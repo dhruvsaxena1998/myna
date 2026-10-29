@@ -80,11 +80,13 @@ pub fn toggle(app: &AppHandle) -> Result<(), String> {
             let id = active.id;
             drop(active); // tears down the tap and mic, closes both files
             clear_tray_title(app);
+            set_tray_menu(app, false);
             let _ = store::set_transcribing(&app.state::<Db>().0.lock().unwrap(), id);
             spawn_transcription(app, id);
         }
         None => {
             *slot = Some(begin(app)?);
+            set_tray_menu(app, true);
         }
     }
     drop(slot); // the pill reads the recording from the database, not from this lock
@@ -115,6 +117,34 @@ pub fn mute_toggle(app: &AppHandle) -> Result<(), String> {
 pub fn mic(conn: &Connection) -> Option<mute::Mic> {
     let id = store::recording(conn)?;
     Some(mute::mic_now(&store::mute_events(conn, id).ok()?, mute::always_record(conn, id)))
+}
+
+/// The right-click fallback menu, for when the popover page won't load. Stop shows only while recording.
+pub fn set_tray_menu(app: &AppHandle, recording: bool) {
+    use tauri::menu::{Menu, MenuItem};
+    let build = || -> tauri::Result<Menu<tauri::Wry>> {
+        let menu = Menu::new(app)?;
+        if recording {
+            menu.append(&MenuItem::with_id(app, "stop", "Stop recording", true, None::<&str>)?)?;
+        }
+        menu.append(&MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?)?;
+        menu.append(&MenuItem::with_id(app, "quit", "Quit Myna", true, None::<&str>)?)?;
+        Ok(menu)
+    };
+    if let (Some(tray), Ok(menu)) = (app.tray_by_id(TRAY_ID), build()) {
+        let _ = tray.set_menu(Some(menu));
+    }
+}
+
+/// A fallback-menu pick: "stop" only acts on a live recording, the rest go through the popover's paths.
+pub fn tray_menu_pick(app: &AppHandle, id: &str) {
+    match id {
+        "stop" if app.state::<Recorder>().0.lock().unwrap().is_some() => {
+            let _ = toggle(app);
+        }
+        "settings" | "quit" => crate::popover::popover_go(app.clone(), id.into(), None),
+        _ => {}
+    }
 }
 
 fn begin(app: &AppHandle) -> Result<Active, String> {
