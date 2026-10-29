@@ -2,12 +2,14 @@
 //! keep the result in SQLite, export it as Markdown or text.
 mod capture;
 mod screen;
+pub(crate) mod mute;
 pub(crate) mod shots;
 pub(crate) mod store;
 mod track;
 mod transcript;
 
 use crate::{dictation::{Transcriber, Utterance}, permissions, with_engine, Db};
+use rusqlite::Connection;
 use serde::Serialize;
 use std::{
     fs,
@@ -94,7 +96,34 @@ pub fn toggle(app: &AppHandle) -> Result<(), String> {
             set_tray_menu(app, true);
         }
     }
+    drop(slot); // the pill reads the recording from the database, not from this lock
+    crate::settle_pill(app);
     Ok(())
+}
+
+/// Flips the mic between live and muted, from the popover or the hotkey, and records when. Does nothing
+/// outside a recording.
+pub fn mute_toggle(app: &AppHandle) -> Result<(), String> {
+    {
+        let rec = app.state::<Recorder>();
+        let slot = rec.0.lock().unwrap();
+        let Some(a) = slot.as_ref() else { return Ok(()) };
+        let db = app.state::<Db>();
+        let conn = db.0.lock().unwrap();
+        let events = store::mute_events(&conn, a.id).map_err(|e| e.to_string())?;
+        // A live mic mutes; muted, or not yet known, unmutes.
+        let muted = mute::mic_now(&events, mute::always_record(&conn, a.id)).live;
+        let at_ms = a.started.elapsed().as_millis() as u64;
+        store::add_mute_event(&conn, a.id, &mute::Event { at_ms, muted, source: mute::Source::Manual }).map_err(|e| e.to_string())?;
+    }
+    crate::settle_pill(app);
+    Ok(())
+}
+
+/// What the popover and the pill say about the mic; None when nothing is recording.
+pub fn mic(conn: &Connection) -> Option<mute::Mic> {
+    let id = store::recording(conn)?;
+    Some(mute::mic_now(&store::mute_events(conn, id).ok()?, mute::always_record(conn, id)))
 }
 
 /// The right-click fallback menu, for when the popover page won't load. Stop shows only while recording.
@@ -131,6 +160,8 @@ fn begin(app: &AppHandle) -> Result<Active, String> {
         return Err("Myna needs Microphone access. Allow it when macOS asks (or in System Settings → Privacy & Security → Microphone), then start again.".into());
     }
     let db = app.state::<Db>();
+    // Taken before the mic opens so mute toggles line up with the mic track's clock.
+    let started = Instant::now();
     let id = store::create(&db.0.lock().unwrap(), now()).map_err(|e| e.to_string())?;
     let dir = app.state::<AudioDir>().0.join(id.to_string());
     let capture = fs::create_dir_all(&dir).map_err(|e| e.to_string()).and_then(|_| capture::start(&dir));
@@ -139,7 +170,6 @@ fn begin(app: &AppHandle) -> Result<Active, String> {
         let _ = fs::remove_dir_all(&dir);
     })?;
     let _ = store::set_source(&db.0.lock().unwrap(), id, capture.app.as_deref(), capture.note.as_deref());
-    let started = Instant::now();
     let frames = app.state::<ScreenshotsDir>().0.join(id.to_string());
     Ok(Active { id, started, _capture: capture, _shots: shots::Screenshots::start(app, id, frames, started) })
 }
@@ -180,6 +210,11 @@ fn spawn_transcription(app: &AppHandle, id: i64) {
 #[tauri::command(async)]
 pub fn meeting_toggle(app: AppHandle) -> Result<(), String> {
     toggle(&app)
+}
+
+#[tauri::command(async)]
+pub fn meeting_mute(app: AppHandle) -> Result<(), String> {
+    mute_toggle(&app)
 }
 
 #[tauri::command]
@@ -250,6 +285,20 @@ pub fn screenshot_windows() -> Result<Vec<screen::Window>, String> {
 #[tauri::command]
 pub fn screenshot_pick(id: Option<u32>) {
     shots::choose(id)
+}
+
+/// Pulls a collapsed segment into the transcript (`included`), or puts it back.
+#[tauri::command]
+pub fn include_segment(db: tauri::State<Db>, id: i64, included: bool) -> Result<(), String> {
+    store::include_segment(&db.0.lock().unwrap(), id, included).map_err(|e| e.to_string())
+}
+
+/// The audio of one segment as a WAV, for the Play button.
+#[tauri::command(async)]
+pub fn segment_clip(app: AppHandle, db: tauri::State<Db>, id: i64) -> Result<tauri::ipc::Response, String> {
+    let (meeting, s) = store::segment(&db.0.lock().unwrap(), id).map_err(|e| e.to_string())?;
+    let track = if s.speaker == store::ME { "mic.wav" } else { "system.wav" };
+    track::clip(&app.state::<AudioDir>().0.join(meeting.to_string()).join(track), s.start_ms, s.end_ms).map(tauri::ipc::Response::new)
 }
 
 #[tauri::command]

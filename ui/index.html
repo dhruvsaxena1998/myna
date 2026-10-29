@@ -48,7 +48,7 @@ const ICONS = {
   check: '<path d="M3 8.5l3 3 7-7"/>',
   plus: '<path d="M8 3v10M3 8h10"/>',
   mic: '<rect x="5.5" y="1.5" width="5" height="8" rx="2.5"/><path d="M3 7.5a5 5 0 0 0 10 0M8 12.5v2M5.5 14.5h5"/>',
-  wave: '<path d="M2 8h1.5M5 4.5v7M8 2v12M11 5v6M14 8h-1.5"/>',
+  list: '<path d="M2.5 4h11M2.5 8h11M2.5 12h7"/>',
 };
 const icon = (name, cls = "") => `<svg class="i ${cls}" viewBox="0 0 16 16" aria-hidden="true">${ICONS[name]}</svg>`;
 const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
@@ -59,7 +59,7 @@ const TASKS = [
   ["diarization", "Speaker separation", ["meetings_enabled"]],
 ];
 
-const PAGES = [["modules", "Modules", "gear"], ["dictation", "Dictation", "mic"], ["meetings", "Meetings", "wave"], ["models", "Models", "dl"]];
+const PAGES = [["modules", "Modules", "gear"], ["dictation", "Dictation", "mic"], ["meetings", "Meetings", "list"], ["models", "Models", "dl"]];
 const KEY_SYMBOLS = { Alt: "⌥", Option: "⌥", Control: "⌃", Ctrl: "⌃", Shift: "⇧", Super: "⌘", Command: "⌘", Cmd: "⌘" };
 const fmtKey = (k) => k.split("+").map((p) => KEY_SYMBOLS[p] || p.replace(/^(Key|Digit)/, "")).join("");
 
@@ -179,9 +179,23 @@ async function meetingsPage(page) {
   const value = (await get("meetings_capture")) === "off" ? "off" : every;
   const allowed = await invoke("permission_granted", { name: SR });
   const access = value === "off" ? "" : `<div class="prow"><div class="l">Screen Recording</div><div class="d${allowed ? "" : " err"}">${allowed ? "Myna can see the call window." : "Without it Myna can’t see other apps’ windows. After allowing it, quit and reopen Myna."}</div><div class="r">${allowed ? `<span class="pill ok">${icon("check", "sm")} Allowed</span>` : '<span class="pill alert">Not allowed</span><button class="btn" id="allow">Allow…</button>'}</div></div>`;
+  const { key, error } = await invoke("mute_hotkey_status");
+  let always = [];
+  try { always = JSON.parse((await get("mic_always_apps")) || "[]"); } catch {}
+  // Apps Myna has recorded in, plus any already switched on whose meetings are gone.
+  const seen = (await invoke("list_meetings")).map((m) => m.app);
+  const apps = [...new Set([...seen, ...always].filter(Boolean))].sort();
+  const rows = apps.length
+    ? apps.map((a, i) => `<div class="prow single"><div class="l">${esc(a)}</div><div class="r">${sw("app" + i, always.includes(a), "Always record mic in " + a)}</div></div>`).join("")
+    : '<div class="prow single"><div class="d">Apps show up here after you record a meeting in them.</div></div>';
   page.innerHTML = `<section class="group"><h2>Capture</h2><div class="box">
 <div class="prow"><div class="l">Screenshots of the meeting window</div><div class="d">Taken while you record, from the app using your mic. Near-duplicates are dropped automatically.</div><div class="r"><select class="field" id="shots" aria-label="Screenshots of the meeting window"><option value="15">Every 15 s</option><option value="30">Every 30 s</option><option value="60">Every minute</option><option value="off">Off</option></select></div></div>${access}
-</div></section>`;
+</div></section>
+<section class="group"><h2>Mute</h2><div class="box">
+<div class="prow"><div class="l">Mute hotkey</div><div class="d${error ? " err" : ""}">${esc(error || "Mutes and unmutes your mic in the transcript while a recording runs. The audio is always saved on this Mac.")}</div><div class="r"><kbd>${esc(fmtKey(key))}</kbd><button class="btn quiet" id="change">Change</button></div></div>
+</div></section>
+<section class="group"><h2>Always record mic</h2><div class="box">${rows}</div>
+<p class="note">Myna can't read mute state in most call apps, so it keeps your side out of the transcript until you include it. Turn an app on to include your mic there unless you mute in Myna.</p></section>`;
   const sel = page.querySelector("#shots");
   sel.value = [...sel.options].some((o) => o.value === value) ? value : "15";
   sel.onchange = async () => {
@@ -194,6 +208,19 @@ async function meetingsPage(page) {
   if (allow) allow.onclick = async () => { await invoke("request_permission", { name: SR }); invoke("open_privacy_settings", { name: SR }); };
   // A grant made in System Settings shows up when the user comes back.
   window.onfocus = () => (page.isConnected ? meetingsPage(page) : (window.onfocus = null));
+  page.querySelector("#change").onclick = async (e) => {
+    e.currentTarget.textContent = "Press the new shortcut…";
+    const combo = await recordHotkey(e.currentTarget);
+    if (combo) await set("mute_hotkey", combo); // the backend re-registers it and reports any clash
+    meetingsPage(page);
+  };
+  apps.forEach((a, i) => {
+    page.querySelector("#app" + i).onclick = (e) => {
+      const on = flip(e.currentTarget);
+      always = apps.filter((x) => (x === a ? on : always.includes(x)));
+      set("mic_always_apps", JSON.stringify(always));
+    };
+  });
 }
 
 async function modelsPage(page) {
@@ -338,6 +365,7 @@ function pill() {
     if (p.kind === "transcribing") show("", '<span class="spin" aria-hidden="true"></span><span>Transcribing…</span>');
     if (p.kind === "done") show("done", `${icon("check")}<span>Pasted ${p.words} ${p.words === 1 ? "word" : "words"}</span>`);
     if (p.kind === "error") show("err", `<span class="dot"></span><span class="msg">${esc(p.message)}</span>`);
+    if (p.kind === "mic") show(p.live ? "rec" : "", `<span class="dot"></span><span>Mic ${p.live ? "live" : "off"} <span class="k">· ${esc(p.how)}</span></span>`);
   });
 }
 

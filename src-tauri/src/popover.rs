@@ -1,7 +1,12 @@
 //! The menubar popover: a borderless window under the tray icon, in place of a native tray menu.
 //! The backend decides what it shows (`view`); ui/popover.js only renders that.
 use crate::{
-    meetings::{shots, store::{self, Meeting}},
+    meetings::{
+        self,
+        mute::Mic,
+        shots,
+        store::{self, Meeting},
+    },
     open_window, open_window_at, Db, HotkeyError,
 };
 use serde::Serialize;
@@ -60,6 +65,8 @@ pub struct View {
     /// Offer the Meetings entry and the recent list.
     meetings: bool,
     dictation: Option<Dictation>,
+    /// The mic's state, while a recording is running. Set by `popover_view`, which reads the mute timeline.
+    mic: Option<Mic>,
     recent: Vec<Recent>,
 }
 
@@ -89,6 +96,7 @@ fn view(list: &[Meeting], meetings_on: bool, dictation: Option<Dictation>) -> Vi
         state,
         meetings: meetings_on,
         dictation,
+        mic: None,
         recent,
     }
 }
@@ -105,6 +113,7 @@ pub fn popover_view(app: AppHandle, db: tauri::State<Db>, failed: tauri::State<H
     if let State::Recording { shots, .. } = &mut v.state {
         *shots = crate::meetings::shots::status();
     }
+    v.mic = meetings::mic(&db.0.lock().unwrap());
     Ok(v)
 }
 
@@ -275,7 +284,7 @@ mod tests {
     #[test]
     fn meetings_off_hides_every_meeting_control() {
         let v = view(&history(&["transcribing", "done"]), false, None);
-        assert_eq!(v, View { state: State::Idle, can_start: false, meetings: false, dictation: None, recent: vec![] });
+        assert_eq!(v, View { state: State::Idle, can_start: false, meetings: false, dictation: None, mic: None, recent: vec![] });
     }
 
     #[test]

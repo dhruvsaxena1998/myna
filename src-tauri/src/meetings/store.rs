@@ -1,16 +1,31 @@
 //! Meetings and their transcript segments, in the same SQLite file as settings.
+use super::mute::{Event, Source, State};
 use rusqlite::{params, Connection};
 use serde::Serialize;
 
 pub const ME: &str = "me";
 pub const THEM: &str = "them";
 
-#[derive(Serialize, Clone, PartialEq, Debug)]
+#[derive(Serialize, Clone, PartialEq, Debug, Default)]
 pub struct Segment {
+    /// The row id; 0 until stored.
+    pub id: i64,
     pub speaker: String,
     pub start_ms: u64,
     pub end_ms: u64,
     pub text: String,
+    /// Only mic segments are ever anything but unmuted.
+    pub mute: State,
+    /// The user pulled a collapsed segment into the transcript.
+    pub included: bool,
+}
+
+impl Segment {
+    /// In the transcript, the export and anything sent to a provider: lines that were live, and collapsed
+    /// lines the user included. Everything that reads a transcript goes through this.
+    pub fn shown(&self) -> bool {
+        self.mute == State::Unmuted || self.included
+    }
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -63,12 +78,26 @@ pub fn init(db: &Connection) -> rusqlite::Result<()> {
         CREATE TABLE IF NOT EXISTS folders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL UNIQUE COLLATE NOCASE
-        );",
+        );
+        CREATE TABLE IF NOT EXISTS mute_events (
+            meeting_id INTEGER NOT NULL,
+            at_ms INTEGER NOT NULL,
+            muted INTEGER NOT NULL,
+            source TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS mute_events_meeting ON mute_events (meeting_id, at_ms);",
     )?;
     // Databases from before folders have no column; their meetings stay NULL, which is the Inbox.
-    let has_folder = db.prepare("SELECT 1 FROM pragma_table_info('meetings') WHERE name = 'folder_id'")?.exists([])?;
-    if !has_folder {
-        db.execute("ALTER TABLE meetings ADD COLUMN folder_id INTEGER", [])?;
+    add_column(db, "meetings", "folder_id", "INTEGER")?;
+    // Segments from before mute state were all live, so they stay in the transcript.
+    add_column(db, "segments", "mute", "TEXT NOT NULL DEFAULT 'unmuted'")?;
+    add_column(db, "segments", "included", "INTEGER NOT NULL DEFAULT 0")
+}
+
+fn add_column(db: &Connection, table: &str, column: &str, ddl: &str) -> rusqlite::Result<()> {
+    let has = db.prepare(&format!("SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1"))?.exists([column])?;
+    if !has {
+        db.execute(&format!("ALTER TABLE {table} ADD COLUMN {column} {ddl}"), [])?;
     }
     Ok(())
 }
@@ -154,8 +183,8 @@ pub fn finish(db: &Connection, id: i64, duration_ms: u64, segments: &[Segment]) 
     tx.execute("DELETE FROM segments WHERE meeting_id = ?1", [id])?;
     for s in segments {
         tx.execute(
-            "INSERT INTO segments (meeting_id, speaker, start_ms, end_ms, text) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![id, s.speaker, s.start_ms, s.end_ms, s.text],
+            "INSERT INTO segments (meeting_id, speaker, start_ms, end_ms, text, mute, included) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![id, s.speaker, s.start_ms, s.end_ms, s.text, s.mute.as_str(), s.included],
         )?;
     }
     tx.execute(
@@ -198,11 +227,52 @@ pub fn get(db: &Connection, id: i64) -> rusqlite::Result<Meeting> {
     db.query_row(&format!("{SELECT} WHERE id = ?1"), [id], row)
 }
 
+const SEGMENT: &str = "SELECT rowid, speaker, start_ms, end_ms, text, mute, included, meeting_id FROM segments";
+
+fn segment_row(r: &rusqlite::Row) -> rusqlite::Result<Segment> {
+    Ok(Segment {
+        id: r.get(0)?,
+        speaker: r.get(1)?,
+        start_ms: r.get(2)?,
+        end_ms: r.get(3)?,
+        text: r.get(4)?,
+        mute: State::parse(&r.get::<_, String>(5)?),
+        included: r.get(6)?,
+    })
+}
+
 pub fn segments(db: &Connection, id: i64) -> rusqlite::Result<Vec<Segment>> {
-    db.prepare("SELECT speaker, start_ms, end_ms, text FROM segments WHERE meeting_id = ?1 ORDER BY start_ms, rowid")?
-        .query_map([id], |r| {
-            Ok(Segment { speaker: r.get(0)?, start_ms: r.get(1)?, end_ms: r.get(2)?, text: r.get(3)? })
-        })?
+    db.prepare(&format!("{SEGMENT} WHERE meeting_id = ?1 ORDER BY start_ms, rowid"))?.query_map([id], segment_row)?.collect()
+}
+
+/// One segment and the meeting it belongs to.
+pub fn segment(db: &Connection, id: i64) -> rusqlite::Result<(i64, Segment)> {
+    db.query_row(&format!("{SEGMENT} WHERE rowid = ?1"), [id], |r| Ok((r.get(7)?, segment_row(r)?)))
+}
+
+/// Pulls a collapsed segment into the transcript, or puts it back.
+pub fn include_segment(db: &Connection, id: i64, included: bool) -> rusqlite::Result<()> {
+    db.execute("UPDATE segments SET included = ?2 WHERE rowid = ?1", params![id, included])?;
+    Ok(())
+}
+
+/// The meeting being recorded, if any.
+pub fn recording(db: &Connection) -> Option<i64> {
+    db.query_row("SELECT id FROM meetings WHERE status = 'recording' ORDER BY id DESC LIMIT 1", [], |r| r.get(0)).ok()
+}
+
+pub fn add_mute_event(db: &Connection, meeting: i64, e: &Event) -> rusqlite::Result<()> {
+    db.execute(
+        "INSERT INTO mute_events (meeting_id, at_ms, muted, source) VALUES (?1, ?2, ?3, ?4)",
+        params![meeting, e.at_ms, e.muted, e.source.as_str()],
+    )?;
+    Ok(())
+}
+
+/// The meeting's mute timeline, oldest first.
+pub fn mute_events(db: &Connection, meeting: i64) -> rusqlite::Result<Vec<Event>> {
+    db.prepare("SELECT at_ms, muted, source FROM mute_events WHERE meeting_id = ?1 ORDER BY at_ms, rowid")?
+        .query_map([meeting], |r| Ok(Event { at_ms: r.get(0)?, muted: r.get(1)?, source: Source::parse(&r.get::<_, String>(2)?) }))?
         .collect()
 }
 
@@ -230,7 +300,11 @@ mod tests {
     }
 
     fn seg(speaker: &str, start_ms: u64, text: &str) -> Segment {
-        Segment { speaker: speaker.into(), start_ms, end_ms: start_ms + 1000, text: text.into() }
+        Segment { speaker: speaker.into(), start_ms, end_ms: start_ms + 1000, text: text.into(), ..Default::default() }
+    }
+
+    fn muted(start_ms: u64, text: &str, mute: State) -> Segment {
+        Segment { mute, ..seg(ME, start_ms, text) }
     }
 
     #[test]
@@ -325,5 +399,52 @@ mod tests {
         assert_eq!(get(&c, done).unwrap().status, "done");
         // A failed meeting waits for an explicit retry.
         assert_eq!(get(&c, failed).unwrap().status, "failed");
+    }
+
+    #[test]
+    fn collapsed_segments_keep_their_state_and_only_included_ones_are_shown() {
+        let c = db();
+        let id = create(&c, 1).unwrap();
+        finish(&c, id, 9000, &[muted(0, "live", State::Unmuted), muted(2000, "private", State::Muted), muted(4000, "who knows", State::Unknown)]).unwrap();
+        let got = segments(&c, id).unwrap();
+        assert_eq!(got.iter().map(|s| (s.mute, s.included, s.shown())).collect::<Vec<_>>(), [
+            (State::Unmuted, false, true), (State::Muted, false, false), (State::Unknown, false, false),
+        ]);
+        include_segment(&c, got[1].id, true).unwrap();
+        assert_eq!(segment(&c, got[1].id).unwrap().0, id);
+        let after = segments(&c, id).unwrap();
+        assert_eq!(after.iter().map(Segment::shown).collect::<Vec<_>>(), [true, true, false]);
+        assert_eq!((after[1].mute, after[1].included), (State::Muted, true));
+        include_segment(&c, got[1].id, false).unwrap();
+        assert!(!segments(&c, id).unwrap()[1].shown());
+    }
+
+    #[test]
+    fn mute_timeline_is_kept_per_meeting_in_time_order() {
+        let c = db();
+        let (a, b) = (create(&c, 1).unwrap(), create(&c, 2).unwrap());
+        let ev = |at_ms, muted, source| Event { at_ms, muted, source };
+        add_mute_event(&c, a, &ev(5000, true, Source::Manual)).unwrap();
+        add_mute_event(&c, a, &ev(1000, false, Source::Extension)).unwrap();
+        add_mute_event(&c, b, &ev(0, false, Source::Manual)).unwrap();
+        assert_eq!(mute_events(&c, a).unwrap(), [ev(1000, false, Source::Extension), ev(5000, true, Source::Manual)]);
+        assert_eq!(mute_events(&c, b).unwrap().len(), 1);
+        assert_eq!(recording(&c), Some(b));
+        set_transcribing(&c, b).unwrap();
+        assert_eq!(recording(&c), Some(a));
+    }
+
+    #[test]
+    fn init_migrates_segments_from_before_mute_state_as_live() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE segments (meeting_id INTEGER NOT NULL, speaker TEXT NOT NULL, start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL, text TEXT NOT NULL);
+             INSERT INTO segments VALUES (1, 'me', 0, 1000, 'old line');",
+        )
+        .unwrap();
+        init(&c).unwrap();
+        init(&c).unwrap(); // idempotent
+        let old = segments(&c, 1).unwrap();
+        assert_eq!((old[0].mute, old[0].included, old[0].shown()), (State::Unmuted, false, true));
     }
 }
