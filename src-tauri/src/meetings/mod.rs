@@ -1,7 +1,7 @@
 //! Meeting capture: record the mic and the call app's audio as two tracks, transcribe after stop,
 //! keep the result in SQLite, export it as Markdown or text.
 mod capture;
-mod store;
+pub(crate) mod store;
 mod track;
 mod transcript;
 
@@ -13,10 +13,7 @@ use std::{
     sync::Mutex,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use tauri::{
-    menu::{Menu, MenuItem},
-    AppHandle, Manager, Wry,
-};
+use tauri::{AppHandle, Manager};
 
 pub const TRAY_ID: &str = "main";
 
@@ -25,22 +22,14 @@ struct AudioDir(PathBuf);
 struct Active {
     id: i64,
     started: Instant,
-    capture: capture::Capture,
+    /// Held for its Drop, which stops the capture.
+    _capture: capture::Capture,
 }
 
 #[derive(Default)]
 struct Recorder(Mutex<Option<Active>>);
 
-/// Tray items that change with the recording state.
-struct TrayUi {
-    menu: Menu<Wry>,
-    record: MenuItem<Wry>,
-    status: MenuItem<Wry>,
-}
-
-// shortcut: the record items are in the tray whether or not the Meetings module is switched on in Settings;
-// gate them on `meetings_enabled` when the modules page starts to matter.
-pub fn setup(app: &tauri::App, root: &Path, menu: Menu<Wry>, record: MenuItem<Wry>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn setup(app: &tauri::App, root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let audio = root.join("audio");
     fs::create_dir_all(&audio)?;
     let queued = {
@@ -51,7 +40,6 @@ pub fn setup(app: &tauri::App, root: &Path, menu: Menu<Wry>, record: MenuItem<Wr
     };
     app.manage(AudioDir(audio));
     app.manage(Recorder::default());
-    app.manage(TrayUi { menu, record, status: MenuItem::new(app, "", false, None::<&str>)? });
     for id in queued {
         spawn_transcription(app.handle(), id);
     }
@@ -89,14 +77,12 @@ pub fn toggle(app: &AppHandle) -> Result<(), String> {
         Some(active) => {
             let id = active.id;
             drop(active); // tears down the tap and mic, closes both files
-            show_recording(app, None);
+            clear_tray_title(app);
             let _ = store::set_transcribing(&app.state::<Db>().0.lock().unwrap(), id);
             spawn_transcription(app, id);
         }
         None => {
-            let active = begin(app)?;
-            show_recording(app, Some(&active.capture));
-            *slot = Some(active);
+            *slot = Some(begin(app)?);
         }
     }
     Ok(())
@@ -116,33 +102,13 @@ fn begin(app: &AppHandle) -> Result<Active, String> {
         let _ = fs::remove_dir_all(&dir);
     })?;
     let _ = store::set_source(&db.0.lock().unwrap(), id, capture.app.as_deref(), capture.note.as_deref());
-    Ok(Active { id, started: Instant::now(), capture })
+    Ok(Active { id, started: Instant::now(), _capture: capture })
 }
 
-/// Menu text for the recording state: a dot plus words, never colour alone.
-fn show_recording(app: &AppHandle, capture: Option<&capture::Capture>) {
-    let ui = app.state::<TrayUi>();
-    let _ = ui.record.set_text(if capture.is_some() { "Stop and transcribe" } else { "Start meeting recording" });
-    match capture {
-        Some(c) => {
-            let source = c.app.as_ref().map_or("mic only".to_string(), |a| format!("system audio from {a}"));
-            let _ = ui.status.set_text(format!("● Mic live · {source}"));
-            let _ = ui.menu.insert(&ui.status, 0);
-        }
-        None => {
-            let _ = ui.menu.remove(&ui.status);
-            if let Some(tray) = app.tray_by_id(TRAY_ID) {
-                let _ = tray.set_title(None::<&str>);
-            }
-        }
+fn clear_tray_title(app: &AppHandle) {
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        let _ = tray.set_title(None::<&str>);
     }
-}
-
-/// For failures with no window to show them in (the tray item).
-pub fn alert(message: &str) {
-    let _ = std::process::Command::new("osascript")
-        .args(["-e", &format!("display alert \"Myna\" message {message:?}")])
-        .spawn();
 }
 
 // One model in memory at a time: queued meetings wait their turn.

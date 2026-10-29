@@ -6,6 +6,7 @@ mod meetings;
 mod models;
 mod paste;
 mod permissions;
+mod popover;
 mod settings;
 
 use serde::Serialize;
@@ -18,8 +19,7 @@ use std::{
     time::Duration,
 };
 use tauri::{
-    menu::{Menu, MenuItem, PredefinedMenuItem},
-    tray::TrayIconBuilder,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     ActivationPolicy, AppHandle, Emitter, Manager, PhysicalPosition, RunEvent, WebviewUrl,
     WebviewWindow, WebviewWindowBuilder,
 };
@@ -395,11 +395,16 @@ fn sync_hotkey(app: &AppHandle) {
 }
 
 fn open_window(app: &AppHandle, label: &str, title: &str, size: (f64, f64)) {
+    open_window_at(app, label, label, title, size)
+}
+
+/// Like `open_window`, but a new window starts on `hash` (the router's route, plus any argument after a slash).
+fn open_window_at(app: &AppHandle, label: &str, hash: &str, title: &str, size: (f64, f64)) {
     if let Some(w) = app.get_webview_window(label) {
         let _ = w.set_focus();
         return;
     }
-    let url = WebviewUrl::App(format!("index.html#{label}").into());
+    let url = WebviewUrl::App(format!("index.html#{hash}").into());
     if let Ok(w) = WebviewWindowBuilder::new(app, label, url)
         .title(title)
         .inner_size(size.0, size.1)
@@ -432,37 +437,16 @@ pub fn run() {
             create_pill(app.handle())?;
             sync_hotkey(app.handle());
 
-            let record = MenuItem::with_id(app, "record", "Start meeting recording", true, None::<&str>)?;
-            let menu = Menu::with_items(
-                app,
-                &[
-                    &record,
-                    &MenuItem::with_id(app, "meetings", "Meetings…", true, None::<&str>)?,
-                    &PredefinedMenuItem::separator(app)?,
-                    &MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?,
-                    &MenuItem::with_id(app, "quit", "Quit Myna", true, None::<&str>)?,
-                ],
-            )?;
+            popover::create(app.handle())?;
             TrayIconBuilder::with_id(meetings::TRAY_ID)
                 .icon(app.default_window_icon().unwrap().clone())
-                .menu(&menu)
-                .on_menu_event(|app, event| match event.id.as_ref() {
-                    "record" => {
-                        let app = app.clone();
-                        // Starting and stopping block on audio hardware; keep them off the main thread.
-                        std::thread::spawn(move || {
-                            if let Err(e) = meetings::toggle(&app) {
-                                meetings::alert(&e);
-                            }
-                        });
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, rect, .. } = event {
+                        popover::toggle(tray.app_handle(), rect);
                     }
-                    "meetings" => open_window(app, "meetings", "Meetings", (1000.0, 680.0)),
-                    "settings" => open_window(app, "settings", "Myna Settings", (800.0, 560.0)),
-                    "quit" => app.exit(0),
-                    _ => {}
                 })
                 .build(app)?;
-            meetings::setup(app, &dir, menu, record)?;
+            meetings::setup(app, &dir)?;
 
             if !onboarded {
                 open_window(app.handle(), "onboarding", "Welcome to Myna", (520.0, 460.0));
@@ -481,6 +465,10 @@ pub fn run() {
             remove_model,
             verify_model,
             reveal_models_dir,
+            popover::popover_view,
+            popover::popover_fit,
+            popover::popover_hide,
+            popover::popover_go,
             meetings::meeting_toggle,
             meetings::list_meetings,
             meetings::get_meeting,
