@@ -661,7 +661,9 @@ pub fn run() {
             meetings::summary::template_save,
             meetings::summary::template_delete,
             meetings::summary::summary_get,
-            meetings::summary::summary_generate
+            meetings::summary::summary_generate,
+            meetings::chat::chat_get,
+            meetings::chat::chat_send
         ])
         .build(tauri::generate_context!())
         .expect("error building Myna")
