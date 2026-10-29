@@ -6,5 +6,7 @@
   <true/>
   <key>NSMicrophoneUsageDescription</key>
   <string>Myna records your voice for dictation and meetings.</string>
+  <key>NSAudioCaptureUsageDescription</key>
+  <string>Myna records the meeting app's audio so it can transcribe what other people say.</string>
 </dict>
 </plist>

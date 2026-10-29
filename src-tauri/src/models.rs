@@ -1,5 +1,5 @@
 //! Curated model downloads: fetch from Hugging Face, verify SHA-256, install atomically.
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
@@ -19,12 +19,28 @@ pub struct File<'a> {
     pub size: u64,
 }
 
-pub struct Model {
-    pub id: &'static str,
+/// Borrowed so a user's own model (strings built at runtime) can use the same install/status code.
+pub struct Model<'a> {
+    pub id: &'a str,
     pub task: &'static str,
-    pub name: &'static str,
-    pub desc: &'static str,
-    pub files: &'static [File<'static>],
+    pub name: &'a str,
+    pub desc: &'a str,
+    pub files: &'a [File<'a>],
+}
+
+/// An owned `File`, for custom models whose file list is stored in settings.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Remote {
+    pub name: String,
+    pub url: String,
+    pub sha256: String,
+    pub size: u64,
+}
+
+impl Remote {
+    pub fn file(&self) -> File<'_> {
+        File { name: &self.name, url: &self.url, sha256: &self.sha256, size: self.size }
+    }
 }
 
 /// A file of Desert Ant's Voz, at the repo commit behind tag v0.5.0: the revision SDK 4.2.1 pins.
@@ -162,8 +178,9 @@ fn download_file(dest: &Path, f: &File, mut src: impl Read, job: &Job) -> Result
         out.write_all(&buf[..n])?;
         job.done.fetch_add(n as u64, Ordering::Relaxed);
     }
-    let got = hex(&hash.finalize());
-    if got != f.sha256 {
+    // shortcut: an empty sha256 (small non-LFS files from a custom repo, which Hugging Face only
+    // hashes with git's SHA-1) is size-checked only; upgrade to blob SHA-1 if those files matter.
+    if !f.sha256.is_empty() && hex(&hash.finalize()) != f.sha256 {
         return Err(Stop::Failed(format!("Checksum mismatch for {}; the download was discarded.", f.name)));
     }
     Ok(())
@@ -224,7 +241,7 @@ pub fn verify(root: &Path, m: &Model) -> bool {
     m.files.iter().all(|f| {
         let Ok(mut file) = fs::File::open(root.join(m.id).join(f.name)) else { return false };
         let mut hash = Sha256::new();
-        io::copy(&mut file, &mut hash).is_ok() && hex(&hash.finalize()) == f.sha256
+        io::copy(&mut file, &mut hash).is_ok() && (f.sha256.is_empty() || hex(&hash.finalize()) == f.sha256)
     })
 }
 
@@ -296,6 +313,19 @@ mod tests {
         let m = Model { id: "m", task: "stt", name: "", desc: "", files: &[File { name: "a.mlmodelc/weights/w.bin", ..HELLO }] };
         assert_eq!(status(&root, &m), Status::Installed);
         assert!(verify(&root, &m));
+    }
+
+    #[test]
+    fn file_without_a_checksum_is_size_checked_only() {
+        let root = tmp("nosum");
+        let f = File { name: "a.bin", url: "mem://a", sha256: "", size: 5 };
+        install(&root, "m", &[f], |_| Ok(Cursor::new(b"hello".to_vec())), &Job::default()).unwrap();
+        let f = File { name: "a.bin", url: "mem://a", sha256: "", size: 5 };
+        let m = Model { id: "m", task: "stt", name: "", desc: "", files: &[f] };
+        assert_eq!(status(&root, &m), Status::Installed);
+        assert!(verify(&root, &m));
+        fs::write(root.join("m/a.bin"), b"hell").unwrap();
+        assert_eq!(status(&root, &m), Status::Damaged);
     }
 
     #[test]

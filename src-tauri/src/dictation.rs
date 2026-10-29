@@ -1,14 +1,28 @@
 //! Dictation pipeline: captured audio -> text. Capture, paste and the pill live elsewhere.
-use crate::{audio, models};
+use crate::{audio, stt::Runtime};
 use parakeet_rs::{ort::environment::Environment, ExecutionConfig};
 use std::{
     path::Path,
     sync::{Mutex, OnceLock},
 };
+use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperState};
+
+/// A line of speech with times relative to the start of the audio it came from.
+pub struct Utterance {
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub text: String,
+}
 
 /// A speech-to-text backend. Takes mono 16 kHz samples.
 pub trait Transcriber: Send {
     fn transcribe(&mut self, audio: &[f32]) -> Result<String, String>;
+
+    /// Timestamped lines, for meetings. A backend without timestamps reports one line spanning the audio.
+    fn transcribe_timed(&mut self, audio: &[f32]) -> Result<Vec<Utterance>, String> {
+        let text = self.transcribe(audio)?;
+        Ok(vec![Utterance { start_ms: 0, end_ms: audio.len() as u64 * 1000 / audio::RATE as u64, text }])
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -31,8 +45,6 @@ pub fn dictate(clip: &audio::Clip, t: &mut dyn Transcriber) -> Result<Heard, Str
     Ok(if text.is_empty() { Heard::Silence } else { Heard::Text(text.to_string()) })
 }
 
-const PARAKEET: &str = "parakeet-tdt-0.6b-v3";
-
 pub struct Parakeet(parakeet_rs::ParakeetTDT);
 
 impl Parakeet {
@@ -54,19 +66,72 @@ impl Transcriber for Parakeet {
             .map(|r| r.text)
             .map_err(|e| e.to_string())
     }
+
+    fn transcribe_timed(&mut self, audio: &[f32]) -> Result<Vec<Utterance>, String> {
+        use parakeet_rs::Transcriber as _;
+        let r = self
+            .0
+            .transcribe_samples(audio.to_vec(), audio::RATE, 1, Some(parakeet_rs::TimestampMode::Sentences))
+            .map_err(|e| e.to_string())?;
+        Ok(r.tokens
+            .into_iter()
+            .map(|t| Utterance { start_ms: (t.start * 1000.0) as u64, end_ms: (t.end * 1000.0) as u64, text: t.text })
+            .collect())
+    }
 }
 
-/// The selected speech model's backend.
-pub fn load(id: &str, root: &Path) -> Result<Box<dyn Transcriber>, String> {
-    let m = models::MODELS.iter().find(|m| m.id == id).ok_or("Unknown speech model")?;
-    if models::status(root, m) != models::Status::Installed {
-        return Err("Download a speech model in Settings".into());
+pub struct Whisper(WhisperState);
+
+impl Whisper {
+    /// `file` is the ggml .bin. Uses the GPU (Metal) when whisper.cpp can.
+    pub fn load(file: &Path) -> Result<Self, String> {
+        let ctx = WhisperContext::new_with_params(file, WhisperContextParameters::default()).map_err(|e| e.to_string())?;
+        ctx.create_state().map(Self).map_err(|e| e.to_string())
     }
-    match id {
-        PARAKEET => Ok(Box::new(Parakeet::load(&root.join(id))?)),
-        crate::voz::ID => Ok(Box::new(crate::voz::Voz::load(&root.join(id))?)),
-        _ => Err(format!("{} can't dictate yet", m.name)),
+}
+
+impl Whisper {
+    fn run(&mut self, audio: &[f32], timestamps: bool) -> Result<(), String> {
+        let mut p = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+        p.set_language(None); // detect it: Whisper is the pick for speech Parakeet doesn't cover
+        p.set_no_timestamps(!timestamps);
+        p.set_print_special(false);
+        p.set_print_progress(false);
+        p.set_print_realtime(false);
+        p.set_print_timestamps(false);
+        self.0.full(p, audio).map_err(|e| e.to_string())
     }
+}
+
+impl Transcriber for Whisper {
+    fn transcribe(&mut self, audio: &[f32]) -> Result<String, String> {
+        self.run(audio, false)?;
+        Ok(self.0.as_iter().map(|s| s.to_string()).collect())
+    }
+
+    fn transcribe_timed(&mut self, audio: &[f32]) -> Result<Vec<Utterance>, String> {
+        self.run(audio, true)?;
+        // whisper.cpp reports segment times in centiseconds.
+        Ok(self
+            .0
+            .as_iter()
+            .map(|s| Utterance {
+                start_ms: s.start_timestamp().max(0) as u64 * 10,
+                end_ms: s.end_timestamp().max(0) as u64 * 10,
+                text: s.to_string().trim().to_string(),
+            })
+            .filter(|u| !u.text.is_empty())
+            .collect())
+    }
+}
+
+/// Loads the backend for a model `stt::resolve` found.
+pub fn load(runtime: Runtime, path: &Path) -> Result<Box<dyn Transcriber>, String> {
+    Ok(match runtime {
+        Runtime::Parakeet => Box::new(Parakeet::load(path)?),
+        Runtime::Whisper => Box::new(Whisper::load(path)?),
+        Runtime::Voz => Box::new(crate::voz::Voz::load(path)?),
+    })
 }
 
 /// Keeps the loaded model between dictations: loading takes seconds, transcribing a fraction of that.
@@ -93,6 +158,10 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        models,
+        stt::{self, Custom, PARAKEET, WHISPER},
+    };
     use audio::Clip;
     use std::{cell::Cell, fs, process::Command};
 
@@ -181,32 +250,156 @@ mod tests {
     }
 
     #[test]
-    fn model_that_is_not_downloaded_says_so() {
-        let root = tmp("absent");
-        assert_eq!(load(PARAKEET, &root).err().as_deref(), Some("Download a speech model in Settings"));
-        assert_eq!(load("nope", &root).err().as_deref(), Some("Unknown speech model"));
+    fn selecting_another_model_loads_its_backend_on_the_next_dictation() {
+        let dir = tmp("switch");
+        let (parakeet, whisper) = (dir.join("parakeet"), dir.join("whisper.bin"));
+        fs::create_dir_all(&parakeet).unwrap();
+        for n in ["vocab.txt", "encoder-model.int8.onnx", "decoder_joint-model.int8.onnx"] {
+            fs::write(parakeet.join(n), b"x").unwrap();
+        }
+        fs::write(&whisper, 0x6767_6d6c_u32.to_le_bytes()).unwrap();
+        let all: Vec<Custom> = [(Runtime::Parakeet, &parakeet), (Runtime::Whisper, &whisper)]
+            .into_iter()
+            .map(|(rt, p)| Custom::new(rt, &p.display().to_string(), |_| unreachable!()).unwrap())
+            .collect();
+
+        let engine = Engine::default();
+        let loaded = Cell::new(vec![]);
+        // What `with_engine` does for each dictation, with the loaders stubbed out.
+        let dictate_with = |id: &str| {
+            engine
+                .with(
+                    id,
+                    || {
+                        let (rt, _) = stt::resolve(id, &dir, &all)?;
+                        let mut seen = loaded.take();
+                        seen.push(rt);
+                        loaded.set(seen);
+                        Ok(Box::new(Fake("hi")) as Box<dyn Transcriber>)
+                    },
+                    |_| (),
+                )
+                .unwrap()
+        };
+        dictate_with(&all[0].id());
+        dictate_with(&all[0].id());
+        dictate_with(&all[1].id());
+        dictate_with(&all[0].id());
+        assert_eq!(loaded.take(), [Runtime::Parakeet, Runtime::Whisper, Runtime::Parakeet]);
     }
 
-    // Real model on real speech. Run by hand: `cargo test -- --ignored real_parakeet`.
-    // Needs macOS `say`; downloads the ~670 MB model once into $TMPDIR/myna-parakeet.
     #[test]
-    #[ignore]
-    fn real_parakeet_hears_speech() {
-        let root = std::env::temp_dir().join("myna-parakeet");
-        let m = models::MODELS.iter().find(|m| m.id == PARAKEET).unwrap();
+    fn a_backend_without_timestamps_reports_one_line_spanning_the_clip() {
+        // Voz gives no timestamps, so meetings get this default for it.
+        let u = Fake("hi").transcribe_timed(&vec![0.0; 16_000]).unwrap();
+        assert_eq!((u.len(), u[0].start_ms, u[0].end_ms, u[0].text.as_str()), (1, 0, 1000, "hi"));
+    }
+
+    /// Share of the reference's words the transcript got wrong (edit distance over words), ignoring case and punctuation.
+    fn word_error_rate(reference: &str, heard: &str) -> f64 {
+        let words = |t: &str| -> Vec<String> {
+            t.split_whitespace().map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase()).filter(|w| !w.is_empty()).collect()
+        };
+        let (r, h) = (words(reference), words(heard));
+        let mut row: Vec<usize> = (0..=h.len()).collect();
+        for (i, rw) in r.iter().enumerate() {
+            let mut diag = row[0];
+            row[0] = i + 1;
+            for (j, hw) in h.iter().enumerate() {
+                let up = row[j + 1];
+                row[j + 1] = (diag + usize::from(rw != hw)).min(row[j] + 1).min(up + 1);
+                diag = up;
+            }
+        }
+        row[h.len()] as f64 / r.len() as f64
+    }
+
+    #[test]
+    fn word_error_rate_counts_substitutions_insertions_and_deletions() {
+        assert_eq!(word_error_rate("the cat sat", "The cat, sat."), 0.0);
+        assert_eq!(word_error_rate("the cat sat down", "the cat sat up"), 0.25);
+        assert_eq!(word_error_rate("the cat sat", "the cat"), 1.0 / 3.0);
+        assert_eq!(word_error_rate("the cat", "the big cat"), 0.5);
+        assert_eq!(word_error_rate("one two", ""), 1.0);
+    }
+
+    // The tests below use real models and are run by hand: `cargo test -- --ignored real_`.
+    // They need macOS `say`, and download models once into $TMPDIR (Parakeet ~670 MB, Whisper ~1.6 GB).
+    const SPOKEN: &str = "The quick brown fox jumps over the lazy dog. She sells sea shells by the sea shore. \
+        Please call Stella and ask her to bring a small snack from the store on Monday.";
+
+    /// About ten seconds of synthetic speech, as a clip like the one the microphone delivers.
+    fn spoken_fixture() -> Clip {
+        let dir = std::env::temp_dir().join("myna-fixture");
+        fs::create_dir_all(&dir).unwrap();
+        let (aiff, wav) = (dir.join("say.aiff"), dir.join("say.wav"));
+        assert!(Command::new("say").arg("-o").arg(&aiff).arg(SPOKEN).status().unwrap().success());
+        assert!(Command::new("afconvert").args(["-f", "WAVE", "-d", "LEI16@16000"]).arg(&aiff).arg(&wav).status().unwrap().success());
+        let clip = read_wav(&wav);
+        let secs = clip.samples.len() as f32 / clip.rate as f32;
+        assert!((8.0..13.0).contains(&secs), "fixture is {secs} s, expected about 10");
+        clip
+    }
+
+    fn installed(name: &str, id: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(name);
+        let m = models::MODELS.iter().find(|m| m.id == id).unwrap();
         if models::status(&root, m) != models::Status::Installed {
             fs::create_dir_all(&root).unwrap();
             models::install(&root, m.id, m.files, models::http_open, &models::Job::default()).unwrap();
         }
-        let phrase = "the quick brown fox jumps over the lazy dog";
-        let (aiff, wav) = (root.join("say.aiff"), root.join("say.wav"));
-        assert!(Command::new("say").args(["-o"]).arg(&aiff).arg(phrase).status().unwrap().success());
-        assert!(Command::new("afconvert").args(["-f", "WAVE", "-d", "LEI16@16000"]).arg(&aiff).arg(&wav).status().unwrap().success());
-        let heard = dictate(&read_wav(&wav), &mut Parakeet::load(&root.join(PARAKEET)).unwrap()).unwrap();
-        let Heard::Text(text) = heard else { panic!("expected text, got {heard:?}") };
-        println!("heard: {text}");
-        let got = text.to_lowercase();
-        let hit = phrase.split(' ').filter(|w| got.contains(w)).count();
-        assert!(hit >= 7, "only {hit}/9 words matched: {text}");
+        root
+    }
+
+    fn assert_hears_the_fixture(t: &mut dyn Transcriber) {
+        let Heard::Text(text) = dictate(&spoken_fixture(), t).unwrap() else { panic!("expected text") };
+        let wer = word_error_rate(SPOKEN, &text);
+        println!("heard: {text}\nword error rate: {wer:.2}");
+        assert!(wer <= 0.3, "word error rate {wer:.2}: {text}");
+    }
+
+    #[test]
+    #[ignore]
+    fn real_parakeet_hears_speech() {
+        let root = installed("myna-parakeet", PARAKEET);
+        let (rt, path) = stt::resolve(PARAKEET, &root, &[]).unwrap();
+        assert_hears_the_fixture(&mut *load(rt, &path).unwrap());
+    }
+
+    #[test]
+    #[ignore]
+    fn real_whisper_hears_speech() {
+        let root = installed("myna-whisper", WHISPER);
+        let (rt, path) = stt::resolve(WHISPER, &root, &[]).unwrap();
+        assert_eq!(rt, Runtime::Whisper);
+        assert_hears_the_fixture(&mut *load(rt, &path).unwrap());
+    }
+
+    // The Advanced path end to end: look a repo up on Hugging Face, download it, resolve and dictate.
+    // The smallest ggml model keeps it quick, so the bar is looser than for the real models above.
+    #[test]
+    #[ignore]
+    fn real_custom_repo_downloads_and_dictates() {
+        let root = std::env::temp_dir().join("myna-custom");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        // The Parakeet repo resolves to exactly the curated files, checksums included.
+        let pk = Custom::new(Runtime::Parakeet, "istupakov/parakeet-tdt-0.6b-v3-onnx", stt::fetch_repo).unwrap();
+        let curated = &models::MODELS[0];
+        for f in curated.files {
+            let got = pk.files.iter().find(|r| r.name == f.name).unwrap_or_else(|| panic!("{} not planned", f.name));
+            assert_eq!((got.size, got.sha256.as_str()), (f.size, if f.name == "vocab.txt" { "" } else { f.sha256 }));
+        }
+        let c = Custom::new(Runtime::Whisper, "ggerganov/whisper.cpp/ggml-tiny.bin", stt::fetch_repo).unwrap();
+        let all = [c.clone()];
+        assert_eq!(stt::resolve(&c.id(), &root, &all).unwrap_err(), "Download ggerganov/whisper.cpp/ggml-tiny.bin in Settings");
+        let files: Vec<_> = c.files.iter().map(models::Remote::file).collect();
+        models::install(&root, &c.id(), &files, models::http_open, &models::Job::default()).unwrap();
+        assert!(c.verify(&root));
+        let (rt, path) = stt::resolve(&c.id(), &root, &all).unwrap();
+        let Heard::Text(text) = dictate(&spoken_fixture(), &mut *load(rt, &path).unwrap()).unwrap() else { panic!("expected text") };
+        let wer = word_error_rate(SPOKEN, &text);
+        println!("heard: {text}\nword error rate: {wer:.2}");
+        assert!(wer <= 0.5, "word error rate {wer:.2}: {text}");
     }
 }
