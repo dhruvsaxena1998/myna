@@ -141,7 +141,8 @@ fn generate(db: &Mutex<Connection>, id: i64, prompt: &str, cfg: &Config, now: i6
         (
             ai::enabled(&conn, "summaries"),
             store::get(&conn, id).map_err(|e| e.to_string())?,
-            store::segments(&conn, id).map_err(|e| e.to_string())?,
+            // Muted or excluded speech never leaves the Mac unless the user included it.
+            store::segments(&conn, id).map_err(|e| e.to_string())?.into_iter().filter(|s| s.shown()).collect::<Vec<_>>(),
         )
     };
     if !enabled {
@@ -225,7 +226,7 @@ mod tests {
     fn done_meeting(db: &Mutex<Connection>) -> i64 {
         let c = db.lock().unwrap();
         let id = store::create(&c, 100).unwrap();
-        let seg = |speaker: &str, start_ms, text: &str| store::Segment { speaker: speaker.into(), start_ms, end_ms: start_ms + 1000, text: text.into() };
+        let seg = |speaker: &str, start_ms, text: &str| store::Segment { speaker: speaker.into(), start_ms, end_ms: start_ms + 1000, text: text.into(), ..Default::default() };
         store::finish(&c, id, 60_000, &[seg(store::ME, 0, "Ship it Friday."), seg(store::THEM, 5000, "Agreed, Priya owns the notes.")]).unwrap();
         id
     }
@@ -317,6 +318,37 @@ mod tests {
 
         assert!(seen.try_recv().is_err());
         assert!(get(&db.lock().unwrap(), id).unwrap().is_none());
+    }
+
+    #[test]
+    fn excluded_segments_are_not_in_the_prompt_until_the_user_includes_them() {
+        use super::super::mute::State;
+        let db = db();
+        let id = {
+            let c = db.lock().unwrap();
+            let id = store::create(&c, 100).unwrap();
+            let seg = |text: &str, mute, included| store::Segment { text: text.into(), mute, included, speaker: store::ME.into(), ..Default::default() };
+            let segs = [seg("Live line.", State::Unmuted, false), seg("Muted secret.", State::Muted, false), seg("Kept aside.", State::Unknown, true)];
+            store::finish(&c, id, 60_000, &segs).unwrap();
+            id
+        };
+        settings::set(&db.lock().unwrap(), "ai_summaries", "true").unwrap();
+        let (base, seen) = stub::serve(vec![stub::ok("ok")]);
+        generate(&db, id, "p", &config(&base), 1).unwrap();
+        let req: serde_json::Value = serde_json::from_str(&seen.recv().unwrap().body).unwrap();
+        let sent = req["messages"][1]["content"].as_str().unwrap();
+        assert!(sent.contains("Live line.") && sent.contains("Kept aside."), "{sent}");
+        assert!(!sent.contains("Muted secret."), "{sent}");
+
+        // Only excluded speech: there is nothing to send, so no request is made.
+        let only = {
+            let c = db.lock().unwrap();
+            let id = store::create(&c, 200).unwrap();
+            store::finish(&c, id, 1000, &[store::Segment { text: "Muted secret.".into(), mute: State::Muted, ..Default::default() }]).unwrap();
+            id
+        };
+        assert!(generate(&db, only, "p", &config(&base), 2).unwrap_err().contains("no transcript"));
+        assert!(seen.try_recv().is_err());
     }
 
     #[test]

@@ -52,6 +52,7 @@ const ICONS = {
   mic: '<rect x="5.5" y="1.5" width="5" height="8" rx="2.5"/><path d="M3 7.5a5 5 0 0 0 10 0M8 12.5v2M5.5 14.5h5"/>',
   spark: '<path d="M8 2l1.4 3.6L13 7l-3.6 1.4L8 12l-1.4-3.6L3 7l3.6-1.4z"/>',
   lock: '<rect x="3.5" y="7" width="9" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/>',
+  list: '<path d="M2.5 4h11M2.5 8h11M2.5 12h7"/>',
 };
 const icon = (name, cls = "") => `<svg class="i ${cls}" viewBox="0 0 16 16" aria-hidden="true">${ICONS[name]}</svg>`;
 const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
@@ -62,7 +63,7 @@ const TASKS = [
   ["diarization", "Speaker separation", ["meetings_enabled"]],
 ];
 
-const PAGES = [["modules", "Modules", "gear"], ["dictation", "Dictation", "mic"], ["models", "Models", "dl"], ["ai", "AI provider", "spark"]];
+const PAGES = [["modules", "Modules", "gear"], ["dictation", "Dictation", "mic"], ["meetings", "Meetings", "list"], ["models", "Models", "dl"], ["ai", "AI provider", "spark"]];
 const KEY_SYMBOLS = { Alt: "⌥", Option: "⌥", Control: "⌃", Ctrl: "⌃", Shift: "⇧", Super: "⌘", Command: "⌘", Cmd: "⌘" };
 const fmtKey = (k) => k.split("+").map((p) => KEY_SYMBOLS[p] || p.replace(/^(Key|Digit)/, "")).join("");
 
@@ -87,6 +88,7 @@ async function settings() {
   if (settingsPage === "models") return modelsPage(page);
   if (settingsPage === "dictation") return dictationPage(page);
   if (settingsPage === "ai") return ai.settings(page);
+  if (settingsPage === "meetings") return meetingsPage(page);
   page.innerHTML = '<section class="group"><h2>Enable</h2><div class="box"></div></section>';
   page.querySelector(".box").append(...(await modulesForm()).children);
 }
@@ -174,6 +176,36 @@ async function dictationPage(page) {
     e.currentTarget.setAttribute("aria-expanded", open);
     if (open) { if (!dict.length) dict.push({ from: "", to: "" }); draw(); }
   };
+}
+
+async function meetingsPage(page) {
+  const { key, error } = await invoke("mute_hotkey_status");
+  let always = [];
+  try { always = JSON.parse((await get("mic_always_apps")) || "[]"); } catch {}
+  // Apps Myna has recorded in, plus any already switched on whose meetings are gone.
+  const seen = (await invoke("list_meetings")).map((m) => m.app);
+  const apps = [...new Set([...seen, ...always].filter(Boolean))].sort();
+  const rows = apps.length
+    ? apps.map((a, i) => `<div class="prow single"><div class="l">${esc(a)}</div><div class="r">${sw("app" + i, always.includes(a), "Always record mic in " + a)}</div></div>`).join("")
+    : '<div class="prow single"><div class="d">Apps show up here after you record a meeting in them.</div></div>';
+  page.innerHTML = `<section class="group"><h2>Mute</h2><div class="box">
+<div class="prow"><div class="l">Mute hotkey</div><div class="d${error ? " err" : ""}">${esc(error || "Mutes and unmutes your mic in the transcript while a recording runs. The audio is always saved on this Mac.")}</div><div class="r"><kbd>${esc(fmtKey(key))}</kbd><button class="btn quiet" id="change">Change</button></div></div>
+</div></section>
+<section class="group"><h2>Always record mic</h2><div class="box">${rows}</div>
+<p class="note">Myna can't read mute state in most call apps, so it keeps your side out of the transcript until you include it. Turn an app on to include your mic there unless you mute in Myna.</p></section>`;
+  page.querySelector("#change").onclick = async (e) => {
+    e.currentTarget.textContent = "Press the new shortcut…";
+    const combo = await recordHotkey(e.currentTarget);
+    if (combo) await set("mute_hotkey", combo); // the backend re-registers it and reports any clash
+    meetingsPage(page);
+  };
+  apps.forEach((a, i) => {
+    page.querySelector("#app" + i).onclick = (e) => {
+      const on = flip(e.currentTarget);
+      always = apps.filter((x) => (x === a ? on : always.includes(x)));
+      set("mic_always_apps", JSON.stringify(always));
+    };
+  });
 }
 
 async function modelsPage(page) {
@@ -318,6 +350,7 @@ function pill() {
     if (p.kind === "transcribing") show("", '<span class="spin" aria-hidden="true"></span><span>Transcribing…</span>');
     if (p.kind === "done") show("done", `${icon("check")}<span>Pasted ${p.words} ${p.words === 1 ? "word" : "words"}</span>`);
     if (p.kind === "error") show("err", `<span class="dot"></span><span class="msg">${esc(p.message)}</span>`);
+    if (p.kind === "mic") show(p.live ? "rec" : "", `<span class="dot"></span><span>Mic ${p.live ? "live" : "off"} <span class="k">· ${esc(p.how)}</span></span>`);
   });
 }
 

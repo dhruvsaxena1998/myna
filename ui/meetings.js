@@ -32,6 +32,8 @@ async function meetings() {
     rec: '<circle cx="8" cy="8" r="5.5"/><circle cx="8" cy="8" r="2" fill="currentColor"/>',
     stop: '<rect x="4" y="4" width="8" height="8" rx="1.5"/>',
     plus: '<path d="M8 3v10M3 8h10"/>',
+    play: '<path d="M5 3.5v9l7-4.5z" fill="currentColor" stroke="none"/>',
+    chev: '<path d="M6 3.5 10.5 8 6 12.5"/>',
     more: '<circle cx="3.5" cy="8" r="1" fill="currentColor"/><circle cx="8" cy="8" r="1" fill="currentColor"/><circle cx="12.5" cy="8" r="1" fill="currentColor"/>',
   });
   document.body.className = "set meet";
@@ -46,6 +48,8 @@ async function meetings() {
   let adding = false; // the new-folder field is open in the sidebar
   let renaming = false;
   let confirming = false; // asked to delete the open folder
+  const opened = new Set(); // ids of segments in collapsed groups the user opened, so a group stays open after an Include
+  let player; // the clip that is playing
   const side = document.getElementById("side");
   const folder = () => folders.find((f) => String(f.id) === view);
   const inView = (m) => view === "all" || (view === "inbox" ? m.folder_id === null : String(m.folder_id) === view);
@@ -248,14 +252,51 @@ async function meetings() {
     } else if (!segments.length) {
       body.innerHTML = '<p class="state">No speech was picked up.</p>';
     } else {
+      // Lines that were possibly muted collapse into a group where they happened, until the user includes them.
+      let run = [];
+      const flush = () => { if (run.length) body.append(mutedGroup(run)); run = []; };
       for (const s of segments) {
-        const row = document.createElement("div");
-        row.className = "seg-row";
-        const me = s.speaker === "me";
-        row.innerHTML = `<div class="who${me ? " me" : ""}">${me ? "Me" : "Them"}<span class="t">${clock(s.start_ms / 1000)}</span></div><p class="said">${esc(s.text)}</p>`;
-        body.append(row);
+        if (s.mute === "unmuted" || s.included) { flush(); body.append(segRow(s)); } else run.push(s);
       }
+      flush();
+      body.onclick = async (e) => {
+        const b = e.target.closest("[data-play], [data-include], [data-undo]");
+        if (!b) return;
+        if (b.dataset.play) return play(b.dataset.play);
+        await act("include_segment", { id: Number(b.dataset.include || b.dataset.undo), included: !!b.dataset.include });
+      };
     }
+  }
+
+  function segRow(s) {
+    const row = document.createElement("div");
+    row.className = "seg-row";
+    const me = s.speaker === "me";
+    const mark = s.included ? ` <span class="pill neutral">Included</span><button class="btn quiet" data-undo="${s.id}">Undo</button>` : "";
+    row.innerHTML = `<div class="who${me ? " me" : ""}">${me ? "Me" : "Them"}<span class="t">${clock(s.start_ms / 1000)}</span></div><p class="said">${esc(s.text)}${mark}</p>`;
+    return row;
+  }
+
+  function mutedGroup(run) {
+    const g = document.createElement("details");
+    g.className = "muted-group";
+    g.open = run.some((s) => opened.has(s.id));
+    g.ontoggle = () => run.forEach((s) => (g.open ? opened.add(s.id) : opened.delete(s.id)));
+    const n = run.length;
+    const span = n > 1 ? ` – ${clock(run.at(-1).end_ms / 1000)}` : "";
+    g.innerHTML = `<summary><span class="dot live"></span> ${n} segment${n === 1 ? "" : "s"} while possibly muted · ${clock(run[0].start_ms / 1000)}${span} <span class="s">not in transcript, not sent anywhere</span>${icon("chev", "sm chev")}</summary>`
+      + run.map((s) => `<div class="seg-row"><div class="who me">Me<span class="t">${clock(s.start_ms / 1000)}</span></div><p class="said">${esc(s.text)}</p><div class="inc"><button class="btn quiet icon" data-play="${s.id}" aria-label="Play">${icon("play", "sm")}</button><button class="btn" data-include="${s.id}">Include</button></div></div>`).join("");
+    return g;
+  }
+
+  async function play(id) {
+    player?.pause();
+    try {
+      const url = URL.createObjectURL(new Blob([await invoke("segment_clip", { id: Number(id) })], { type: "audio/wav" }));
+      player = new Audio(url);
+      player.onended = () => URL.revokeObjectURL(url);
+      await player.play();
+    } catch (e) { error = "Couldn't play that: " + e; shown = ""; refresh(); }
   }
 
   refresh();

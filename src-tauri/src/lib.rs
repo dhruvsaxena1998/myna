@@ -41,6 +41,8 @@ struct Dictating {
     rec: Mutex<Option<audio::Recording>>,
 }
 struct HotkeyError(Mutex<Option<String>>);
+/// Why the mute hotkey is not registered, when it is not.
+struct MuteHotkeyError(Mutex<Option<String>>);
 /// Bumped whenever the pill is shown, so a stale "hide in 1.2 s" timer does not hide a newer state.
 #[derive(Default)]
 struct PillEpoch(AtomicU64);
@@ -54,6 +56,8 @@ enum Pill {
     Transcribing,
     Done { words: usize },
     Error { message: String },
+    /// Where the pill rests while a meeting records: the mic state, as text plus a dot.
+    Mic { live: bool, how: &'static str },
 }
 
 #[derive(Serialize)]
@@ -214,7 +218,7 @@ fn get_setting(db: tauri::State<Db>, key: String) -> Option<String> {
 #[tauri::command]
 fn set_setting(app: AppHandle, db: tauri::State<Db>, key: String, value: String) -> Result<(), String> {
     settings::set(&db.0.lock().unwrap(), &key, &value).map_err(|e| e.to_string())?;
-    if key == "dictation_enabled" || key == "dictation_hotkey" {
+    if ["dictation_enabled", "dictation_hotkey", "meetings_enabled", "mute_hotkey"].contains(&key.as_str()) {
         sync_hotkey(&app);
     }
     Ok(())
@@ -229,6 +233,11 @@ struct HotkeyStatus {
 #[tauri::command]
 fn hotkey_status(app: AppHandle, err: tauri::State<HotkeyError>) -> HotkeyStatus {
     HotkeyStatus { key: hotkey(&app), error: err.0.lock().unwrap().clone() }
+}
+
+#[tauri::command]
+fn mute_hotkey_status(app: AppHandle, err: tauri::State<MuteHotkeyError>) -> HotkeyStatus {
+    HotkeyStatus { key: mute_hotkey(&app), error: err.0.lock().unwrap().clone() }
 }
 
 #[tauri::command]
@@ -307,11 +316,24 @@ fn hide_pill_after(app: &AppHandle, ms: u64) {
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(ms));
         if app.state::<PillEpoch>().0.load(Ordering::Relaxed) == shown {
+            settle_pill(&app);
+        }
+    });
+}
+
+/// Where the pill rests when nothing else is on it: the mic state while a meeting records, otherwise hidden.
+pub(crate) fn settle_pill(app: &AppHandle) {
+    if app.state::<Dictating>().busy.load(Ordering::SeqCst) {
+        return; // dictation owns the pill until it finishes, and settles it then
+    }
+    match meetings::mic(&app.state::<Db>().0.lock().unwrap()) {
+        Some(mic) => show_pill(app, Pill::Mic { live: mic.live, how: mic.how }),
+        None => {
             if let Some(w) = app.get_webview_window("pill") {
                 let _ = w.hide();
             }
         }
-    });
+    }
 }
 
 fn show_error(app: &AppHandle, message: impl Into<String>) {
@@ -325,6 +347,10 @@ fn setting(app: &AppHandle, key: &str) -> Option<String> {
 
 fn hotkey(app: &AppHandle) -> String {
     setting(app, "dictation_hotkey").filter(|k| !k.trim().is_empty()).unwrap_or_else(|| hotkey::DEFAULT.into())
+}
+
+fn mute_hotkey(app: &AppHandle) -> String {
+    setting(app, "mute_hotkey").filter(|k| !k.trim().is_empty()).unwrap_or_else(|| hotkey::MUTE_DEFAULT.into())
 }
 
 fn toggle_mode(app: &AppHandle) -> bool {
@@ -433,28 +459,42 @@ fn paste_into_focused_app(app: &AppHandle, text: &str) -> Result<(), String> {
     paste::paste_text(text, paste::delay(setting(app, "paste_delay_ms")))
 }
 
-/// The hotkey is held only while Dictation is enabled, so Meetings-only users keep the shortcut.
+fn dictation_key(app: &AppHandle, state: ShortcutState) {
+    // Read per event, so switching mode needs no re-registering.
+    let recording = app.state::<Dictating>().rec.lock().unwrap().is_some();
+    match hotkey::act(toggle_mode(app), state == ShortcutState::Pressed, recording) {
+        hotkey::Act::Start => press(app),
+        hotkey::Act::Stop => release(app),
+        hotkey::Act::Nothing => {}
+    }
+}
+
+fn mute_key(app: &AppHandle, state: ShortcutState) {
+    if state == ShortcutState::Pressed {
+        // Off the shortcut's thread: it may have to wait for a recording that is still starting or stopping.
+        let app = app.clone();
+        std::thread::spawn(move || drop(meetings::mute_toggle(&app)));
+    }
+}
+
+/// Registers the global shortcuts: dictation while Dictation is on, mute while Meetings is on. Any change to
+/// either re-registers both, so rebinding one never drops the other.
+// shortcut: this unregisters everything first, so a new global shortcut has to be bound here, not elsewhere.
 fn sync_hotkey(app: &AppHandle) {
     let keys = app.global_shortcut();
     let _ = keys.unregister_all();
-    let enabled = setting(app, "dictation_enabled").as_deref() == Some("true");
-    let hotkey = hotkey(app);
-    let error = enabled
-        .then(|| {
-            keys.on_shortcut(hotkey.as_str(), |app, _, event| {
-                // Read per event, so switching mode needs no re-registering.
-                let recording = app.state::<Dictating>().rec.lock().unwrap().is_some();
-                match hotkey::act(toggle_mode(app), event.state() == ShortcutState::Pressed, recording) {
-                    hotkey::Act::Start => press(app),
-                    hotkey::Act::Stop => release(app),
-                    hotkey::Act::Nothing => {}
-                }
+    let on = |key: &str| setting(app, key).as_deref() == Some("true");
+    let bind = |enabled: bool, combo: String, handler: fn(&AppHandle, ShortcutState)| {
+        enabled
+            .then(|| {
+                keys.on_shortcut(combo.as_str(), move |app, _, event| handler(app, event.state()))
+                    .err()
+                    .map(|e| format!("{combo} could not be registered ({e}). Another app may be using it."))
             })
-            .err()
-            .map(|e| format!("{hotkey} could not be registered ({e}). Another app may be using it."))
-        })
-        .flatten();
-    *app.state::<HotkeyError>().0.lock().unwrap() = error;
+            .flatten()
+    };
+    *app.state::<HotkeyError>().0.lock().unwrap() = bind(on("dictation_enabled"), hotkey(app), dictation_key);
+    *app.state::<MuteHotkeyError>().0.lock().unwrap() = bind(on("meetings_enabled"), mute_hotkey(app), mute_key);
 }
 
 fn open_window(app: &AppHandle, label: &str, title: &str, size: (f64, f64)) {
@@ -496,6 +536,7 @@ pub fn run() {
             app.manage(dictation::Engine::default());
             app.manage(Dictating::default());
             app.manage(HotkeyError(Mutex::new(None)));
+            app.manage(MuteHotkeyError(Mutex::new(None)));
             app.manage(PillEpoch::default());
             create_pill(app.handle())?;
             sync_hotkey(app.handle());
@@ -522,6 +563,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![get_setting,
             set_setting,
             hotkey_status,
+            mute_hotkey_status,
             request_permission,
             permission_granted,
             open_privacy_settings,
@@ -537,6 +579,9 @@ pub fn run() {
             popover::popover_hide,
             popover::popover_go,
             meetings::meeting_toggle,
+            meetings::meeting_mute,
+            meetings::include_segment,
+            meetings::segment_clip,
             meetings::list_meetings,
             meetings::get_meeting,
             meetings::retry_transcription,

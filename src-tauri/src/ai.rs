@@ -53,7 +53,7 @@ pub struct Reply {
 #[cfg(target_os = "macos")]
 mod keychain {
     use security_framework::passwords::{delete_generic_password, get_generic_password, set_generic_password};
-    const SERVICE: &str = "com.myna.app.ai";
+    const SERVICE: &str = "com.dhruvsaxena.myna.ai";
     const NOT_FOUND: i32 = -25300; // errSecItemNotFound
 
     pub fn get(account: &str) -> Option<String> {

@@ -23,11 +23,19 @@ const row = (act, ic, label, k = "") =>
   `<button class="mi" tabindex="0" data-act="${act}">${ic ? icon(ic) : ""}<span class="t">${label}</span>${k ? `<span class="k">${k}</span>` : ""}</button>`;
 const section = (...parts) => (parts.some(Boolean) ? `<div class="sec">${parts.filter(Boolean).join("")}</div>` : "");
 
-function stateHtml(s) {
+// Always text plus a dot, never colour alone. When the mic is off, the way back and what that means sit under it.
+function micHtml(m) {
+  const mute = (cls, label) => `<button class="btn ${cls}" tabindex="0" data-act="mute">${label}</button>`;
+  if (!m) return "";
+  const state = `<span class="grow">Mic ${m.live ? "live" : "off"} · <b>${esc(m.how)}</b></span>`;
+  if (m.live) return `<div class="line"><span class="dot live"></span>${state}${mute("quiet", "Mute")}</div>`;
+  return `<div class="line"><span class="dot"></span>${state}</div><div class="line">${mute("", icon("mic", "sm") + " Unmute in Myna")}<span class="xs grow">Saved locally, kept out of the transcript.</span></div>`;
+}
+
+function stateHtml(s, mic) {
   if (s.kind === "recording") {
-    // 08 puts Mute / Unmute at the end of the mic line.
     return `<div class="sec"><div class="state"><div><div class="lbl">Recording</div><div class="big" data-live="elapsed">${elapsed(s.started_at)}</div></div></div>
-<div class="line"><span class="dot live"></span><span class="grow">Mic live</span></div>
+${micHtml(mic)}
 <div class="line"><span class="dot"></span><span class="grow">${esc(s.app ? "System audio · " + s.app : s.note || "No system audio")}</span></div></div>`;
   }
   if (s.kind === "transcribing") {
@@ -48,7 +56,7 @@ function viewHtml(v, error) {
     : "";
   const d = v.dictation;
   const dictation = d && `<div class="mi${d.error ? " err" : ""}">${icon("mic")}<span class="t">Dictation</span><span class="k">${d.error ? "hotkey unavailable" : (d.toggle ? "press " : "hold ") + esc(fmtKey(d.hotkey))}</span></div>`;
-  return `<div class="popover" role="group" aria-label="Myna">${error ? `<div class="banner" role="alert">${esc(error)}</div>` : ""}${stateHtml(s)}${section(toggle)}${recent}${section(dictation, v.meetings && row("meetings", "list", "Meetings…"), row("settings", "gear", "Settings…"))}${section(row("quit", "", "Quit Myna"))}</div>`;
+  return `<div class="popover" role="group" aria-label="Myna">${error ? `<div class="banner" role="alert">${esc(error)}</div>` : ""}${stateHtml(s, v.mic)}${section(toggle)}${recent}${section(dictation, v.meetings && row("meetings", "list", "Meetings…"), row("settings", "gear", "Settings…"))}${section(row("quit", "", "Quit Myna"))}</div>`;
 }
 
 async function popover() {
@@ -96,6 +104,9 @@ async function popover() {
       // Starting and stopping wait on audio hardware, so the control stays put until it is done.
       try { await invoke("meeting_toggle"); } catch (err) { error = String(err); }
       busy = false;
+      refresh();
+    } else if (act === "mute") {
+      try { await invoke("meeting_mute"); } catch (err) { error = String(err); }
       refresh();
     } else if (act === "meeting") {
       invoke("popover_go", { to: "meetings", id: Number(b.dataset.id) });
