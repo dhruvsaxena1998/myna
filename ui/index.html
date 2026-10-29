@@ -55,14 +55,33 @@ async function onboarding() {
 
 function permission(i) {
   const [name, reason] = PERMS[i];
-  app.innerHTML = `<h1>${name}</h1><p class="reason">${reason}</p>`;
-  const btn = document.createElement("button");
-  btn.textContent = `Allow ${name}`;
-  btn.onclick = async () => {
-    await invoke("request_permission", { name });
-    i + 1 < PERMS.length ? permission(i + 1) : finish();
+  app.innerHTML = `<h1>${name}</h1><p class="reason">${reason}</p><p id="state"></p>`;
+  const state = document.getElementById("state");
+  const refresh = async () => {
+    const ok = await invoke("permission_granted", { name });
+    state.textContent = ok ? "Granted" : "Not granted yet";
+    return ok;
   };
-  app.append(btn);
+  refresh();
+  window.onfocus = refresh; // System Settings grants show up when the user comes back
+  const btn = (text, fn) => {
+    const b = document.createElement("button");
+    b.textContent = text;
+    b.onclick = fn;
+    app.append(b, " ");
+  };
+  btn(`Allow ${name}`, async () => {
+    await invoke("request_permission", { name });
+    setTimeout(refresh, 1500);
+  });
+  btn("Open System Settings", () => invoke("open_privacy_settings", { name }));
+  btn(i + 1 < PERMS.length ? "Next" : "Finish", () => i + 1 < PERMS.length ? permission(i + 1) : finish());
+  if (name === "Screen Recording") {
+    const p = document.createElement("p");
+    p.className = "reason";
+    p.textContent = "macOS may need Myna to be relaunched before this shows as granted.";
+    app.append(p);
+  }
 }
 
 async function finish() {
@@ -70,6 +89,7 @@ async function finish() {
   app.innerHTML = "<h1>All set</h1><p>Myna lives in your menubar.</p>";
   const done = document.createElement("button");
   done.textContent = "Done";
+  window.onfocus = null;
   done.onclick = () => window.__TAURI__.window.getCurrentWindow().close();
   app.append(done);
 }

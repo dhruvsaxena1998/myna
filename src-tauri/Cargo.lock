@@ -1889,6 +1889,9 @@ dependencies = [
 name = "myna"
 version = "0.1.0"
 dependencies = [
+ "block2",
+ "core-foundation",
+ "objc2",
  "rusqlite",
  "tauri",
  "tauri-build",
