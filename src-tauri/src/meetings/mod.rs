@@ -182,6 +182,31 @@ pub fn list_meetings(db: tauri::State<Db>) -> Result<Vec<store::Meeting>, String
     store::list(&db.0.lock().unwrap()).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn list_folders(db: tauri::State<Db>) -> Result<Vec<store::Folder>, String> {
+    store::folders(&db.0.lock().unwrap()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn create_folder(db: tauri::State<Db>, name: String) -> Result<store::Folder, String> {
+    store::create_folder(&db.0.lock().unwrap(), &name)
+}
+
+#[tauri::command]
+pub fn rename_folder(db: tauri::State<Db>, id: i64, name: String) -> Result<(), String> {
+    store::rename_folder(&db.0.lock().unwrap(), id, &name)
+}
+
+#[tauri::command]
+pub fn delete_folder(db: tauri::State<Db>, id: i64) -> Result<(), String> {
+    store::delete_folder(&db.0.lock().unwrap(), id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn move_meeting(db: tauri::State<Db>, id: i64, folder: Option<i64>) -> Result<(), String> {
+    store::move_meeting(&db.0.lock().unwrap(), id, folder)
+}
+
 #[derive(Serialize)]
 pub struct Detail {
     meeting: store::Meeting,
