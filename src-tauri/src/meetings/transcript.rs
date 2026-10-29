@@ -1,21 +1,11 @@
 //! From two recorded tracks to a Me / Them transcript, and from a transcript to Markdown or plain text.
+use crate::dictation::{Transcriber, Utterance};
 use super::{
     store::{self, Meeting, Segment, ME, THEM},
     track::{read_track, RATE},
 };
 use rusqlite::Connection;
 use std::{ops::Range, path::Path, sync::Mutex};
-
-pub struct Utterance {
-    pub start_ms: u64,
-    pub end_ms: u64,
-    pub text: String,
-}
-
-/// One speech-to-text backend. `samples` are 16 kHz mono; times in the result are relative to its start.
-pub trait Transcriber {
-    fn transcribe(&mut self, samples: &[f32]) -> Result<Vec<Utterance>, String>;
-}
 
 // The model's memory grows with input length, so a track goes through in pieces. Each cut is placed at
 // the quietest 100 ms in the last 5 s of a piece so it rarely lands inside a word.
@@ -59,7 +49,7 @@ pub fn transcribe_track(
         if !skip(chunk) {
             let floats: Vec<f32> = chunk.iter().map(|&s| s as f32 / 32768.0).collect();
             let offset = range.start as u64 * 1000 / RATE as u64;
-            for mut u in t.transcribe(&floats)? {
+            for mut u in t.transcribe_timed(&floats)? {
                 u.start_ms += offset;
                 u.end_ms += offset;
                 all.push(u);
@@ -189,6 +179,7 @@ pub fn file_name(m: &Meeting, format: Format) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{dictation, models};
 
     fn utt(start_ms: u64, end_ms: u64, text: &str) -> Utterance {
         Utterance { start_ms, end_ms, text: text.into() }
@@ -216,7 +207,10 @@ mod tests {
 
     struct EachChunk(Vec<usize>);
     impl Transcriber for EachChunk {
-        fn transcribe(&mut self, samples: &[f32]) -> Result<Vec<Utterance>, String> {
+        fn transcribe(&mut self, _: &[f32]) -> Result<String, String> {
+            unreachable!("meetings ask for timestamps")
+        }
+        fn transcribe_timed(&mut self, samples: &[f32]) -> Result<Vec<Utterance>, String> {
             self.0.push(samples.len());
             Ok(vec![utt(100, 900, "line")])
         }
@@ -295,7 +289,10 @@ mod tests {
     // The command-layer test: two fixture tracks in, speaker-labelled timed segments out.
     struct Scripted;
     impl Transcriber for Scripted {
-        fn transcribe(&mut self, samples: &[f32]) -> Result<Vec<Utterance>, String> {
+        fn transcribe(&mut self, _: &[f32]) -> Result<String, String> {
+            unreachable!("meetings ask for timestamps")
+        }
+        fn transcribe_timed(&mut self, samples: &[f32]) -> Result<Vec<Utterance>, String> {
             let peak = samples.iter().fold(0f32, |m, x| m.max(x.abs()));
             Ok(if peak > 0.4 { vec![utt(200, 1200, "hello from me")] } else { vec![utt(1500, 2500, "hi from them")] })
         }
@@ -356,5 +353,47 @@ mod tests {
         assert!(err.contains("No microphone audio"), "{err}");
         assert_eq!(store::get(&db.lock().unwrap(), id).unwrap().status, "transcribing");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // Slow: downloads the ~670 MB model on first run (cached in the temp dir) and uses macOS `say` for speech.
+    // `cargo test --lib real_parakeet -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn real_parakeet_transcribes_synthesized_speech() {
+        let root = std::env::temp_dir().join("myna-test-models");
+        let m = models::MODELS.iter().find(|m| m.id == dictation::PARAKEET).unwrap();
+        if models::status(&root, m) != models::Status::Installed {
+            std::fs::create_dir_all(&root).unwrap();
+            models::install(&root, m.id, m.files, models::http_open, &models::Job::default()).unwrap();
+        }
+        let dir = std::env::temp_dir().join(format!("myna-stt-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let said = "Hello everyone. Let's review the roadmap for next quarter. The first item is the meeting capture feature.";
+        let run = |cmd: &str, args: &[&str]| assert!(std::process::Command::new(cmd).args(args).status().unwrap().success());
+        let (aiff, wav, wav48) = (dir.join("s.aiff"), dir.join("s.wav"), dir.join("s48.wav"));
+        run("say", &["-o", aiff.to_str().unwrap(), said]);
+        run("afconvert", &["-f", "WAVE", "-d", "LEI16@16000", "-c", "1", aiff.to_str().unwrap(), wav.to_str().unwrap()]);
+        run("afconvert", &["-f", "WAVE", "-d", "LEI16@48000", "-c", "1", aiff.to_str().unwrap(), wav48.to_str().unwrap()]);
+
+        // The same speech as a 48 kHz device would deliver it, through the live writer's resampler.
+        let live = dir.join("live.wav");
+        let mut writer = super::super::track::TrackWriter::create(&live, 48_000).unwrap();
+        let tx = writer.sender();
+        let mut r = hound::WavReader::open(&wav48).unwrap();
+        let wide: Vec<f32> = r.samples::<i16>().map(|s| s.unwrap() as f32 / 32768.0).collect();
+        wide.chunks(480).for_each(|c| tx.send(c.to_vec()).unwrap());
+        writer.finish().unwrap();
+
+        let mut stt = dictation::Parakeet::load(&root.join(dictation::PARAKEET)).unwrap();
+        for path in [&wav, &live] {
+            let samples = read_track(path).unwrap();
+            let lines = transcribe_track(&samples, &mut stt, |_| {}).unwrap();
+            let segments = assemble(lines, vec![]);
+            let text = segments.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join(" ").to_lowercase();
+            eprintln!("{path:?}: {segments:#?}");
+            let hits = ["hello", "everyone", "roadmap", "quarter", "meeting", "capture", "feature"].iter().filter(|w| text.contains(*w)).count();
+            assert!(hits >= 5, "heard: {text}");
+            assert!(segments.iter().all(|s| s.end_ms >= s.start_ms && s.end_ms <= samples.len() as u64 * 1000 / 16_000 + 500));
+        }
     }
 }

@@ -1,21 +1,60 @@
+mod audio;
+mod dictation;
 mod meetings;
 mod models;
+mod paste;
 mod permissions;
 mod settings;
 
 use serde::Serialize;
 use std::{
     path::PathBuf,
-    sync::{atomic::Ordering, Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Mutex,
+    },
+    time::Duration,
 };
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
-    ActivationPolicy, AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder,
+    ActivationPolicy, AppHandle, Emitter, Manager, PhysicalPosition, RunEvent, WebviewUrl,
+    WebviewWindow, WebviewWindowBuilder,
 };
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 struct Db(Mutex<rusqlite::Connection>);
 struct ModelsDir(PathBuf);
+
+// shortcut: a fixed key. Fn and Right Option alone cannot be registered as global shortcuts (they
+// need an event tap and Input Monitoring), so this is the nearest hold-friendly default. Make it a
+// setting when the Dictation settings page grows a key recorder.
+const HOTKEY: &str = "Alt+Space";
+const PILL_SIZE: (f64, f64) = (360.0, 64.0);
+const PILL_MARGIN: f64 = 24.0;
+
+#[derive(Default)]
+struct Dictating {
+    /// True from key press until the text is pasted (or the attempt fails).
+    busy: AtomicBool,
+    /// Present only while the hotkey is held.
+    rec: Mutex<Option<audio::Recording>>,
+}
+struct HotkeyError(Mutex<Option<String>>);
+/// Bumped whenever the pill is shown, so a stale "hide in 1.2 s" timer does not hide a newer state.
+#[derive(Default)]
+struct PillEpoch(AtomicU64);
+
+/// What the pill window renders; the shape is the contract with `pill()` in ui/index.html.
+#[derive(Serialize, Clone)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+enum Pill {
+    Idle { hotkey: &'static str },
+    Listening { level: f32 },
+    Transcribing,
+    Done { words: usize },
+    Error { message: String },
+}
 
 #[derive(Serialize)]
 struct ModelRow {
@@ -122,8 +161,23 @@ fn get_setting(db: tauri::State<Db>, key: String) -> Option<String> {
 }
 
 #[tauri::command]
-fn set_setting(db: tauri::State<Db>, key: String, value: String) -> Result<(), String> {
-    settings::set(&db.0.lock().unwrap(), &key, &value).map_err(|e| e.to_string())
+fn set_setting(app: AppHandle, db: tauri::State<Db>, key: String, value: String) -> Result<(), String> {
+    settings::set(&db.0.lock().unwrap(), &key, &value).map_err(|e| e.to_string())?;
+    if key == "dictation_enabled" {
+        sync_hotkey(&app);
+    }
+    Ok(())
+}
+
+#[derive(Serialize)]
+struct HotkeyStatus {
+    key: &'static str,
+    error: Option<String>,
+}
+
+#[tauri::command]
+fn hotkey_status(err: tauri::State<HotkeyError>) -> HotkeyStatus {
+    HotkeyStatus { key: HOTKEY, error: err.0.lock().unwrap().clone() }
 }
 
 #[tauri::command]
@@ -148,6 +202,175 @@ fn open_privacy_settings(name: String) {
         .spawn();
 }
 
+fn create_pill(app: &AppHandle) -> tauri::Result<()> {
+    let w = WebviewWindowBuilder::new(app, "pill", WebviewUrl::App("index.html#pill".into()))
+        .inner_size(PILL_SIZE.0, PILL_SIZE.1)
+        .decorations(false)
+        .transparent(true)
+        .shadow(false)
+        .resizable(false)
+        .always_on_top(true)
+        .visible_on_all_workspaces(true)
+        .skip_taskbar(true)
+        // The pill must never take focus: the paste goes to whichever app had it.
+        .focusable(false)
+        .focused(false)
+        .visible(false)
+        .build()?;
+    w.set_ignore_cursor_events(true)
+}
+
+/// Bottom-center of the display the cursor is on, above the Dock.
+fn place_pill(app: &AppHandle, w: &WebviewWindow) {
+    // Not `monitor_from_point`: on macOS it takes points while `cursor_position` returns pixels.
+    let under_cursor = app.cursor_position().ok().and_then(|c| {
+        app.available_monitors().ok()?.into_iter().find(|m| {
+            let (p, s) = (m.position(), m.size());
+            (p.x as f64..p.x as f64 + s.width as f64).contains(&c.x)
+                && (p.y as f64..p.y as f64 + s.height as f64).contains(&c.y)
+        })
+    });
+    let Some(mon) = under_cursor.or_else(|| app.primary_monitor().ok().flatten()) else { return };
+    let (area, scale) = (mon.work_area(), mon.scale_factor());
+    let x = area.position.x as f64 + (area.size.width as f64 - PILL_SIZE.0 * scale) / 2.0;
+    let y = (area.position.y + area.size.height as i32) as f64 - (PILL_SIZE.1 + PILL_MARGIN) * scale;
+    let _ = w.set_position(PhysicalPosition::new(x as i32, y as i32));
+}
+
+fn emit_pill(app: &AppHandle, state: &Pill) {
+    let _ = app.emit_to("pill", "pill", state);
+}
+
+fn show_pill(app: &AppHandle, state: Pill) {
+    app.state::<PillEpoch>().0.fetch_add(1, Ordering::Relaxed);
+    emit_pill(app, &state); // before show(), so the window never flashes the previous state
+    let Some(w) = app.get_webview_window("pill") else { return };
+    if !w.is_visible().unwrap_or(false) {
+        place_pill(app, &w);
+        let _ = w.show();
+    }
+}
+
+fn hide_pill_after(app: &AppHandle, ms: u64) {
+    let (app, shown) = (app.clone(), app.state::<PillEpoch>().0.load(Ordering::Relaxed));
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(ms));
+        if app.state::<PillEpoch>().0.load(Ordering::Relaxed) == shown {
+            if let Some(w) = app.get_webview_window("pill") {
+                let _ = w.hide();
+            }
+        }
+    });
+}
+
+fn show_error(app: &AppHandle, message: impl Into<String>) {
+    show_pill(app, Pill::Error { message: message.into() });
+    hide_pill_after(app, 3000);
+}
+
+/// Runs `f` on the selected speech model, loading it first if needed.
+pub(crate) fn with_engine<R>(app: &AppHandle, f: impl FnOnce(&mut dyn dictation::Transcriber) -> R) -> Result<R, String> {
+    let id = settings::get(&app.state::<Db>().0.lock().unwrap(), "model_stt")
+        .unwrap_or_else(|| models::MODELS.iter().find(|m| m.task == "stt").unwrap().id.to_string());
+    let dir = app.state::<ModelsDir>().0.clone();
+    app.state::<dictation::Engine>().with(&id, || dictation::load(&id, &dir), f)
+}
+
+fn press(app: &AppHandle) {
+    let st = app.state::<Dictating>();
+    if st.busy.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    if !permissions::granted("Microphone") {
+        permissions::request("Microphone");
+        st.busy.store(false, Ordering::SeqCst);
+        return show_error(app, "Allow the microphone in System Settings");
+    }
+    let a = app.clone();
+    match audio::Recording::start(move |level| emit_pill(&a, &Pill::Listening { level })) {
+        Ok(rec) => {
+            *st.rec.lock().unwrap() = Some(rec);
+            show_pill(app, Pill::Listening { level: 0.0 });
+            // Load the model while the user is still talking.
+            let a = app.clone();
+            std::thread::spawn(move || {
+                let _ = with_engine(&a, |_| ());
+            });
+        }
+        Err(e) => {
+            st.busy.store(false, Ordering::SeqCst);
+            show_error(app, e);
+        }
+    }
+}
+
+fn release(app: &AppHandle) {
+    let Some(rec) = app.state::<Dictating>().rec.lock().unwrap().take() else { return };
+    let app = app.clone();
+    std::thread::spawn(move || finish(&app, rec));
+}
+
+fn finish(app: &AppHandle, rec: audio::Recording) {
+    // Clears `busy` however this ends, a panic in the model included, so the hotkey never goes dead.
+    struct Reset<'a>(&'a AtomicBool);
+    impl Drop for Reset<'_> {
+        fn drop(&mut self) {
+            self.0.store(false, Ordering::SeqCst);
+        }
+    }
+    let st = app.state::<Dictating>();
+    let _reset = Reset(&st.busy);
+
+    let result = rec.stop().and_then(|clip| {
+        show_pill(app, Pill::Transcribing);
+        match with_engine(app, |t| dictation::dictate(&clip, t))?? {
+            dictation::Heard::TooShort => Ok(Pill::Idle { hotkey: HOTKEY }),
+            dictation::Heard::Silence => Err("Didn't catch that".to_string()),
+            dictation::Heard::Text(text) => {
+                paste_into_focused_app(app, &text)?;
+                Ok(Pill::Done { words: text.split_whitespace().count() })
+            }
+        }
+    });
+    match result {
+        Ok(pill) => {
+            let linger = if matches!(pill, Pill::Done { .. }) { 1200 } else { 2500 };
+            show_pill(app, pill);
+            hide_pill_after(app, linger);
+        }
+        Err(message) => show_error(app, message),
+    }
+}
+
+fn paste_into_focused_app(app: &AppHandle, text: &str) -> Result<(), String> {
+    if !permissions::granted("Accessibility") {
+        // Without it the Cmd-V is silently dropped. Keep the text on the clipboard rather than lose it.
+        permissions::request("Accessibility");
+        paste::copy_only(text)?;
+        return Err("Copied. Allow Accessibility to paste".into());
+    }
+    let delay = paste::delay(settings::get(&app.state::<Db>().0.lock().unwrap(), "paste_delay_ms"));
+    paste::paste_text(text, delay)
+}
+
+/// The hotkey is held only while Dictation is enabled, so Meetings-only users keep the shortcut.
+fn sync_hotkey(app: &AppHandle) {
+    let keys = app.global_shortcut();
+    let _ = keys.unregister_all();
+    let enabled = settings::get(&app.state::<Db>().0.lock().unwrap(), "dictation_enabled").as_deref() == Some("true");
+    let error = enabled
+        .then(|| {
+            keys.on_shortcut(HOTKEY, |app, _, event| match event.state() {
+                ShortcutState::Pressed => press(app),
+                ShortcutState::Released => release(app),
+            })
+            .err()
+            .map(|e| format!("{HOTKEY} could not be registered ({e}). Another app may be using it."))
+        })
+        .flatten();
+    *app.state::<HotkeyError>().0.lock().unwrap() = error;
+}
+
 fn open_window(app: &AppHandle, label: &str, title: &str, size: (f64, f64)) {
     if let Some(w) = app.get_webview_window(label) {
         let _ = w.set_focus();
@@ -165,6 +388,7 @@ fn open_window(app: &AppHandle, label: &str, title: &str, size: (f64, f64)) {
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
             app.set_activation_policy(ActivationPolicy::Accessory);
 
@@ -178,6 +402,12 @@ pub fn run() {
             models::clean_partials(&models_dir);
             app.manage(ModelsDir(models_dir));
             app.manage(Arc::new(models::Jobs::default()));
+            app.manage(dictation::Engine::default());
+            app.manage(Dictating::default());
+            app.manage(HotkeyError(Mutex::new(None)));
+            app.manage(PillEpoch::default());
+            create_pill(app.handle())?;
+            sync_hotkey(app.handle());
 
             let record = MenuItem::with_id(app, "record", "Start meeting recording", true, None::<&str>)?;
             let menu = Menu::with_items(
@@ -218,6 +448,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![get_setting,
             set_setting,
+            hotkey_status,
             request_permission,
             permission_granted,
             open_privacy_settings,

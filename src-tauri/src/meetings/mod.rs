@@ -2,11 +2,10 @@
 //! keep the result in SQLite, export it as Markdown or text.
 mod capture;
 mod store;
-mod stt;
 mod track;
 mod transcript;
 
-use crate::{permissions, Db, ModelsDir};
+use crate::{dictation::{Transcriber, Utterance}, permissions, with_engine, Db};
 use serde::Serialize;
 use std::{
     fs,
@@ -149,12 +148,24 @@ pub fn alert(message: &str) {
 // One model in memory at a time: queued meetings wait their turn.
 static TRANSCRIBING: Mutex<()> = Mutex::new(());
 
+/// The shared speech engine, borrowed one call at a time so a long meeting never holds up dictation.
+struct Shared(AppHandle);
+
+impl Transcriber for Shared {
+    fn transcribe(&mut self, audio: &[f32]) -> Result<String, String> {
+        with_engine(&self.0, |t| t.transcribe(audio))?
+    }
+    fn transcribe_timed(&mut self, audio: &[f32]) -> Result<Vec<Utterance>, String> {
+        with_engine(&self.0, |t| t.transcribe_timed(audio))?
+    }
+}
+
 fn spawn_transcription(app: &AppHandle, id: i64) {
     let app = app.clone();
     std::thread::spawn(move || {
         let _turn = TRANSCRIBING.lock().unwrap_or_else(|e| e.into_inner());
-        let (db, models, audio) = (app.state::<Db>(), app.state::<ModelsDir>(), app.state::<AudioDir>());
-        let result = stt::load(&models.0).and_then(|mut t| transcript::run(&db.0, &audio.0, id, &mut t));
+        let (db, audio) = (app.state::<Db>(), app.state::<AudioDir>());
+        let result = transcript::run(&db.0, &audio.0, id, &mut Shared(app.clone()));
         if let Err(e) = result {
             store::fail(&db.0.lock().unwrap(), id, &e);
         }

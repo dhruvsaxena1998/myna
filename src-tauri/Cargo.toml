@@ -10,15 +10,17 @@ name = "myna_lib"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
 ureq = "2"
-cpal = "0.18"
-hound = "3.5"
+tauri-plugin-global-shortcut = "2"
+cpal = "0.18.2"
+arboard = "3.7.0"
+hound = "3.5.1"
 libc = "0.2"
-parakeet-rs = "0.4"
+parakeet-rs = "0.4.3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
@@ -27,3 +29,4 @@ core-foundation = "0.10"
 objc2-core-audio = "0.3"
 objc2-core-audio-types = "0.3"
 objc2-foundation = "0.3"
+core-graphics = "0.25"
