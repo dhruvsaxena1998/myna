@@ -22,12 +22,21 @@ try {
   const cdp = (method, params = {}) => new Promise((r) => { pending.set(++id, r); ws.send(JSON.stringify({ id, method, params })); });
   await cdp("Emulation.setDeviceMetricsOverride", { width: +w, height: +h, deviceScaleFactor: 1, mobile: false });
   await cdp("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: scheme }] });
+  // Page errors would otherwise leave a blank screenshot with no clue why.
+  await cdp("Page.addScriptToEvaluateOnNewDocument", { source: "window.__errors = []; const log = (e) => __errors.push(String(e.error?.stack || e.reason?.stack || e.reason || e.message)); addEventListener('error', log); addEventListener('unhandledrejection', log);" });
   await cdp("Page.navigate", { url });
-  await sleep(2500);
+  // The harness writes the real page over itself, so wait until the app has drawn something, then let async panes settle.
+  for (let i = 0; i < 100; i++) {
+    await sleep(100);
+    if ((await cdp("Runtime.evaluate", { expression: "!!document.getElementById('app')?.children.length" })).result?.value) break;
+  }
+  await sleep(1500);
   if (process.env.SHOT_JS) {
     const r = await cdp("Runtime.evaluate", { expression: `(async () => { ${process.env.SHOT_JS} })()`, awaitPromise: true });
     if (r.exceptionDetails) console.error("SHOT_JS failed:", r.exceptionDetails.exception?.description ?? r.exceptionDetails.text);
   }
+  const errors = (await cdp("Runtime.evaluate", { expression: "JSON.stringify(window.__errors || [])" })).result?.value;
+  if (errors && errors !== "[]") console.error("Page errors:", errors);
   writeFileSync(out, Buffer.from((await cdp("Page.captureScreenshot", { format: "png" })).data, "base64"));
 } finally {
   chrome.kill();

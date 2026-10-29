@@ -40,7 +40,7 @@
   const commands = {
     list_meetings: () => [meeting],
     list_folders: () => [{ id: 1, name: "Acme" }],
-    get_meeting: () => ({ meeting, segments }),
+    get_meeting: () => ({ meeting, segments, shots: [], shots_taken: 0, audio: [] }),
     ai_state: () => ai,
     template_list: () => templates,
     summary_get: () => summary,
