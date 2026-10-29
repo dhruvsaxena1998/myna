@@ -1,5 +1,5 @@
 {
   "identifier": "default",
-  "windows": ["onboarding", "settings"],
+  "windows": ["onboarding", "settings", "pill"],
   "permissions": ["core:default"]
 }
