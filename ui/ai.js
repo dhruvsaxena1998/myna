@@ -23,6 +23,7 @@ ${row("ai-ctx", "Context window (tokens)", text("ai-ctx", "num"))}
 </div><p class="note">Saved for the model named above. Counts are approximate (characters ÷ 4). Leave prices blank to show tokens only.</p></section>
 <section class="group"><h2>Uses this provider</h2><div class="box">
 <div class="prow single"><div class="l row"><span id="ai-sum-l">Meeting summaries</span> ${offMac}</div><div class="r"><button class="switch" role="switch" id="ai-sum" aria-labelledby="ai-sum-l"></button></div></div>
+<div class="prow single"><div class="l row"><span id="ai-fold-l">Suggest a folder for new meetings</span> ${offMac}</div><div class="r"><button class="switch" role="switch" id="ai-fold" aria-labelledby="ai-fold-l"></button></div></div>
 <div class="prow single"><div class="l row"><span id="ai-chat-l">Chat with a meeting</span> ${offMac}</div><div class="r"><button class="switch" role="switch" id="ai-chat" aria-labelledby="ai-chat-l"></button></div></div>
 </div></section>`;
 
