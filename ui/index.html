@@ -2,6 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
+<link rel="stylesheet" href="styles.css">
 <style>
   body { font: 14px -apple-system, sans-serif; margin: 0; padding: 24px; }
   h1 { font-size: 20px; margin-top: 0; }
@@ -37,9 +38,124 @@ async function modulesForm(onChange) {
   return form;
 }
 
+const ICONS = {
+  gear: '<circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/>',
+  dl: '<path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10"/>',
+  check: '<path d="M3 8.5l3 3 7-7"/>',
+};
+const icon = (name, cls = "") => `<svg class="i ${cls}" viewBox="0 0 16 16" aria-hidden="true">${ICONS[name]}</svg>`;
+const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const fmtSize = (b) => (b >= 1e9 ? (b / 1e9).toFixed(1) + " GB" : Math.round(b / 1e6) + " MB");
+
+const TASKS = [
+  ["stt", "Speech to text", ["dictation_enabled", "meetings_enabled"]],
+  ["diarization", "Speaker separation", ["meetings_enabled"]],
+];
+
+let settingsPage = "models";
+let pollTimer;
+
 async function settings() {
-  app.innerHTML = "<h1>Modules</h1>";
-  app.append(await modulesForm());
+  document.body.className = "set";
+  app.innerHTML = `<nav class="sidebar" aria-label="Settings"></nav><div class="content"><div class="toolbar"><h1 id="title"></h1></div><div class="page" id="page"></div></div>`;
+  const nav = app.querySelector(".sidebar");
+  for (const [id, label, ic] of [["modules", "Modules", "gear"], ["models", "Models", "dl"]]) {
+    const b = document.createElement("button");
+    b.className = "nav";
+    b.innerHTML = icon(ic) + label;
+    if (id === settingsPage) b.setAttribute("aria-current", "page");
+    b.onclick = () => { settingsPage = id; settings(); };
+    nav.append(b);
+  }
+  clearTimeout(pollTimer);
+  const page = document.getElementById("page");
+  document.getElementById("title").textContent = settingsPage === "models" ? "Models" : "Modules";
+  if (settingsPage === "models") return modelsPage(page);
+  page.innerHTML = '<section class="group"><h2>Enable</h2><div class="box"></div></section>';
+  page.querySelector(".box").append(...(await modulesForm()).children);
+}
+
+async function modelsPage(page) {
+  const enabled = {};
+  for (const k of ["dictation_enabled", "meetings_enabled"]) enabled[k] = (await get(k)) === "true";
+  let shown = "";
+  const damaged = new Set();
+  const verified = new Set();
+
+  async function refresh() {
+    const { dir, models } = await invoke("list_models");
+    if (!page.isConnected) return;
+    clearTimeout(pollTimer);
+    const busy = models.filter((m) => m.downloading !== null);
+    const sig = JSON.stringify(models.map((m) => [m.id, m.status, m.downloading !== null, m.error, damaged.has(m.id)]));
+    if (sig !== shown) { shown = sig; await render(dir, models); }
+    for (const m of busy) {
+      const bar = page.querySelector(`[data-prog="${m.id}"]`);
+      if (bar) { bar.style.width = (100 * m.downloading / m.size).toFixed(1) + "%"; bar.parentElement.setAttribute("aria-valuenow", Math.round(100 * m.downloading / m.size)); }
+    }
+    // Hash installed models once per page visit: a corrupted file is flagged, not silently trusted.
+    for (const m of models) {
+      if (m.status === "installed" && !verified.has(m.id)) {
+        verified.add(m.id);
+        invoke("verify_model", { id: m.id }).then((ok) => { if (!ok) { damaged.add(m.id); refresh(); } });
+      }
+    }
+    pollTimer = setTimeout(refresh, busy.length ? 500 : 2000);
+  }
+
+  async function render(dir, models) {
+    page.innerHTML = "";
+    const tasks = TASKS.filter(([, , needs]) => needs.some((k) => enabled[k]));
+    if (!tasks.length) {
+      page.innerHTML = '<p class="s">Turn on Dictation or Meetings under Modules to see the models they use.</p>';
+      return;
+    }
+    for (const [task, heading] of tasks) {
+      const rows = models.filter((m) => m.task === task);
+      const chosen = (await get("model_" + task)) || rows[0].id;
+      const sec = document.createElement("section");
+      sec.className = "group";
+      sec.innerHTML = `<h2>${heading}</h2><div class="box" role="radiogroup" aria-label="${heading}"></div>`;
+      for (const m of rows) sec.querySelector(".box").append(modelRow(m, task, chosen));
+      page.append(sec);
+    }
+    const store = document.createElement("section");
+    store.className = "group";
+    store.innerHTML = `<h2>Storage</h2><div class="box"><div class="prow single"><div class="l">Models folder</div><div class="r"><span class="s mono">${esc(dir.replace(/^\/Users\/[^/]+/, "~"))}</span><button class="btn quiet">Reveal</button></div></div></div>`;
+    store.querySelector("button").onclick = () => invoke("reveal_models_dir");
+    page.append(store);
+  }
+
+  function modelRow(m, task, chosen) {
+    const row = document.createElement("div");
+    row.className = "prow";
+    const bad = m.status === "damaged" || damaged.has(m.id);
+    const err = m.error || (bad ? "Files are damaged. Download again to repair." : "");
+    let right;
+    if (m.downloading !== null) {
+      right = `<span class="size">${fmtSize(m.size)}</span><span class="prog" role="progressbar" aria-label="Downloading ${esc(m.name)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i data-prog="${m.id}"></i></span><button class="btn quiet" data-act="cancel">Cancel</button>`;
+    } else if (m.status === "installed" && !bad) {
+      right = `<span class="size">${fmtSize(m.size)}</span><span class="pill ok">${icon("check", "sm")} Installed</span><button class="btn quiet" data-act="remove">Remove</button>`;
+    } else {
+      right = `<span class="size">${fmtSize(m.size)}</span>${bad ? '<span class="pill alert">Damaged</span><button class="btn quiet" data-act="remove">Remove</button>' : ""}<button class="btn" data-act="download">${icon("dl", "sm")} ${bad || m.error ? "Retry" : "Download"}</button>`;
+    }
+    row.innerHTML = `<div class="l"><label class="row pick"><input type="radio" name="${task}"${m.id === chosen ? " checked" : ""}><span class="radio"></span>${esc(m.name)}</label></div><div class="d${err ? " err" : ""}">${esc(err || m.desc)}</div><div class="r">${right}</div>`;
+    row.querySelector("input").onchange = () => set("model_" + task, m.id);
+    row.querySelectorAll("[data-act]").forEach((b) => {
+      b.onclick = async () => {
+        const act = b.dataset.act;
+        if (act === "download") { damaged.delete(m.id); verified.add(m.id); await invoke("download_model", { id: m.id }); }
+        if (act === "cancel") await invoke("cancel_model", { id: m.id });
+        if (act === "remove") { damaged.delete(m.id); await invoke("remove_model", { id: m.id }); }
+        clearTimeout(pollTimer);
+        shown = "";
+        refresh();
+      };
+    });
+    return row;
+  }
+
+  refresh();
 }
 
 async function onboarding() {

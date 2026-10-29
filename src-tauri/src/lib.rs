@@ -1,7 +1,12 @@
+mod models;
 mod permissions;
 mod settings;
 
-use std::sync::Mutex;
+use serde::Serialize;
+use std::{
+    path::PathBuf,
+    sync::{atomic::Ordering, Arc, Mutex},
+};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
@@ -9,6 +14,106 @@ use tauri::{
 };
 
 struct Db(Mutex<rusqlite::Connection>);
+struct ModelsDir(PathBuf);
+
+#[derive(Serialize)]
+struct ModelRow {
+    id: &'static str,
+    task: &'static str,
+    name: &'static str,
+    desc: &'static str,
+    size: u64,
+    status: models::Status,
+    /// Bytes fetched so far while a download runs.
+    downloading: Option<u64>,
+    error: Option<String>,
+}
+
+#[derive(Serialize)]
+struct ModelList {
+    dir: String,
+    models: Vec<ModelRow>,
+}
+
+#[tauri::command]
+fn list_models(dir: tauri::State<ModelsDir>, jobs: tauri::State<models::Jobs>) -> ModelList {
+    let jobs = jobs.lock().unwrap();
+    let models = models::MODELS
+        .iter()
+        .map(|m| {
+            let job = jobs.get(m.id);
+            let result = job.and_then(|j| j.result.lock().unwrap().clone());
+            ModelRow {
+                id: m.id,
+                task: m.task,
+                name: m.name,
+                desc: m.desc,
+                size: m.files.iter().map(|f| f.size).sum(),
+                status: models::status(&dir.0, m),
+                downloading: job.filter(|_| result.is_none()).map(|j| j.done.load(Ordering::Relaxed)),
+                error: result.and_then(|r| r.err()),
+            }
+        })
+        .collect();
+    ModelList { dir: dir.0.display().to_string(), models }
+}
+
+#[tauri::command]
+fn download_model(
+    dir: tauri::State<ModelsDir>,
+    jobs: tauri::State<Arc<models::Jobs>>,
+    id: String,
+) -> Result<(), String> {
+    let m = models::MODELS.iter().find(|m| m.id == id).ok_or("unknown model")?;
+    let job = {
+        let mut map = jobs.lock().unwrap();
+        if map.get(&id).is_some_and(|j| j.result.lock().unwrap().is_none()) {
+            return Ok(());
+        }
+        let job = Arc::new(models::Job::default());
+        map.insert(id.clone(), job.clone());
+        job
+    };
+    let (root, jobs) = (dir.0.clone(), jobs.inner().clone());
+    std::thread::spawn(move || {
+        let res = models::install(&root, m.id, m.files, models::http_open, &job);
+        match res {
+            Ok(()) | Err(models::Stop::Cancelled) => {
+                jobs.lock().unwrap().remove(m.id);
+            }
+            Err(models::Stop::Failed(msg)) => *job.result.lock().unwrap() = Some(Err(msg)),
+        }
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn cancel_model(jobs: tauri::State<Arc<models::Jobs>>, id: String) {
+    if let Some(j) = jobs.lock().unwrap().get(&id) {
+        j.cancel.store(true, Ordering::Relaxed);
+    }
+}
+
+#[tauri::command]
+fn remove_model(dir: tauri::State<ModelsDir>, jobs: tauri::State<Arc<models::Jobs>>, id: String) {
+    jobs.lock().unwrap().remove(&id);
+    models::remove(&dir.0, &id);
+}
+
+/// Full checksum of an installed model; async so hashing gigabytes stays off the main thread.
+#[tauri::command]
+async fn verify_model(dir: tauri::State<'_, ModelsDir>, id: String) -> Result<bool, String> {
+    let root = dir.0.clone();
+    let m = models::MODELS.iter().find(|m| m.id == id).ok_or("unknown model")?;
+    tauri::async_runtime::spawn_blocking(move || models::verify(&root, m))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn reveal_models_dir(dir: tauri::State<ModelsDir>) {
+    let _ = std::process::Command::new("open").arg(&dir.0).spawn();
+}
 
 #[tauri::command]
 fn get_setting(db: tauri::State<Db>, key: String) -> Option<String> {
@@ -67,6 +172,11 @@ pub fn run() {
             let db = settings::open(&dir.join("myna.db"))?;
             let onboarded = settings::get(&db, "onboarded").is_some();
             app.manage(Db(Mutex::new(db)));
+            let models_dir = dir.join("models");
+            std::fs::create_dir_all(&models_dir)?;
+            models::clean_partials(&models_dir);
+            app.manage(ModelsDir(models_dir));
+            app.manage(Arc::new(models::Jobs::default()));
 
             let menu = Menu::with_items(
                 app,
@@ -79,7 +189,7 @@ pub fn run() {
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
-                    "settings" => open_window(app, "settings", "Myna Settings", (560.0, 380.0)),
+                    "settings" => open_window(app, "settings", "Myna Settings", (800.0, 560.0)),
                     "quit" => app.exit(0),
                     _ => {}
                 })
@@ -94,7 +204,13 @@ pub fn run() {
             set_setting,
             request_permission,
             permission_granted,
-            open_privacy_settings
+            open_privacy_settings,
+            list_models,
+            download_model,
+            cancel_model,
+            remove_model,
+            verify_model,
+            reveal_models_dir
         ])
         .build(tauri::generate_context!())
         .expect("error building Myna")
