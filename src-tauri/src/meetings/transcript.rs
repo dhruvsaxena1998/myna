@@ -257,7 +257,7 @@ mod tests {
     fn meeting() -> Meeting {
         Meeting {
             id: 1, title: "Design: review/2".into(), started_at: 1_793_000_000, duration_ms: 2_520_000, app: Some("Google Chrome".into()),
-            note: None, status: "done".into(), progress: 1.0, error: None, segments: 2, has_them: true,
+            note: None, status: "done".into(), progress: 1.0, error: None, segments: 2, has_them: true, folder_id: None,
         }
     }
 

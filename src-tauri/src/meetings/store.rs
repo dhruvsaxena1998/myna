@@ -29,6 +29,14 @@ pub struct Meeting {
     pub error: Option<String>,
     pub segments: u32,
     pub has_them: bool,
+    /// None means Inbox.
+    pub folder_id: Option<i64>,
+}
+
+#[derive(Serialize, Clone, PartialEq, Debug)]
+pub struct Folder {
+    pub id: i64,
+    pub name: String,
 }
 
 pub fn init(db: &Connection) -> rusqlite::Result<()> {
@@ -51,8 +59,66 @@ pub fn init(db: &Connection) -> rusqlite::Result<()> {
             end_ms INTEGER NOT NULL,
             text TEXT NOT NULL
         );
-        CREATE INDEX IF NOT EXISTS segments_meeting ON segments (meeting_id, start_ms);",
-    )
+        CREATE INDEX IF NOT EXISTS segments_meeting ON segments (meeting_id, start_ms);
+        CREATE TABLE IF NOT EXISTS folders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE COLLATE NOCASE
+        );",
+    )?;
+    // Databases from before folders have no column; their meetings stay NULL, which is the Inbox.
+    let has_folder = db.prepare("SELECT 1 FROM pragma_table_info('meetings') WHERE name = 'folder_id'")?.exists([])?;
+    if !has_folder {
+        db.execute("ALTER TABLE meetings ADD COLUMN folder_id INTEGER", [])?;
+    }
+    Ok(())
+}
+
+fn clean(name: &str) -> Result<&str, String> {
+    let name = name.trim();
+    if name.is_empty() { Err("Give the folder a name.".into()) } else { Ok(name) }
+}
+
+fn name_error(e: rusqlite::Error) -> String {
+    match e {
+        rusqlite::Error::SqliteFailure(f, _) if f.code == rusqlite::ErrorCode::ConstraintViolation => "A folder with that name already exists.".into(),
+        e => e.to_string(),
+    }
+}
+
+pub fn folders(db: &Connection) -> rusqlite::Result<Vec<Folder>> {
+    db.prepare("SELECT id, name FROM folders ORDER BY name COLLATE NOCASE")?
+        .query_map([], |r| Ok(Folder { id: r.get(0)?, name: r.get(1)? }))?
+        .collect()
+}
+
+pub fn create_folder(db: &Connection, name: &str) -> Result<Folder, String> {
+    let name = clean(name)?;
+    db.execute("INSERT INTO folders (name) VALUES (?1)", [name]).map_err(name_error)?;
+    Ok(Folder { id: db.last_insert_rowid(), name: name.into() })
+}
+
+pub fn rename_folder(db: &Connection, id: i64, name: &str) -> Result<(), String> {
+    db.execute("UPDATE folders SET name = ?2 WHERE id = ?1", params![id, clean(name)?]).map_err(name_error)?;
+    Ok(())
+}
+
+/// Its meetings go back to the Inbox.
+pub fn delete_folder(db: &Connection, id: i64) -> rusqlite::Result<()> {
+    let tx = db.unchecked_transaction()?;
+    tx.execute("UPDATE meetings SET folder_id = NULL WHERE folder_id = ?1", [id])?;
+    tx.execute("DELETE FROM folders WHERE id = ?1", [id])?;
+    tx.commit()
+}
+
+/// `folder` None files the meeting in the Inbox.
+pub fn move_meeting(db: &Connection, id: i64, folder: Option<i64>) -> Result<(), String> {
+    if let Some(f) = folder {
+        if !db.query_row("SELECT EXISTS (SELECT 1 FROM folders WHERE id = ?1)", [f], |r| r.get(0)).map_err(|e| e.to_string())? {
+            return Err("That folder no longer exists.".into());
+        }
+    }
+    db.execute("UPDATE meetings SET folder_id = ?2 WHERE id = ?1", params![id, folder]).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 pub fn create(db: &Connection, started_at: i64) -> rusqlite::Result<i64> {
@@ -101,7 +167,8 @@ pub fn finish(db: &Connection, id: i64, duration_ms: u64, segments: &[Segment]) 
 
 const SELECT: &str = "SELECT id, title, started_at, duration_ms, app, note, status, progress, error,
     (SELECT COUNT(*) FROM segments s WHERE s.meeting_id = m.id),
-    (SELECT COUNT(*) FROM segments s WHERE s.meeting_id = m.id AND s.speaker = 'them')
+    (SELECT COUNT(*) FROM segments s WHERE s.meeting_id = m.id AND s.speaker = 'them'),
+    folder_id
     FROM meetings m";
 
 fn row(r: &rusqlite::Row) -> rusqlite::Result<Meeting> {
@@ -117,6 +184,7 @@ fn row(r: &rusqlite::Row) -> rusqlite::Result<Meeting> {
         error: r.get(8)?,
         segments: r.get(9)?,
         has_them: r.get::<_, u32>(10)? > 0,
+        folder_id: r.get(11)?,
     })
 }
 
@@ -185,6 +253,60 @@ mod tests {
         let old = create(&c, 100).unwrap();
         let new = create(&c, 200).unwrap();
         assert_eq!(list(&c).unwrap().iter().map(|m| m.id).collect::<Vec<_>>(), [new, old]);
+    }
+
+    #[test]
+    fn folder_names_are_trimmed_and_unique_ignoring_case() {
+        let c = db();
+        let acme = create_folder(&c, "  Acme ").unwrap();
+        assert_eq!(acme.name, "Acme");
+        assert!(create_folder(&c, "acme").is_err());
+        assert!(create_folder(&c, "   ").is_err());
+        let other = create_folder(&c, "1:1s").unwrap();
+        assert!(rename_folder(&c, other.id, "ACME").is_err());
+        rename_folder(&c, other.id, "Team").unwrap();
+        assert_eq!(folders(&c).unwrap().iter().map(|f| f.name.as_str()).collect::<Vec<_>>(), ["Acme", "Team"]);
+    }
+
+    #[test]
+    fn a_meeting_is_in_one_folder_and_moves_between_them_and_the_inbox() {
+        let c = db();
+        let (a, b) = (create_folder(&c, "A").unwrap().id, create_folder(&c, "B").unwrap().id);
+        let m = create(&c, 1).unwrap();
+        assert_eq!(get(&c, m).unwrap().folder_id, None);
+        move_meeting(&c, m, Some(a)).unwrap();
+        move_meeting(&c, m, Some(b)).unwrap();
+        assert_eq!(get(&c, m).unwrap().folder_id, Some(b));
+        move_meeting(&c, m, None).unwrap();
+        assert_eq!(get(&c, m).unwrap().folder_id, None);
+        assert!(move_meeting(&c, m, Some(999)).is_err());
+    }
+
+    #[test]
+    fn deleting_a_folder_returns_its_meetings_to_the_inbox() {
+        let c = db();
+        let (a, b) = (create_folder(&c, "A").unwrap().id, create_folder(&c, "B").unwrap().id);
+        let (m1, m2) = (create(&c, 1).unwrap(), create(&c, 2).unwrap());
+        move_meeting(&c, m1, Some(a)).unwrap();
+        move_meeting(&c, m2, Some(b)).unwrap();
+        delete_folder(&c, a).unwrap();
+        assert_eq!(get(&c, m1).unwrap().folder_id, None);
+        assert_eq!(get(&c, m2).unwrap().folder_id, Some(b));
+        assert_eq!(folders(&c).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn init_migrates_a_database_from_before_folders() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE meetings (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL DEFAULT 'Untitled', started_at INTEGER NOT NULL,
+             duration_ms INTEGER NOT NULL DEFAULT 0, app TEXT, note TEXT, status TEXT NOT NULL, progress REAL NOT NULL DEFAULT 0, error TEXT);
+             INSERT INTO meetings (started_at, status) VALUES (1, 'done');",
+        )
+        .unwrap();
+        init(&c).unwrap();
+        init(&c).unwrap(); // idempotent
+        assert_eq!(list(&c).unwrap()[0].folder_id, None);
     }
 
     #[test]
