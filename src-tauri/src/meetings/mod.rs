@@ -2,6 +2,7 @@
 //! keep the result in SQLite, export it as Markdown or text.
 mod capture;
 mod store;
+pub mod summary;
 mod track;
 mod transcript;
 
@@ -47,6 +48,7 @@ pub fn setup(app: &tauri::App, root: &Path, menu: Menu<Wry>, record: MenuItem<Wr
         let db = app.state::<Db>();
         let conn = db.0.lock().unwrap();
         store::init(&conn)?;
+        summary::init(&conn)?;
         store::recover(&conn)?
     };
     app.manage(AudioDir(audio));

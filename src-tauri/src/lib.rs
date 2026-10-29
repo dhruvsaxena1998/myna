@@ -1,3 +1,4 @@
+mod ai;
 mod audio;
 mod dictation;
 mod meetings;
@@ -462,7 +463,14 @@ pub fn run() {
             meetings::list_meetings,
             meetings::get_meeting,
             meetings::retry_transcription,
-            meetings::export_meeting
+            meetings::export_meeting,
+            ai::ai_state,
+            ai::ai_set_key,
+            meetings::summary::template_list,
+            meetings::summary::template_save,
+            meetings::summary::template_delete,
+            meetings::summary::summary_get,
+            meetings::summary::summary_generate
         ])
         .build(tauri::generate_context!())
         .expect("error building Myna")
