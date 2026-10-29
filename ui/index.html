@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="meetings.css">
 <style>
   body { font: 14px -apple-system, sans-serif; margin: 0; padding: 24px; }
   h1 { font-size: 20px; margin-top: 0; }
@@ -12,6 +13,7 @@
 </style>
 </head>
 <body><div id="app"></div>
+<script src="meetings.js"></script>
 <script>
 const { invoke } = window.__TAURI__.core;
 const app = document.getElementById("app");
@@ -247,7 +249,7 @@ async function finish() {
   app.append(done);
 }
 
-({ "#onboarding": onboarding, "#pill": pill }[location.hash] || settings)();
+({ "#onboarding": onboarding, "#meetings": meetings, "#pill": pill }[location.hash] || settings)();
 </script>
 </body>
 </html>

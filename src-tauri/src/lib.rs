@@ -1,5 +1,6 @@
 mod audio;
 mod dictation;
+mod meetings;
 mod models;
 mod paste;
 mod permissions;
@@ -15,7 +16,7 @@ use std::{
     time::Duration,
 };
 use tauri::{
-    menu::{Menu, MenuItem},
+    menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
     ActivationPolicy, AppHandle, Emitter, Manager, PhysicalPosition, RunEvent, WebviewUrl,
     WebviewWindow, WebviewWindowBuilder,
@@ -268,7 +269,7 @@ fn show_error(app: &AppHandle, message: impl Into<String>) {
 }
 
 /// Runs `f` on the selected speech model, loading it first if needed.
-fn with_engine<R>(app: &AppHandle, f: impl FnOnce(&mut dyn dictation::Transcriber) -> R) -> Result<R, String> {
+pub(crate) fn with_engine<R>(app: &AppHandle, f: impl FnOnce(&mut dyn dictation::Transcriber) -> R) -> Result<R, String> {
     let id = settings::get(&app.state::<Db>().0.lock().unwrap(), "model_stt")
         .unwrap_or_else(|| models::MODELS.iter().find(|m| m.task == "stt").unwrap().id.to_string());
     let dir = app.state::<ModelsDir>().0.clone();
@@ -408,22 +409,37 @@ pub fn run() {
             create_pill(app.handle())?;
             sync_hotkey(app.handle());
 
+            let record = MenuItem::with_id(app, "record", "Start meeting recording", true, None::<&str>)?;
             let menu = Menu::with_items(
                 app,
                 &[
+                    &record,
+                    &MenuItem::with_id(app, "meetings", "Meetings…", true, None::<&str>)?,
+                    &PredefinedMenuItem::separator(app)?,
                     &MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?,
                     &MenuItem::with_id(app, "quit", "Quit Myna", true, None::<&str>)?,
                 ],
             )?;
-            TrayIconBuilder::new()
+            TrayIconBuilder::with_id(meetings::TRAY_ID)
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
+                    "record" => {
+                        let app = app.clone();
+                        // Starting and stopping block on audio hardware; keep them off the main thread.
+                        std::thread::spawn(move || {
+                            if let Err(e) = meetings::toggle(&app) {
+                                meetings::alert(&e);
+                            }
+                        });
+                    }
+                    "meetings" => open_window(app, "meetings", "Meetings", (1000.0, 680.0)),
                     "settings" => open_window(app, "settings", "Myna Settings", (800.0, 560.0)),
                     "quit" => app.exit(0),
                     _ => {}
                 })
                 .build(app)?;
+            meetings::setup(app, &dir, menu, record)?;
 
             if !onboarded {
                 open_window(app.handle(), "onboarding", "Welcome to Myna", (520.0, 460.0));
@@ -441,14 +457,19 @@ pub fn run() {
             cancel_model,
             remove_model,
             verify_model,
-            reveal_models_dir
+            reveal_models_dir,
+            meetings::meeting_toggle,
+            meetings::list_meetings,
+            meetings::get_meeting,
+            meetings::retry_transcription,
+            meetings::export_meeting
         ])
         .build(tauri::generate_context!())
         .expect("error building Myna")
-        .run(|_, event| {
+        .run(|app, event| match event {
             // Tray app: closing every window must not quit.
-            if let RunEvent::ExitRequested { api, code: None, .. } = event {
-                api.prevent_exit();
-            }
+            RunEvent::ExitRequested { api, code: None, .. } => api.prevent_exit(),
+            RunEvent::Exit => meetings::shutdown(app),
+            _ => {}
         });
 }
