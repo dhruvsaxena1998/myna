@@ -5,6 +5,7 @@ mod screen;
 pub(crate) mod mute;
 pub(crate) mod shots;
 pub(crate) mod store;
+pub mod summary;
 mod track;
 mod transcript;
 
@@ -44,6 +45,7 @@ pub fn setup(app: &tauri::App, root: &Path) -> Result<(), Box<dyn std::error::Er
         let conn = db.0.lock().unwrap();
         store::init(&conn)?;
         shots::init(&conn)?;
+        summary::init(&conn)?;
         store::recover(&conn)?
     };
     app.manage(AudioDir(audio));
