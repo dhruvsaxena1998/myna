@@ -1,11 +1,15 @@
 mod ai;
 mod audio;
+mod cleanup;
 mod dictation;
+mod hotkey;
 mod meetings;
 mod models;
 mod paste;
 mod permissions;
+mod popover;
 mod settings;
+mod stt;
 
 use serde::Serialize;
 use std::{
@@ -17,8 +21,7 @@ use std::{
     time::Duration,
 };
 use tauri::{
-    menu::{Menu, MenuItem, PredefinedMenuItem},
-    tray::TrayIconBuilder,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     ActivationPolicy, AppHandle, Emitter, Manager, PhysicalPosition, RunEvent, WebviewUrl,
     WebviewWindow, WebviewWindowBuilder,
 };
@@ -27,10 +30,6 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 struct Db(Mutex<rusqlite::Connection>);
 struct ModelsDir(PathBuf);
 
-// shortcut: a fixed key. Fn and Right Option alone cannot be registered as global shortcuts (they
-// need an event tap and Input Monitoring), so this is the nearest hold-friendly default. Make it a
-// setting when the Dictation settings page grows a key recorder.
-const HOTKEY: &str = "Alt+Space";
 const PILL_SIZE: (f64, f64) = (360.0, 64.0);
 const PILL_MARGIN: f64 = 24.0;
 
@@ -50,7 +49,7 @@ struct PillEpoch(AtomicU64);
 #[derive(Serialize, Clone)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 enum Pill {
-    Idle { hotkey: &'static str },
+    Idle { hotkey: String, toggle: bool },
     Listening { level: f32 },
     Transcribing,
     Done { words: usize },
@@ -59,15 +58,19 @@ enum Pill {
 
 #[derive(Serialize)]
 struct ModelRow {
-    id: &'static str,
+    id: String,
     task: &'static str,
-    name: &'static str,
-    desc: &'static str,
+    name: String,
+    desc: String,
     size: u64,
     status: models::Status,
     /// Bytes fetched so far while a download runs.
     downloading: Option<u64>,
     error: Option<String>,
+    /// Added by the user under Advanced, as opposed to the curated list.
+    custom: bool,
+    /// A custom model that lives on disk where the user keeps it: nothing to download.
+    local: bool,
 }
 
 #[derive(Serialize)]
@@ -77,25 +80,29 @@ struct ModelList {
 }
 
 #[tauri::command]
-fn list_models(dir: tauri::State<ModelsDir>, jobs: tauri::State<models::Jobs>) -> ModelList {
+fn list_models(dir: tauri::State<ModelsDir>, jobs: tauri::State<models::Jobs>, db: tauri::State<Db>) -> ModelList {
     let jobs = jobs.lock().unwrap();
-    let models = models::MODELS
-        .iter()
-        .map(|m| {
-            let job = jobs.get(m.id);
-            let result = job.and_then(|j| j.result.lock().unwrap().clone());
-            ModelRow {
-                id: m.id,
-                task: m.task,
-                name: m.name,
-                desc: m.desc,
-                size: m.files.iter().map(|f| f.size).sum(),
-                status: models::status(&dir.0, m),
-                downloading: job.filter(|_| result.is_none()).map(|j| j.done.load(Ordering::Relaxed)),
-                error: result.and_then(|r| r.err()),
-            }
-        })
-        .collect();
+    let row = |m: &models::Model, status, custom: Option<&stt::Custom>, problem: Option<String>| {
+        let job = jobs.get(m.id);
+        let result = job.and_then(|j| j.result.lock().unwrap().clone());
+        ModelRow {
+            id: m.id.into(),
+            task: m.task,
+            name: m.name.into(),
+            desc: m.desc.into(),
+            size: m.files.iter().map(|f| f.size).sum(),
+            status,
+            downloading: job.filter(|_| result.is_none()).map(|j| j.done.load(Ordering::Relaxed)),
+            error: result.and_then(|r| r.err()).or(problem),
+            custom: custom.is_some(),
+            local: custom.is_some_and(stt::Custom::local),
+        }
+    };
+    let mut models: Vec<_> = models::MODELS.iter().map(|m| row(m, models::status(&dir.0, m), None, None)).collect();
+    for c in stt::customs(&db.0.lock().unwrap()) {
+        let (status, problem) = c.state(&dir.0);
+        models.push(c.model(|m| row(m, status, Some(&c), problem)));
+    }
     ModelList { dir: dir.0.display().to_string(), models }
 }
 
@@ -103,9 +110,14 @@ fn list_models(dir: tauri::State<ModelsDir>, jobs: tauri::State<models::Jobs>) -
 fn download_model(
     dir: tauri::State<ModelsDir>,
     jobs: tauri::State<Arc<models::Jobs>>,
+    db: tauri::State<Db>,
     id: String,
 ) -> Result<(), String> {
-    let m = models::MODELS.iter().find(|m| m.id == id).ok_or("unknown model")?;
+    let curated = models::MODELS.iter().find(|m| m.id == id);
+    let custom = stt::customs(&db.0.lock().unwrap()).into_iter().find(|c| c.id() == id && !c.local());
+    if curated.is_none() && custom.is_none() {
+        return Err("unknown model".into());
+    }
     let job = {
         let mut map = jobs.lock().unwrap();
         if map.get(&id).is_some_and(|j| j.result.lock().unwrap().is_none()) {
@@ -117,10 +129,15 @@ fn download_model(
     };
     let (root, jobs) = (dir.0.clone(), jobs.inner().clone());
     std::thread::spawn(move || {
-        let res = models::install(&root, m.id, m.files, models::http_open, &job);
+        let fetch = |m: &models::Model| models::install(&root, m.id, m.files, models::http_open, &job);
+        let res = match (&custom, curated) {
+            (Some(c), _) => c.model(fetch),
+            (_, Some(m)) => fetch(m),
+            _ => unreachable!(),
+        };
         match res {
             Ok(()) | Err(models::Stop::Cancelled) => {
-                jobs.lock().unwrap().remove(m.id);
+                jobs.lock().unwrap().remove(&id);
             }
             Err(models::Stop::Failed(msg)) => *job.result.lock().unwrap() = Some(Err(msg)),
         }
@@ -135,20 +152,53 @@ fn cancel_model(jobs: tauri::State<Arc<models::Jobs>>, id: String) {
     }
 }
 
+/// Deletes a curated model's files, or forgets a custom one (and deletes only what Myna downloaded for it).
 #[tauri::command]
-fn remove_model(dir: tauri::State<ModelsDir>, jobs: tauri::State<Arc<models::Jobs>>, id: String) {
+fn remove_model(dir: tauri::State<ModelsDir>, jobs: tauri::State<Arc<models::Jobs>>, db: tauri::State<Db>, id: String) {
     jobs.lock().unwrap().remove(&id);
-    models::remove(&dir.0, &id);
+    models::remove(&dir.0, &id); // custom ids are folder names too; a local path never lives under here
+    let db = db.0.lock().unwrap();
+    let mut all = stt::customs(&db);
+    if all.iter().any(|c| c.id() == id) {
+        all.retain(|c| c.id() != id);
+        let _ = stt::save(&db, &all);
+        if settings::get(&db, "model_stt").as_deref() == Some(&id) {
+            let _ = settings::set(&db, "model_stt", stt::PARAKEET);
+        }
+    }
+}
+
+/// Validates a custom model (a path, or a Hugging Face repo that gets looked up) and remembers it.
+#[tauri::command]
+async fn add_custom_model(db: tauri::State<'_, Db>, runtime: stt::Runtime, source: String) -> Result<(), String> {
+    let c = tauri::async_runtime::spawn_blocking(move || stt::Custom::new(runtime, &source, stt::fetch_repo))
+        .await
+        .map_err(|e| e.to_string())??;
+    let db = db.0.lock().unwrap();
+    let mut all = stt::customs(&db);
+    if all.iter().any(|x| x.id() == c.id()) {
+        return Err("Already added".into());
+    }
+    all.push(c);
+    stt::save(&db, &all).map_err(|e| e.to_string())
 }
 
 /// Full checksum of an installed model; async so hashing gigabytes stays off the main thread.
 #[tauri::command]
-async fn verify_model(dir: tauri::State<'_, ModelsDir>, id: String) -> Result<bool, String> {
+async fn verify_model(dir: tauri::State<'_, ModelsDir>, db: tauri::State<'_, Db>, id: String) -> Result<bool, String> {
     let root = dir.0.clone();
-    let m = models::MODELS.iter().find(|m| m.id == id).ok_or("unknown model")?;
-    tauri::async_runtime::spawn_blocking(move || models::verify(&root, m))
-        .await
-        .map_err(|e| e.to_string())
+    let curated = models::MODELS.iter().find(|m| m.id == id);
+    let custom = stt::customs(&db.0.lock().unwrap()).into_iter().find(|c| c.id() == id);
+    if curated.is_none() && custom.is_none() {
+        return Err("unknown model".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || match (&custom, curated) {
+        (Some(c), _) => c.verify(&root),
+        (_, Some(m)) => models::verify(&root, m),
+        _ => unreachable!(),
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -164,7 +214,7 @@ fn get_setting(db: tauri::State<Db>, key: String) -> Option<String> {
 #[tauri::command]
 fn set_setting(app: AppHandle, db: tauri::State<Db>, key: String, value: String) -> Result<(), String> {
     settings::set(&db.0.lock().unwrap(), &key, &value).map_err(|e| e.to_string())?;
-    if key == "dictation_enabled" {
+    if key == "dictation_enabled" || key == "dictation_hotkey" {
         sync_hotkey(&app);
     }
     Ok(())
@@ -172,13 +222,13 @@ fn set_setting(app: AppHandle, db: tauri::State<Db>, key: String, value: String)
 
 #[derive(Serialize)]
 struct HotkeyStatus {
-    key: &'static str,
+    key: String,
     error: Option<String>,
 }
 
 #[tauri::command]
-fn hotkey_status(err: tauri::State<HotkeyError>) -> HotkeyStatus {
-    HotkeyStatus { key: HOTKEY, error: err.0.lock().unwrap().clone() }
+fn hotkey_status(app: AppHandle, err: tauri::State<HotkeyError>) -> HotkeyStatus {
+    HotkeyStatus { key: hotkey(&app), error: err.0.lock().unwrap().clone() }
 }
 
 #[tauri::command]
@@ -269,12 +319,34 @@ fn show_error(app: &AppHandle, message: impl Into<String>) {
     hide_pill_after(app, 3000);
 }
 
-/// Runs `f` on the selected speech model, loading it first if needed.
+fn setting(app: &AppHandle, key: &str) -> Option<String> {
+    settings::get(&app.state::<Db>().0.lock().unwrap(), key)
+}
+
+fn hotkey(app: &AppHandle) -> String {
+    setting(app, "dictation_hotkey").filter(|k| !k.trim().is_empty()).unwrap_or_else(|| hotkey::DEFAULT.into())
+}
+
+fn toggle_mode(app: &AppHandle) -> bool {
+    setting(app, "dictation_mode").as_deref() == Some("toggle")
+}
+
+/// Runs `f` on the selected speech model, loading it first if needed. The selection is read on
+/// every call, so a change in Settings applies to the next dictation without a restart.
 pub(crate) fn with_engine<R>(app: &AppHandle, f: impl FnOnce(&mut dyn dictation::Transcriber) -> R) -> Result<R, String> {
-    let id = settings::get(&app.state::<Db>().0.lock().unwrap(), "model_stt")
-        .unwrap_or_else(|| models::MODELS.iter().find(|m| m.task == "stt").unwrap().id.to_string());
+    let (id, customs) = {
+        let state = app.state::<Db>();
+        let db = state.0.lock().unwrap();
+        let id = settings::get(&db, "model_stt")
+            .unwrap_or_else(|| models::MODELS.iter().find(|m| m.task == "stt").unwrap().id.to_string());
+        (id, stt::customs(&db))
+    };
     let dir = app.state::<ModelsDir>().0.clone();
-    app.state::<dictation::Engine>().with(&id, || dictation::load(&id, &dir), f)
+    let load = || {
+        let (runtime, path) = stt::resolve(&id, &dir, &customs)?;
+        dictation::load(runtime, &path)
+    };
+    app.state::<dictation::Engine>().with(&id, load, f)
 }
 
 fn press(app: &AppHandle) {
@@ -325,9 +397,14 @@ fn finish(app: &AppHandle, rec: audio::Recording) {
     let result = rec.stop().and_then(|clip| {
         show_pill(app, Pill::Transcribing);
         match with_engine(app, |t| dictation::dictate(&clip, t))?? {
-            dictation::Heard::TooShort => Ok(Pill::Idle { hotkey: HOTKEY }),
+            dictation::Heard::TooShort => Ok(Pill::Idle { hotkey: hotkey(app), toggle: toggle_mode(app) }),
             dictation::Heard::Silence => Err("Didn't catch that".to_string()),
             dictation::Heard::Text(text) => {
+                let rules = setting(app, "dictation_cleanup").as_deref() != Some("false");
+                let text = cleanup::clean(&text, rules, &cleanup::dictionary(setting(app, "dictionary")));
+                if text.is_empty() {
+                    return Err("Didn't catch that".to_string()); // it was all fillers
+                }
                 paste_into_focused_app(app, &text)?;
                 Ok(Pill::Done { words: text.split_whitespace().count() })
             }
@@ -350,34 +427,47 @@ fn paste_into_focused_app(app: &AppHandle, text: &str) -> Result<(), String> {
         paste::copy_only(text)?;
         return Err("Copied. Allow Accessibility to paste".into());
     }
-    let delay = paste::delay(settings::get(&app.state::<Db>().0.lock().unwrap(), "paste_delay_ms"));
-    paste::paste_text(text, delay)
+    if setting(app, "paste_method").as_deref() == Some("keystrokes") {
+        return paste::type_text(text);
+    }
+    paste::paste_text(text, paste::delay(setting(app, "paste_delay_ms")))
 }
 
 /// The hotkey is held only while Dictation is enabled, so Meetings-only users keep the shortcut.
 fn sync_hotkey(app: &AppHandle) {
     let keys = app.global_shortcut();
     let _ = keys.unregister_all();
-    let enabled = settings::get(&app.state::<Db>().0.lock().unwrap(), "dictation_enabled").as_deref() == Some("true");
+    let enabled = setting(app, "dictation_enabled").as_deref() == Some("true");
+    let hotkey = hotkey(app);
     let error = enabled
         .then(|| {
-            keys.on_shortcut(HOTKEY, |app, _, event| match event.state() {
-                ShortcutState::Pressed => press(app),
-                ShortcutState::Released => release(app),
+            keys.on_shortcut(hotkey.as_str(), |app, _, event| {
+                // Read per event, so switching mode needs no re-registering.
+                let recording = app.state::<Dictating>().rec.lock().unwrap().is_some();
+                match hotkey::act(toggle_mode(app), event.state() == ShortcutState::Pressed, recording) {
+                    hotkey::Act::Start => press(app),
+                    hotkey::Act::Stop => release(app),
+                    hotkey::Act::Nothing => {}
+                }
             })
             .err()
-            .map(|e| format!("{HOTKEY} could not be registered ({e}). Another app may be using it."))
+            .map(|e| format!("{hotkey} could not be registered ({e}). Another app may be using it."))
         })
         .flatten();
     *app.state::<HotkeyError>().0.lock().unwrap() = error;
 }
 
 fn open_window(app: &AppHandle, label: &str, title: &str, size: (f64, f64)) {
+    open_window_at(app, label, label, title, size)
+}
+
+/// Like `open_window`, but a new window starts on `hash` (the router's route, plus any argument after a slash).
+fn open_window_at(app: &AppHandle, label: &str, hash: &str, title: &str, size: (f64, f64)) {
     if let Some(w) = app.get_webview_window(label) {
         let _ = w.set_focus();
         return;
     }
-    let url = WebviewUrl::App(format!("index.html#{label}").into());
+    let url = WebviewUrl::App(format!("index.html#{hash}").into());
     if let Ok(w) = WebviewWindowBuilder::new(app, label, url)
         .title(title)
         .inner_size(size.0, size.1)
@@ -410,37 +500,19 @@ pub fn run() {
             create_pill(app.handle())?;
             sync_hotkey(app.handle());
 
-            let record = MenuItem::with_id(app, "record", "Start meeting recording", true, None::<&str>)?;
-            let menu = Menu::with_items(
-                app,
-                &[
-                    &record,
-                    &MenuItem::with_id(app, "meetings", "Meetings…", true, None::<&str>)?,
-                    &PredefinedMenuItem::separator(app)?,
-                    &MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?,
-                    &MenuItem::with_id(app, "quit", "Quit Myna", true, None::<&str>)?,
-                ],
-            )?;
+            popover::create(app.handle())?;
             TrayIconBuilder::with_id(meetings::TRAY_ID)
                 .icon(app.default_window_icon().unwrap().clone())
-                .menu(&menu)
-                .on_menu_event(|app, event| match event.id.as_ref() {
-                    "record" => {
-                        let app = app.clone();
-                        // Starting and stopping block on audio hardware; keep them off the main thread.
-                        std::thread::spawn(move || {
-                            if let Err(e) = meetings::toggle(&app) {
-                                meetings::alert(&e);
-                            }
-                        });
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| meetings::tray_menu_pick(app, event.id.as_ref()))
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, rect, .. } = event {
+                        popover::toggle(tray.app_handle(), rect);
                     }
-                    "meetings" => open_window(app, "meetings", "Meetings", (1000.0, 680.0)),
-                    "settings" => open_window(app, "settings", "Myna Settings", (800.0, 560.0)),
-                    "quit" => app.exit(0),
-                    _ => {}
                 })
                 .build(app)?;
-            meetings::setup(app, &dir, menu, record)?;
+            meetings::set_tray_menu(app.handle(), false);
+            meetings::setup(app, &dir)?;
 
             if !onboarded {
                 open_window(app.handle(), "onboarding", "Welcome to Myna", (520.0, 460.0));
@@ -457,13 +529,23 @@ pub fn run() {
             download_model,
             cancel_model,
             remove_model,
+            add_custom_model,
             verify_model,
             reveal_models_dir,
+            popover::popover_view,
+            popover::popover_fit,
+            popover::popover_hide,
+            popover::popover_go,
             meetings::meeting_toggle,
             meetings::list_meetings,
             meetings::get_meeting,
             meetings::retry_transcription,
             meetings::export_meeting,
+            meetings::list_folders,
+            meetings::create_folder,
+            meetings::rename_folder,
+            meetings::delete_folder,
+            meetings::move_meeting,
             ai::ai_state,
             ai::ai_set_key,
             meetings::summary::template_list,

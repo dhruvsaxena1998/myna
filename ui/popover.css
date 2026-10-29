@@ -1,0 +1,36 @@
+/* Menubar popover: its own transparent window, sized to the page by the backend. Ported from the approved
+   prototype; tokens come from styles.css and meetings.css. */
+body.pop { background: transparent; height: auto; }
+.pop #app { display: block; height: auto; }
+/* Room for the arrow above and the shadow around the card. popover.rs sizes the window as 320 + 2 × 16. */
+.pop .shell { padding: 12px 16px 20px; }
+.pop .popover { position: relative; background: var(--raised); border: 1px solid var(--hair-strong); border-radius: 12px; box-shadow: var(--shadow), inset 0 0 0 0.5px var(--edge); padding: 10px; }
+/* --arrow is the icon's x inside the window; 22.5 = card inset (16 + 1 border) + half the arrow. */
+.pop .popover::before { content: ""; position: absolute; top: -6px; left: clamp(14px, calc(var(--arrow, 280px) - 22.5px), 290px); width: 11px; height: 11px; background: var(--raised); border-left: 1px solid var(--hair-strong); border-top: 1px solid var(--hair-strong); transform: rotate(45deg); }
+
+.pop .sec { padding: 6px; }
+.pop .sec + .sec { border-top: 1px solid var(--hair); }
+.pop .hd { padding: 0 6px 2px; font-size: 11px; font-weight: 600; color: var(--ink-3); }
+.pop .xs { font-size: 11px; color: var(--ink-3); }
+.pop .grow { flex: 1; min-width: 0; }
+
+.pop .mi { display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 6px; border-radius: 5px; font-size: 13px; text-align: left; }
+.pop button.mi:hover, .pop button.mi:focus-visible { background: var(--accent-fill); color: var(--accent-ink); outline: none; }
+.pop .mi .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pop .mi .k { margin-left: auto; flex: none; font-size: 11px; opacity: 0.55; white-space: nowrap; }
+.pop .mi.err .k { color: var(--alert); opacity: 1; }
+.pop .mi[disabled] { opacity: 0.45; }
+
+.pop .state { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 8px 6px; }
+.pop .state .lbl { color: var(--ink-3); font-size: 11px; }
+.pop .big { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; }
+.pop .state .bar { grid-column: 1 / -1; height: 4px; background: var(--hair); border-radius: 2px; overflow: hidden; margin: 4px 0 2px; }
+.pop .state .bar i { display: block; height: 100%; background: var(--accent-fill); }
+.pop .state .xs { grid-column: 1 / -1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Text plus a dot, never colour alone. */
+.pop .line { display: flex; align-items: center; gap: 8px; padding: 6px; font-size: 12px; }
+.pop .line + .line { padding-top: 0; font-size: 11px; color: var(--ink-2); }
+.pop .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); flex: none; display: inline-block; }
+.pop .dot.live { background: var(--alert); box-shadow: 0 0 0 3px var(--alert-soft); }
+
+.pop .banner { margin: 2px 6px 6px; padding: 8px 12px; border-radius: var(--r-sm); background: var(--alert-soft); color: var(--alert); font-size: 12px; -webkit-user-select: text; user-select: text; }

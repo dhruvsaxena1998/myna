@@ -1,5 +1,6 @@
 //! Paste into the focused app through the clipboard: save it, put the text there, send Cmd-V, put it back.
 use arboard::{Clipboard, ImageData, SetExtApple};
+use core_graphics::event::CGEventFlags;
 use std::{thread::sleep, time::Duration};
 
 const DEFAULT_DELAY_MS: u64 = 150;
@@ -77,19 +78,60 @@ pub fn copy_only(text: &str) -> Result<(), String> {
 }
 
 // shortcut: keycode 9 is the physical key labelled V on a QWERTY board; on Dvorak and similar layouts it
-// types a different shortcut. Needs a layout-aware lookup, which belongs with the keystroke fallback.
+// types a different shortcut. The keystroke method below is layout-independent, so those users can switch to it.
 fn press_cmd_v() -> Result<(), String> {
+    const KEY_V: u16 = 9;
+    post_key(KEY_V, CGEventFlags::CGEventFlagCommand, None) // exactly Cmd, even if the hotkey's modifier is still held
+}
+
+/// One key press (down, up). `units` overrides what the key types, whatever the keyboard layout.
+fn post_key(code: u16, flags: CGEventFlags, units: Option<&[u16]>) -> Result<(), String> {
     use core_graphics::{
-        event::{CGEvent, CGEventFlags, CGEventTapLocation},
+        event::{CGEvent, CGEventTapLocation},
         event_source::{CGEventSource, CGEventSourceStateID},
     };
-    const KEY_V: u16 = 9;
     let err = |_| "Could not create the paste keystroke".to_string();
     let source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState).map_err(err)?;
     for down in [true, false] {
-        let key = CGEvent::new_keyboard_event(source.clone(), KEY_V, down).map_err(err)?;
-        key.set_flags(CGEventFlags::CGEventFlagCommand); // exactly Cmd, even if the hotkey's modifier is still held
+        let key = CGEvent::new_keyboard_event(source.clone(), code, down).map_err(err)?;
+        key.set_flags(flags);
+        if let Some(u) = units {
+            key.set_string_from_utf16_unchecked(u);
+        }
         key.post(CGEventTapLocation::AnnotatedSession);
+    }
+    Ok(())
+}
+
+/// A key event carries few characters; apps drop the rest of a long string.
+const CHUNK_UNITS: usize = 20;
+const CHUNK_GAP: Duration = Duration::from_millis(3);
+
+/// UTF-16 pieces of at most `CHUNK_UNITS`, never cutting a surrogate pair.
+fn chunks(text: &str) -> Vec<Vec<u16>> {
+    let mut out: Vec<Vec<u16>> = Vec::new();
+    let mut cur: Vec<u16> = Vec::new();
+    for ch in text.chars() {
+        let mut buf = [0; 2];
+        let units = &*ch.encode_utf16(&mut buf);
+        if cur.len() + units.len() > CHUNK_UNITS {
+            out.push(std::mem::take(&mut cur));
+        }
+        cur.extend_from_slice(units);
+    }
+    out.extend((!cur.is_empty()).then_some(cur));
+    out
+}
+
+/// For apps that reject paste: type the text as keystrokes. The clipboard is not touched.
+pub fn type_text(text: &str) -> Result<(), String> {
+    type_with(text, |units| post_key(0, CGEventFlags::empty(), Some(units)))
+}
+
+fn type_with(text: &str, mut post: impl FnMut(&[u16]) -> Result<(), String>) -> Result<(), String> {
+    for c in chunks(text) {
+        post(&c)?;
+        sleep(CHUNK_GAP);
     }
     Ok(())
 }
@@ -159,5 +201,28 @@ mod tests {
         assert_eq!(ms(Some("soon")), 150);
         assert_eq!(ms(Some("-5")), 150);
         assert_eq!(ms(Some("999999")), 2_000);
+    }
+
+    #[test]
+    fn typed_text_is_split_without_losing_or_cutting_characters() {
+        let long = "word ".repeat(30) + "ends 😀😀😀😀😀😀😀😀😀😀 é";
+        let mut got: Vec<Vec<u16>> = Vec::new();
+        type_with(&long, |u| Ok(got.push(u.to_vec()))).unwrap();
+        assert!(got.len() > 1 && got.iter().all(|c| c.len() <= CHUNK_UNITS));
+        // Every piece decodes on its own (no split surrogate pair) and together they are the text.
+        let joined: String = got.iter().map(|c| String::from_utf16(c).unwrap()).collect();
+        assert_eq!(joined, long);
+        assert!(chunks("").is_empty());
+        assert_eq!(chunks("hi"), vec!["hi".encode_utf16().collect::<Vec<_>>()]);
+    }
+
+    #[test]
+    fn typing_stops_at_the_first_failure() {
+        let mut calls = 0;
+        let r = type_with(&"x".repeat(100), |_| {
+            calls += 1;
+            Err("blocked".into())
+        });
+        assert_eq!((r, calls), (Err("blocked".into()), 1));
     }
 }

@@ -257,7 +257,7 @@ mod tests {
     fn meeting() -> Meeting {
         Meeting {
             id: 1, title: "Design: review/2".into(), started_at: 1_793_000_000, duration_ms: 2_520_000, app: Some("Google Chrome".into()),
-            note: None, status: "done".into(), progress: 1.0, error: None, segments: 2, has_them: true,
+            note: None, status: "done".into(), progress: 1.0, error: None, segments: 2, has_them: true, folder_id: None,
         }
     }
 
@@ -361,7 +361,7 @@ mod tests {
     #[ignore]
     fn real_parakeet_transcribes_synthesized_speech() {
         let root = std::env::temp_dir().join("myna-test-models");
-        let m = models::MODELS.iter().find(|m| m.id == dictation::PARAKEET).unwrap();
+        let m = models::MODELS.iter().find(|m| m.id == crate::stt::PARAKEET).unwrap();
         if models::status(&root, m) != models::Status::Installed {
             std::fs::create_dir_all(&root).unwrap();
             models::install(&root, m.id, m.files, models::http_open, &models::Job::default()).unwrap();
@@ -384,7 +384,7 @@ mod tests {
         wide.chunks(480).for_each(|c| tx.send(c.to_vec()).unwrap());
         writer.finish().unwrap();
 
-        let mut stt = dictation::Parakeet::load(&root.join(dictation::PARAKEET)).unwrap();
+        let mut stt = dictation::Parakeet::load(&root.join(crate::stt::PARAKEET)).unwrap();
         for path in [&wav, &live] {
             let samples = read_track(path).unwrap();
             let lines = transcribe_track(&samples, &mut stt, |_| {}).unwrap();
