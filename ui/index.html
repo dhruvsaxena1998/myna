@@ -1,0 +1,100 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { font: 14px -apple-system, sans-serif; margin: 0; padding: 24px; }
+  h1 { font-size: 20px; margin-top: 0; }
+  label { display: block; margin: 12px 0; }
+  .reason { color: #666; margin: 4px 0 12px; }
+  button { font: inherit; padding: 6px 14px; }
+</style>
+</head>
+<body><div id="app"></div>
+<script>
+const { invoke } = window.__TAURI__.core;
+const app = document.getElementById("app");
+const get = (key) => invoke("get_setting", { key });
+const set = (key, value) => invoke("set_setting", { key, value: String(value) });
+
+const PERMS = [
+  ["Microphone", "Myna needs it to hear your voice for dictation and meetings."],
+  ["Accessibility", "Myna needs it to paste text and use the global hotkey."],
+  ["Screen Recording", "Myna needs it to capture meeting audio and screenshots."],
+];
+
+async function modulesForm(onChange) {
+  const form = document.createElement("div");
+  for (const [key, name] of [["dictation_enabled", "Dictation"], ["meetings_enabled", "Meetings"]]) {
+    const label = document.createElement("label");
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = (await get(key)) === "true";
+    box.onchange = async () => { await set(key, box.checked); onChange && onChange(); };
+    label.append(box, " " + name);
+    form.append(label);
+  }
+  return form;
+}
+
+async function settings() {
+  app.innerHTML = "<h1>Modules</h1>";
+  app.append(await modulesForm());
+}
+
+async function onboarding() {
+  app.innerHTML = "<h1>Welcome to Myna</h1><p>What do you want to use Myna for?</p>";
+  const any = () => [...form.querySelectorAll("input")].some((b) => b.checked);
+  const form = await modulesForm(() => next.disabled = !any());
+  const next = document.createElement("button");
+  next.textContent = "Continue";
+  next.disabled = !any();
+  next.onclick = () => permission(0);
+  app.append(form, next);
+}
+
+function permission(i) {
+  const [name, reason] = PERMS[i];
+  app.innerHTML = `<h1>${name}</h1><p class="reason">${reason}</p><p id="state"></p>`;
+  const state = document.getElementById("state");
+  const refresh = async () => {
+    const ok = await invoke("permission_granted", { name });
+    state.textContent = ok ? "Granted" : "Not granted yet";
+    return ok;
+  };
+  refresh();
+  window.onfocus = refresh; // System Settings grants show up when the user comes back
+  const btn = (text, fn) => {
+    const b = document.createElement("button");
+    b.textContent = text;
+    b.onclick = fn;
+    app.append(b, " ");
+  };
+  btn(`Allow ${name}`, async () => {
+    await invoke("request_permission", { name });
+    setTimeout(refresh, 1500);
+  });
+  btn("Open System Settings", () => invoke("open_privacy_settings", { name }));
+  btn(i + 1 < PERMS.length ? "Next" : "Finish", () => i + 1 < PERMS.length ? permission(i + 1) : finish());
+  if (name === "Screen Recording") {
+    const p = document.createElement("p");
+    p.className = "reason";
+    p.textContent = "macOS may need Myna to be relaunched before this shows as granted.";
+    app.append(p);
+  }
+}
+
+async function finish() {
+  await set("onboarded", true);
+  app.innerHTML = "<h1>All set</h1><p>Myna lives in your menubar.</p>";
+  const done = document.createElement("button");
+  done.textContent = "Done";
+  window.onfocus = null;
+  done.onclick = () => window.__TAURI__.window.getCurrentWindow().close();
+  app.append(done);
+}
+
+location.hash === "#onboarding" ? onboarding() : settings();
+</script>
+</body>
+</html>
