@@ -139,6 +139,27 @@ pub fn read_track(path: &Path) -> Result<Vec<i16>, String> {
     r.samples::<i16>().collect::<Result<_, _>>().map_err(|e| e.to_string())
 }
 
+/// `start_ms..end_ms` of a track as a standalone WAV, for playing a segment back. Padded a little on both sides
+/// because the model's timestamps cut close to the words.
+pub fn clip(path: &Path, start_ms: u64, end_ms: u64) -> Result<Vec<u8>, String> {
+    const PAD_MS: u64 = 300;
+    let read = || -> hound::Result<Vec<u8>> {
+        let mut r = hound::WavReader::open(path)?;
+        let spec = r.spec();
+        let at = |ms: u64| ((ms * spec.sample_rate as u64 / 1000) as u32).min(r.duration());
+        let (from, to) = (at(start_ms.saturating_sub(PAD_MS)), at(end_ms + PAD_MS));
+        r.seek(from)?;
+        let mut out = std::io::Cursor::new(Vec::new());
+        let mut w = hound::WavWriter::new(&mut out, spec)?;
+        for s in r.samples::<i16>().take(to.saturating_sub(from) as usize) {
+            w.write_sample(s?)?;
+        }
+        w.finalize()?;
+        Ok(out.into_inner())
+    };
+    read().map_err(|e| format!("{}: {e}", path.display()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,6 +215,28 @@ mod tests {
         let samples = read_track(&path).unwrap();
         assert!((samples.len() as i64 - 16_000).abs() < 40, "{}", samples.len());
         assert!(samples.iter().any(|&s| s.abs() > 20_000));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn clip_is_the_padded_slice_as_its_own_wav() {
+        let path = std::env::temp_dir().join(format!("myna-clip-{}.wav", std::process::id()));
+        let spec = hound::WavSpec { channels: 1, sample_rate: RATE, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
+        let mut w = hound::WavWriter::create(&path, spec).unwrap();
+        for i in 0..10 * RATE as i32 {
+            w.write_sample((i / RATE as i32) as i16).unwrap(); // each second holds its own number
+        }
+        w.finalize().unwrap();
+
+        let wav = clip(&path, 4000, 5000).unwrap();
+        let mut r = hound::WavReader::new(std::io::Cursor::new(wav)).unwrap();
+        assert_eq!((r.spec().sample_rate, r.spec().channels), (RATE, 1));
+        let got: Vec<i16> = r.samples::<i16>().map(Result::unwrap).collect();
+        assert_eq!(got.len(), 25_600, "1 s plus 300 ms either side is 1.6 s");
+        assert_eq!((got[0], got[got.len() - 1]), (3, 5));
+        // Past the end it stops at the end instead of failing; before the start it starts at 0.
+        assert_eq!(clip(&path, 9900, 20_000).unwrap().len(), 44 + 2 * 6400); // 9.6 s to the end, plus the header
+        assert!(clip(&path, 0, 100).is_ok());
         let _ = std::fs::remove_file(&path);
     }
 }
