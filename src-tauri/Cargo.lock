@@ -2412,6 +2412,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "sha2",
+ "swift-rs",
  "tauri",
  "tauri-build",
  "tauri-plugin-global-shortcut",

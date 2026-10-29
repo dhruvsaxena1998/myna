@@ -56,7 +56,7 @@ impl Transcriber for Parakeet {
     }
 }
 
-/// The selected speech model's backend. Only Parakeet has one so far.
+/// The selected speech model's backend.
 pub fn load(id: &str, root: &Path) -> Result<Box<dyn Transcriber>, String> {
     let m = models::MODELS.iter().find(|m| m.id == id).ok_or("Unknown speech model")?;
     if models::status(root, m) != models::Status::Installed {
@@ -64,6 +64,7 @@ pub fn load(id: &str, root: &Path) -> Result<Box<dyn Transcriber>, String> {
     }
     match id {
         PARAKEET => Ok(Box::new(Parakeet::load(&root.join(id))?)),
+        crate::voz::ID => Ok(Box::new(crate::voz::Voz::load(&root.join(id))?)),
         _ => Err(format!("{} can't dictate yet", m.name)),
     }
 }

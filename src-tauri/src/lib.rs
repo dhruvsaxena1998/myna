@@ -4,6 +4,7 @@ mod models;
 mod paste;
 mod permissions;
 mod settings;
+mod voz;
 
 use serde::Serialize;
 use std::{
@@ -66,6 +67,8 @@ struct ModelRow {
     /// Bytes fetched so far while a download runs.
     downloading: Option<u64>,
     error: Option<String>,
+    /// Why this model can't run on this Mac or in this build; the picker disables it.
+    unavailable: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -91,6 +94,7 @@ fn list_models(dir: tauri::State<ModelsDir>, jobs: tauri::State<models::Jobs>) -
                 status: models::status(&dir.0, m),
                 downloading: job.filter(|_| result.is_none()).map(|j| j.done.load(Ordering::Relaxed)),
                 error: result.and_then(|r| r.err()),
+                unavailable: (m.id == voz::ID).then(voz::unavailable).flatten(),
             }
         })
         .collect();
