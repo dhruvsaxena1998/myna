@@ -55,6 +55,18 @@ macro_rules! voz_file {
     };
 }
 
+/// A file of Desert Ant's Who (fp16 Core ML), at the repo commit behind tag v0.3.4: the revision SDK 4.2.1 pins.
+macro_rules! who_file {
+    ($name:literal, $sha256:literal, $size:literal) => {
+        File {
+            name: $name,
+            url: concat!("https://huggingface.co/desert-ant-labs/who/resolve/f026f4604f874e2cfe6b817e5123c2b64a56683d/", $name),
+            sha256: $sha256,
+            size: $size,
+        }
+    };
+}
+
 // URLs are pinned to a repo commit so the checksums stay valid; hashes are the LFS oids
 // from the Hugging Face API (vocab.txt is not LFS, so its hash was computed from the download).
 pub static MODELS: &[Model] = &[
@@ -122,6 +134,40 @@ pub static MODELS: &[Model] = &[
             voz_file!("mel.mlmodelc/weights/weight.bin", "34f8a1bcf01e6a6ae053efe012cd189e0c38e9dca65660f199740ce9a0958f95", 826_688),
             voz_file!("meta.json", "2b5fa951d70cbbab49fccf31836521be8305d0d9557b9bedf45cc8dcdc61b53b", 584),
             voz_file!("vocab.json", "3eb2f73e8853dce5156c2ed97c0b1bb84eb4ebd201eb1761d15977fc1ea31490", 78_654),
+        ],
+    },
+    // Core ML files again, loaded only by the Desert Ant SDK (see who.rs). Names keep the repo's
+    // `coreml-fp16/` folder, which is where the SDK looks. Hashes of the non-LFS files were computed from the download.
+    Model {
+        id: "who",
+        task: "diarization",
+        name: "Who",
+        desc: "Default. Runs on the Neural Engine. Up to four speakers. Needs macOS 15.",
+        files: &[
+            who_file!("coreml-fp16/encoder_30000.mlmodelc/analytics/coremldata.bin", "2f2656633f626f87beba6e47e533baed3874d1eacd3228c2bf351326858cc53e", 243),
+            who_file!("coreml-fp16/encoder_30000.mlmodelc/coremldata.bin", "a1b2a35fddb8755483ca4bd9cb3d51e15c79c1e9ce3b052e1e55f69ba75a444e", 399),
+            who_file!("coreml-fp16/encoder_30000.mlmodelc/model.mil", "3adf9eb810955c207527c87868ff926b8594919d5ea2cc7e5a220d4ea2aa3499", 228_136),
+            who_file!("coreml-fp16/encoder_30000.mlmodelc/weights/weight.bin", "998194432a81fef3c66350502c624cf844e62592223c25bf5deb93031f529bd1", 23_349_888),
+            who_file!("coreml-fp16/encoder_6000.mlmodelc/analytics/coremldata.bin", "203e8dfd90815c1d197147d44cf9cc41da5031c5c0fe15398918023bb3c57722", 243),
+            who_file!("coreml-fp16/encoder_6000.mlmodelc/coremldata.bin", "f3c6f8e3f44270e1d0672cb0ecce98de3a2de3715a0d1c2f13f6cb341f28fb76", 397),
+            who_file!("coreml-fp16/encoder_6000.mlmodelc/model.mil", "22c7928cf61eb8594436075f1200f489232a5fc9ed61dc8b3fdfb6e7287418e6", 227_558),
+            who_file!("coreml-fp16/encoder_6000.mlmodelc/weights/weight.bin", "fa34257f332b5ebfcd53d1461cbb87f76a02c5bb129a33703dcafd9a11477316", 20_834_688),
+            who_file!("coreml-fp16/queries_30000.mlmodelc/analytics/coremldata.bin", "92335d6b04331041d4f255e5bafe7befc837a9f6d37d03fa4beeba25cb4cb347", 243),
+            who_file!("coreml-fp16/queries_30000.mlmodelc/coremldata.bin", "979397a485b3c0e1c9a8dd6e4c8bffeed4f019b8323b722b3c586ff311f056b7", 504),
+            who_file!("coreml-fp16/queries_30000.mlmodelc/model.mil", "6d2f360abe974b7bd9fce4e077735a005ff54d0640d23be50041768b6c75379a", 135_814),
+            who_file!("coreml-fp16/queries_30000.mlmodelc/weights/weight.bin", "46687be0f958349341bc7e2bf84bda5e4d7365ff5056462a205d19f1f56f81fb", 13_019_136),
+            who_file!("coreml-fp16/queries_6000.mlmodelc/analytics/coremldata.bin", "617e1a729e0a763826236a7a4cd1e2d6252aad96b34f052a9044c8e7f7c00800", 243),
+            who_file!("coreml-fp16/queries_6000.mlmodelc/coremldata.bin", "76b9725564138b9741ac553e1d8fdd03987645e603124edd2fa0c575e706ccb4", 452),
+            who_file!("coreml-fp16/queries_6000.mlmodelc/model.mil", "5f9a152aa7c01fc4ba2c8916e29d6ec581cb3b41df53afc44661b85be7c2336b", 134_015),
+            who_file!("coreml-fp16/queries_6000.mlmodelc/weights/weight.bin", "46687be0f958349341bc7e2bf84bda5e4d7365ff5056462a205d19f1f56f81fb", 13_019_136),
+            who_file!("coreml-fp16/voice_3256.mlmodelc/analytics/coremldata.bin", "874f2018ec09db2d185cb43c1c55a65d383b4b8d6f435d746e1c73045594fb48", 243),
+            who_file!("coreml-fp16/voice_3256.mlmodelc/coremldata.bin", "ac5fb237dc7f59da6bb643f7de7ee98dafadd9b3c3f3770cd1df680abc53a442", 373),
+            who_file!("coreml-fp16/voice_3256.mlmodelc/model.mil", "6eebc5e3608f69ebe755c51f7d7b98799e1310afb93df643a1c98cf00f9caf89", 57_727),
+            who_file!("coreml-fp16/voice_3256.mlmodelc/weights/weight.bin", "b8c030fc8b0053f9274f4f54a87e9c575ce2df9dd207f4098a1ca96ec0dfa57f", 10_642_880),
+            who_file!("coreml-fp16/who_embed.f16", "2f2cb55e4370c30b3d5f0401bf421e018fcc8633f5d3aef225375704c60a8c1c", 2_621_960),
+            who_file!("coreml-fp16/who_mel_banks.f32", "730d76d5d2099d964c705c82c4556e2b10792d287666aa97edb0633f88f08ce0", 23_652),
+            who_file!("coreml-fp16/who_meta.json", "cd2a2e311db7e7f6c0248a635b59b21fff5028837fef9ccc1ea5c715edd7e737", 3_954),
+            who_file!("coreml-fp16/who_voice_banks.f32", "df33ff45ac021f5d014356b4e9ab4b9f91fadd836649962ee6e89eadfcd264e3", 82_248),
         ],
     },
     Model {

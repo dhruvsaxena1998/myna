@@ -2,12 +2,14 @@
 //! keep the result in SQLite, export it as Markdown or text.
 mod capture;
 pub(crate) mod mute;
+pub mod speakers;
 pub(crate) mod store;
 pub mod summary;
 mod track;
 mod transcript;
+mod voiceprint;
 
-use crate::{dictation::{Transcriber, Utterance}, permissions, with_engine, Db};
+use crate::{dictation::{Transcriber, Utterance}, diarize, permissions, settings, with_engine, Db, ModelsDir};
 use rusqlite::Connection;
 use serde::Serialize;
 use std::{
@@ -40,6 +42,7 @@ pub fn setup(app: &tauri::App, root: &Path) -> Result<(), Box<dyn std::error::Er
         let conn = db.0.lock().unwrap();
         store::init(&conn)?;
         summary::init(&conn)?;
+        speakers::init(&conn)?;
         store::recover(&conn)?
     };
     app.manage(AudioDir(audio));
@@ -194,7 +197,11 @@ fn spawn_transcription(app: &AppHandle, id: i64) {
     std::thread::spawn(move || {
         let _turn = TRANSCRIBING.lock().unwrap_or_else(|e| e.into_inner());
         let (db, audio) = (app.state::<Db>(), app.state::<AudioDir>());
-        let result = transcript::run(&db.0, &audio.0, id, &mut Shared(app.clone()));
+        let diarizer = || {
+            let picked = diarize::pick(settings::get(&db.0.lock().unwrap(), "model_diarization").as_deref(), |m| diarize::unavailable(m).is_some());
+            diarize::load(picked, &app.state::<ModelsDir>().0)
+        };
+        let result = transcript::run(&db.0, &audio.0, id, &mut Shared(app.clone()), diarizer);
         if let Err(e) = result {
             store::fail(&db.0.lock().unwrap(), id, &e);
         }
@@ -245,6 +252,7 @@ pub fn move_meeting(db: tauri::State<Db>, id: i64, folder: Option<i64>) -> Resul
 pub struct Detail {
     meeting: store::Meeting,
     segments: Vec<store::Segment>,
+    speakers: Vec<speakers::Speaker>,
 }
 
 #[tauri::command]
@@ -253,6 +261,7 @@ pub fn get_meeting(db: tauri::State<Db>, id: i64) -> Result<Detail, String> {
     Ok(Detail {
         meeting: store::get(&conn, id).map_err(|e| e.to_string())?,
         segments: store::segments(&conn, id).map_err(|e| e.to_string())?,
+        speakers: speakers::list(&conn, id).map_err(|e| e.to_string())?,
     })
 }
 
@@ -262,12 +271,13 @@ pub fn include_segment(db: tauri::State<Db>, id: i64, included: bool) -> Result<
     store::include_segment(&db.0.lock().unwrap(), id, included).map_err(|e| e.to_string())
 }
 
-/// The audio of one segment as a WAV, for the Play button.
+/// The audio of one segment as a WAV, for the Play button; `max_ms` cuts a long one short.
 #[tauri::command(async)]
-pub fn segment_clip(app: AppHandle, db: tauri::State<Db>, id: i64) -> Result<tauri::ipc::Response, String> {
+pub fn segment_clip(app: AppHandle, db: tauri::State<Db>, id: i64, max_ms: Option<u64>) -> Result<tauri::ipc::Response, String> {
     let (meeting, s) = store::segment(&db.0.lock().unwrap(), id).map_err(|e| e.to_string())?;
     let track = if s.speaker == store::ME { "mic.wav" } else { "system.wav" };
-    track::clip(&app.state::<AudioDir>().0.join(meeting.to_string()).join(track), s.start_ms, s.end_ms).map(tauri::ipc::Response::new)
+    let end = max_ms.map_or(s.end_ms, |m| s.end_ms.min(s.start_ms + m));
+    track::clip(&app.state::<AudioDir>().0.join(meeting.to_string()).join(track), s.start_ms, end).map(tauri::ipc::Response::new)
 }
 
 #[tauri::command]
@@ -287,12 +297,12 @@ pub fn retry_transcription(app: AppHandle, db: tauri::State<Db>, id: i64) -> Res
 #[tauri::command]
 pub fn export_meeting(app: AppHandle, db: tauri::State<Db>, id: i64, format: String) -> Result<String, String> {
     let format = transcript::Format::parse(&format).ok_or("unknown export format")?;
-    let (meeting, segments) = {
+    let (meeting, segments, people) = {
         let conn = db.0.lock().unwrap();
-        (store::get(&conn, id).map_err(|e| e.to_string())?, store::segments(&conn, id).map_err(|e| e.to_string())?)
+        (store::get(&conn, id).map_err(|e| e.to_string())?, store::segments(&conn, id).map_err(|e| e.to_string())?, speakers::list(&conn, id).map_err(|e| e.to_string())?)
     };
     let path = app.path().download_dir().map_err(|e| e.to_string())?.join(transcript::file_name(&meeting, format));
-    fs::write(&path, transcript::export(&meeting, &segments, format)).map_err(|e| e.to_string())?;
+    fs::write(&path, transcript::export_named(&meeting, &segments, &people, format)).map_err(|e| e.to_string())?;
     let _ = std::process::Command::new("open").arg("-R").arg(&path).spawn();
     Ok(path.display().to_string())
 }

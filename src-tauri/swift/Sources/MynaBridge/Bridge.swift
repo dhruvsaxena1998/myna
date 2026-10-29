@@ -3,6 +3,7 @@
 import Foundation
 #if canImport(Voz)
 import Voz
+import Who
 #endif
 
 private func cString(_ s: String) -> UnsafeMutablePointer<CChar> { strdup(s)! }
@@ -92,5 +93,68 @@ public func mynaVozTranscribe(
 public func mynaVozFree(_ handle: UnsafeMutableRawPointer) {
     #if canImport(Voz)
     Unmanaged<Voz>.fromOpaque(handle).release()
+    #endif
+}
+
+/// NULL when Who can run on this Mac with this build, else the reason it can't.
+@_cdecl("myna_who_unavailable")
+public func mynaWhoUnavailable() -> UnsafeMutablePointer<CChar>? {
+    #if canImport(Voz)
+    if #available(macOS 15, *) { return nil }
+    return cString("Who needs macOS 15 or newer.")
+    #else
+    return cString("This build of Myna doesn't include the Desert Ant SDK.")
+    #endif
+}
+
+/// Loads Who from a folder of its model files. Returns an owned handle, or NULL with `failure` set.
+@_cdecl("myna_who_load")
+public func mynaWhoLoad(
+    _ dir: UnsafePointer<CChar>,
+    _ failure: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>
+) -> UnsafeMutableRawPointer? {
+    #if canImport(Voz)
+    let path = String(cString: dir)
+    // Handed an incomplete folder the SDK would download the model itself. Downloads are Myna's job.
+    guard Who.isDownloaded(directory: path) else {
+        failure.pointee = cString("Who's model files aren't in the models folder.")
+        return nil
+    }
+    return Unmanaged.passRetained(Who(directory: path)).toOpaque()
+    #else
+    failure.pointee = mynaWhoUnavailable()
+    return nil
+    #endif
+}
+
+/// Mono 16 kHz samples in; one "start end speaker" line per turn out (seconds, speakers from 0), owned.
+/// NULL with `failure` set on failure.
+@_cdecl("myna_who_diarize")
+public func mynaWhoDiarize(
+    _ handle: UnsafeMutableRawPointer,
+    _ samples: UnsafePointer<Float>,
+    _ count: Int,
+    _ failure: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>
+) -> UnsafeMutablePointer<CChar>? {
+    #if canImport(Voz)
+    let who = Unmanaged<Who>.fromOpaque(handle).takeUnretainedValue()
+    let audio = Array(UnsafeBufferPointer(start: samples, count: count))
+    do {
+        let result = try wait { try await who.diarize(samples: audio, sampleRate: 16_000) }
+        return cString(result.turns.map { "\($0.start) \($0.end) \($0.speaker)\n" }.joined())
+    } catch {
+        failure.pointee = cString("\(error)")
+        return nil
+    }
+    #else
+    failure.pointee = mynaWhoUnavailable()
+    return nil
+    #endif
+}
+
+@_cdecl("myna_who_free")
+public func mynaWhoFree(_ handle: UnsafeMutableRawPointer) {
+    #if canImport(Voz)
+    Unmanaged<Who>.fromOpaque(handle).release()
     #endif
 }

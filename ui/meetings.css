@@ -57,7 +57,7 @@
 .meet .tx h2 { font-size: 20px; font-weight: 600; letter-spacing: -0.015em; margin: 0 0 2px; }
 .meet .tx .sub { color: var(--ink-2); margin-bottom: 20px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .meet .tx .note { color: var(--ink-2); font-size: 12px; margin: -8px 0 16px; }
-.meet .seg-row { display: grid; grid-template-columns: 136px 1fr; gap: 0 14px; padding: 6px 0; border-radius: 6px; -webkit-user-select: text; user-select: text; }
+.meet .seg-row { position: relative; display: grid; grid-template-columns: 136px 1fr auto; gap: 0 14px; padding: 6px 0; border-radius: 6px; -webkit-user-select: text; user-select: text; }
 .meet .seg-row:hover { background: var(--sel); margin: 0 -8px; padding: 6px 8px; }
 .meet .who { font-weight: 600; font-size: 12px; text-align: right; padding-top: 2px; }
 .meet .who .t { display: block; color: var(--ink-3); font-weight: 400; font-size: 11px; }
@@ -90,3 +90,25 @@
 .meet .menu .mi svg { visibility: hidden; }
 .meet .menu .mi[aria-checked="true"] svg { visibility: visible; }
 .meet .menu .mi:hover, .meet .menu .mi:focus-visible { background: var(--accent-fill); color: var(--accent-ink); outline: none; }
+
+/* Speakers: the name is a button that opens the rename popover. Ported from the prototype's .sugg and .pop. */
+.meet .seg-row .inc { display: flex; align-items: center; }
+.meet #body > .seg-row .inc { opacity: 0; }
+.meet #body > .seg-row:hover .inc, .meet #body > .seg-row .inc:focus-within { opacity: 1; }
+.meet .spk { font-weight: 600; }
+.meet .spk:hover { text-decoration: underline; }
+.meet .who .sugg { display: block; width: fit-content; margin: 2px 0 0 auto; white-space: nowrap; font-size: 11px; font-weight: 500; color: var(--ink-3); border: 1px solid var(--hair-strong); border-radius: 3px; padding: 0 3px; }
+.meet .pop { position: absolute; z-index: 5; top: 52px; left: -6px; width: 300px; padding: 12px; text-align: left; font-weight: 400; background: var(--raised); border: 1px solid var(--hair-strong); border-radius: 10px; box-shadow: var(--shadow), inset 0 0 0 0.5px var(--edge); }
+.meet .pop .arrow { position: absolute; top: -6px; left: 40px; width: 10px; height: 10px; background: var(--raised); border-left: 1px solid var(--hair-strong); border-top: 1px solid var(--hair-strong); transform: rotate(45deg); }
+.meet .pop h3 { margin: 0 0 8px; font-size: 12px; font-weight: 600; }
+.meet .pop .field { width: 100%; }
+.meet .pop .s { margin-top: 6px; }
+.meet .pop label.row { font-size: 12px; color: var(--ink-2); margin-top: 8px; }
+.meet .pop .head { margin-top: 10px; }
+.meet .pop .clip { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid var(--hair); font-size: 12px; color: var(--ink-2); }
+.meet .pop .clip:first-of-type { margin-top: 4px; }
+.meet .pop .clip .wave { flex: 1; height: 14px; border-radius: 2px; background: var(--sel); }
+.meet .pop .foot { display: flex; gap: 6px; justify-content: flex-end; margin-top: 10px; }
+.meet .pop .mi { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; padding: 5px 8px; border-radius: 5px; font-size: 13px; text-align: left; }
+.meet .pop .mi:hover, .meet .pop .mi:focus-visible { background: var(--accent-fill); color: var(--accent-ink); outline: none; }
+.meet .pop .mi .xs { color: inherit; opacity: 0.75; }

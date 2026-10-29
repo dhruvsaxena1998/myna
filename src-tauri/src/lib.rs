@@ -2,6 +2,7 @@ mod ai;
 mod audio;
 mod cleanup;
 mod dictation;
+mod diarize;
 mod hotkey;
 mod meetings;
 mod models;
@@ -11,6 +12,7 @@ mod popover;
 mod settings;
 mod stt;
 mod voz;
+mod who;
 
 use serde::Serialize;
 use std::{
@@ -103,7 +105,7 @@ fn list_models(dir: tauri::State<ModelsDir>, jobs: tauri::State<models::Jobs>, d
             error: result.and_then(|r| r.err()).or(problem),
             custom: custom.is_some(),
             local: custom.is_some_and(stt::Custom::local),
-            unavailable: (m.id == voz::ID).then(voz::unavailable).flatten(),
+            unavailable: if m.id == voz::ID { voz::unavailable() } else { diarize::unavailable(m.id) },
         }
     };
     let mut models: Vec<_> = models::MODELS.iter().map(|m| row(m, models::status(&dir.0, m), None, None)).collect();
@@ -601,7 +603,11 @@ pub fn run() {
             meetings::summary::template_save,
             meetings::summary::template_delete,
             meetings::summary::summary_get,
-            meetings::summary::summary_generate
+            meetings::summary::summary_generate,
+            meetings::speakers::speaker_rename,
+            meetings::speakers::speaker_dismiss,
+            meetings::speakers::speaker_merge,
+            meetings::speakers::speaker_clips
         ])
         .build(tauri::generate_context!())
         .expect("error building Myna")
