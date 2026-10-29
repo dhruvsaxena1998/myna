@@ -2,6 +2,7 @@
 use crate::{audio, stt::Runtime};
 use parakeet_rs::{ort::environment::Environment, ExecutionConfig};
 use std::{
+    ops::Range,
     path::Path,
     sync::{Mutex, OnceLock},
 };
@@ -22,6 +23,65 @@ pub trait Transcriber: Send {
     fn transcribe_timed(&mut self, audio: &[f32]) -> Result<Vec<Utterance>, String> {
         let text = self.transcribe(audio)?;
         Ok(vec![Utterance { start_ms: 0, end_ms: audio.len() as u64 * 1000 / audio::RATE as u64, text }])
+    }
+
+    /// The experimental LLM pass over finished text (meetings call it per line); None keeps the text as it is.
+    /// Only the shared engine has a provider behind it.
+    fn polish(&self, _text: &str) -> Option<String> {
+        None
+    }
+}
+
+/// Finds filler words in mono 16 kHz samples, as millisecond spans.
+pub trait FillerDetector: Send {
+    fn fillers(&mut self, audio: &[f32]) -> Result<Vec<Range<u64>>, String>;
+}
+
+/// Silences each span, so the audio keeps its length and every timestamp downstream stays true.
+fn hush(audio: &[f32], spans: &[Range<u64>]) -> Vec<f32> {
+    let mut out = audio.to_vec();
+    for s in spans {
+        let at = |ms: u64| (ms as usize * audio::RATE as usize / 1000).min(out.len());
+        let (from, to) = (at(s.start), at(s.end));
+        out[from..to.max(from)].fill(0.0);
+    }
+    out
+}
+
+/// A transcriber that hears the audio with its fillers silenced: Uhm runs before speech-to-text.
+/// shortcut: silencing the spans instead of dropping timestamped words, because the backends hand back text or
+/// whole lines, not words; upgrade if `Transcriber` ever exposes word timestamps.
+pub struct Hushed<'a> {
+    pub t: &'a mut dyn Transcriber,
+    pub d: &'a mut dyn FillerDetector,
+}
+
+impl Hushed<'_> {
+    /// A detector that fails leaves the audio as it was: filler detection must never cost a dictation.
+    fn hushed(&mut self, audio: &[f32]) -> Vec<f32> {
+        match self.d.fillers(audio) {
+            Ok(spans) => hush(audio, &spans),
+            Err(e) => {
+                eprintln!("Uhm failed, transcribing as recorded: {e}");
+                audio.to_vec()
+            }
+        }
+    }
+}
+
+impl Transcriber for Hushed<'_> {
+    fn transcribe(&mut self, audio: &[f32]) -> Result<String, String> {
+        let audio = self.hushed(audio);
+        self.t.transcribe(&audio)
+    }
+
+    fn transcribe_timed(&mut self, audio: &[f32]) -> Result<Vec<Utterance>, String> {
+        let audio = self.hushed(audio);
+        self.t.transcribe_timed(&audio)
+    }
+
+    fn polish(&self, text: &str) -> Option<String> {
+        self.t.polish(text)
     }
 }
 
@@ -179,6 +239,41 @@ mod tests {
         fn transcribe(&mut self, _: &[f32]) -> Result<String, String> {
             Err("model crashed".into())
         }
+    }
+
+    /// Hears whatever it is given, so a test can see what reached speech-to-text.
+    struct Echo(Vec<f32>);
+    impl Transcriber for Echo {
+        fn transcribe(&mut self, audio: &[f32]) -> Result<String, String> {
+            self.0 = audio.to_vec();
+            Ok("text".into())
+        }
+    }
+
+    struct Found(Result<Vec<Range<u64>>, String>);
+    impl FillerDetector for Found {
+        fn fillers(&mut self, _: &[f32]) -> Result<Vec<Range<u64>>, String> {
+            self.0.clone()
+        }
+    }
+
+    #[test]
+    fn uhm_silences_the_fillers_before_speech_to_text_hears_the_audio() {
+        let (mut echo, mut uhm) = (Echo(vec![]), Found(Ok(vec![250..500, 900..5000])));
+        let audio = vec![1.0; 16_000];
+        let heard = Hushed { t: &mut echo, d: &mut uhm }.transcribe(&audio).unwrap();
+        assert_eq!(heard, "text");
+        assert_eq!(echo.0.len(), audio.len(), "timestamps depend on the length surviving");
+        let silent: Vec<usize> = (0..echo.0.len()).filter(|&i| echo.0[i] == 0.0).collect();
+        assert_eq!(silent, (4000..8000).chain(14_400..16_000).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn a_failing_detector_costs_nothing() {
+        let (mut echo, mut uhm) = (Echo(vec![]), Found(Err("no model".into())));
+        let audio = vec![1.0; 16_000];
+        Hushed { t: &mut echo, d: &mut uhm }.transcribe(&audio).unwrap();
+        assert_eq!(echo.0, audio);
     }
 
     fn read_wav(path: &Path) -> Clip {

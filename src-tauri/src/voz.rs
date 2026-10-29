@@ -19,7 +19,7 @@ extern "C" {
 }
 
 /// Copies a string the bridge allocated and gives it back.
-fn take(s: *mut c_char) -> Option<String> {
+pub(crate) fn take(s: *mut c_char) -> Option<String> {
     if s.is_null() {
         return None;
     }

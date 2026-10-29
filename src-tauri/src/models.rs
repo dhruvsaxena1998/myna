@@ -43,6 +43,18 @@ impl Remote {
     }
 }
 
+/// A file of Desert Ant's Uhm, at the repo commit behind tag v1.2.0.
+macro_rules! uhm_file {
+    ($name:literal, $sha256:literal, $size:literal) => {
+        File {
+            name: $name,
+            url: concat!("https://huggingface.co/desert-ant-labs/uhm/resolve/fcbc8f364cef3e0bd3a54d1489d76ca433070dd5/", $name),
+            sha256: $sha256,
+            size: $size,
+        }
+    };
+}
+
 /// A file of Desert Ant's Voz, at the repo commit behind tag v0.5.0: the revision SDK 4.2.1 pins.
 macro_rules! voz_file {
     ($name:literal, $sha256:literal, $size:literal) => {
@@ -122,6 +134,22 @@ pub static MODELS: &[Model] = &[
             voz_file!("mel.mlmodelc/weights/weight.bin", "34f8a1bcf01e6a6ae053efe012cd189e0c38e9dca65660f199740ce9a0958f95", 826_688),
             voz_file!("meta.json", "2b5fa951d70cbbab49fccf31836521be8305d0d9557b9bedf45cc8dcdc61b53b", 584),
             voz_file!("vocab.json", "3eb2f73e8853dce5156c2ed97c0b1bb84eb4ebd201eb1761d15977fc1ea31490", 78_654),
+        ],
+    },
+    // Core ML detector plus its type-labeler head, at the repo commit behind tag v1.2.0 (the revision SDK 4.2.1 pins).
+    // Same non-LFS caveat as above for the small json/mil files.
+    Model {
+        id: "uhm",
+        task: "filler",
+        name: "Uhm",
+        desc: "Finds \"uh\" and \"um\" in the audio itself. Experimental.",
+        files: &[
+            uhm_file!("uhm.mlmodelc/analytics/coremldata.bin", "0693408f429a19d9f6ae21b5dbbb1dceb06e1e499281b1c6c842cbef29195718", 243),
+            uhm_file!("uhm.mlmodelc/coremldata.bin", "f87f7ff6605d389e853488363680654025f5c1765c93d282c95d2fec04cd6287", 991),
+            uhm_file!("uhm.mlmodelc/metadata.json", "49f5c52b16f4230d48f64c4ab60835e28c66678bea163d0ca35b1a3f86c547ce", 2_806),
+            uhm_file!("uhm.mlmodelc/model.mil", "2445325b0d767a85e432bd48a6e95cd178afc325224dd3eee4b3248eb7e7036a", 281_547),
+            uhm_file!("uhm.mlmodelc/weights/weight.bin", "f463c73ff42cd2cc2fe5ad4954f0af1218468ca8c13e183ea9c7de529c84701a", 47_100_992),
+            uhm_file!("UhmLabel.mlmodel", "234aada7598f99786efd3b05cdac783da408a3123fe12fb1dca5e52035d59c31", 12_950),
         ],
     },
     Model {

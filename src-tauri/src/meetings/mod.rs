@@ -7,7 +7,7 @@ pub mod summary;
 mod track;
 mod transcript;
 
-use crate::{dictation::{Transcriber, Utterance}, permissions, with_engine, Db};
+use crate::{dictation::{Transcriber, Utterance}, permissions, with_hushed, Db};
 use rusqlite::Connection;
 use serde::Serialize;
 use std::{
@@ -182,10 +182,13 @@ struct Shared(AppHandle);
 
 impl Transcriber for Shared {
     fn transcribe(&mut self, audio: &[f32]) -> Result<String, String> {
-        with_engine(&self.0, |t| t.transcribe(audio))?
+        with_hushed(&self.0, "meetings", |t| t.transcribe(audio))?
     }
     fn transcribe_timed(&mut self, audio: &[f32]) -> Result<Vec<Utterance>, String> {
-        with_engine(&self.0, |t| t.transcribe_timed(audio))?
+        with_hushed(&self.0, "meetings", |t| t.transcribe_timed(audio))?
+    }
+    fn polish(&self, text: &str) -> Option<String> {
+        crate::polish(&self.0, "meetings", text)
     }
 }
 

@@ -7,7 +7,10 @@ import PackageDescription
 let sdk: [Package.Dependency] = [
     .package(url: "https://github.com/Desert-Ant-Labs/desert-ant-core.git", exact: "4.2.1"),
 ]
-let voz: [Target.Dependency] = [.product(name: "Voz", package: "desert-ant-core")]
+let voz: [Target.Dependency] = [
+    .product(name: "Voz", package: "desert-ant-core"),
+    .product(name: "Uhm", package: "desert-ant-core"),
+]
 #else
 let sdk: [Package.Dependency] = []
 let voz: [Target.Dependency] = []
