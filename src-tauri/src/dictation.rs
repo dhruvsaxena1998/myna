@@ -6,9 +6,22 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 
+/// A line of speech with times relative to the start of the audio it came from.
+pub struct Utterance {
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub text: String,
+}
+
 /// A speech-to-text backend. Takes mono 16 kHz samples.
 pub trait Transcriber: Send {
     fn transcribe(&mut self, audio: &[f32]) -> Result<String, String>;
+
+    /// Timestamped lines, for meetings. A backend without timestamps reports one line spanning the audio.
+    fn transcribe_timed(&mut self, audio: &[f32]) -> Result<Vec<Utterance>, String> {
+        let text = self.transcribe(audio)?;
+        Ok(vec![Utterance { start_ms: 0, end_ms: audio.len() as u64 * 1000 / audio::RATE as u64, text }])
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -31,7 +44,7 @@ pub fn dictate(clip: &audio::Clip, t: &mut dyn Transcriber) -> Result<Heard, Str
     Ok(if text.is_empty() { Heard::Silence } else { Heard::Text(text.to_string()) })
 }
 
-const PARAKEET: &str = "parakeet-tdt-0.6b-v3";
+pub const PARAKEET: &str = "parakeet-tdt-0.6b-v3";
 
 pub struct Parakeet(parakeet_rs::ParakeetTDT);
 
@@ -53,6 +66,18 @@ impl Transcriber for Parakeet {
             .transcribe_samples(audio.to_vec(), audio::RATE, 1, None)
             .map(|r| r.text)
             .map_err(|e| e.to_string())
+    }
+
+    fn transcribe_timed(&mut self, audio: &[f32]) -> Result<Vec<Utterance>, String> {
+        use parakeet_rs::Transcriber as _;
+        let r = self
+            .0
+            .transcribe_samples(audio.to_vec(), audio::RATE, 1, Some(parakeet_rs::TimestampMode::Sentences))
+            .map_err(|e| e.to_string())?;
+        Ok(r.tokens
+            .into_iter()
+            .map(|t| Utterance { start_ms: (t.start * 1000.0) as u64, end_ms: (t.end * 1000.0) as u64, text: t.text })
+            .collect())
     }
 }
 

@@ -19,13 +19,15 @@ ureq = "2"
 tauri-plugin-global-shortcut = "2"
 cpal = "0.18.2"
 arboard = "3.7.0"
+hound = "3.5.1"
+libc = "0.2"
 parakeet-rs = "0.4.3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 block2 = "0.6"
 core-foundation = "0.10"
+objc2-core-audio = "0.3"
+objc2-core-audio-types = "0.3"
+objc2-foundation = "0.3"
 core-graphics = "0.25"
-
-[dev-dependencies]
-hound = "3.5.1"
