@@ -597,6 +597,8 @@ pub fn run() {
             meetings::move_meeting,
             ai::ai_state,
             ai::ai_set_key,
+            meetings::suggest::folder_suggest,
+            meetings::suggest::folder_suggest_dismiss,
             meetings::summary::template_list,
             meetings::summary::template_save,
             meetings::summary::template_delete,
