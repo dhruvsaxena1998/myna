@@ -23,6 +23,7 @@ ${row("ai-ctx", "Context window (tokens)", text("ai-ctx", "num"))}
 </div><p class="note">Saved for the model named above. Counts are approximate (characters ÷ 4). Leave prices blank to show tokens only.</p></section>
 <section class="group"><h2>Uses this provider</h2><div class="box">
 <div class="prow single"><div class="l row"><span id="ai-sum-l">Meeting summaries</span> ${offMac}</div><div class="r"><button class="switch" role="switch" id="ai-sum" aria-labelledby="ai-sum-l"></button></div></div>
+<div class="prow single"><div class="l row"><span id="ai-chat-l">Chat with a meeting</span> ${offMac}</div><div class="r"><button class="switch" role="switch" id="ai-chat" aria-labelledby="ai-chat-l"></button></div></div>
 </div></section>`;
 
   // The field being typed in keeps its text; everything else follows the saved state.
@@ -39,6 +40,7 @@ ${row("ai-ctx", "Context window (tokens)", text("ai-ctx", "num"))}
       $(id).disabled = !st.model;
     }
     $("ai-sum").setAttribute("aria-checked", st.summaries);
+    $("ai-chat").setAttribute("aria-checked", st.chat);
     page.querySelectorAll(".offdev").forEach((p) => { p.hidden = !st.off_device; });
   }
   const sync = async () => { st = await invoke("ai_state"); fill(); };
@@ -62,6 +64,7 @@ ${row("ai-ctx", "Context window (tokens)", text("ai-ctx", "num"))}
   // Price and context window are per model: the backend reads ai_in:<model>, ai_out:<model>, ai_ctx:<model>.
   for (const [id, kind] of [["ai-in", "in"], ["ai-out", "out"], ["ai-ctx", "ctx"]]) $(id).onchange = (e) => save(`ai_${kind}:${st.model}`, e.target.value.trim());
   $("ai-sum").onclick = () => save("ai_summaries", !st.summaries);
+  $("ai-chat").onclick = () => save("ai_chat", !st.chat);
   fill();
 }
 
@@ -85,9 +88,7 @@ function md(text) {
 const inflight = new Map(); // meeting id -> request, so reopening a meeting mid-request still shows it working
 
 // The Summary tab of the meeting detail. `ready` is false until there is a transcript.
-async function summary(box, m, ready) {
-  box.innerHTML = '<div class="tabs" role="tablist"><button role="tab" id="tab-sum" aria-selected="true" aria-controls="pane-sum">Summary</button></div><div class="pane" id="pane-sum" role="tabpanel" aria-labelledby="tab-sum"></div>';
-  const pane = box.querySelector(".pane");
+async function summary(pane, m, ready) {
   if (!ready) { pane.innerHTML = '<p class="s">A summary is available once the transcript is ready.</p>'; return; }
   try {
     const [st, templates0, stored] = await Promise.all([invoke("ai_state"), invoke("template_list"), invoke("summary_get", { id: m.id })]);
@@ -157,5 +158,88 @@ ${current ? `<p class="xs meta">Generated ${when} with ${esc(current.model)} via
   }
 }
 
-return { settings, summary };
+const asking = new Map(); // meeting id -> { question, request }: a question still waiting for its answer
+const drafts = new Map(); // meeting id -> what was typed and not sent, kept while the detail view redraws
+
+// The Chat tab: one thread per meeting, stored by the backend. `ready` is false until there is a transcript.
+async function chat(pane, m, ready) {
+  if (!ready) { pane.innerHTML = '<p class="s">Chat is available once the transcript is ready.</p>'; return; }
+  try {
+    const [st, thread] = await Promise.all([invoke("ai_state"), invoke("chat_get", { id: m.id })]);
+    if (!pane.isConnected) return;
+    let current = thread;
+    let error = "";
+    const blocked = st.chat ? st.problem : "Chat is off. Turn it on under AI provider in Settings.";
+
+    function draw() {
+      const waiting = asking.get(m.id);
+      const said = (t) => `<div class="msg me"><div class="from">You</div><p>${esc(t.question)}</p></div>` + (t.answer == null ? "" : `<div class="msg"><div class="from">${esc(t.model)}</div><div class="out">${md(t.answer)}</div></div>`);
+      const turns = current.turns.map(said).join("") + (waiting ? said({ question: waiting.question }) + '<p class="s" role="status">Thinking…</p>' : "");
+      pane.innerHTML = `<div class="hdr"><span><b>${fmtTokens(current.context_tokens)}</b> tokens in context</span>${current.turns.length && current.cost != null ? `<span><b>≈ ${fmtCost(current.cost)}</b> this chat</span>` : ""}${st.off_device ? offMac : ""}</div>
+${current.over_window ? `<p class="warn" role="status">This chat is about ${fmtTokens(current.context_tokens)} tokens, over the ${fmtTokens(current.window)} window you entered for ${esc(st.model)}. The provider may refuse it or drop the start of the transcript.</p>` : ""}
+<div class="log">${turns || '<p class="s">Ask anything about this meeting. Each question sends the transcript, the summary and this chat again.</p>'}</div>
+${blocked ? `<p class="s">${esc(blocked)}</p>` : ""}${error ? `<p class="err" role="alert">${esc(error)}</p>` : ""}
+<form class="ask" id="ask"><input class="field" id="q" placeholder="Ask about this meeting…" aria-label="Ask" autocomplete="off" spellcheck="true"${waiting || blocked ? " disabled" : ""}><button class="btn icon" aria-label="Send"${waiting || blocked ? " disabled" : ""}>${icon("send", "sm")}</button></form>`;
+      const q = pane.querySelector("#q");
+      q.value = drafts.get(m.id) || "";
+      q.oninput = () => drafts.set(m.id, q.value);
+      pane.querySelector("#ask").onsubmit = (e) => { e.preventDefault(); send(q.value.trim()); };
+      pane.querySelector(".log").scrollTop = 1e9;
+    }
+
+    function send(question) {
+      if (!question || asking.has(m.id)) return;
+      error = "";
+      drafts.delete(m.id);
+      const request = invoke("chat_send", { id: m.id, question })
+        .then((c) => { current = c; }, (e) => { error = String(e); drafts.set(m.id, question); }) // a failed question goes back in the field
+        .finally(() => {
+          asking.delete(m.id);
+          if (!pane.isConnected) return;
+          draw();
+          if (!pane.hidden) pane.querySelector("#q").focus();
+        });
+      asking.set(m.id, { question, request });
+      draw();
+    }
+
+    if (asking.has(m.id)) {
+      // Reopened mid-request: the answer is stored by the time it ends.
+      asking.get(m.id).request.then(async () => { current = await invoke("chat_get", { id: m.id }); if (pane.isConnected) draw(); });
+    }
+    draw();
+  } catch (e) {
+    pane.innerHTML = `<p class="err" role="alert">${esc(e)}</p>`;
+  }
+}
+
+let tab = "sum"; // the tab in use, kept while the detail view redraws
+
+// The meeting detail's right-hand column: Summary and Chat.
+function inspector(box, m, ready) {
+  const tabs = [["sum", "Summary", summary], ["chat", "Chat", chat]];
+  box.innerHTML = `<div class="tabs" role="tablist">${tabs.map(([k, label]) => `<button role="tab" id="tab-${k}" aria-selected="${k === tab}" aria-controls="pane-${k}" tabindex="${k === tab ? 0 : -1}">${label}</button>`).join("")}</div>`
+    + tabs.map(([k]) => `<div class="pane${k === "chat" ? " chat" : ""}" id="pane-${k}" role="tabpanel" aria-labelledby="tab-${k}"${k === tab ? "" : " hidden"}></div>`).join("");
+  const pick = (k) => {
+    tab = k;
+    for (const [id] of tabs) {
+      box.querySelector("#tab-" + id).setAttribute("aria-selected", id === k);
+      box.querySelector("#tab-" + id).tabIndex = id === k ? 0 : -1;
+      box.querySelector("#pane-" + id).hidden = id !== k;
+    }
+    const log = box.querySelector("#pane-" + k + " .log");
+    if (log) log.scrollTop = 1e9; // the thread was drawn while hidden
+  };
+  box.querySelector(".tabs").onclick = (e) => { const b = e.target.closest("[role=tab]"); if (b) pick(b.id.slice(4)); };
+  box.querySelector(".tabs").onkeydown = (e) => {
+    const d = { ArrowLeft: -1, ArrowRight: 1 }[e.key];
+    if (!d) return;
+    const next = tabs[(tabs.findIndex(([k]) => k === tab) + d + tabs.length) % tabs.length][0];
+    pick(next);
+    box.querySelector("#tab-" + next).focus();
+  };
+  for (const [k, , fill] of tabs) fill(box.querySelector("#pane-" + k), m, ready);
+}
+
+return { settings, inspector };
 })();

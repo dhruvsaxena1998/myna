@@ -1,6 +1,7 @@
 //! Meeting capture: record the mic and the call app's audio as two tracks, transcribe after stop,
 //! keep the result in SQLite, export it as Markdown or text.
 mod capture;
+pub mod chat;
 pub(crate) mod mute;
 pub(crate) mod store;
 pub mod summary;
@@ -40,6 +41,7 @@ pub fn setup(app: &tauri::App, root: &Path) -> Result<(), Box<dyn std::error::Er
         let conn = db.0.lock().unwrap();
         store::init(&conn)?;
         summary::init(&conn)?;
+        chat::init(&conn)?;
         store::recover(&conn)?
     };
     app.manage(AudioDir(audio));
