@@ -44,6 +44,7 @@ const ICONS = {
   gear: '<circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/>',
   dl: '<path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10"/>',
   check: '<path d="M3 8.5l3 3 7-7"/>',
+  plus: '<path d="M8 3v10M3 8h10"/>',
   mic: '<rect x="5.5" y="1.5" width="5" height="8" rx="2.5"/><path d="M3 7.5a5 5 0 0 0 10 0M8 12.5v2M5.5 14.5h5"/>',
 };
 const icon = (name, cls = "") => `<svg class="i ${cls}" viewBox="0 0 16 16" aria-hidden="true">${ICONS[name]}</svg>`;
@@ -57,7 +58,7 @@ const TASKS = [
 
 const PAGES = [["modules", "Modules", "gear"], ["dictation", "Dictation", "mic"], ["models", "Models", "dl"]];
 const KEY_SYMBOLS = { Alt: "⌥", Option: "⌥", Control: "⌃", Ctrl: "⌃", Shift: "⇧", Super: "⌘", Command: "⌘", Cmd: "⌘" };
-const fmtKey = (k) => k.split("+").map((p) => KEY_SYMBOLS[p] || p).join("");
+const fmtKey = (k) => k.split("+").map((p) => KEY_SYMBOLS[p] || p.replace(/^(Key|Digit)/, "")).join("");
 
 let settingsPage = "models";
 let pollTimer;
@@ -83,14 +84,89 @@ async function settings() {
   page.querySelector(".box").append(...(await modulesForm()).children);
 }
 
+const MODS = [["ctrlKey", "Control"], ["altKey", "Alt"], ["shiftKey", "Shift"], ["metaKey", "Super"]];
+
+// Resolves with a global-shortcut string like "Alt+Space", or null if cancelled (Esc, or focus left the button).
+function recordHotkey(btn) {
+  return new Promise((resolve) => {
+    const end = (v) => { removeEventListener("keydown", on, true); btn.removeEventListener("blur", cancel); resolve(v); };
+    const cancel = () => end(null);
+    const on = (e) => {
+      e.preventDefault();
+      if (e.code === "Escape") return end(null);
+      if (/^(Control|Alt|Shift|Meta)(Left|Right)$/.test(e.code)) return; // wait for the real key
+      const mods = MODS.filter(([f]) => e[f]).map(([, name]) => name);
+      if (!mods.length && !/^F\d+$/.test(e.code)) return; // a bare letter would hijack typing
+      end([...mods, e.code].join("+"));
+    };
+    addEventListener("keydown", on, true);
+    btn.addEventListener("blur", cancel);
+    btn.focus();
+  });
+}
+
+const sw = (id, on, label) => `<button class="switch" role="switch" id="${id}" aria-checked="${on}" aria-label="${esc(label)}"></button>`;
+const flip = (b) => { const v = b.getAttribute("aria-checked") !== "true"; b.setAttribute("aria-checked", v); return v; };
+const words = (n) => `${n} word${n === 1 ? "" : "s"}`;
+
 async function dictationPage(page) {
   const { key, error } = await invoke("hotkey_status");
   const on = (await get("dictation_enabled")) === "true";
-  const note = error || (on ? "Hold it while you speak, release to paste." : "Dictation is off. Turn it on under Modules.");
+  const toggle = (await get("dictation_mode")) === "toggle";
+  const keystrokes = (await get("paste_method")) === "keystrokes";
+  const rules = (await get("dictation_cleanup")) !== "false";
   const delay = (await get("paste_delay_ms")) || "150";
-  page.innerHTML = `<section class="group"><h2>Hotkey</h2><div class="box"><div class="prow"><div class="l">Hold to talk</div><div class="d${error ? " err" : ""}">${esc(note)}</div><div class="r"><kbd>${esc(fmtKey(key))}</kbd></div></div></div></section>
-<section class="group"><h2>Output</h2><div class="box"><div class="prow"><div class="l">Paste delay</div><div class="d">How long Myna waits after pasting before it puts your clipboard back. Raise it if an app pastes your old clipboard.</div><div class="r"><input class="field" type="number" min="0" max="2000" step="50" value="${esc(delay)}" aria-label="Paste delay in milliseconds"><span class="s">ms</span></div></div></div></section>`;
-  page.querySelector("input").onchange = (e) => set("paste_delay_ms", e.target.value);
+  let dict = [];
+  try { dict = JSON.parse((await get("dictionary")) || "[]"); } catch {}
+  const note = error || (!on ? "Dictation is off. Turn it on under Modules." : toggle ? "Press once to start, again to paste." : "Hold it while you speak, release to paste.");
+  page.innerHTML = `<section class="group"><h2>Hotkey</h2><div class="box">
+<div class="prow"><div class="l">${toggle ? "Press to talk" : "Hold to talk"}</div><div class="d${error ? " err" : ""}">${esc(note)}</div><div class="r"><kbd>${esc(fmtKey(key))}</kbd><button class="btn quiet" id="change">Change</button></div></div>
+<div class="prow single"><div class="l">Press to start, press to stop</div><div class="r">${sw("toggle", toggle, "Press to start, press to stop")}</div></div>
+</div></section>
+<section class="group"><h2>Output</h2><div class="box">
+<div class="prow"><div class="l">Paste method</div><div class="d">Paste uses the clipboard and ⌘V, then restores it. Type keystrokes is for apps that block paste.</div><div class="r"><select class="field" id="method" aria-label="Paste method"><option value="clipboard">Paste</option><option value="keystrokes">Type keystrokes</option></select></div></div>
+<div class="prow"><div class="l">Paste delay</div><div class="d">How long Myna waits after pasting before it puts your clipboard back. Raise it if an app pastes your old clipboard.</div><div class="r"><input class="field" id="delay" type="number" min="0" max="2000" step="50" value="${esc(delay)}" aria-label="Paste delay in milliseconds"${keystrokes ? " disabled" : ""}><span class="s">ms</span></div></div>
+<div class="prow single"><div class="l">Remove filler words (um, uh, like, repeats)</div><div class="r">${sw("rules", rules, "Remove filler words")}</div></div>
+<div class="prow"><div class="l">Personal dictionary</div><div class="d">Spell names and jargon your way. Leave “Heard as” blank to only fix the capitals.</div><div class="r"><span class="s" id="count"></span><button class="btn quiet" id="edit" aria-expanded="false">Edit…</button></div></div>
+<div class="dict" id="dict" hidden></div>
+</div></section>`;
+  const q = (sel) => page.querySelector(sel);
+
+  q("#change").onclick = async (e) => {
+    e.currentTarget.textContent = "Press the new shortcut…";
+    const combo = await recordHotkey(e.currentTarget);
+    if (combo) await set("dictation_hotkey", combo); // the backend re-registers it and reports any clash
+    dictationPage(page);
+  };
+  q("#toggle").onclick = async (e) => { await set("dictation_mode", flip(e.currentTarget) ? "toggle" : "hold"); dictationPage(page); };
+  q("#rules").onclick = (e) => set("dictation_cleanup", flip(e.currentTarget));
+  q("#method").value = keystrokes ? "keystrokes" : "clipboard";
+  q("#method").onchange = (e) => { set("paste_method", e.target.value); q("#delay").disabled = e.target.value === "keystrokes"; };
+  q("#delay").onchange = (e) => set("paste_delay_ms", e.target.value);
+
+  const box = q("#dict");
+  const saved = () => dict.filter((e) => e.to.trim());
+  const save = () => { set("dictionary", JSON.stringify(saved())); q("#count").textContent = words(saved().length); };
+  const draw = () => {
+    box.innerHTML = dict.map((e, i) => `<div class="e"><input class="field" data-i="${i}" data-f="from" value="${esc(e.from)}" placeholder="Heard as (optional)" aria-label="Heard as"><span class="arrow" aria-hidden="true">→</span><input class="field" data-i="${i}" data-f="to" value="${esc(e.to)}" placeholder="Spelled as" aria-label="Spelled as"><button class="btn quiet" data-rm="${i}">Remove</button></div>`).join("")
+      + `<div><button class="btn quiet" data-add>${icon("plus", "sm")} Add word</button></div>`;
+  };
+  q("#count").textContent = words(saved().length);
+  box.onchange = (e) => { if (e.target.dataset.f) { dict[e.target.dataset.i][e.target.dataset.f] = e.target.value; save(); } };
+  box.onclick = (e) => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    if (b.dataset.rm) { dict.splice(+b.dataset.rm, 1); save(); }
+    else dict.push({ from: "", to: "" });
+    draw();
+    if (!b.dataset.rm) [...box.querySelectorAll(".e")].at(-1).querySelector("input").focus();
+  };
+  q("#edit").onclick = (e) => {
+    const open = box.hidden;
+    box.hidden = !open;
+    e.currentTarget.setAttribute("aria-expanded", open);
+    if (open) { if (!dict.length) dict.push({ from: "", to: "" }); draw(); }
+  };
 }
 
 async function modelsPage(page) {
@@ -184,7 +260,7 @@ function pill() {
   const levels = Array(9).fill(0);
   const show = (cls, html) => { el.className = "dpill " + cls; el.innerHTML = html; };
   window.__TAURI__.event.listen("pill", ({ payload: p }) => {
-    if (p.kind === "idle") show("", `<span class="dot"></span><span>Hold <span class="k">${esc(fmtKey(p.hotkey))}</span> to talk</span>`);
+    if (p.kind === "idle") show("", `<span class="dot"></span><span>${p.toggle ? "Press" : "Hold"} <span class="k">${esc(fmtKey(p.hotkey))}</span> to talk</span>`);
     if (p.kind === "listening") {
       if (!el.classList.contains("rec")) levels.fill(0);
       levels.push(p.level);

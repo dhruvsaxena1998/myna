@@ -1,5 +1,7 @@
 mod audio;
+mod cleanup;
 mod dictation;
+mod hotkey;
 mod meetings;
 mod models;
 mod paste;
@@ -26,10 +28,6 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 struct Db(Mutex<rusqlite::Connection>);
 struct ModelsDir(PathBuf);
 
-// shortcut: a fixed key. Fn and Right Option alone cannot be registered as global shortcuts (they
-// need an event tap and Input Monitoring), so this is the nearest hold-friendly default. Make it a
-// setting when the Dictation settings page grows a key recorder.
-const HOTKEY: &str = "Alt+Space";
 const PILL_SIZE: (f64, f64) = (360.0, 64.0);
 const PILL_MARGIN: f64 = 24.0;
 
@@ -49,7 +47,7 @@ struct PillEpoch(AtomicU64);
 #[derive(Serialize, Clone)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 enum Pill {
-    Idle { hotkey: &'static str },
+    Idle { hotkey: String, toggle: bool },
     Listening { level: f32 },
     Transcribing,
     Done { words: usize },
@@ -163,7 +161,7 @@ fn get_setting(db: tauri::State<Db>, key: String) -> Option<String> {
 #[tauri::command]
 fn set_setting(app: AppHandle, db: tauri::State<Db>, key: String, value: String) -> Result<(), String> {
     settings::set(&db.0.lock().unwrap(), &key, &value).map_err(|e| e.to_string())?;
-    if key == "dictation_enabled" {
+    if key == "dictation_enabled" || key == "dictation_hotkey" {
         sync_hotkey(&app);
     }
     Ok(())
@@ -171,13 +169,13 @@ fn set_setting(app: AppHandle, db: tauri::State<Db>, key: String, value: String)
 
 #[derive(Serialize)]
 struct HotkeyStatus {
-    key: &'static str,
+    key: String,
     error: Option<String>,
 }
 
 #[tauri::command]
-fn hotkey_status(err: tauri::State<HotkeyError>) -> HotkeyStatus {
-    HotkeyStatus { key: HOTKEY, error: err.0.lock().unwrap().clone() }
+fn hotkey_status(app: AppHandle, err: tauri::State<HotkeyError>) -> HotkeyStatus {
+    HotkeyStatus { key: hotkey(&app), error: err.0.lock().unwrap().clone() }
 }
 
 #[tauri::command]
@@ -268,6 +266,18 @@ fn show_error(app: &AppHandle, message: impl Into<String>) {
     hide_pill_after(app, 3000);
 }
 
+fn setting(app: &AppHandle, key: &str) -> Option<String> {
+    settings::get(&app.state::<Db>().0.lock().unwrap(), key)
+}
+
+fn hotkey(app: &AppHandle) -> String {
+    setting(app, "dictation_hotkey").filter(|k| !k.trim().is_empty()).unwrap_or_else(|| hotkey::DEFAULT.into())
+}
+
+fn toggle_mode(app: &AppHandle) -> bool {
+    setting(app, "dictation_mode").as_deref() == Some("toggle")
+}
+
 /// Runs `f` on the selected speech model, loading it first if needed.
 pub(crate) fn with_engine<R>(app: &AppHandle, f: impl FnOnce(&mut dyn dictation::Transcriber) -> R) -> Result<R, String> {
     let id = settings::get(&app.state::<Db>().0.lock().unwrap(), "model_stt")
@@ -324,9 +334,14 @@ fn finish(app: &AppHandle, rec: audio::Recording) {
     let result = rec.stop().and_then(|clip| {
         show_pill(app, Pill::Transcribing);
         match with_engine(app, |t| dictation::dictate(&clip, t))?? {
-            dictation::Heard::TooShort => Ok(Pill::Idle { hotkey: HOTKEY }),
+            dictation::Heard::TooShort => Ok(Pill::Idle { hotkey: hotkey(app), toggle: toggle_mode(app) }),
             dictation::Heard::Silence => Err("Didn't catch that".to_string()),
             dictation::Heard::Text(text) => {
+                let rules = setting(app, "dictation_cleanup").as_deref() != Some("false");
+                let text = cleanup::clean(&text, rules, &cleanup::dictionary(setting(app, "dictionary")));
+                if text.is_empty() {
+                    return Err("Didn't catch that".to_string()); // it was all fillers
+                }
                 paste_into_focused_app(app, &text)?;
                 Ok(Pill::Done { words: text.split_whitespace().count() })
             }
@@ -349,23 +364,31 @@ fn paste_into_focused_app(app: &AppHandle, text: &str) -> Result<(), String> {
         paste::copy_only(text)?;
         return Err("Copied. Allow Accessibility to paste".into());
     }
-    let delay = paste::delay(settings::get(&app.state::<Db>().0.lock().unwrap(), "paste_delay_ms"));
-    paste::paste_text(text, delay)
+    if setting(app, "paste_method").as_deref() == Some("keystrokes") {
+        return paste::type_text(text);
+    }
+    paste::paste_text(text, paste::delay(setting(app, "paste_delay_ms")))
 }
 
 /// The hotkey is held only while Dictation is enabled, so Meetings-only users keep the shortcut.
 fn sync_hotkey(app: &AppHandle) {
     let keys = app.global_shortcut();
     let _ = keys.unregister_all();
-    let enabled = settings::get(&app.state::<Db>().0.lock().unwrap(), "dictation_enabled").as_deref() == Some("true");
+    let enabled = setting(app, "dictation_enabled").as_deref() == Some("true");
+    let hotkey = hotkey(app);
     let error = enabled
         .then(|| {
-            keys.on_shortcut(HOTKEY, |app, _, event| match event.state() {
-                ShortcutState::Pressed => press(app),
-                ShortcutState::Released => release(app),
+            keys.on_shortcut(hotkey.as_str(), |app, _, event| {
+                // Read per event, so switching mode needs no re-registering.
+                let recording = app.state::<Dictating>().rec.lock().unwrap().is_some();
+                match hotkey::act(toggle_mode(app), event.state() == ShortcutState::Pressed, recording) {
+                    hotkey::Act::Start => press(app),
+                    hotkey::Act::Stop => release(app),
+                    hotkey::Act::Nothing => {}
+                }
             })
             .err()
-            .map(|e| format!("{HOTKEY} could not be registered ({e}). Another app may be using it."))
+            .map(|e| format!("{hotkey} could not be registered ({e}). Another app may be using it."))
         })
         .flatten();
     *app.state::<HotkeyError>().0.lock().unwrap() = error;
