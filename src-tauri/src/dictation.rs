@@ -7,9 +7,22 @@ use std::{
 };
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperState};
 
+/// A line of speech with times relative to the start of the audio it came from.
+pub struct Utterance {
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub text: String,
+}
+
 /// A speech-to-text backend. Takes mono 16 kHz samples.
 pub trait Transcriber: Send {
     fn transcribe(&mut self, audio: &[f32]) -> Result<String, String>;
+
+    /// Timestamped lines, for meetings. A backend without timestamps reports one line spanning the audio.
+    fn transcribe_timed(&mut self, audio: &[f32]) -> Result<Vec<Utterance>, String> {
+        let text = self.transcribe(audio)?;
+        Ok(vec![Utterance { start_ms: 0, end_ms: audio.len() as u64 * 1000 / audio::RATE as u64, text }])
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -53,6 +66,18 @@ impl Transcriber for Parakeet {
             .map(|r| r.text)
             .map_err(|e| e.to_string())
     }
+
+    fn transcribe_timed(&mut self, audio: &[f32]) -> Result<Vec<Utterance>, String> {
+        use parakeet_rs::Transcriber as _;
+        let r = self
+            .0
+            .transcribe_samples(audio.to_vec(), audio::RATE, 1, Some(parakeet_rs::TimestampMode::Sentences))
+            .map_err(|e| e.to_string())?;
+        Ok(r.tokens
+            .into_iter()
+            .map(|t| Utterance { start_ms: (t.start * 1000.0) as u64, end_ms: (t.end * 1000.0) as u64, text: t.text })
+            .collect())
+    }
 }
 
 pub struct Whisper(WhisperState);
@@ -65,17 +90,38 @@ impl Whisper {
     }
 }
 
-impl Transcriber for Whisper {
-    fn transcribe(&mut self, audio: &[f32]) -> Result<String, String> {
+impl Whisper {
+    fn run(&mut self, audio: &[f32], timestamps: bool) -> Result<(), String> {
         let mut p = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
         p.set_language(None); // detect it: Whisper is the pick for speech Parakeet doesn't cover
-        p.set_no_timestamps(true);
+        p.set_no_timestamps(!timestamps);
         p.set_print_special(false);
         p.set_print_progress(false);
         p.set_print_realtime(false);
         p.set_print_timestamps(false);
-        self.0.full(p, audio).map_err(|e| e.to_string())?;
+        self.0.full(p, audio).map_err(|e| e.to_string())
+    }
+}
+
+impl Transcriber for Whisper {
+    fn transcribe(&mut self, audio: &[f32]) -> Result<String, String> {
+        self.run(audio, false)?;
         Ok(self.0.as_iter().map(|s| s.to_string()).collect())
+    }
+
+    fn transcribe_timed(&mut self, audio: &[f32]) -> Result<Vec<Utterance>, String> {
+        self.run(audio, true)?;
+        // whisper.cpp reports segment times in centiseconds.
+        Ok(self
+            .0
+            .as_iter()
+            .map(|s| Utterance {
+                start_ms: s.start_timestamp().max(0) as u64 * 10,
+                end_ms: s.end_timestamp().max(0) as u64 * 10,
+                text: s.to_string().trim().to_string(),
+            })
+            .filter(|u| !u.text.is_empty())
+            .collect())
     }
 }
 
