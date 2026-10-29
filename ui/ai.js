@@ -39,6 +39,7 @@ ${row("ai-ctx", "Context window (tokens)", text("ai-ctx", "num"))}
       $(id).disabled = !st.model;
     }
     $("ai-sum").setAttribute("aria-checked", st.summaries);
+    $("ai-fold").setAttribute("aria-checked", st.folders);
     page.querySelectorAll(".offdev").forEach((p) => { p.hidden = !st.off_device; });
   }
   const sync = async () => { st = await invoke("ai_state"); fill(); };
@@ -62,6 +63,7 @@ ${row("ai-ctx", "Context window (tokens)", text("ai-ctx", "num"))}
   // Price and context window are per model: the backend reads ai_in:<model>, ai_out:<model>, ai_ctx:<model>.
   for (const [id, kind] of [["ai-in", "in"], ["ai-out", "out"], ["ai-ctx", "ctx"]]) $(id).onchange = (e) => save(`ai_${kind}:${st.model}`, e.target.value.trim());
   $("ai-sum").onclick = () => save("ai_summaries", !st.summaries);
+  $("ai-fold").onclick = () => save("ai_folders", !st.folders);
   fill();
 }
 
@@ -157,5 +159,22 @@ ${current ? `<p class="xs meta">Generated ${when} with ${esc(current.model)} via
   }
 }
 
-return { settings, summary };
+const asked = new Map(); // meeting id -> suggestion request, so a redraw mid-request does not send a second
+
+// The "Suggested: Acme · Accept / Dismiss" chip above the inspector tabs. `accept(folder)` files the meeting.
+// Stays hidden unless the provider answers with one of the user's folders; the backend decides when to ask.
+async function suggestion(box, m, accept) {
+  try {
+    const st = await invoke("ai_state");
+    if (!st.folders || st.problem || m.folder_id !== null) return;
+    if (!asked.has(m.id)) asked.set(m.id, invoke("folder_suggest", { id: m.id }).finally(() => asked.delete(m.id)));
+    const f = await asked.get(m.id);
+    if (!f || !box.isConnected || box.querySelector(".suggest")) return;
+    box.insertAdjacentHTML("afterbegin", `<div class="suggest" role="status"><span class="pill neutral">Suggested folder: ${esc(f.name)}</span><button class="btn quiet" id="sg-yes">Accept</button><button class="btn quiet" id="sg-no">Dismiss</button>${st.off_device ? offMac : ""}</div>`);
+    box.querySelector("#sg-yes").onclick = () => accept(f);
+    box.querySelector("#sg-no").onclick = async () => { await invoke("folder_suggest_dismiss", { id: m.id }); box.querySelector(".suggest")?.remove(); };
+  } catch (e) { /* a failed or unreachable provider just means no chip */ }
+}
+
+return { settings, summary, suggestion };
 })();
