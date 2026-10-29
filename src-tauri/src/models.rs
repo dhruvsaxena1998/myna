@@ -43,6 +43,18 @@ impl Remote {
     }
 }
 
+/// A file of Desert Ant's Voz, at the repo commit behind tag v0.5.0: the revision SDK 4.2.1 pins.
+macro_rules! voz_file {
+    ($name:literal, $sha256:literal, $size:literal) => {
+        File {
+            name: $name,
+            url: concat!("https://huggingface.co/desert-ant-labs/voz/resolve/12802bf4e2b5e97e1289b723bc6283b6f1a1ace5/", $name),
+            sha256: $sha256,
+            size: $size,
+        }
+    };
+}
+
 // URLs are pinned to a repo commit so the checksums stay valid; hashes are the LFS oids
 // from the Hugging Face API (vocab.txt is not LFS, so its hash was computed from the download).
 pub static MODELS: &[Model] = &[
@@ -84,6 +96,34 @@ pub static MODELS: &[Model] = &[
             size: 1_624_555_275,
         }],
     },
+    // The Core ML files only; Myna downloads them and the Desert Ant SDK loads them (see voz.rs).
+    // Same non-LFS caveat as above for the small json/mil files.
+    Model {
+        id: "voz",
+        task: "stt",
+        name: "Voz",
+        desc: "Runs on the Neural Engine. Fastest on Apple Silicon. Needs macOS 15.",
+        files: &[
+            voz_file!("decoder.mlmodelc/analytics/coremldata.bin", "cc2be0dbcd0c7d8d915aa3621869ea074791c432ba7b4bb6e029c483087f7189", 243),
+            voz_file!("decoder.mlmodelc/coremldata.bin", "2d7a5210e91e4e3b25c547db4b76ea14bf769db9f71e7659c027008041e38d2d", 1_093),
+            voz_file!("decoder.mlmodelc/metadata.json", "798639c54e4eb71bcfa5dbc15b62c0a341c37b265d1a9c879c28a40b06549875", 18_528),
+            voz_file!("decoder.mlmodelc/model.mil", "1f331acb4a4bb999c792db0a3725d790c046311ab9941ddbe0ee7e3418ae1e14", 99_410),
+            voz_file!("decoder.mlmodelc/weights/weight.bin", "12ab4cbb83155dbaf3d9832f524c23b803e3e266863d9c6f3d58e1d88577e130", 12_277_132),
+            voz_file!("embedding.f16", "07163e5f6f8a68f9ffeed7a8ff770c68098c2db216232321912188bd614b9a72", 10_487_040),
+            voz_file!("encoder.mlmodelc/analytics/coremldata.bin", "983e1e4e31f6ef386fba8d35202984c6ec11ff688f62cf3fde57dd957d40ff27", 243),
+            voz_file!("encoder.mlmodelc/coremldata.bin", "02327c1dc4dc362dfcb1061f785a24ee3bcb86853ecaa818511ae71ca2e2a0b8", 430),
+            voz_file!("encoder.mlmodelc/metadata.json", "81e00f4d507edf2e6d045a9826362f3c6e314e60ef16a28aef4c99d693876991", 2_739),
+            voz_file!("encoder.mlmodelc/model.mil", "974c88c39c840c21b031f10529943516d1d8469535f0ddc3571cddaab29574e4", 820_490),
+            voz_file!("encoder.mlmodelc/weights/weight.bin", "72b6e867cb3176cea36fc1410622b7bfd50043e80eafbaab03ae0a53382908c2", 312_039_808),
+            voz_file!("mel.mlmodelc/analytics/coremldata.bin", "d1cabbea932a1be1b53a1adc0d434d5a7a1f097d9679d3d995183238773de472", 243),
+            voz_file!("mel.mlmodelc/coremldata.bin", "e6598e764b01f8ba06fa787f2bc22d7707f97c2954492d77a2736800fd006f5d", 405),
+            voz_file!("mel.mlmodelc/metadata.json", "6be5be2c02370c3a218b712046ea50c8486f4e20fd70558458d5980d1c296e53", 2_215),
+            voz_file!("mel.mlmodelc/model.mil", "aae23c58b6aa3093063f75a392d9f44deb324804c3fbb58fa3e55bb7f371ece1", 9_728),
+            voz_file!("mel.mlmodelc/weights/weight.bin", "34f8a1bcf01e6a6ae053efe012cd189e0c38e9dca65660f199740ce9a0958f95", 826_688),
+            voz_file!("meta.json", "2b5fa951d70cbbab49fccf31836521be8305d0d9557b9bedf45cc8dcdc61b53b", 584),
+            voz_file!("vocab.json", "3eb2f73e8853dce5156c2ed97c0b1bb84eb4ebd201eb1761d15977fc1ea31490", 78_654),
+        ],
+    },
     Model {
         id: "sortformer-4spk-v2.1",
         task: "diarization",
@@ -121,6 +161,8 @@ impl From<io::Error> for Stop {
 }
 
 fn download_file(dest: &Path, f: &File, mut src: impl Read, job: &Job) -> Result<(), Stop> {
+    // Names may be nested (Core ML models are directories).
+    fs::create_dir_all(dest.parent().unwrap_or(dest))?;
     let mut out = fs::File::create(dest)?;
     let mut hash = Sha256::new();
     let mut buf = vec![0u8; 64 * 1024];
@@ -260,6 +302,17 @@ mod tests {
         assert_eq!(status(&root, &m), Status::Damaged);
         remove(&root, "m");
         assert_eq!(status(&root, &m), Status::Absent);
+    }
+
+    #[test]
+    fn nested_file_names_install_and_verify() {
+        let root = tmp("nested");
+        let nested = File { name: "a.mlmodelc/weights/w.bin", ..HELLO };
+        install(&root, "m", &[nested], |_| Ok(Cursor::new(b"hello".to_vec())), &Job::default()).unwrap();
+        assert_eq!(fs::read(root.join("m/a.mlmodelc/weights/w.bin")).unwrap(), b"hello");
+        let m = Model { id: "m", task: "stt", name: "", desc: "", files: &[File { name: "a.mlmodelc/weights/w.bin", ..HELLO }] };
+        assert_eq!(status(&root, &m), Status::Installed);
+        assert!(verify(&root, &m));
     }
 
     #[test]

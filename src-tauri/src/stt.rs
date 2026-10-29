@@ -19,6 +19,8 @@ pub const WHISPER: &str = "whisper-large-v3-turbo";
 pub enum Runtime {
     Parakeet,
     Whisper,
+    /// Desert Ant's Voz, behind the Swift bridge. Curated only: Myna downloads its Core ML folder.
+    Voz,
 }
 
 // Same names parakeet-rs looks for, int8 first so a repo with both downloads the small one.
@@ -76,11 +78,22 @@ fn whisper_entry(path: &Path) -> Result<PathBuf, String> {
     Ok(file)
 }
 
+/// The SDK would download whatever is missing from a folder it is handed, so a folder missing
+/// any of Voz's files is refused here instead of reaching it.
+fn voz_entry(path: &Path) -> Result<PathBuf, String> {
+    let m = models::MODELS.iter().find(|m| m.id == crate::voz::ID).unwrap();
+    match m.files.iter().find(|f| !path.join(f.name).is_file()) {
+        Some(f) => Err(format!("Not a complete Voz model: missing {}.", f.name)),
+        None => Ok(path.to_path_buf()),
+    }
+}
+
 impl Runtime {
     pub fn label(self) -> &'static str {
         match self {
             Runtime::Parakeet => "Parakeet",
             Runtime::Whisper => "Whisper",
+            Runtime::Voz => "Voz",
         }
     }
 
@@ -93,6 +106,7 @@ impl Runtime {
         match self {
             Runtime::Parakeet => parakeet_names(|n| path.join(n).is_file()).map(|_| path.to_path_buf()),
             Runtime::Whisper => whisper_entry(path),
+            Runtime::Voz => voz_entry(path),
         }
     }
 }
@@ -155,6 +169,7 @@ pub fn fetch_repo(id: &str) -> Result<Info, String> {
 fn plan(runtime: Runtime, id: &str, file: Option<&str>, info: Info) -> Result<Vec<models::Remote>, String> {
     let top: Vec<&str> = info.siblings.iter().map(|s| s.rfilename.as_str()).filter(|n| !n.contains('/')).collect();
     let names = match (runtime, file) {
+        (Runtime::Voz, _) => return Err("Voz can't be added as your own model.".into()),
         (Runtime::Parakeet, Some(_)) => return Err("Parakeet takes a whole repo or folder, not one file.".into()),
         (Runtime::Parakeet, None) => parakeet_names(|n| top.contains(&n))?,
         (Runtime::Whisper, Some(f)) if !f.ends_with(".bin") => return Err("Whisper models are .bin files.".into()),
@@ -199,6 +214,9 @@ pub struct Custom {
 impl Custom {
     /// Validates `source` for `runtime`; a repo is looked up with `fetch` so the file list is known.
     pub fn new(runtime: Runtime, source: &str, fetch: impl FnOnce(&str) -> Result<Info, String>) -> Result<Self, String> {
+        if runtime == Runtime::Voz {
+            return Err("Voz comes from the curated list; it can't be added as your own model.".into());
+        }
         Ok(match parse_source(source)? {
             Source::Path(p) => {
                 runtime.entry(&p)?;
@@ -275,6 +293,7 @@ pub fn resolve(id: &str, root: &Path, all: &[Custom]) -> Result<(Runtime, PathBu
     let runtime = match id {
         PARAKEET => Runtime::Parakeet,
         WHISPER => Runtime::Whisper,
+        crate::voz::ID => Runtime::Voz,
         _ => return Err(format!("{} can't dictate yet", m.name)),
     };
     if models::status(root, m) != models::Status::Installed {
@@ -415,6 +434,24 @@ mod tests {
         // Same source under the other runtime is a different model.
         assert_ne!(repo.id(), Custom { runtime: Runtime::Whisper, ..repo.clone() }.id());
         assert!(repo.id().starts_with("custom-") && !repo.id().contains('/'));
+    }
+
+    #[test]
+    fn voz_folder_must_be_complete_and_cannot_be_custom() {
+        let root = tmp("voz");
+        let m = models::MODELS.iter().find(|m| m.id == crate::voz::ID).unwrap();
+        let dir = root.join(m.id);
+        assert!(Runtime::Voz.entry(&dir).unwrap_err().starts_with("Nothing at"));
+        // All but the last file: the guard names what is missing instead of letting the SDK fetch it.
+        for f in &m.files[..m.files.len() - 1] {
+            fs::create_dir_all(dir.join(f.name).parent().unwrap()).unwrap();
+            fs::write(dir.join(f.name), b"x").unwrap();
+        }
+        let last = m.files.last().unwrap().name;
+        assert!(Runtime::Voz.entry(&dir).unwrap_err().contains(last));
+        fs::write(dir.join(last), b"x").unwrap();
+        assert_eq!(Runtime::Voz.entry(&dir), Ok(dir.clone()));
+        assert!(Custom::new(Runtime::Voz, "o/r", |_| unreachable!()).is_err());
     }
 
     #[test]

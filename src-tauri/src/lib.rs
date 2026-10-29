@@ -10,6 +10,7 @@ mod permissions;
 mod popover;
 mod settings;
 mod stt;
+mod voz;
 
 use serde::Serialize;
 use std::{
@@ -71,6 +72,8 @@ struct ModelRow {
     /// Bytes fetched so far while a download runs.
     downloading: Option<u64>,
     error: Option<String>,
+    /// Why this model can't run on this Mac or in this build; the picker disables it.
+    unavailable: Option<String>,
     /// Added by the user under Advanced, as opposed to the curated list.
     custom: bool,
     /// A custom model that lives on disk where the user keeps it: nothing to download.
@@ -100,6 +103,7 @@ fn list_models(dir: tauri::State<ModelsDir>, jobs: tauri::State<models::Jobs>, d
             error: result.and_then(|r| r.err()).or(problem),
             custom: custom.is_some(),
             local: custom.is_some_and(stt::Custom::local),
+            unavailable: (m.id == voz::ID).then(voz::unavailable).flatten(),
         }
     };
     let mut models: Vec<_> = models::MODELS.iter().map(|m| row(m, models::status(&dir.0, m), None, None)).collect();

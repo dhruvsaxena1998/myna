@@ -63,6 +63,11 @@ const TASKS = [
   ["diarization", "Speaker separation", ["meetings_enabled"]],
 ];
 
+// Models whose use needs the "Powered by Desert Ant Labs" credit while selected.
+const BY_DESERT_ANT = new Set(["voz"]);
+// The Voz SDK phones home on every model load, so its row says so whether or not it is selected.
+const OFF_DEVICE = { voz: "Sends a license check to Desert Ant when the model loads. No audio or text." };
+
 const PAGES = [["modules", "Modules", "gear"], ["dictation", "Dictation", "mic"], ["meetings", "Meetings", "list"], ["models", "Models", "dl"], ["ai", "AI provider", "spark"]];
 const KEY_SYMBOLS = { Alt: "⌥", Option: "⌥", Control: "⌃", Ctrl: "⌃", Shift: "⇧", Super: "⌘", Command: "⌘", Cmd: "⌘" };
 const fmtKey = (k) => k.split("+").map((p) => KEY_SYMBOLS[p] || p.replace(/^(Key|Digit)/, "")).join("");
@@ -243,9 +248,11 @@ async function modelsPage(page) {
       page.innerHTML = '<p class="s">Turn on Dictation or Meetings under Modules to see the models they use.</p>';
       return;
     }
+    let desertAnt = false;
     for (const [task, heading] of tasks) {
       const rows = models.filter((m) => m.task === task);
       const chosen = (await get("model_" + task)) || rows[0].id;
+      desertAnt ||= BY_DESERT_ANT.has(chosen);
       const sec = document.createElement("section");
       sec.className = "group";
       sec.innerHTML = `<h2>${heading}</h2><div class="box" role="radiogroup" aria-label="${heading}"></div>`;
@@ -258,6 +265,12 @@ async function modelsPage(page) {
     store.innerHTML = `<h2>Storage</h2><div class="box"><div class="prow single"><div class="l">Models folder</div><div class="r"><span class="s mono">${esc(dir.replace(/^\/Users\/[^/]+/, "~"))}</span><button class="btn quiet">Reveal</button></div></div></div>`;
     store.querySelector("button").onclick = () => invoke("reveal_models_dir");
     page.append(store);
+    if (desertAnt) {
+      const credit = document.createElement("section");
+      credit.className = "group";
+      credit.innerHTML = '<div class="box"><div class="prow single"><div class="l s">Powered by Desert Ant Labs</div></div></div>';
+      page.append(credit);
+    }
   }
 
   function modelRow(m, task, chosen) {
@@ -268,7 +281,9 @@ async function modelsPage(page) {
     const size = m.size ? `<span class="size">${fmtSize(m.size)}</span>` : "";
     const remove = '<button class="btn quiet" data-act="remove">Remove</button>';
     let right;
-    if (m.downloading !== null) {
+    if (m.unavailable) {
+      right = `${size}<span class="pill alert">Unavailable</span>`;
+    } else if (m.downloading !== null) {
       right = `${size}<span class="prog" role="progressbar" aria-label="Downloading ${esc(m.name)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i data-prog="${m.id}"></i></span><button class="btn quiet" data-act="cancel">Cancel</button>`;
     } else if (m.local) {
       right = (bad ? '<span class="pill alert">Unusable</span>' : `<span class="pill ok">${icon("check", "sm")} Installed</span>`) + remove;
@@ -277,8 +292,8 @@ async function modelsPage(page) {
     } else {
       right = `${size}${bad ? '<span class="pill alert">Damaged</span>' : ""}${bad || m.custom ? remove : ""}<button class="btn" data-act="download">${icon("dl", "sm")} ${bad || m.error ? "Retry" : "Download"}</button>`;
     }
-    row.innerHTML = `<div class="l"><label class="row pick"><input type="radio" name="${task}"${m.id === chosen ? " checked" : ""}><span class="radio"></span>${esc(m.name)}</label></div><div class="d${err ? " err" : ""}">${esc(err || m.desc)}</div><div class="r">${right}</div>`;
-    row.querySelector("input").onchange = () => set("model_" + task, m.id);
+    row.innerHTML = `<div class="l"><label class="row pick"><input type="radio" name="${task}"${m.id === chosen ? " checked" : ""}${m.unavailable ? " disabled" : ""}><span class="radio"></span>${esc(m.name)}${BY_DESERT_ANT.has(m.id) ? ' <span class="xs">by Desert Ant</span>' : ""}${OFF_DEVICE[m.id] ? ' <span class="pill alert">Off-device</span>' : ""}</label></div><div class="d${err ? " err" : ""}">${esc(err || m.unavailable || m.desc)}${OFF_DEVICE[m.id] ? `<br>${esc(OFF_DEVICE[m.id])}` : ""}</div><div class="r">${right}</div>`;
+    row.querySelector("input").onchange = async () => { await set("model_" + task, m.id); shown = ""; refresh(); };
     row.querySelectorAll("[data-act]").forEach((b) => {
       b.onclick = async () => {
         const act = b.dataset.act;

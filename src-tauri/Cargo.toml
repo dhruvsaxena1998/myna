@@ -8,6 +8,7 @@ name = "myna_lib"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+swift-rs = { version = "1", features = ["build"] }
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api"] }
