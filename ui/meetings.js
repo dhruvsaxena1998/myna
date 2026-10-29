@@ -37,7 +37,7 @@ async function meetings() {
   document.body.className = "set meet";
   app.innerHTML = `<nav class="sidebar" aria-label="Meetings" id="side"></nav><div class="content" id="main"></div>`;
   const main = document.getElementById("main");
-  let open = null; // id of the meeting shown in detail, or null for the list
+  let open = Number(location.hash.split("/")[1]) || null; // id of the meeting shown in detail, or null for the list
   let shown = "";
   let timer;
   let error = "";
@@ -119,6 +119,9 @@ async function meetings() {
     document.addEventListener("click", close, { once: true });
     return close;
   }
+
+  // The menubar popover opens a meeting in a window that is already showing.
+  window.__TAURI__.event.listen("open-meeting", ({ payload }) => { view = "all"; open = payload; error = ""; shown = ""; refresh(); });
 
   async function refresh() {
     clearTimeout(timer);

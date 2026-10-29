@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <link rel="stylesheet" href="styles.css">
 <link rel="stylesheet" href="meetings.css">
+<link rel="stylesheet" href="popover.css">
 <style>
   body { font: 14px -apple-system, sans-serif; margin: 0; padding: 24px; }
   h1 { font-size: 20px; margin-top: 0; }
@@ -14,6 +15,7 @@
 </head>
 <body><div id="app"></div>
 <script src="meetings.js"></script>
+<script src="popover.js"></script>
 <script>
 const { invoke } = window.__TAURI__.core;
 const app = document.getElementById("app");
@@ -325,7 +327,8 @@ async function finish() {
   app.append(done);
 }
 
-({ "#onboarding": onboarding, "#meetings": meetings, "#pill": pill }[location.hash] || settings)();
+// A route may carry an argument after a slash (#meetings/12); the page reads it itself.
+({ "#onboarding": onboarding, "#meetings": meetings, "#pill": pill, "#popover": popover }[location.hash.split("/")[0]] || settings)();
 </script>
 </body>
 </html>
