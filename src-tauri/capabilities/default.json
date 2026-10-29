@@ -1,0 +1,5 @@
+{
+  "identifier": "default",
+  "windows": ["onboarding", "settings"],
+  "permissions": ["core:default"]
+}
