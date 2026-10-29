@@ -58,7 +58,8 @@
 .meet .tx .sub { color: var(--ink-2); margin-bottom: 20px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .meet .tx .note { color: var(--ink-2); font-size: 12px; margin: -8px 0 16px; }
 .meet .seg-row { position: relative; display: grid; grid-template-columns: 136px 1fr auto; gap: 0 14px; padding: 6px 0; border-radius: 6px; -webkit-user-select: text; user-select: text; }
-.meet .seg-row:hover { background: var(--sel); margin: 0 -8px; padding: 6px 8px; }
+.meet .seg-row:hover, .meet .seg-row.cur { background: var(--sel); margin: 0 -8px; padding: 6px 8px; }
+.meet .seg-row.cur { background: var(--accent-soft); }
 .meet .who { font-weight: 600; font-size: 12px; text-align: right; padding-top: 2px; }
 .meet .who .t { display: block; color: var(--ink-3); font-weight: 400; font-size: 11px; }
 .meet .who.me { color: var(--accent); }
@@ -112,3 +113,13 @@
 .meet .pop .mi { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; padding: 5px 8px; border-radius: 5px; font-size: 13px; text-align: left; }
 .meet .pop .mi:hover, .meet .pop .mi:focus-visible { background: var(--accent-fill); color: var(--accent-ink); outline: none; }
 .meet .pop .mi .xs { color: inherit; opacity: 0.75; }
+/* Screenshot filmstrip: sticks to the top so the next slide is one click away while the transcript scrolls. */
+.meet .filmbar { position: sticky; top: 0; z-index: 3; background: var(--win); border-bottom: 1px solid var(--hair); padding-bottom: 8px; }
+.meet .film { display: flex; gap: 6px; padding: 12px 24px 0; overflow-x: auto; scrollbar-width: none; }
+.meet .film::-webkit-scrollbar { display: none; }
+.meet .film .f { width: 92px; height: 56px; border-radius: 4px; background: var(--inset); border: 1px solid var(--hair); position: relative; flex: none; overflow: hidden; }
+.meet .film .f img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+/* The time sits on the frame, so it gets its own scrim to stay legible on any slide. */
+.meet .film .f::after { content: attr(data-t); position: absolute; left: 0; right: 0; bottom: 0; padding: 10px 6px 3px; text-align: left; font-size: 11px; color: #fff; background: linear-gradient(transparent, rgba(0, 0, 0, 0.6)); }
+.meet .film .f[aria-current="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.meet .ruler { padding: 6px 24px 0; font-size: 11px; color: var(--ink-3); }

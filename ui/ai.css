@@ -43,3 +43,7 @@
 .meet .edit .foot { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
 .meet .edit .foot .sp { flex: 1; }
 .meet .edit .foot .field { width: auto; }
+
+/* Folder suggestion chip above the inspector tabs */
+.meet .inspector .suggest { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; padding: 10px 16px 0; }
+.meet .inspector .suggest .btn { height: 22px; font-size: 11.5px; }
