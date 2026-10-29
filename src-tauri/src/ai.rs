@@ -193,6 +193,7 @@ pub struct State {
     context: Option<u64>,
     summaries: bool,
     folders: bool,
+    chat: bool,
     /// Why a request cannot be sent yet.
     problem: Option<&'static str>,
     /// Whether a request would leave this Mac; drives the "sends text off this Mac" pill.
@@ -203,9 +204,9 @@ pub struct State {
 pub fn ai_state(app: AppHandle) -> State {
     let db = app.state::<Db>();
     let c = Config::load(&db.0);
-    let (summaries, folders) = {
+    let (summaries, folders, chat) = {
         let conn = db.0.lock().unwrap();
-        (enabled(&conn, "summaries"), enabled(&conn, "folders"))
+        (enabled(&conn, "summaries"), enabled(&conn, "folders"), enabled(&conn, "chat"))
     };
     State {
         presets: PRESETS,
@@ -216,6 +217,7 @@ pub fn ai_state(app: AppHandle) -> State {
         context: c.context,
         summaries,
         folders,
+        chat,
         problem: c.problem(),
         off_device: c.off_device(),
         model: c.model,
