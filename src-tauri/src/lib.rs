@@ -478,7 +478,9 @@ pub fn run() {
             meetings::create_folder,
             meetings::rename_folder,
             meetings::delete_folder,
-            meetings::move_meeting
+            meetings::move_meeting,
+            meetings::screenshot_windows,
+            meetings::screenshot_pick
         ])
         .build(tauri::generate_context!())
         .expect("error building Myna")

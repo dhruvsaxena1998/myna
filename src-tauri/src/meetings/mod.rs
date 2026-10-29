@@ -1,6 +1,8 @@
 //! Meeting capture: record the mic and the call app's audio as two tracks, transcribe after stop,
 //! keep the result in SQLite, export it as Markdown or text.
 mod capture;
+mod screen;
+pub(crate) mod shots;
 pub(crate) mod store;
 mod track;
 mod transcript;
@@ -17,28 +19,33 @@ use tauri::{AppHandle, Manager};
 
 pub const TRAY_ID: &str = "main";
 
-struct AudioDir(PathBuf);
+pub struct AudioDir(PathBuf);
+pub struct ScreenshotsDir(PathBuf);
 
 struct Active {
     id: i64,
     started: Instant,
     /// Held for its Drop, which stops the capture.
     _capture: capture::Capture,
+    _shots: shots::Screenshots,
 }
 
 #[derive(Default)]
 struct Recorder(Mutex<Option<Active>>);
 
 pub fn setup(app: &tauri::App, root: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let audio = root.join("audio");
+    let (audio, screenshots) = (root.join("audio"), root.join("screenshots"));
     fs::create_dir_all(&audio)?;
+    fs::create_dir_all(&screenshots)?;
     let queued = {
         let db = app.state::<Db>();
         let conn = db.0.lock().unwrap();
         store::init(&conn)?;
+        shots::init(&conn)?;
         store::recover(&conn)?
     };
     app.manage(AudioDir(audio));
+    app.manage(ScreenshotsDir(screenshots));
     app.manage(Recorder::default());
     for id in queued {
         spawn_transcription(app.handle(), id);
@@ -102,7 +109,9 @@ fn begin(app: &AppHandle) -> Result<Active, String> {
         let _ = fs::remove_dir_all(&dir);
     })?;
     let _ = store::set_source(&db.0.lock().unwrap(), id, capture.app.as_deref(), capture.note.as_deref());
-    Ok(Active { id, started: Instant::now(), _capture: capture })
+    let started = Instant::now();
+    let frames = app.state::<ScreenshotsDir>().0.join(id.to_string());
+    Ok(Active { id, started, _capture: capture, _shots: shots::Screenshots::start(app, id, frames, started) })
 }
 
 fn clear_tray_title(app: &AppHandle) {
@@ -177,15 +186,40 @@ pub fn move_meeting(db: tauri::State<Db>, id: i64, folder: Option<i64>) -> Resul
 pub struct Detail {
     meeting: store::Meeting,
     segments: Vec<store::Segment>,
+    /// Screenshots kept, in time order, and how many were taken before duplicates were dropped.
+    shots: Vec<shots::Shot>,
+    shots_taken: usize,
+    /// The track files on disk (mic, and system audio when it was tapped), for the player.
+    audio: Vec<String>,
 }
 
 #[tauri::command]
-pub fn get_meeting(db: tauri::State<Db>, id: i64) -> Result<Detail, String> {
+pub fn get_meeting(db: tauri::State<Db>, audio: tauri::State<AudioDir>, frames: tauri::State<ScreenshotsDir>, id: i64) -> Result<Detail, String> {
     let conn = db.0.lock().unwrap();
+    let (shots, shots_taken) = shots::list(&conn, id, &frames.0.join(id.to_string())).map_err(|e| e.to_string())?;
+    let tracks = ["mic.wav", "system.wav"].map(|f| audio.0.join(id.to_string()).join(f));
     Ok(Detail {
         meeting: store::get(&conn, id).map_err(|e| e.to_string())?,
         segments: store::segments(&conn, id).map_err(|e| e.to_string())?,
+        shots,
+        shots_taken,
+        audio: tracks.into_iter().filter(|p| p.exists()).map(|p| p.display().to_string()).collect(),
     })
+}
+
+/// Windows to offer as the screenshot target. Async: ScreenCaptureKit answers on its own queue.
+#[tauri::command(async)]
+pub fn screenshot_windows() -> Result<Vec<screen::Window>, String> {
+    if !permissions::granted("Screen Recording") {
+        return Err("Allow Screen Recording in Settings → Meetings to list windows.".into());
+    }
+    screen::windows()
+}
+
+/// Screenshots follow this window until it closes; None goes back to the app that has the mic.
+#[tauri::command]
+pub fn screenshot_pick(id: Option<u32>) {
+    shots::choose(id)
 }
 
 #[tauri::command]

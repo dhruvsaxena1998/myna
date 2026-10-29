@@ -218,6 +218,17 @@ fn process_label(pid: i32) -> String {
     app_name(&path).unwrap_or_else(|| format!("process {pid}"))
 }
 
+/// Apps with the mic open right now, other than Myna. The screenshot window is the biggest one of these.
+// shortcut: names come from the process's .app path, so an app whose audio runs outside its bundle (Safari's WebKit
+// GPU process) never matches a window; the popover's window picker covers it. Match by bundle id if that bites.
+pub fn mic_apps() -> Vec<String> {
+    let mut apps: Vec<String> =
+        audio_processes(kAudioProcessPropertyIsRunningInput).unwrap_or_default().iter().map(|p| process_label(p.pid)).collect();
+    apps.sort();
+    apps.dedup();
+    apps
+}
+
 struct TapState {
     tx: Sender<Vec<f32>>,
 }

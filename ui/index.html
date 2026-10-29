@@ -48,6 +48,7 @@ const ICONS = {
   check: '<path d="M3 8.5l3 3 7-7"/>',
   plus: '<path d="M8 3v10M3 8h10"/>',
   mic: '<rect x="5.5" y="1.5" width="5" height="8" rx="2.5"/><path d="M3 7.5a5 5 0 0 0 10 0M8 12.5v2M5.5 14.5h5"/>',
+  wave: '<path d="M2 8h1.5M5 4.5v7M8 2v12M11 5v6M14 8h-1.5"/>',
 };
 const icon = (name, cls = "") => `<svg class="i ${cls}" viewBox="0 0 16 16" aria-hidden="true">${ICONS[name]}</svg>`;
 const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
@@ -58,7 +59,7 @@ const TASKS = [
   ["diarization", "Speaker separation", ["meetings_enabled"]],
 ];
 
-const PAGES = [["modules", "Modules", "gear"], ["dictation", "Dictation", "mic"], ["models", "Models", "dl"]];
+const PAGES = [["modules", "Modules", "gear"], ["dictation", "Dictation", "mic"], ["meetings", "Meetings", "wave"], ["models", "Models", "dl"]];
 const KEY_SYMBOLS = { Alt: "⌥", Option: "⌥", Control: "⌃", Ctrl: "⌃", Shift: "⇧", Super: "⌘", Command: "⌘", Cmd: "⌘" };
 const fmtKey = (k) => k.split("+").map((p) => KEY_SYMBOLS[p] || p.replace(/^(Key|Digit)/, "")).join("");
 
@@ -82,6 +83,7 @@ async function settings() {
   document.getElementById("title").textContent = PAGES.find((p) => p[0] === settingsPage)[1];
   if (settingsPage === "models") return modelsPage(page);
   if (settingsPage === "dictation") return dictationPage(page);
+  if (settingsPage === "meetings") return meetingsPage(page);
   page.innerHTML = '<section class="group"><h2>Enable</h2><div class="box"></div></section>';
   page.querySelector(".box").append(...(await modulesForm()).children);
 }
@@ -169,6 +171,29 @@ async function dictationPage(page) {
     e.currentTarget.setAttribute("aria-expanded", open);
     if (open) { if (!dict.length) dict.push({ from: "", to: "" }); draw(); }
   };
+}
+
+async function meetingsPage(page) {
+  const SR = "Screen Recording";
+  const every = (await get("meetings_interval")) || "15";
+  const value = (await get("meetings_capture")) === "off" ? "off" : every;
+  const allowed = await invoke("permission_granted", { name: SR });
+  const access = value === "off" ? "" : `<div class="prow"><div class="l">Screen Recording</div><div class="d${allowed ? "" : " err"}">${allowed ? "Myna can see the call window." : "Without it Myna can’t see other apps’ windows. After allowing it, quit and reopen Myna."}</div><div class="r">${allowed ? `<span class="pill ok">${icon("check", "sm")} Allowed</span>` : '<span class="pill alert">Not allowed</span><button class="btn" id="allow">Allow…</button>'}</div></div>`;
+  page.innerHTML = `<section class="group"><h2>Capture</h2><div class="box">
+<div class="prow"><div class="l">Screenshots of the meeting window</div><div class="d">Taken while you record, from the app using your mic. Near-duplicates are dropped automatically.</div><div class="r"><select class="field" id="shots" aria-label="Screenshots of the meeting window"><option value="15">Every 15 s</option><option value="30">Every 30 s</option><option value="60">Every minute</option><option value="off">Off</option></select></div></div>${access}
+</div></section>`;
+  const sel = page.querySelector("#shots");
+  sel.value = [...sel.options].some((o) => o.value === value) ? value : "15";
+  sel.onchange = async () => {
+    await set("meetings_capture", sel.value === "off" ? "off" : "screenshots");
+    if (sel.value !== "off") await set("meetings_interval", sel.value);
+    meetingsPage(page);
+  };
+  const allow = page.querySelector("#allow");
+  // Asking registers Myna in the Screen Recording list; the pane is where the switch is.
+  if (allow) allow.onclick = async () => { await invoke("request_permission", { name: SR }); invoke("open_privacy_settings", { name: SR }); };
+  // A grant made in System Settings shows up when the user comes back.
+  window.onfocus = () => (page.isConnected ? meetingsPage(page) : (window.onfocus = null));
 }
 
 async function modelsPage(page) {
