@@ -4,6 +4,7 @@ use crate::{
     meetings::{
         self,
         mute::Mic,
+        shots,
         store::{self, Meeting},
     },
     open_window, open_window_at, Db, HotkeyError,
@@ -33,7 +34,8 @@ pub struct Popover {
 #[serde(tag = "kind", rename_all = "lowercase")]
 enum State {
     Idle,
-    Recording { started_at: i64, app: Option<String>, note: Option<String> },
+    /// `shots` is filled in by `popover_view`, from the live capture; None while screenshots are off.
+    Recording { started_at: i64, app: Option<String>, note: Option<String>, shots: Option<shots::Status> },
     Transcribing { title: String, progress: f64 },
 }
 
@@ -79,7 +81,7 @@ fn view(list: &[Meeting], meetings_on: bool, dictation: Option<Dictation>) -> Vi
     // A live recording is always shown and stoppable, even if Meetings was switched off mid-call:
     // hiding Stop would leave the mic open with no way to end it.
     let state = match (with("recording"), with("transcribing")) {
-        (Some(m), _) => State::Recording { started_at: m.started_at, app: m.app.clone(), note: m.note.clone() },
+        (Some(m), _) => State::Recording { started_at: m.started_at, app: m.app.clone(), note: m.note.clone(), shots: None },
         (None, Some(m)) if meetings_on => State::Transcribing { title: m.title.clone(), progress: m.progress },
         _ => State::Idle,
     };
@@ -108,6 +110,9 @@ pub fn popover_view(app: AppHandle, db: tauri::State<Db>, failed: tauri::State<H
     let registered = failed.0.lock().unwrap().is_none();
     let dictation = dictation(on("dictation_enabled"), crate::hotkey(&app), crate::toggle_mode(&app), registered);
     let mut v = view(&list, on("meetings_enabled"), dictation);
+    if let State::Recording { shots, .. } = &mut v.state {
+        *shots = crate::meetings::shots::status();
+    }
     v.mic = meetings::mic(&db.0.lock().unwrap());
     Ok(v)
 }
