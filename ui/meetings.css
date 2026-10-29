@@ -68,6 +68,20 @@
 .meet .state .bar i { display: block; height: 100%; background: var(--accent-fill); }
 .meet .state .err { color: var(--alert); }
 
+/* Possibly-muted lines, collapsed in place. Ported from the prototype's .muted-group. */
+.meet .muted-group { margin: 8px 0; border: 1px solid var(--hair); border-radius: var(--r); background: var(--inset); }
+.meet .muted-group > summary { list-style: none; display: flex; align-items: center; gap: 8px; padding: 8px 12px; color: var(--ink-2); font-size: 12px; }
+.meet .muted-group > summary::-webkit-details-marker { display: none; }
+.meet .muted-group > summary .chev { transition: transform 0.15s; margin-left: auto; }
+.meet .muted-group[open] > summary .chev { transform: rotate(90deg); }
+.meet .muted-group .dot.live { box-shadow: none; }
+.meet .muted-group .seg-row { margin: 0 12px; padding: 6px 0; border-top: 1px solid var(--hair); border-radius: 0; grid-template-columns: 124px 1fr auto; }
+.meet .muted-group .seg-row:hover { margin: 0 12px; padding: 6px 0; background: none; }
+.meet .muted-group .said { color: var(--ink-2); font-size: 13px; }
+.meet .muted-group .inc { display: flex; gap: 4px; align-items: center; }
+.meet .muted-group .btn { height: 22px; font-size: 11.5px; }
+.meet .said .pill, .meet .said .btn { vertical-align: 1px; margin-left: 6px; }
+
 .meet .menu-wrap { position: relative; }
 .meet .menu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 6; min-width: 188px; padding: 4px; background: var(--raised); border: 1px solid var(--hair-strong); border-radius: 10px; box-shadow: var(--shadow), inset 0 0 0 0.5px var(--edge); }
 .meet .menu[hidden] { display: none; }

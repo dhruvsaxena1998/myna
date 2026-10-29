@@ -1,6 +1,7 @@
 //! From two recorded tracks to a Me / Them transcript, and from a transcript to Markdown or plain text.
 use crate::dictation::{Transcriber, Utterance};
 use super::{
+    mute::{self, Event, State},
     store::{self, Meeting, Segment, ME, THEM},
     track::{read_track, RATE},
 };
@@ -60,10 +61,18 @@ pub fn transcribe_track(
     Ok(all)
 }
 
-/// Interleaves both speakers by start time and joins runs of one speaker into paragraphs.
-pub fn assemble(me: Vec<Utterance>, them: Vec<Utterance>) -> Vec<Segment> {
+/// Interleaves both speakers by start time and joins runs of one speaker into paragraphs. Each mic line gets its
+/// mute state first, and lines only join when their state matches, so a muted aside never merges into a live one.
+pub fn assemble(me: Vec<Utterance>, them: Vec<Utterance>, mutes: &[Event], always: bool) -> Vec<Segment> {
     let tag = |speaker: &'static str| {
-        move |u: Utterance| Segment { speaker: speaker.into(), start_ms: u.start_ms, end_ms: u.end_ms, text: u.text.trim().into() }
+        move |u: Utterance| Segment {
+            speaker: speaker.into(),
+            start_ms: u.start_ms,
+            end_ms: u.end_ms,
+            text: u.text.trim().into(),
+            mute: if speaker == ME { mute::state(mutes, u.start_ms, u.end_ms, always) } else { State::Unmuted },
+            ..Default::default()
+        }
     };
     let mut all: Vec<Segment> =
         me.into_iter().map(tag(ME)).chain(them.into_iter().map(tag(THEM))).filter(|s| !s.text.is_empty()).collect();
@@ -71,7 +80,7 @@ pub fn assemble(me: Vec<Utterance>, them: Vec<Utterance>) -> Vec<Segment> {
     let mut out: Vec<Segment> = vec![];
     for s in all {
         match out.last_mut() {
-            Some(prev) if prev.speaker == s.speaker && s.start_ms.saturating_sub(prev.end_ms) <= MERGE_GAP_MS => {
+            Some(prev) if prev.speaker == s.speaker && prev.mute == s.mute && s.start_ms.saturating_sub(prev.end_ms) <= MERGE_GAP_MS => {
                 prev.text.push(' ');
                 prev.text.push_str(&s.text);
                 prev.end_ms = prev.end_ms.max(s.end_ms);
@@ -97,7 +106,11 @@ pub fn run(db: &Mutex<Connection>, audio: &Path, id: i64, t: &mut dyn Transcribe
     let me_lines = transcribe_track(&mic, t, &mut report)?;
     let them_lines = transcribe_track(&them, t, &mut report)?;
     let duration_ms = mic.len() as u64 * 1000 / RATE as u64;
-    store::finish(&db.lock().unwrap(), id, duration_ms, &assemble(me_lines, them_lines)).map_err(|e| e.to_string())
+    let conn = db.lock().unwrap();
+    // A timeline that cannot be read fails the meeting (retryable) instead of letting every line in.
+    let mutes = store::mute_events(&conn, id).map_err(|e| e.to_string())?;
+    let segments = assemble(me_lines, them_lines, &mutes, mute::always_record(&conn, id));
+    store::finish(&conn, id, duration_ms, &segments).map_err(|e| e.to_string())
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -156,7 +169,7 @@ pub fn export(m: &Meeting, segments: &[Segment], format: Format) -> String {
         Format::Markdown => format!("# {}\n\n{meta}\n\n", m.title),
         Format::Text => format!("{}\n{meta}\n\n", m.title),
     };
-    for s in segments {
+    for s in segments.iter().filter(|s| s.shown()) {
         let (who, at) = (label(&s.speaker), clock(s.start_ms));
         out += &match format {
             Format::Markdown => format!("**{who}** · {at}\n\n{}\n\n", s.text),
@@ -238,7 +251,8 @@ mod tests {
     fn assemble_interleaves_speakers_and_joins_close_same_speaker_lines() {
         let me = vec![utt(0, 3000, "Hi there."), utt(4000, 6000, "How are you?"), utt(30_000, 31_000, "Bye.")];
         let them = vec![utt(7000, 9000, "Good."), utt(9500, 10_000, "You?"), utt(12_000, 12_500, "  ")];
-        let got: Vec<_> = assemble(me, them).into_iter().map(|s| (s.speaker, s.start_ms, s.text)).collect();
+        let live = [Event { at_ms: 0, muted: false, source: mute::Source::Manual }];
+        let got: Vec<_> = assemble(me, them, &live, false).into_iter().map(|s| (s.speaker, s.start_ms, s.text)).collect();
         assert_eq!(
             got,
             [
@@ -247,6 +261,50 @@ mod tests {
                 ("me".into(), 30_000, "Bye.".into()),
             ]
         );
+    }
+
+    fn live(at_ms: u64) -> Event {
+        Event { at_ms, muted: false, source: mute::Source::Manual }
+    }
+
+    fn off(at_ms: u64) -> Event {
+        Event { at_ms, muted: true, source: mute::Source::Manual }
+    }
+
+    #[test]
+    fn a_muted_aside_gets_its_state_and_never_merges_into_the_live_lines_around_it() {
+        let me = vec![utt(0, 1000, "Live."), utt(1500, 2500, "Private."), utt(3000, 4000, "Back."), utt(4500, 5000, "More.")];
+        let got: Vec<_> = assemble(me, vec![], &[live(0), off(1200), live(2800)], false)
+            .into_iter()
+            .map(|s| (s.text, s.mute))
+            .collect();
+        assert_eq!(
+            got,
+            [("Live.".into(), State::Unmuted), ("Private.".into(), State::Muted), ("Back. More.".into(), State::Unmuted)]
+        );
+    }
+
+    #[test]
+    fn export_leaves_out_collapsed_segments_unless_the_user_included_them() {
+        let line = |speaker: &str, start_ms, text: &str, mute, included| Segment {
+            speaker: speaker.into(), start_ms, end_ms: start_ms + 1000, text: text.into(), mute, included, ..Default::default()
+        };
+        let segments = [
+            line(ME, 0, "Live line.", State::Unmuted, false),
+            line(ME, 2000, "Private aside.", State::Muted, false),
+            line(ME, 4000, "Unknown line.", State::Unknown, false),
+            line(ME, 6000, "Pulled in.", State::Muted, true),
+            line(THEM, 8000, "Their line.", State::Unmuted, false),
+        ];
+        for format in [Format::Markdown, Format::Text] {
+            let out = export(&meeting(), &segments, format);
+            for kept in ["Live line.", "Pulled in.", "Their line."] {
+                assert!(out.contains(kept), "{kept} missing from {out}");
+            }
+            for dropped in ["Private aside.", "Unknown line."] {
+                assert!(!out.contains(dropped), "{dropped} leaked into {out}");
+            }
+        }
     }
 
     #[test]
@@ -263,8 +321,8 @@ mod tests {
 
     fn lines() -> Vec<Segment> {
         vec![
-            Segment { speaker: ME.into(), start_ms: 12_000, end_ms: 15_000, text: "Hello.".into() },
-            Segment { speaker: THEM.into(), start_ms: 20_000, end_ms: 24_000, text: "Hi, thanks for joining.".into() },
+            Segment { speaker: ME.into(), start_ms: 12_000, end_ms: 15_000, text: "Hello.".into(), ..Default::default() },
+            Segment { speaker: THEM.into(), start_ms: 20_000, end_ms: 24_000, text: "Hi, thanks for joining.".into(), ..Default::default() },
         ]
     }
 
@@ -337,6 +395,37 @@ mod tests {
     }
 
     #[test]
+    fn transcription_assigns_each_mic_line_its_state_from_the_stored_timeline_and_policy() {
+        // (events, zoom is on the always-record list, state of the mic line)
+        let table = [
+            ("no mute source", vec![], false, State::Unknown),
+            ("no mute source, always record", vec![], true, State::Unmuted),
+            ("live", vec![live(0)], false, State::Unmuted),
+            ("muted partway through the line", vec![live(0), off(1000), live(2000)], false, State::Muted),
+            ("muted, always record", vec![off(0)], true, State::Muted),
+        ];
+        for (i, (name, events, always, want)) in table.into_iter().enumerate() {
+            let (db, root, id) = fixture(&format!("state{i}"), 0.2, &["mic.wav", "system.wav"]);
+            {
+                let conn = db.lock().unwrap();
+                conn.execute("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)", []).unwrap();
+                store::set_source(&conn, id, Some("zoom.us"), None).unwrap();
+                for e in &events {
+                    store::add_mute_event(&conn, id, e).unwrap();
+                }
+                if always {
+                    crate::settings::set(&conn, mute::ALWAYS_KEY, r#"["zoom.us"]"#).unwrap();
+                }
+            }
+            run(&db, &root, id, &mut Scripted).unwrap();
+            let got = store::segments(&db.lock().unwrap(), id).unwrap();
+            let state_of = |who| got.iter().find(|s| s.speaker == who).unwrap().mute;
+            assert_eq!((state_of(ME), state_of(THEM)), (want, State::Unmuted), "{name}");
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
+
+    #[test]
     fn mic_only_meeting_still_transcribes() {
         let (db, root, id) = fixture("mic", 0.2, &["mic.wav"]);
         run(&db, &root, id, &mut Scripted).unwrap();
@@ -388,7 +477,7 @@ mod tests {
         for path in [&wav, &live] {
             let samples = read_track(path).unwrap();
             let lines = transcribe_track(&samples, &mut stt, |_| {}).unwrap();
-            let segments = assemble(lines, vec![]);
+            let segments = assemble(lines, vec![], &[Event { at_ms: 0, muted: false, source: mute::Source::Manual }], false);
             let text = segments.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join(" ").to_lowercase();
             eprintln!("{path:?}: {segments:#?}");
             let hits = ["hello", "everyone", "roadmap", "quarter", "meeting", "capture", "feature"].iter().filter(|w| text.contains(*w)).count();
