@@ -130,6 +130,7 @@ pub fn load(runtime: Runtime, path: &Path) -> Result<Box<dyn Transcriber>, Strin
     Ok(match runtime {
         Runtime::Parakeet => Box::new(Parakeet::load(path)?),
         Runtime::Whisper => Box::new(Whisper::load(path)?),
+        Runtime::Voz => Box::new(crate::voz::Voz::load(path)?),
     })
 }
 
@@ -285,6 +286,13 @@ mod tests {
         dictate_with(&all[1].id());
         dictate_with(&all[0].id());
         assert_eq!(loaded.take(), [Runtime::Parakeet, Runtime::Whisper, Runtime::Parakeet]);
+    }
+
+    #[test]
+    fn a_backend_without_timestamps_reports_one_line_spanning_the_clip() {
+        // Voz gives no timestamps, so meetings get this default for it.
+        let u = Fake("hi").transcribe_timed(&vec![0.0; 16_000]).unwrap();
+        assert_eq!((u.len(), u[0].start_ms, u[0].end_ms, u[0].text.as_str()), (1, 0, 1000, "hi"));
     }
 
     /// Share of the reference's words the transcript got wrong (edit distance over words), ignoring case and punctuation.

@@ -9,7 +9,7 @@
     presets: [{ id: "openrouter", name: "OpenRouter", base_url: "https://openrouter.ai/api/v1", model: "openai/gpt-5-mini" }, { id: "custom", name: "Custom (OpenAI-compatible)", base_url: "http://localhost:11434/v1", model: "llama3.1" }],
     preset: q.has("local") ? "custom" : "openrouter", base_url: "https://openrouter.ai/api/v1", model: "gpt-5-mini", has_key: !q.has("unready"),
     input_price: q.has("noprice") ? null : 0.25, output_price: q.has("noprice") ? null : 2, context: q.has("window") ? Number(q.get("window")) : 400000,
-    summaries: true, chat: !q.has("off"), problem: q.has("unready") ? "Add an API key under AI provider in Settings." : null, off_device: !q.has("local"),
+    summaries: true, folders: false, chat: !q.has("off"), problem: q.has("unready") ? "Add an API key under AI provider in Settings." : null, off_device: !q.has("local"),
   };
   const meeting = { id: 1, title: "Design review · Meetings module", started_at: Math.floor(Date.now() / 1000) - 7200, duration_ms: 42 * 60000, app: "Google Meet · Chrome", note: null, status: "done", progress: 1, error: null, segments: 6, has_them: true, folder_id: null };
   const line = (speaker, start_ms, text, extra = {}) => ({ id: start_ms + 1, speaker, start_ms, end_ms: start_ms + 8000, text, mute: "unmuted", included: false, ...extra });

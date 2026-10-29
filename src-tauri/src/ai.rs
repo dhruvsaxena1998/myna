@@ -192,6 +192,7 @@ pub struct State {
     output_price: Option<f64>,
     context: Option<u64>,
     summaries: bool,
+    folders: bool,
     chat: bool,
     /// Why a request cannot be sent yet.
     problem: Option<&'static str>,
@@ -203,8 +204,10 @@ pub struct State {
 pub fn ai_state(app: AppHandle) -> State {
     let db = app.state::<Db>();
     let c = Config::load(&db.0);
-    let summaries = enabled(&db.0.lock().unwrap(), "summaries");
-    let chat = enabled(&db.0.lock().unwrap(), "chat");
+    let (summaries, folders, chat) = {
+        let conn = db.0.lock().unwrap();
+        (enabled(&conn, "summaries"), enabled(&conn, "folders"), enabled(&conn, "chat"))
+    };
     State {
         presets: PRESETS,
         preset: c.preset.id,
@@ -213,6 +216,7 @@ pub fn ai_state(app: AppHandle) -> State {
         output_price: c.output_price,
         context: c.context,
         summaries,
+        folders,
         chat,
         problem: c.problem(),
         off_device: c.off_device(),

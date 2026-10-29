@@ -4,6 +4,7 @@ mod capture;
 pub mod chat;
 pub(crate) mod mute;
 pub(crate) mod store;
+pub mod suggest;
 pub mod summary;
 mod track;
 mod transcript;
