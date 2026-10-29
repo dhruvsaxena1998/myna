@@ -3,6 +3,8 @@
 // shortcut: a recordable combo, not Fn or Right Option alone: those cannot be registered as global
 // shortcuts (they need an event tap and Input Monitoring). Revisit with the Swift bridge if people ask.
 pub const DEFAULT: &str = "Alt+Space";
+/// Mutes and unmutes the mic during a meeting recording.
+pub const MUTE_DEFAULT: &str = "Alt+Shift+M";
 
 #[derive(Debug, PartialEq)]
 pub enum Act {
@@ -45,7 +47,7 @@ mod tests {
     #[test]
     fn what_the_settings_recorder_produces_registers() {
         // The UI builds these from KeyboardEvent.code; the plugin must understand every shape.
-        for s in [DEFAULT, "Control+Shift+KeyD", "Super+Digit1", "Control+Alt+Super+ArrowLeft", "F5", "Shift+Backquote", "Alt+Comma"] {
+        for s in [DEFAULT, MUTE_DEFAULT, "Control+Shift+KeyD", "Super+Digit1", "Control+Alt+Super+ArrowLeft", "F5", "Shift+Backquote", "Alt+Comma"] {
             s.parse::<tauri_plugin_global_shortcut::Shortcut>().unwrap_or_else(|e| panic!("{s}: {e}"));
         }
     }

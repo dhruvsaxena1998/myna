@@ -285,7 +285,7 @@ impl Tap {
             let description = CFDictionary::from_CFType_pairs(&[
                 (key(kAudioAggregateDeviceNameKey), CFString::new("Myna meeting tap").as_CFType()),
                 // Unique per tap: destroying the previous aggregate device is asynchronous.
-                (key(kAudioAggregateDeviceUIDKey), CFString::new(&format!("com.myna.tap.{}", desc.UUID().UUIDString())).as_CFType()),
+                (key(kAudioAggregateDeviceUIDKey), CFString::new(&format!("com.dhruvsaxena.myna.tap.{}", desc.UUID().UUIDString())).as_CFType()),
                 (key(kAudioAggregateDeviceMainSubDeviceKey), output_uid.as_CFType()),
                 (key(kAudioAggregateDeviceIsPrivateKey), CFBoolean::true_value().as_CFType()),
                 (key(kAudioAggregateDeviceIsStackedKey), CFBoolean::false_value().as_CFType()),

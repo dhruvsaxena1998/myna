@@ -110,6 +110,7 @@ body.set {
 .pill { display: inline-flex; align-items: center; gap: 5px; height: 18px; padding: 0 7px; border-radius: 9px; font-size: 11px; font-weight: 500; }
 .pill.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
 .pill.alert { color: var(--alert); background: color-mix(in srgb, var(--alert) 12%, transparent); }
+.pill.off { color: var(--alert); background: color-mix(in srgb, var(--alert) 12%, transparent); margin-left: 6px; }
 
 .set input.field { -webkit-user-select: text; user-select: text; }
 .field.grow { flex: 1; min-width: 0; width: auto; }
