@@ -1,4 +1,4 @@
-// Meetings window: list of recordings and a transcript with the time in the margin.
+// Meetings window: list of recordings and a transcript with the time in the margin, a screenshot filmstrip above it.
 // Uses invoke, app, icon, esc and ICONS from the inline script in index.html.
 // Wrapped so its helpers stay out of the page's global scope; only `meetings` is exposed.
 const meetings = (() => {
@@ -35,6 +35,7 @@ async function meetings() {
     play: '<path d="M5 3.5v9l7-4.5z" fill="currentColor" stroke="none"/>',
     chev: '<path d="M6 3.5 10.5 8 6 12.5"/>',
     more: '<circle cx="3.5" cy="8" r="1" fill="currentColor"/><circle cx="8" cy="8" r="1" fill="currentColor"/><circle cx="12.5" cy="8" r="1" fill="currentColor"/>',
+    pause: '<path d="M5.5 3.5v9M10.5 3.5v9"/>',
   });
   document.body.className = "set meet";
   app.innerHTML = `<nav class="sidebar" aria-label="Meetings" id="side"></nav><div class="content" id="main"></div>`;
@@ -48,8 +49,11 @@ async function meetings() {
   let adding = false; // the new-folder field is open in the sidebar
   let renaming = false;
   let confirming = false; // asked to delete the open folder
+  let tracks = []; // the <audio> elements of the open meeting (mic, and system audio when tapped), played together
+  let clip; // the segment clip that is playing
+  const pauseAudio = () => [...tracks, clip].forEach((a) => a?.pause());
+  const stopAudio = () => { pauseAudio(); tracks = []; clip = null; };
   const opened = new Set(); // ids of segments in collapsed groups the user opened, so a group stays open after an Include
-  let player; // the clip that is playing
   const side = document.getElementById("side");
   const folder = () => folders.find((f) => String(f.id) === view);
   const inView = (m) => view === "all" || (view === "inbox" ? m.folder_id === null : String(m.folder_id) === view);
@@ -136,7 +140,7 @@ async function meetings() {
     if (view !== "all" && view !== "inbox" && !folder()) view = "all"; // its folder was deleted
     const detail = open === null ? null : await invoke("get_meeting", { id: open }).catch(() => null);
     if (open !== null && !detail) open = null;
-    const sig = JSON.stringify([open, error, view, folders, renaming, confirming, ...(detail ? [detail.meeting.status, detail.meeting.error, detail.segments.length, detail.meeting.folder_id] : list.map((m) => [m.id, m.status, m.segments, m.app, m.has_them, m.error, m.folder_id]))]);
+    const sig = JSON.stringify([open, error, view, folders, renaming, confirming, ...(detail ? [detail.meeting.status, detail.meeting.error, detail.segments.length, detail.meeting.folder_id, detail.shots.length, detail.shots_taken] : list.map((m) => [m.id, m.status, m.segments, m.app, m.has_them, m.error, m.folder_id]))]);
     if (sig !== shown) {
       shown = sig;
       if (!adding) renderSide(list);
@@ -190,6 +194,7 @@ async function meetings() {
   }
 
   function renderList(all) {
+    stopAudio();
     const recording = all.some((m) => m.status === "recording");
     const list = all.filter(inView);
     main.innerHTML = `<div class="toolbar">${folderTools()}<span class="sp"></span><button class="btn primary" id="rec">${icon(recording ? "stop" : "rec", "sm")} ${recording ? "Stop and transcribe" : "Record"}</button></div>${error ? `<div class="banner" role="alert">${esc(error)}</div>` : ""}<div class="list" id="list"></div>`;
@@ -219,10 +224,11 @@ async function meetings() {
     }
   }
 
-  function renderDetail({ meeting: m, segments }) {
+  function renderDetail({ meeting: m, segments, shots, shots_taken, audio }) {
+    stopAudio();
     const d = new Date(m.started_at * 1000);
     const when = `${d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })} · ${hhmm(d)}${m.duration_ms ? " · " + mins(m.duration_ms) : ""}`;
-    main.innerHTML = `<div class="toolbar"><button class="btn quiet icon" id="back" aria-label="Back to Meetings">${icon("back")}</button><h1>Meetings</h1><span class="sp"></span><span class="s" id="saved" role="status"></span><div class="menu-wrap"><button class="btn" id="export" aria-haspopup="menu" aria-expanded="false"${m.status === "done" ? "" : " disabled"}>Export</button><div class="menu" role="menu" id="menu" hidden><button class="mi" role="menuitem" data-fmt="md">Markdown (.md)</button><button class="mi" role="menuitem" data-fmt="txt">Plain text (.txt)</button></div></div><div class="menu-wrap"><button class="btn quiet icon" id="more" aria-label="More" aria-haspopup="menu" aria-expanded="false">${icon("more")}</button><div class="menu" role="menu" id="move-menu" aria-label="Move to" hidden><div class="mhead" aria-hidden="true">Move to</div>${[{ id: null, name: "Inbox" }, ...folders].map((f) => `<button class="mi" role="menuitemradio" aria-checked="${f.id === m.folder_id}" data-folder="${f.id}">${icon("check")}${esc(f.name)}</button>`).join("")}</div></div></div>${error ? `<div class="banner" role="alert">${esc(error)}</div>` : ""}<div class="detail"><div class="doc"><div class="tx"><h2>${esc(m.title)}</h2><div class="sub"><span>${esc(when)}</span><span>${esc(m.app || "Mic only")}</span><span class="pill neutral">Parakeet v3</span></div>${m.note ? `<p class="note">${esc(m.note)}</p>` : ""}<div id="body"></div></div></div><div class="inspector" id="insp"></div></div>`;
+    main.innerHTML = `<div class="toolbar"><button class="btn quiet icon" id="back" aria-label="Back to Meetings">${icon("back")}</button><h1>Meetings</h1><span class="sp"></span><span class="s" id="saved" role="status"></span>${audio.length && m.status === "done" ? `<button class="btn" id="play" aria-label="Play recording">${icon("play", "sm")}<span id="pos"></span></button>` : ""}<div class="menu-wrap"><button class="btn" id="export" aria-haspopup="menu" aria-expanded="false"${m.status === "done" ? "" : " disabled"}>Export</button><div class="menu" role="menu" id="menu" hidden><button class="mi" role="menuitem" data-fmt="md">Markdown (.md)</button><button class="mi" role="menuitem" data-fmt="txt">Plain text (.txt)</button></div></div><div class="menu-wrap"><button class="btn quiet icon" id="more" aria-label="More" aria-haspopup="menu" aria-expanded="false">${icon("more")}</button><div class="menu" role="menu" id="move-menu" aria-label="Move to" hidden><div class="mhead" aria-hidden="true">Move to</div>${[{ id: null, name: "Inbox" }, ...folders].map((f) => `<button class="mi" role="menuitemradio" aria-checked="${f.id === m.folder_id}" data-folder="${f.id}">${icon("check")}${esc(f.name)}</button>`).join("")}</div></div></div>${error ? `<div class="banner" role="alert">${esc(error)}</div>` : ""}<div class="detail"><div class="doc">${filmstrip(shots, shots_taken)}<div class="tx"><h2>${esc(m.title)}</h2><div class="sub"><span>${esc(when)}</span><span>${esc(m.app || "Mic only")}</span><span class="pill neutral">Parakeet v3</span></div>${m.note ? `<p class="note">${esc(m.note)}</p>` : ""}<div id="body"></div></div></div><div class="inspector" id="insp"></div></div>`;
     ai.summary(document.getElementById("insp"), m, m.status === "done" && segments.length > 0);
     if (m.status === "done" && segments.length) ai.suggestion(document.getElementById("insp"), m, (f) => act("move_meeting", { id: m.id, folder: f.id }));
     document.getElementById("back").onclick = () => { open = null; shown = ""; refresh(); };
@@ -267,11 +273,59 @@ async function meetings() {
         await act("include_segment", { id: Number(b.dataset.include || b.dataset.undo), included: !!b.dataset.include });
       };
     }
+    wirePlayer(m, audio);
+    const film = main.querySelector(".film");
+    if (film) film.onclick = (e) => {
+      const f = e.target.closest(".f");
+      if (!f) return;
+      film.querySelector('[aria-current="true"]')?.removeAttribute("aria-current");
+      f.setAttribute("aria-current", "true");
+      seek(Number(f.dataset.ms));
+    };
+  }
+
+  // The frames kept while recording, on the timeline; a click jumps the transcript and the audio to that moment.
+  function filmstrip(shots, taken) {
+    if (!shots.length) return "";
+    const src = window.__TAURI__.core.convertFileSrc;
+    const frames = shots.map((s) => `<button class="f" data-ms="${s.at_ms}" data-t="${clock(s.at_ms / 1000)}" aria-label="Screenshot at ${clock(s.at_ms / 1000)}"><img src="${esc(src(s.path))}" alt="" loading="lazy" decoding="async"></button>`);
+    return `<div class="filmbar"><div class="film" aria-label="Screenshots">${frames.join("")}</div><div class="ruler"><span>${shots.length} kept of ${taken} taken</span></div></div>`;
+  }
+
+  function seek(ms) {
+    tracks.forEach((a) => { a.currentTime = ms / 1000; });
+    const rows = [...main.querySelectorAll(".seg-row")];
+    const row = rows.filter((r) => Number(r.dataset.ms) <= ms).at(-1) || rows[0];
+    main.querySelector(".seg-row.cur")?.classList.remove("cur");
+    if (row) { row.classList.add("cur"); row.scrollIntoView({ block: "center", behavior: "smooth" }); }
+  }
+
+  // One Play button for both tracks. shortcut: two <audio> elements drift apart a little over a long meeting;
+  // mix the tracks into one file if that is ever audible.
+  function wirePlayer(m, files) {
+    const btn = document.getElementById("play");
+    if (!btn) return;
+    const src = window.__TAURI__.core.convertFileSrc;
+    // Metadata only: a long meeting's WAV is tens of MB, fetched as it plays.
+    tracks = files.map((f) => Object.assign(new Audio(), { src: src(f), preload: "metadata" }));
+    const [lead] = tracks;
+    const pos = document.getElementById("pos");
+    const total = clock(m.duration_ms / 1000);
+    const show = () => {
+      pos.textContent = `${clock(lead.currentTime)} / ${total}`;
+      btn.firstElementChild.outerHTML = icon(lead.paused ? "play" : "pause", "sm");
+      btn.setAttribute("aria-label", lead.paused ? "Play recording" : "Pause recording");
+    };
+    show();
+    btn.onclick = () => { clip?.pause(); tracks.forEach((a) => (lead.paused ? a.play().catch(() => {}) : a.pause())); };
+    for (const ev of ["play", "pause", "timeupdate", "seeked"]) lead.addEventListener(ev, show);
+    lead.addEventListener("ended", () => tracks.forEach((a) => a.pause()));
   }
 
   function segRow(s) {
     const row = document.createElement("div");
     row.className = "seg-row";
+    row.dataset.ms = s.start_ms;
     const me = s.speaker === "me";
     const mark = s.included ? ` <span class="pill neutral">Included</span><button class="btn quiet" data-undo="${s.id}">Undo</button>` : "";
     row.innerHTML = `<div class="who${me ? " me" : ""}">${me ? "Me" : "Them"}<span class="t">${clock(s.start_ms / 1000)}</span></div><p class="said">${esc(s.text)}${mark}</p>`;
@@ -291,12 +345,12 @@ async function meetings() {
   }
 
   async function play(id) {
-    player?.pause();
+    pauseAudio();
     try {
       const url = URL.createObjectURL(new Blob([await invoke("segment_clip", { id: Number(id) })], { type: "audio/wav" }));
-      player = new Audio(url);
-      player.onended = () => URL.revokeObjectURL(url);
-      await player.play();
+      clip = new Audio(url);
+      clip.onended = () => URL.revokeObjectURL(url);
+      await clip.play();
     } catch (e) { error = "Couldn't play that: " + e; shown = ""; refresh(); }
   }
 

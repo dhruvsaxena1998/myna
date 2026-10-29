@@ -19,8 +19,8 @@ const when = (m) => {
 };
 
 // tabindex: WebKit leaves buttons out of the Tab order unless Full Keyboard Access is on; an explicit one keeps them in.
-const row = (act, ic, label, k = "") =>
-  `<button class="mi" tabindex="0" data-act="${act}">${ic ? icon(ic) : ""}<span class="t">${label}</span>${k ? `<span class="k">${k}</span>` : ""}</button>`;
+const row = (act, ic, label, k = "", attrs = "") =>
+  `<button class="mi" tabindex="0" data-act="${act}"${attrs}>${ic ? icon(ic) : ""}<span class="t">${label}</span>${k ? `<span class="k">${k}</span>` : ""}</button>`;
 const section = (...parts) => (parts.some(Boolean) ? `<div class="sec">${parts.filter(Boolean).join("")}</div>` : "");
 
 // Always text plus a dot, never colour alone. When the mic is off, the way back and what that means sit under it.
@@ -36,7 +36,8 @@ function stateHtml(s, mic) {
   if (s.kind === "recording") {
     return `<div class="sec"><div class="state"><div><div class="lbl">Recording</div><div class="big" data-live="elapsed">${elapsed(s.started_at)}</div></div></div>
 ${micHtml(mic)}
-<div class="line"><span class="dot"></span><span class="grow">${esc(s.app ? "System audio · " + s.app : s.note || "No system audio")}</span></div></div>`;
+<div class="line"><span class="dot"></span><span class="grow">${esc(s.app ? "System audio · " + s.app : s.note || "No system audio")}</span></div>
+${s.shots ? `<div class="line"><span class="dot"></span><span class="grow">${esc("Screenshots · " + s.shots.text)}</span></div>` : ""}</div>`;
   }
   if (s.kind === "transcribing") {
     const n = pct(s.progress);
@@ -45,10 +46,18 @@ ${micHtml(mic)}
   return "";
 }
 
-function viewHtml(v, error) {
+// Which window the screenshots follow: the app using the mic, unless picked here. `windows` is the open list, or null.
+function pickerHtml(shots, windows) {
+  const open = windows !== null;
+  const items = [{ id: null, label: "Automatic · the app using the mic" }, ...(windows || []).map((w) => ({ id: w.id, label: w.title ? `${w.app} · ${w.title}` : w.app }))];
+  const list = items.map((w) => `<button class="mi" tabindex="0" role="menuitemradio" aria-checked="${w.id === shots.chosen}" data-act="pick"${w.id === null ? "" : ` data-id="${w.id}"`}><span class="t">${esc(w.label)}</span>${w.id === shots.chosen ? icon("check") : ""}</button>`);
+  return row("windows", "cam", "Screenshot window", shots.chosen === null ? "automatic" : "picked", ` aria-expanded="${open}"`) + (open ? `<div class="picklist" role="menu" aria-label="Screenshot window">${list.join("")}</div>` : "");
+}
+
+function viewHtml(v, error, windows) {
   const s = v.state;
-  // 12 puts the window picker beside Start.
   const toggle = s.kind === "recording" ? row("toggle", "stop", "Stop and transcribe") : v.can_start ? row("toggle", "rec", "Start meeting recording") : "";
+  const picker = s.kind === "recording" && s.shots ? pickerHtml(s.shots, windows) : "";
   const recent = v.recent.length
     ? `<div class="sec" role="group" aria-label="Recent meetings"><div class="hd" aria-hidden="true">Recent</div>${v.recent
         .map((m) => `<button class="mi" tabindex="0" data-act="meeting" data-id="${m.id}"><span class="t">${esc(m.title)}</span><span class="k">${esc(when(m))}</span></button>`)
@@ -56,7 +65,7 @@ function viewHtml(v, error) {
     : "";
   const d = v.dictation;
   const dictation = d && `<div class="mi${d.error ? " err" : ""}">${icon("mic")}<span class="t">Dictation</span><span class="k">${d.error ? "hotkey unavailable" : (d.toggle ? "press " : "hold ") + esc(fmtKey(d.hotkey))}</span></div>`;
-  return `<div class="popover" role="group" aria-label="Myna">${error ? `<div class="banner" role="alert">${esc(error)}</div>` : ""}${stateHtml(s, v.mic)}${section(toggle)}${recent}${section(dictation, v.meetings && row("meetings", "list", "Meetings…"), row("settings", "gear", "Settings…"))}${section(row("quit", "", "Quit Myna"))}</div>`;
+  return `<div class="popover" role="group" aria-label="Myna">${error ? `<div class="banner" role="alert">${esc(error)}</div>` : ""}${stateHtml(s, v.mic)}${section(toggle, picker)}${recent}${section(dictation, v.meetings && row("meetings", "list", "Meetings…"), row("settings", "gear", "Settings…"))}${section(row("quit", "", "Quit Myna"))}</div>`;
 }
 
 async function popover() {
@@ -64,6 +73,7 @@ async function popover() {
     list: '<path d="M2.5 4h11M2.5 8h11M2.5 12h7"/>',
     rec: '<circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2.5" fill="currentColor" stroke="none"/>',
     stop: '<rect x="3.5" y="3.5" width="9" height="9" rx="1.5"/>',
+    cam: '<rect x="1.5" y="4.5" width="9" height="7" rx="1.5"/><path d="M10.5 7l4-2v6l-4-2"/>',
   });
   document.body.className = "set pop";
   app.innerHTML = '<div class="shell"></div>';
@@ -71,16 +81,17 @@ async function popover() {
   let shown = "";
   let error = "";
   let busy = false;
+  let windows = null; // the screenshot window list while the picker is open
 
   async function refresh() {
     const v = await invoke("popover_view");
     // Ticking numbers update in place, so the page (and keyboard focus in it) is not rebuilt every second.
-    const sig = JSON.stringify([v, error], (k, x) => (k === "progress" ? 0 : x));
+    const sig = JSON.stringify([v, error, windows], (k, x) => (k === "progress" ? 0 : x));
     if (sig !== shown) {
       shown = sig;
       const focused = document.activeElement?.closest("[data-act]");
       const key = focused && `[data-act="${focused.dataset.act}"]${focused.dataset.id ? `[data-id="${focused.dataset.id}"]` : ""}`;
-      shell.innerHTML = viewHtml(v, error);
+      shell.innerHTML = viewHtml(v, error, windows);
       if (key) shell.querySelector(key)?.focus();
       // The first fit after a tray click shows the window; later ones follow the content's height.
       invoke("popover_fit", { height: shell.offsetHeight });
@@ -101,9 +112,19 @@ async function popover() {
     if (act === "toggle") {
       busy = true;
       error = "";
+      windows = null;
       // Starting and stopping wait on audio hardware, so the control stays put until it is done.
       try { await invoke("meeting_toggle"); } catch (err) { error = String(err); }
       busy = false;
+      refresh();
+    } else if (act === "windows") {
+      error = "";
+      // Closing is just forgetting the list; opening asks ScreenCaptureKit, which can say no.
+      try { windows = windows ? null : await invoke("screenshot_windows"); } catch (err) { error = String(err); }
+      refresh();
+    } else if (act === "pick") {
+      windows = null;
+      await invoke("screenshot_pick", { id: b.dataset.id ? Number(b.dataset.id) : null });
       refresh();
     } else if (act === "mute") {
       try { await invoke("meeting_mute"); } catch (err) { error = String(err); }
@@ -118,6 +139,7 @@ async function popover() {
   window.__TAURI__.event.listen("popover-open", ({ payload }) => {
     shell.style.setProperty("--arrow", payload.arrow + "px");
     error = "";
+    windows = null;
     shown = "";
     refresh();
   });
