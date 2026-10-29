@@ -22,6 +22,7 @@ arboard = "3.7.0"
 hound = "3.5.1"
 libc = "0.2"
 parakeet-rs = "0.4.3"
+whisper-rs = { version = "0.16", features = ["metal"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
