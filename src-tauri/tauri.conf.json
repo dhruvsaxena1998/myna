@@ -8,7 +8,10 @@
     "withGlobalTauri": true,
     "macOSPrivateApi": true,
     "windows": [],
-    "security": { "csp": null }
+    "security": {
+      "csp": null,
+      "assetProtocol": { "enable": true, "scope": ["$DATA/Myna/screenshots/**", "$DATA/Myna/audio/**"] }
+    }
   },
   "bundle": {
     "active": true,

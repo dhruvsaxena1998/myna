@@ -595,6 +595,8 @@ pub fn run() {
             meetings::rename_folder,
             meetings::delete_folder,
             meetings::move_meeting,
+            meetings::screenshot_windows,
+            meetings::screenshot_pick,
             ai::ai_state,
             ai::ai_set_key,
             meetings::suggest::folder_suggest,
