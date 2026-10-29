@@ -18,6 +18,7 @@
   --alert: #b5380a;
   --ok: #1f7a33;
   --sel: rgba(0, 0, 0, 0.05);
+  --shadow-sm: 0 4px 14px rgba(0, 0, 0, 0.14), 0 1px 1px rgba(0, 0, 0, 0.08);
   --r: 8px;
   --r-sm: 6px;
 }
@@ -39,6 +40,7 @@
     --alert: #ff8a5c;
     --ok: #5fd374;
     --sel: rgba(255, 255, 255, 0.07);
+    --shadow-sm: 0 6px 18px rgba(0, 0, 0, 0.5), 0 1px 1px rgba(0, 0, 0, 0.4);
   }
 }
 
@@ -106,3 +108,22 @@ body.set {
 .pill { display: inline-flex; align-items: center; gap: 5px; height: 18px; padding: 0 7px; border-radius: 9px; font-size: 11px; font-weight: 500; }
 .pill.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
 .pill.alert { color: var(--alert); background: color-mix(in srgb, var(--alert) 12%, transparent); }
+
+.field { height: 26px; width: 72px; padding: 0 8px; border-radius: var(--r-sm); border: 1px solid var(--hair-strong); background: var(--win); font: inherit; font-size: 12.5px; color: var(--ink); }
+kbd { font: 11px var(--font); background: var(--sel); border: 1px solid var(--hair); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; color: var(--ink-2); }
+
+/* Dictation pill: its own transparent window. Dark in light and dark mode alike, as in the prototype. */
+body.pillwin { margin: 0; padding: 0; height: 100vh; display: flex; align-items: center; justify-content: center; background: transparent; overflow: hidden; font: 13px/1.45 var(--font); -webkit-font-smoothing: antialiased; -webkit-user-select: none; user-select: none; }
+.dpill { display: inline-flex; align-items: center; gap: 8px; height: 34px; max-width: 340px; padding: 0 14px 0 12px; background: rgba(30, 30, 34, 0.86); color: #f2f2f4; border-radius: 17px; box-shadow: var(--shadow-sm), inset 0 0 0 0.5px rgba(255, 255, 255, 0.14); font-size: 12.5px; font-weight: 500; white-space: nowrap; }
+.dpill .msg { overflow: hidden; text-overflow: ellipsis; }
+.dpill .dot { width: 7px; height: 7px; border-radius: 50%; background: #8a8f98; flex: none; }
+.dpill.rec .dot { background: #ff5a3c; box-shadow: 0 0 0 3px rgba(255, 90, 60, 0.25); }
+.dpill.err .dot { background: #ff8a5c; }
+.dpill .meter { display: flex; gap: 2px; align-items: flex-end; height: 14px; }
+.dpill .meter i { width: 3px; background: #f2f2f4; border-radius: 1px; display: block; }
+.dpill .k { opacity: 0.55; font-weight: 400; }
+.dpill svg.i { width: 12px; height: 12px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.dpill .spin { width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid rgba(255, 255, 255, 0.3); border-top-color: #fff; animation: spin 0.9s linear infinite; }
+.dpill.done { animation: fade 0.3s ease 0.9s forwards; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes fade { to { opacity: 0; } }

@@ -42,6 +42,7 @@ const ICONS = {
   gear: '<circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/>',
   dl: '<path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10"/>',
   check: '<path d="M3 8.5l3 3 7-7"/>',
+  mic: '<rect x="5.5" y="1.5" width="5" height="8" rx="2.5"/><path d="M3 7.5a5 5 0 0 0 10 0M8 12.5v2M5.5 14.5h5"/>',
 };
 const icon = (name, cls = "") => `<svg class="i ${cls}" viewBox="0 0 16 16" aria-hidden="true">${ICONS[name]}</svg>`;
 const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
@@ -52,6 +53,10 @@ const TASKS = [
   ["diarization", "Speaker separation", ["meetings_enabled"]],
 ];
 
+const PAGES = [["modules", "Modules", "gear"], ["dictation", "Dictation", "mic"], ["models", "Models", "dl"]];
+const KEY_SYMBOLS = { Alt: "⌥", Option: "⌥", Control: "⌃", Ctrl: "⌃", Shift: "⇧", Super: "⌘", Command: "⌘", Cmd: "⌘" };
+const fmtKey = (k) => k.split("+").map((p) => KEY_SYMBOLS[p] || p).join("");
+
 let settingsPage = "models";
 let pollTimer;
 
@@ -59,7 +64,7 @@ async function settings() {
   document.body.className = "set";
   app.innerHTML = `<nav class="sidebar" aria-label="Settings"></nav><div class="content"><div class="toolbar"><h1 id="title"></h1></div><div class="page" id="page"></div></div>`;
   const nav = app.querySelector(".sidebar");
-  for (const [id, label, ic] of [["modules", "Modules", "gear"], ["models", "Models", "dl"]]) {
+  for (const [id, label, ic] of PAGES) {
     const b = document.createElement("button");
     b.className = "nav";
     b.innerHTML = icon(ic) + label;
@@ -69,10 +74,21 @@ async function settings() {
   }
   clearTimeout(pollTimer);
   const page = document.getElementById("page");
-  document.getElementById("title").textContent = settingsPage === "models" ? "Models" : "Modules";
+  document.getElementById("title").textContent = PAGES.find((p) => p[0] === settingsPage)[1];
   if (settingsPage === "models") return modelsPage(page);
+  if (settingsPage === "dictation") return dictationPage(page);
   page.innerHTML = '<section class="group"><h2>Enable</h2><div class="box"></div></section>';
   page.querySelector(".box").append(...(await modulesForm()).children);
+}
+
+async function dictationPage(page) {
+  const { key, error } = await invoke("hotkey_status");
+  const on = (await get("dictation_enabled")) === "true";
+  const note = error || (on ? "Hold it while you speak, release to paste." : "Dictation is off. Turn it on under Modules.");
+  const delay = (await get("paste_delay_ms")) || "150";
+  page.innerHTML = `<section class="group"><h2>Hotkey</h2><div class="box"><div class="prow"><div class="l">Hold to talk</div><div class="d${error ? " err" : ""}">${esc(note)}</div><div class="r"><kbd>${esc(fmtKey(key))}</kbd></div></div></div></section>
+<section class="group"><h2>Output</h2><div class="box"><div class="prow"><div class="l">Paste delay</div><div class="d">How long Myna waits after pasting before it puts your clipboard back. Raise it if an app pastes your old clipboard.</div><div class="r"><input class="field" type="number" min="0" max="2000" step="50" value="${esc(delay)}" aria-label="Paste delay in milliseconds"><span class="s">ms</span></div></div></div></section>`;
+  page.querySelector("input").onchange = (e) => set("paste_delay_ms", e.target.value);
 }
 
 async function modelsPage(page) {
@@ -158,6 +174,27 @@ async function modelsPage(page) {
   refresh();
 }
 
+// The floating pill: a separate click-through window the backend drives with "pill" events.
+function pill() {
+  document.body.className = "pillwin";
+  const el = document.createElement("div");
+  app.append(el);
+  const levels = Array(9).fill(0);
+  const show = (cls, html) => { el.className = "dpill " + cls; el.innerHTML = html; };
+  window.__TAURI__.event.listen("pill", ({ payload: p }) => {
+    if (p.kind === "idle") show("", `<span class="dot"></span><span>Hold <span class="k">${esc(fmtKey(p.hotkey))}</span> to talk</span>`);
+    if (p.kind === "listening") {
+      if (!el.classList.contains("rec")) levels.fill(0);
+      levels.push(p.level);
+      levels.shift();
+      show("rec", `<span class="dot"></span><span class="meter" aria-hidden="true">${levels.map((l) => `<i style="height:${Math.round(3 + 11 * l)}px"></i>`).join("")}</span><span>Listening</span>`);
+    }
+    if (p.kind === "transcribing") show("", '<span class="spin" aria-hidden="true"></span><span>Transcribing…</span>');
+    if (p.kind === "done") show("done", `${icon("check")}<span>Pasted ${p.words} ${p.words === 1 ? "word" : "words"}</span>`);
+    if (p.kind === "error") show("err", `<span class="dot"></span><span class="msg">${esc(p.message)}</span>`);
+  });
+}
+
 async function onboarding() {
   app.innerHTML = "<h1>Welcome to Myna</h1><p>What do you want to use Myna for?</p>";
   const any = () => [...form.querySelectorAll("input")].some((b) => b.checked);
@@ -210,7 +247,7 @@ async function finish() {
   app.append(done);
 }
 
-location.hash === "#onboarding" ? onboarding() : settings();
+({ "#onboarding": onboarding, "#pill": pill }[location.hash] || settings)();
 </script>
 </body>
 </html>
