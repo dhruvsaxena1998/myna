@@ -106,11 +106,21 @@ pub fn run(db: &Mutex<Connection>, audio: &Path, id: i64, t: &mut dyn Transcribe
     let me_lines = transcribe_track(&mic, t, &mut report)?;
     let them_lines = transcribe_track(&them, t, &mut report)?;
     let duration_ms = mic.len() as u64 * 1000 / RATE as u64;
-    let conn = db.lock().unwrap();
     // A timeline that cannot be read fails the meeting (retryable) instead of letting every line in.
-    let mutes = store::mute_events(&conn, id).map_err(|e| e.to_string())?;
-    let segments = assemble(me_lines, them_lines, &mutes, mute::always_record(&conn, id));
-    store::finish(&conn, id, duration_ms, &segments).map_err(|e| e.to_string())
+    let (mutes, always) = {
+        let conn = db.lock().unwrap();
+        (store::mute_events(&conn, id).map_err(|e| e.to_string())?, mute::always_record(&conn, id))
+    };
+    let mut segments = assemble(me_lines, them_lines, &mutes, always);
+    // The optional LLM pass, outside the database lock. Only lines that are in the transcript go to a provider, and
+    // the first one it cannot do (slow, down) ends the pass, so a dead network costs one timeout, not one per line.
+    for s in segments.iter_mut().filter(|s| s.shown()) {
+        match t.polish(&s.text) {
+            Some(text) => s.text = text,
+            None => break,
+        }
+    }
+    store::finish(&db.lock().unwrap(), id, duration_ms, &segments).map_err(|e| e.to_string())
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -423,6 +433,58 @@ mod tests {
             assert_eq!((state_of(ME), state_of(THEM)), (want, State::Unmuted), "{name}");
             let _ = std::fs::remove_dir_all(&root);
         }
+    }
+
+    /// `Scripted` plus the LLM pass: shouts each line it is given, or fails after `ok` lines.
+    struct Polishing {
+        asked: std::cell::RefCell<Vec<String>>,
+        ok: usize,
+    }
+    impl Transcriber for Polishing {
+        fn transcribe(&mut self, s: &[f32]) -> Result<String, String> {
+            Scripted.transcribe(s)
+        }
+        fn transcribe_timed(&mut self, s: &[f32]) -> Result<Vec<Utterance>, String> {
+            Scripted.transcribe_timed(s)
+        }
+        fn polish(&self, text: &str) -> Option<String> {
+            self.asked.borrow_mut().push(text.into());
+            (self.asked.borrow().len() <= self.ok).then(|| text.to_uppercase())
+        }
+    }
+
+    #[test]
+    fn the_llm_pass_runs_after_transcription_on_lines_in_the_transcript_only() {
+        let (db, root, id) = fixture("polish", 0.2, &["mic.wav", "system.wav"]);
+        {
+            // The mic is muted: that line is collapsed, so it must never reach a provider.
+            let conn = db.lock().unwrap();
+            conn.execute("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)", []).unwrap();
+            store::add_mute_event(&conn, id, &off(0)).unwrap();
+        }
+        let mut t = Polishing { asked: Default::default(), ok: 9 };
+        run(&db, &root, id, &mut t).unwrap();
+        assert_eq!(*t.asked.borrow(), ["hi from them"]);
+        let got = store::segments(&db.lock().unwrap(), id).unwrap();
+        let text_of = |who| got.iter().find(|s| s.speaker == who).unwrap().text.clone();
+        assert_eq!((text_of(ME).as_str(), text_of(THEM).as_str()), ("hello from me", "HI FROM THEM"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_first_line_the_provider_cannot_do_ends_the_llm_pass_and_keeps_the_local_text() {
+        let (db, root, id) = fixture("polish-down", 0.2, &["mic.wav", "system.wav"]);
+        {
+            let conn = db.lock().unwrap();
+            conn.execute("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)", []).unwrap();
+            store::add_mute_event(&conn, id, &live(0)).unwrap();
+        }
+        let mut t = Polishing { asked: Default::default(), ok: 0 };
+        run(&db, &root, id, &mut t).unwrap();
+        assert_eq!(t.asked.borrow().len(), 1, "one timeout, not one per line");
+        let texts: Vec<_> = store::segments(&db.lock().unwrap(), id).unwrap().into_iter().map(|s| s.text).collect();
+        assert_eq!(texts, ["hello from me", "hi from them"]);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

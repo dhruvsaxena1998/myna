@@ -24,6 +24,7 @@ pub const PRESETS: &[Preset] = &[
     Preset { id: "custom", name: "Custom (OpenAI-compatible)", base_url: "http://localhost:11434/v1", model: "llama3.1" },
 ];
 
+#[derive(Clone)]
 pub struct Config {
     pub preset: &'static Preset,
     pub base_url: String,
@@ -137,14 +138,34 @@ impl Config {
     /// sent, so no path from a recording reaches this body (`Message::content` is a String, and the tests in
     /// this module, summary.rs and suggest.rs check the wire).
     pub fn complete(&self, messages: &[Message]) -> Result<Reply, String> {
+        self.complete_within(messages, Duration::from_secs(180)) // long transcripts take a while to answer
+    }
+
+    /// Dictated or transcribed text tidied by the provider, or None if it can't be done in `within`: a slow
+    /// network, an error or an empty reply all mean "keep your local text", never a wait.
+    pub fn polish(&self, text: &str, within: Duration) -> Option<String> {
+        let (config, text) = (self.clone(), text.to_string());
+        let (tx, rx) = std::sync::mpsc::channel();
+        // The deadline is on the reply, not the request: a DNS lookup or a connect that hangs is left behind.
+        std::thread::spawn(move || {
+            let messages = [
+                Message { role: "system", content: POLISH_PROMPT.into() },
+                Message { role: "user", content: text },
+            ];
+            let _ = tx.send(config.complete_within(&messages, within));
+        });
+        rx.recv_timeout(within).ok()?.ok().map(|r| r.text)
+    }
+
+    fn complete_within(&self, messages: &[Message], within: Duration) -> Result<Reply, String> {
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
         let body = json!({
             "model": self.model,
             "messages": messages.iter().map(|m| json!({"role": m.role, "content": m.content})).collect::<Vec<_>>(),
         });
         let agent = ureq::AgentBuilder::new()
-            .timeout_connect(Duration::from_secs(10))
-            .timeout(Duration::from_secs(180)) // long transcripts take a while to answer
+            .timeout_connect(Duration::from_secs(10).min(within))
+            .timeout(within)
             .build();
         let mut req = agent.post(&url);
         if let Some(key) = &self.key {
@@ -177,6 +198,13 @@ impl Config {
         Some((tokens_in as f64 * self.input_price? + tokens_out as f64 * self.output_price?) / 1e6)
     }
 }
+
+/// How long dictation waits on the provider before it pastes the local text.
+pub const POLISH_TIMEOUT: Duration = Duration::from_secs(3);
+
+const POLISH_PROMPT: &str = "You tidy dictated speech. Fix grammar and punctuation, drop false starts and \
+    rambling, and tighten the phrasing, without changing the meaning, the language or any names. Reply with only \
+    the revised text.";
 
 /// A per-feature switch ("summaries" and so on); off until the user turns it on.
 pub fn enabled(db: &Connection, feature: &str) -> bool {
@@ -361,6 +389,49 @@ mod tests {
         assert!(result.is_err(), "the check must reject a message with a video part");
         let result = std::panic::catch_unwind(|| stub::assert_text_only(r#"{"model":"m","messages":[],"video":"/x/window.mp4"}"#));
         assert!(result.is_err(), "the check must reject a video beside the messages");
+    }
+
+    #[test]
+    fn polish_returns_the_tidied_text() {
+        let (base, seen) = stub::serve(vec![stub::ok("Ship it.")]);
+        assert_eq!(config(&base, None).polish("um ship it", POLISH_TIMEOUT).as_deref(), Some("Ship it."));
+        let sent = seen.recv().unwrap().body;
+        stub::assert_text_only(&sent); // the cleanup path is a provider request too: text only, never video
+        let body: Value = serde_json::from_str(&sent).unwrap();
+        assert_eq!(body["messages"][1]["content"], "um ship it");
+    }
+
+    /// Accepts connections and sits on them, the way a provider with a dead network behind it does.
+    fn slow_stub() -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}/v1", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for s in listener.incoming().flatten() {
+                std::thread::sleep(Duration::from_secs(5));
+                drop(s);
+            }
+        });
+        base
+    }
+
+    #[test]
+    fn a_slow_provider_times_out_and_the_caller_keeps_its_text() {
+        let started = std::time::Instant::now();
+        assert_eq!(config(&slow_stub(), None).polish("um ship it", Duration::from_millis(300)), None);
+        assert!(started.elapsed() < Duration::from_secs(2), "waited {:?}", started.elapsed());
+    }
+
+    #[test]
+    fn dictation_pastes_the_rules_text_when_the_provider_is_slow() {
+        let c = config(&slow_stub(), None);
+        let out = crate::cleanup::clean("um ship it", true, &[], &|t| c.polish(t, Duration::from_millis(300)));
+        assert_eq!(out, "Ship it");
+    }
+
+    #[test]
+    fn a_failing_provider_also_gives_none() {
+        let (base, _seen) = stub::serve(vec![(500, r#"{"error":{"message":"down"}}"#.into())]);
+        assert_eq!(config(&base, None).polish("hi", POLISH_TIMEOUT), None);
     }
 
     #[test]
