@@ -49,6 +49,8 @@ async function meetings() {
   let adding = false; // the new-folder field is open in the sidebar
   let renaming = false;
   let confirming = false; // asked to delete the open folder
+  let confirmingMedia = null; // id of the meeting whose media delete is waiting on a confirm
+  let hasAudio = true; // the open meeting's tracks are still on disk, so segments can be played
   let tracks = []; // the <audio> elements of the open meeting (mic, and system audio when tapped), played together
   let clip; // the segment clip that is playing
   const pauseAudio = () => [...tracks, clip].forEach((a) => a?.pause());
@@ -68,6 +70,7 @@ async function meetings() {
     let result;
     try { result = await invoke(cmd, args); } catch (e) { error = String(e); }
     adding = renaming = confirming = false;
+    confirmingMedia = null;
     shown = "";
     refresh();
     return result;
@@ -146,7 +149,7 @@ async function meetings() {
     if (view !== "all" && view !== "inbox" && !folder()) view = "all"; // its folder was deleted
     const detail = open === null ? null : await invoke("get_meeting", { id: open }).catch(() => null);
     if (open !== null && !detail) open = null;
-    const sig = JSON.stringify([open, error, view, folders, renaming, confirming, ...(detail ? [detail.meeting.status, detail.meeting.error, detail.segments.length, detail.meeting.folder_id, detail.shots.length, detail.shots_taken] : list.map((m) => [m.id, m.status, m.segments, m.app, m.has_them, m.error, m.folder_id]))]);
+    const sig = JSON.stringify([open, error, view, folders, renaming, confirming, confirmingMedia, ...(detail ? [detail.meeting.status, detail.meeting.error, detail.segments.length, detail.meeting.folder_id, detail.shots.length, detail.shots_taken, detail.video, detail.media_bytes] : list.map((m) => [m.id, m.status, m.segments, m.app, m.has_them, m.error, m.folder_id]))]);
     if (sig !== shown) {
       shown = sig;
       if (!adding) renderSide(list);
@@ -230,24 +233,33 @@ async function meetings() {
     }
   }
 
-  function renderDetail({ meeting: m, segments, speakers, shots, shots_taken, audio }) {
+  const size = (b) => (b >= 1e9 ? (b / 1e9).toFixed(1) + " GB" : Math.max(1, Math.round(b / 1e6)) + " MB");
+
+  function renderDetail({ meeting: m, segments, speakers, shots, shots_taken, audio, video, media_bytes }) {
     stopAudio();
     closeRename();
     people = speakers;
     segs = segments;
+    hasAudio = audio.length > 0;
+    // Media can go once the transcript no longer needs the audio.
+    const canDelete = media_bytes > 0 && m.status !== "recording" && m.status !== "transcribing";
     const d = new Date(m.started_at * 1000);
     const when = `${d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })} · ${hhmm(d)}${m.duration_ms ? " · " + mins(m.duration_ms) : ""}`;
-    main.innerHTML = `<div class="toolbar"><button class="btn quiet icon" id="back" aria-label="Back to Meetings">${icon("back")}</button><h1>Meetings</h1><span class="sp"></span><span class="s" id="saved" role="status">${esc(notice)}</span>${audio.length && m.status === "done" ? `<button class="btn" id="play" aria-label="Play recording">${icon("play", "sm")}<span id="pos"></span></button>` : ""}<div class="menu-wrap"><button class="btn" id="export" aria-haspopup="menu" aria-expanded="false"${m.status === "done" ? "" : " disabled"}>Export</button><div class="menu" role="menu" id="menu" hidden><button class="mi" role="menuitem" data-fmt="md">Markdown (.md)</button><button class="mi" role="menuitem" data-fmt="txt">Plain text (.txt)</button></div></div><div class="menu-wrap"><button class="btn quiet icon" id="more" aria-label="More" aria-haspopup="menu" aria-expanded="false">${icon("more")}</button><div class="menu" role="menu" id="move-menu" aria-label="Move to" hidden><div class="mhead" aria-hidden="true">Move to</div>${[{ id: null, name: "Inbox" }, ...folders].map((f) => `<button class="mi" role="menuitemradio" aria-checked="${f.id === m.folder_id}" data-folder="${f.id}">${icon("check")}${esc(f.name)}</button>`).join("")}</div></div></div>${error ? `<div class="banner" role="alert">${esc(error)}</div>` : ""}<div class="detail"><div class="doc">${filmstrip(shots, shots_taken)}<div class="tx"><h2>${esc(m.title)}</h2><div class="sub"><span>${esc(when)}</span><span>${esc(m.app || "Mic only")}</span><span class="pill neutral">Parakeet v3</span></div>${m.note ? `<p class="note">${esc(m.note)}</p>` : ""}<div id="body"></div></div></div><div class="inspector" id="insp"></div></div>`;
-    ai.summary(document.getElementById("insp"), m, m.status === "done" && segments.length > 0);
+    main.innerHTML = `<div class="toolbar"><button class="btn quiet icon" id="back" aria-label="Back to Meetings">${icon("back")}</button><h1>Meetings</h1><span class="sp"></span><span class="s" id="saved" role="status">${esc(notice)}</span>${audio.length && m.status === "done" ? `<button class="btn" id="play" aria-label="Play recording">${icon("play", "sm")}<span id="pos"></span></button>` : ""}<div class="menu-wrap"><button class="btn" id="export" aria-haspopup="menu" aria-expanded="false"${m.status === "done" ? "" : " disabled"}>Export</button><div class="menu" role="menu" id="menu" hidden><button class="mi" role="menuitem" data-fmt="md">Markdown (.md)</button><button class="mi" role="menuitem" data-fmt="txt">Plain text (.txt)</button></div></div><div class="menu-wrap"><button class="btn quiet icon" id="more" aria-label="More" aria-haspopup="menu" aria-expanded="false">${icon("more")}</button><div class="menu" role="menu" id="move-menu" aria-label="More" hidden><div class="mhead" aria-hidden="true">Move to</div>${[{ id: null, name: "Inbox" }, ...folders].map((f) => `<button class="mi" role="menuitemradio" aria-checked="${f.id === m.folder_id}" data-folder="${f.id}">${icon("check")}${esc(f.name)}</button>`).join("")}${canDelete ? `<div class="msep" role="separator"></div><button class="mi danger" role="menuitem" id="del-media">${icon("check")}Delete audio, video and screenshots…</button>` : ""}</div></div></div>${error ? `<div class="banner" role="alert">${esc(error)}</div>` : ""}${confirmingMedia === m.id && canDelete ? `<div class="banner ask" role="alert"><span>Delete this meeting’s audio, video and screenshots (${size(media_bytes)})? The transcript and summary stay. This can’t be undone.</span><button class="btn" id="media-cancel">Cancel</button><button class="btn danger" id="media-confirm">Delete</button></div>` : ""}<div class="detail"><div class="doc">${filmstrip(shots, shots_taken, m.status === "done" ? video : null)}<div class="tx"><h2>${esc(m.title)}</h2><div class="sub"><span>${esc(when)}</span><span>${esc(m.app || "Mic only")}</span><span class="pill neutral">Parakeet v3</span>${m.status === "done" && !media_bytes ? '<span class="pill neutral">Audio, video and screenshots deleted</span>' : ""}</div>${m.note ? `<p class="note">${esc(m.note)}</p>` : ""}<div id="body"></div></div></div><div class="inspector" id="insp"></div></div>`;
+    ai.inspector(document.getElementById("insp"), m, m.status === "done" && segments.length > 0);
     if (m.status === "done" && segments.length) ai.suggestion(document.getElementById("insp"), m, (f) => act("move_meeting", { id: m.id, folder: f.id }));
-    document.getElementById("back").onclick = () => { open = null; notice = ""; shown = ""; refresh(); };
+    document.getElementById("back").onclick = () => { open = null; confirmingMedia = null; notice = ""; shown = ""; refresh(); };
     const menu = document.getElementById("menu");
     const close = dropdown(document.getElementById("export"), menu);
     const moveMenu = document.getElementById("move-menu");
     const closeMove = dropdown(document.getElementById("more"), moveMenu);
-    moveMenu.querySelectorAll(".mi").forEach((b) => {
+    moveMenu.querySelectorAll(".mi[data-folder]").forEach((b) => {
       b.onclick = () => { closeMove(); act("move_meeting", { id: m.id, folder: b.dataset.folder === "null" ? null : Number(b.dataset.folder) }); };
     });
+    const on = (id, fn) => { const el = document.getElementById(id); if (el) el.onclick = fn; };
+    on("del-media", () => { closeMove(); confirmingMedia = m.id; shown = ""; refresh(); });
+    on("media-cancel", () => { confirmingMedia = null; shown = ""; refresh(); });
+    on("media-confirm", () => act("delete_media", { id: m.id }));
     menu.querySelectorAll(".mi").forEach((b) => {
       b.onclick = async () => {
         close();
@@ -294,12 +306,15 @@ async function meetings() {
     };
   }
 
-  // The frames kept while recording, on the timeline; a click jumps the transcript and the audio to that moment.
-  function filmstrip(shots, taken) {
-    if (!shots.length) return "";
+  // The window video, if one was recorded, and the frames kept while recording, on the timeline; a click on a frame
+  // jumps the transcript, the audio and the video to that moment.
+  function filmstrip(shots, taken, video) {
+    if (!shots.length && !video) return "";
     const src = window.__TAURI__.core.convertFileSrc;
     const frames = shots.map((s) => `<button class="f" data-ms="${s.at_ms}" data-t="${clock(s.at_ms / 1000)}" aria-label="Screenshot at ${clock(s.at_ms / 1000)}"><img src="${esc(src(s.path))}" alt="" loading="lazy" decoding="async"></button>`);
-    return `<div class="filmbar"><div class="film" aria-label="Screenshots">${frames.join("")}</div><div class="ruler"><span>${shots.length} kept of ${taken} taken</span></div></div>`;
+    const vid = video ? `<video class="vid" src="${esc(src(video))}" controls muted playsinline preload="metadata" aria-label="Window video"></video>` : "";
+    const film = shots.length ? `<div class="film" aria-label="Screenshots">${frames.join("")}</div><div class="ruler"><span>${shots.length} kept of ${taken} taken</span></div>` : "";
+    return `<div class="filmbar">${vid}${film}</div>`;
   }
 
   function seek(ms) {
@@ -319,6 +334,14 @@ async function meetings() {
     // Metadata only: a long meeting's WAV is tens of MB, fetched as it plays.
     tracks = files.map((f) => Object.assign(new Audio(), { src: src(f), preload: "metadata" }));
     const [lead] = tracks;
+    // The video has no sound of its own and follows the tracks; its own controls drive them too.
+    const video = main.querySelector(".vid");
+    if (video) {
+      tracks.push(video);
+      video.onplay = () => tracks.forEach((a) => a.paused && a.play().catch(() => {}));
+      video.onpause = () => video.ended || tracks.forEach((a) => a.pause()); // a video that ends first must not stop the audio
+      video.onseeked = () => tracks.forEach((a) => { if (Math.abs(a.currentTime - video.currentTime) > 0.5) a.currentTime = video.currentTime; });
+    }
     const pos = document.getElementById("pos");
     const total = clock(m.duration_ms / 1000);
     const show = () => {
@@ -327,7 +350,11 @@ async function meetings() {
       btn.setAttribute("aria-label", lead.paused ? "Play recording" : "Pause recording");
     };
     show();
-    btn.onclick = () => { clip?.pause(); tracks.forEach((a) => (lead.paused ? a.play().catch(() => {}) : a.pause())); };
+    btn.onclick = () => {
+      clip?.pause();
+      const go = lead.paused; // read once: play() flips it at once, which would pause the tracks after the first
+      tracks.forEach((a) => (go ? a.play().catch(() => {}) : a.pause()));
+    };
     for (const ev of ["play", "pause", "timeupdate", "seeked"]) lead.addEventListener(ev, show);
     lead.addEventListener("ended", () => tracks.forEach((a) => a.pause()));
   }
@@ -349,7 +376,7 @@ async function meetings() {
     row.dataset.ms = s.start_ms;
     const me = s.speaker === "me";
     const mark = s.included ? ` <span class="pill neutral">Included</span><button class="btn quiet" data-undo="${s.id}">Undo</button>` : "";
-    row.innerHTML = `<div class="who${me ? " me" : ""}">${whoHtml(s)}<span class="t">${clock(s.start_ms / 1000)}</span></div><p class="said">${esc(s.text)}${mark}</p><div class="inc"><button class="btn quiet icon" data-play="${s.id}" aria-label="Play">${icon("play", "sm")}</button></div>`;
+    row.innerHTML = `<div class="who${me ? " me" : ""}">${whoHtml(s)}<span class="t">${clock(s.start_ms / 1000)}</span></div><p class="said">${esc(s.text)}${mark}</p><div class="inc">${hasAudio ? `<button class="btn quiet icon" data-play="${s.id}" aria-label="Play">${icon("play", "sm")}</button>` : ""}</div>`;
     return row;
   }
 
@@ -373,7 +400,7 @@ async function meetings() {
     const count = (c) => segs.filter((s) => s.speaker === "them" && s.cluster === c).length;
     const n = count(cluster);
     const sugg = p.suggested && !p.name;
-    const clips = await invoke("speaker_clips", { meeting: m.id, cluster }).catch(() => []);
+    const clips = hasAudio ? await invoke("speaker_clips", { meeting: m.id, cluster }).catch(() => []) : [];
     const row = btn.closest(".seg-row");
     pop = document.createElement("div");
     pop.className = "pop";
@@ -428,7 +455,7 @@ async function meetings() {
     const n = run.length;
     const span = n > 1 ? ` – ${clock(run.at(-1).end_ms / 1000)}` : "";
     g.innerHTML = `<summary><span class="dot live"></span> ${n} segment${n === 1 ? "" : "s"} while possibly muted · ${clock(run[0].start_ms / 1000)}${span} <span class="s">not in transcript, not sent anywhere</span>${icon("chev", "sm chev")}</summary>`
-      + run.map((s) => `<div class="seg-row"><div class="who me">Me<span class="t">${clock(s.start_ms / 1000)}</span></div><p class="said">${esc(s.text)}</p><div class="inc"><button class="btn quiet icon" data-play="${s.id}" aria-label="Play">${icon("play", "sm")}</button><button class="btn" data-include="${s.id}">Include</button></div></div>`).join("");
+      + run.map((s) => `<div class="seg-row"><div class="who me">Me<span class="t">${clock(s.start_ms / 1000)}</span></div><p class="said">${esc(s.text)}</p><div class="inc">${hasAudio ? `<button class="btn quiet icon" data-play="${s.id}" aria-label="Play">${icon("play", "sm")}</button>` : ""}<button class="btn" data-include="${s.id}">Include</button></div></div>`).join("");
     return g;
   }
 

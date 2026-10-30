@@ -135,9 +135,12 @@ pub fn apply_dictionary(text: &str, dict: &[Entry]) -> String {
     out.join(" ")
 }
 
-/// The whole dictation cleanup. The dictionary runs last so its spelling beats the sentence-start capital.
-pub fn clean(text: &str, rules_on: bool, dict: &[Entry]) -> String {
+/// The whole dictation cleanup: rules, then the optional LLM pass, then the dictionary. The dictionary runs last so
+/// its spelling beats both the sentence-start capital and whatever the model did to a name. `polish` gets text that
+/// has something in it and answers None to keep it as it is (off, slow, or failed).
+pub fn clean(text: &str, rules_on: bool, dict: &[Entry], polish: &dyn Fn(&str) -> Option<String>) -> String {
     let text = if rules_on { rules(text) } else { text.to_string() };
+    let text = if text.is_empty() { text } else { polish(&text).unwrap_or(text) };
     apply_dictionary(&text, dict)
 }
 
@@ -233,14 +236,14 @@ mod tests {
     #[test]
     fn dictionary_spelling_beats_the_sentence_start_capital() {
         let d = [entry("", "iPhone")];
-        assert_eq!(clean("um iphone is nice", true, &d), "iPhone is nice");
+        assert_eq!(clean("um iphone is nice", true, &d, &|_| None), "iPhone is nice");
     }
 
     #[test]
     fn rules_can_be_switched_off_but_the_dictionary_still_runs() {
         let d = [entry("druv", "Dhruv")];
-        assert_eq!(clean("um I I think druv", false, &d), "um I I think Dhruv");
-        assert_eq!(clean("um I I think druv", true, &d), "I think Dhruv");
+        assert_eq!(clean("um I I think druv", false, &d, &|_| None), "um I I think Dhruv");
+        assert_eq!(clean("um I I think druv", true, &d, &|_| None), "I think Dhruv");
     }
 
     #[test]
@@ -248,5 +251,23 @@ mod tests {
         assert_eq!(dictionary(None), vec![]);
         assert_eq!(dictionary(Some("not json".into())), vec![]);
         assert_eq!(dictionary(Some(r#"[{"to":"Myna"},{"from":"x","to":" "},{"from":"druv","to":"Dhruv"}]"#.into())), vec![entry("", "Myna"), entry("druv", "Dhruv")]);
+    }
+
+    #[test]
+    fn the_chain_runs_rules_then_llm_then_dictionary() {
+        let d = [entry("druv", "Dhruv")];
+        // The model sees what the rules left (no "um", no stutter), and its own spelling of a name loses to the dictionary.
+        let polish = |t: &str| {
+            assert_eq!(t, "I think druv should ship it");
+            Some("In my view Druv should ship it".to_string())
+        };
+        assert_eq!(clean("um I I think druv should ship it", true, &d, &polish), "In my view Dhruv should ship it");
+    }
+
+    #[test]
+    fn a_pass_that_gives_nothing_back_leaves_the_local_text() {
+        assert_eq!(clean("um hello there", true, &[], &|_| None), "Hello there");
+        // A transcript that was all fillers never reaches the provider.
+        assert_eq!(clean("um uh", true, &[], &|_| panic!("sent an empty text")), "");
     }
 }

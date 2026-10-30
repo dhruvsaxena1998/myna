@@ -1,25 +1,21 @@
-// C entry points for Apple-only runtimes. Rust declares them in src/voz.rs.
+// C entry points for Apple-only runtimes. Rust declares them in src/voz.rs, src/who.rs, src/uhm.rs and src/meetings/video.rs.
 // Strings that cross over are malloc'd here and handed back to `myna_string_free`.
 import Foundation
 #if canImport(Voz)
 import Voz
+import Uhm
 import Who
 #endif
 
-private func cString(_ s: String) -> UnsafeMutablePointer<CChar> { strdup(s)! }
+func cString(_ s: String) -> UnsafeMutablePointer<CChar> { strdup(s)! }
 
 @_cdecl("myna_string_free")
 public func mynaStringFree(_ s: UnsafeMutablePointer<CChar>?) { free(s) }
 
-#if canImport(Voz)
 /// Runs async SDK calls to completion; the Rust caller is already on its own thread.
-private final class Outcome<T>: @unchecked Sendable { var value: Result<T, Error>? }
+final class Outcome<T>: @unchecked Sendable { var value: Result<T, Error>? }
 
-private struct MissingFiles: Error, CustomStringConvertible {
-    var description: String { "Voz's model files aren't in the models folder." }
-}
-
-private func wait<T>(_ body: @escaping @Sendable () async throws -> T) throws -> T {
+func wait<T>(_ body: @escaping @Sendable () async throws -> T) throws -> T {
     let outcome = Outcome<T>()
     let done = DispatchSemaphore(value: 0)
     Task.detached {
@@ -28,6 +24,11 @@ private func wait<T>(_ body: @escaping @Sendable () async throws -> T) throws ->
     }
     done.wait()
     return try outcome.value!.get()
+}
+
+#if canImport(Voz)
+private struct MissingFiles: Error, CustomStringConvertible {
+    var description: String { "Voz's model files aren't in the models folder." }
 }
 #endif
 
@@ -93,6 +94,70 @@ public func mynaVozTranscribe(
 public func mynaVozFree(_ handle: UnsafeMutableRawPointer) {
     #if canImport(Voz)
     Unmanaged<Voz>.fromOpaque(handle).release()
+    #endif
+}
+
+// MARK: Uhm (filler detection)
+
+/// NULL when Uhm can run with this build, else the reason it can't. Uhm ships in the same SDK as Voz.
+@_cdecl("myna_uhm_unavailable")
+public func mynaUhmUnavailable() -> UnsafeMutablePointer<CChar>? {
+    #if canImport(Voz)
+    return nil
+    #else
+    return cString("This build of Myna doesn't include the Desert Ant SDK.")
+    #endif
+}
+
+/// Opens Uhm on a folder of its model files. The model itself loads on the first analysis.
+@_cdecl("myna_uhm_load")
+public func mynaUhmLoad(
+    _ dir: UnsafePointer<CChar>,
+    _ failure: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>
+) -> UnsafeMutableRawPointer? {
+    #if canImport(Voz)
+    let path = String(cString: dir)
+    // Handed an incomplete folder the SDK would download the model itself. Downloads are Myna's job.
+    guard Uhm.isDownloaded(directory: path) else {
+        failure.pointee = cString("Uhm's model files aren't in the models folder.")
+        return nil
+    }
+    return Unmanaged.passRetained(Uhm(directory: path)).toOpaque()
+    #else
+    failure.pointee = mynaUhmUnavailable()
+    return nil
+    #endif
+}
+
+/// Mono 16 kHz samples in, one "start end" line in seconds per filler out (owned, empty for none).
+@_cdecl("myna_uhm_analyze")
+public func mynaUhmAnalyze(
+    _ handle: UnsafeMutableRawPointer,
+    _ samples: UnsafePointer<Float>,
+    _ count: Int,
+    _ failure: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>
+) -> UnsafeMutablePointer<CChar>? {
+    #if canImport(Voz)
+    let uhm = Unmanaged<Uhm>.fromOpaque(handle).takeUnretainedValue()
+    let audio = Array(UnsafeBufferPointer(start: samples, count: count))
+    do {
+        // Spans only: the type labeler isn't needed to know where to cut.
+        let result = try wait { try await uhm.analyze(samples: audio, sampleRate: 16_000, options: .init(includeTypes: false)) }
+        return cString(result.fillers.map { "\($0.start) \($0.end)" }.joined(separator: "\n"))
+    } catch {
+        failure.pointee = cString("\(error)")
+        return nil
+    }
+    #else
+    failure.pointee = mynaUhmUnavailable()
+    return nil
+    #endif
+}
+
+@_cdecl("myna_uhm_free")
+public func mynaUhmFree(_ handle: UnsafeMutableRawPointer) {
+    #if canImport(Voz)
+    Unmanaged<Uhm>.fromOpaque(handle).release()
     #endif
 }
 

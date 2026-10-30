@@ -37,7 +37,7 @@ function stateHtml(s, mic) {
     return `<div class="sec"><div class="state"><div><div class="lbl">Recording</div><div class="big" data-live="elapsed">${elapsed(s.started_at)}</div></div></div>
 ${micHtml(mic)}
 <div class="line"><span class="dot"></span><span class="grow">${esc(s.app ? "System audio · " + s.app : s.note || "No system audio")}</span></div>
-${s.shots ? `<div class="line"><span class="dot"></span><span class="grow">${esc("Screenshots · " + s.shots.text)}</span></div>` : ""}</div>`;
+${s.shots ? `<div class="line"><span class="dot"></span><span class="grow">${esc((s.shots.video ? "Window video · " : "Screenshots · ") + s.shots.text)}</span></div>` : ""}</div>`;
   }
   if (s.kind === "transcribing") {
     const n = pct(s.progress);
@@ -46,12 +46,12 @@ ${s.shots ? `<div class="line"><span class="dot"></span><span class="grow">${esc
   return "";
 }
 
-// Which window the screenshots follow: the app using the mic, unless picked here. `windows` is the open list, or null.
+// Which window the screenshots or video follow: the app using the mic, unless picked here. `windows` is the open list, or null.
 function pickerHtml(shots, windows) {
   const open = windows !== null;
   const items = [{ id: null, label: "Automatic · the app using the mic" }, ...(windows || []).map((w) => ({ id: w.id, label: w.title ? `${w.app} · ${w.title}` : w.app }))];
   const list = items.map((w) => `<button class="mi" tabindex="0" role="menuitemradio" aria-checked="${w.id === shots.chosen}" data-act="pick"${w.id === null ? "" : ` data-id="${w.id}"`}><span class="t">${esc(w.label)}</span>${w.id === shots.chosen ? icon("check") : ""}</button>`);
-  return row("windows", "cam", "Screenshot window", shots.chosen === null ? "automatic" : "picked", ` aria-expanded="${open}"`) + (open ? `<div class="picklist" role="menu" aria-label="Screenshot window">${list.join("")}</div>` : "");
+  return row("windows", "cam", shots.video ? "Video window" : "Screenshot window", shots.chosen === null ? "automatic" : "picked", ` aria-expanded="${open}"`) + (open ? `<div class="picklist" role="menu" aria-label="${shots.video ? "Video window" : "Screenshot window"}">${list.join("")}</div>` : "");
 }
 
 function viewHtml(v, error, windows) {

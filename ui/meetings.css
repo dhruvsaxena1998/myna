@@ -88,6 +88,8 @@
 .meet .menu[hidden] { display: none; }
 .meet .menu .mi { display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 8px; border-radius: 5px; font-size: 13px; text-align: left; }
 .meet .menu .mhead { padding: 5px 8px 4px; font-size: 11px; font-weight: 600; color: var(--ink-3); }
+.meet .menu .msep { height: 1px; margin: 4px 6px; background: var(--hair); }
+.meet .menu .mi.danger { color: var(--alert); }
 .meet .menu .mi svg { visibility: hidden; }
 .meet .menu .mi[aria-checked="true"] svg { visibility: visible; }
 .meet .menu .mi:hover, .meet .menu .mi:focus-visible { background: var(--accent-fill); color: var(--accent-ink); outline: none; }
@@ -123,3 +125,12 @@
 .meet .film .f::after { content: attr(data-t); position: absolute; left: 0; right: 0; bottom: 0; padding: 10px 6px 3px; text-align: left; font-size: 11px; color: #fff; background: linear-gradient(transparent, rgba(0, 0, 0, 0.6)); }
 .meet .film .f[aria-current="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 .meet .ruler { padding: 6px 24px 0; font-size: 11px; color: var(--ink-3); }
+
+/* Window video sits above the frames in the same sticky bar, so it stays in view while the transcript scrolls. */
+.meet .vid { display: block; max-height: 168px; max-width: calc(100% - 48px); margin: 12px 24px 0; border-radius: 4px; background: var(--inset); border: 1px solid var(--hair); }
+.meet .filmbar:has(.vid) { padding-bottom: 12px; }
+
+/* Asking before media is deleted */
+.meet .banner.ask { display: flex; align-items: center; gap: 10px; }
+.meet .banner.ask span { flex: 1; }
+.meet .banner.ask .btn { flex: none; }
