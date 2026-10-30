@@ -259,7 +259,7 @@ mod tests {
             id
         };
         let (base, seen) = stub::serve(vec![stub::ok("ok")]);
-        send(&db, id, "Who spoke?", &config(&base)).unwrap();
+        send(&db, id, "Who spoke?", &config(&base), Path::new("")).unwrap();
         let req = body(&seen).to_string();
         assert!(req.contains("Speaker 1: Agreed.") && !req.contains("Lena") && !req.contains("Ström"), "{req}");
     }

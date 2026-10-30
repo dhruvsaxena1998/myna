@@ -327,7 +327,7 @@ mod tests {
         };
         settings::set(&db.lock().unwrap(), "ai_summaries", "true").unwrap();
         let (base, seen) = stub::serve(vec![stub::ok("ok")]);
-        generate(&db, id, "Summarize", &config(&base), 1).unwrap();
+        generate(&db, id, "Summarize", &config(&base), 1, Path::new("")).unwrap();
         let body = seen.recv().unwrap().body;
         assert!(body.contains("Speaker 1: Agreed.") && !body.contains("Lena") && !body.contains("Ström"), "{body}");
     }
