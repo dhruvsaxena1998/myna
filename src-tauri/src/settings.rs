@@ -7,6 +7,8 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
         "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
         [],
     )?;
+    // Per-model prices the user used to type; the cost now comes from the model (prices.rs).
+    db.execute("DELETE FROM settings WHERE key LIKE 'ai_in:%' OR key LIKE 'ai_out:%'", [])?;
     Ok(db)
 }
 
@@ -37,9 +39,14 @@ mod tests {
             assert_eq!(get(&db, "meetings_enabled"), None);
             set(&db, "meetings_enabled", "true").unwrap();
             set(&db, "meetings_enabled", "false").unwrap();
+            set(&db, "ai_in:m", "1").unwrap();
+            set(&db, "ai_out:m", "1").unwrap();
+            set(&db, "ai_ctx:m", "1").unwrap();
         }
         let db = open(&path).unwrap();
         assert_eq!(get(&db, "meetings_enabled").as_deref(), Some("false"));
+        // Old typed prices are dropped on open; other per-model settings stay.
+        assert_eq!((get(&db, "ai_in:m"), get(&db, "ai_out:m"), get(&db, "ai_ctx:m").as_deref()), (None, None, Some("1")));
         let _ = std::fs::remove_file(&path);
     }
 }

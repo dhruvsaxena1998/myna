@@ -124,13 +124,13 @@ pub fn toggle(app: &AppHandle) -> Result<(), String> {
             let id = active.id;
             drop(active); // tears down the tap and mic, closes both files
             clear_tray_title(app);
-            set_tray_menu(app, false);
+            set_tray(app, false);
             let _ = store::set_transcribing(&app.state::<Db>().0.lock().unwrap(), id);
             spawn_transcription(app, id);
         }
         None => {
             *slot = Some(begin(app)?);
-            set_tray_menu(app, true);
+            set_tray(app, true);
         }
     }
     drop(slot); // the pill reads the recording from the database, not from this lock
@@ -167,8 +167,14 @@ pub fn mic(conn: &Connection) -> Option<mute::Mic> {
     Some(m)
 }
 
-/// The right-click fallback menu, for when the popover page won't load. Stop shows only while recording.
-pub fn set_tray_menu(app: &AppHandle, recording: bool) {
+/// The menubar glyph, a template image macOS tints for light and dark; recording adds a dot.
+pub fn tray_icon(recording: bool) -> tauri::image::Image<'static> {
+    let png: &[u8] = if recording { include_bytes!("../../icons/tray-recording@2x.png") } else { include_bytes!("../../icons/tray@2x.png") };
+    tauri::image::Image::from_bytes(png).expect("bundled tray icon")
+}
+
+/// The tray glyph, and the right-click fallback menu for when the popover page won't load. Stop shows only while recording.
+pub fn set_tray(app: &AppHandle, recording: bool) {
     use tauri::menu::{Menu, MenuItem};
     let build = || -> tauri::Result<Menu<tauri::Wry>> {
         let menu = Menu::new(app)?;
@@ -181,7 +187,9 @@ pub fn set_tray_menu(app: &AppHandle, recording: bool) {
         menu.append(&MenuItem::with_id(app, "quit", "Quit Myna", true, None::<&str>)?)?;
         Ok(menu)
     };
-    if let (Some(tray), Ok(menu)) = (app.tray_by_id(TRAY_ID), build()) {
+    let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
+    let _ = tray.set_icon_with_as_template(Some(tray_icon(recording)), true);
+    if let Ok(menu) = build() {
         let _ = tray.set_menu(Some(menu));
     }
 }
@@ -425,4 +433,14 @@ pub fn export_meeting(app: AppHandle, db: tauri::State<Db>, id: i64, format: Str
     fs::write(&path, transcript::export_named(&meeting, &segments, &people, format)).map_err(|e| e.to_string())?;
     let _ = std::process::Command::new("open").arg("-R").arg(&path).spawn();
     Ok(path.display().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn tray_icons_decode_at_18pt_retina() {
+        for recording in [false, true] {
+            assert_eq!(super::tray_icon(recording).height(), 36);
+        }
+    }
 }

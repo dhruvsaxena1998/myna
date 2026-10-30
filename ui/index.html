@@ -11,6 +11,7 @@
   h1 { font-size: 20px; margin-top: 0; }
   label { display: block; margin: 12px 0; }
   .reason { color: #666; margin: 4px 0 12px; }
+  .logo { display: block; margin-bottom: 12px; }
   button { font: inherit; padding: 6px 14px; }
 </style>
 </head>
@@ -297,7 +298,7 @@ async function meetingsPage(page) {
 // The updater's answer is shown, not acted on, until the person clicks Install.
 async function aboutPage(page) {
   const version = await window.__TAURI__.app.getVersion();
-  page.innerHTML = `<section class="group"><div class="box"><div class="prow"><div class="l">Myna ${esc(version)}</div><div class="d" id="upd" role="status">Updates come from GitHub Releases.</div><div class="r"><button class="btn" id="upd-check">Check for updates</button></div></div></div></section>`;
+  page.innerHTML = `<section class="group"><div class="box"><div class="prow"><div class="l row"><img src="logo.png" alt="" width="32" height="32">Myna ${esc(version)}</div><div class="d" id="upd" role="status">Updates come from GitHub Releases.</div><div class="r"><button class="btn" id="upd-check">Check for updates</button></div></div></div></section>`;
   const msg = page.querySelector("#upd"), btn = page.querySelector("#upd-check");
   const show = (text, err) => { msg.textContent = text; msg.classList.toggle("err", !!err); };
   const check = async () => {
@@ -477,7 +478,7 @@ function pill() {
 }
 
 async function onboarding() {
-  app.innerHTML = "<h1>Welcome to Myna</h1><p>What do you want to use Myna for?</p>";
+  app.innerHTML = '<img class="logo" src="logo.png" alt="" width="64" height="64"><h1>Welcome to Myna</h1><p>What do you want to use Myna for?</p>';
   const any = () => [...form.querySelectorAll("input")].some((b) => b.checked);
   const form = await modulesForm(() => next.disabled = !any());
   const next = document.createElement("button");

@@ -99,7 +99,7 @@ mod tests {
     }
 
     fn config(base: &str) -> Config {
-        Config { preset: &ai::PRESETS[3], base_url: base.into(), model: "vis".into(), key: None, input_price: None, output_price: None, context: None }
+        Config { preset: &ai::PRESETS[3], base_url: base.into(), model: "vis".into(), key: None, context: None }
     }
 
     #[test]

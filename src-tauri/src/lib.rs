@@ -11,6 +11,7 @@ mod models;
 mod paste;
 mod permissions;
 mod popover;
+mod prices;
 mod settings;
 mod stt;
 mod uhm;
@@ -614,7 +615,8 @@ pub fn run() {
 
             popover::create(app.handle())?;
             TrayIconBuilder::with_id(meetings::TRAY_ID)
-                .icon(app.default_window_icon().unwrap().clone())
+                .icon(meetings::tray_icon(false))
+                .icon_as_template(true)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| meetings::tray_menu_pick(app, event.id.as_ref()))
                 .on_tray_icon_event(|tray, event| {
@@ -623,7 +625,7 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
-            meetings::set_tray_menu(app.handle(), false);
+            meetings::set_tray(app.handle(), false);
             meetings::setup(app, &dir)?;
 
             if !onboarded {

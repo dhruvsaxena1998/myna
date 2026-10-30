@@ -19,12 +19,11 @@ ${row("ai-url", "Base URL", text("ai-url"))}
 <div class="prow single"><label class="l" for="ai-key">API key</label><div class="r"><input class="field mono wide" id="ai-key" type="password" spellcheck="false" autocomplete="off"><span class="xs row">${icon("lock", "sm")} Keychain</span><button class="btn quiet" id="ai-key-rm">Remove</button></div><div class="d err" id="ai-err" role="alert" hidden></div></div>
 ${row("ai-model", "Model", text("ai-model"))}
 </div><p class="note">Myna only talks to this provider when a feature below is on. Each one shows ${offMac} where it applies.</p></section>
-<section class="group"><h2>Cost estimate (optional)</h2><div class="box">
-${row("ai-in", "Input price per 1M tokens", text("ai-in", "num"))}
-${row("ai-out", "Output price per 1M tokens", text("ai-out", "num"))}
+<section class="group"><h2>This model</h2><div class="box">
+<div class="prow single"><div class="l">Price</div><div class="r"><span class="xs meta" id="ai-price"></span></div></div>
 ${row("ai-ctx", "Context window (tokens)", text("ai-ctx", "num"))}
 <div class="prow single"><div class="l" id="ai-img-l">Model accepts images</div><div class="r"><button class="switch" role="switch" id="ai-img" aria-labelledby="ai-img-l"></button></div></div>
-</div><p class="note">Saved for the model named above. Counts are approximate (characters ÷ 4). Leave prices blank to show tokens only. “Model accepts images” only matters for the two screenshot options under Experimental.</p></section>
+</div><p class="note">Saved for the model named above. The price comes from the model (OpenRouter's list, or Myna's own table), never from you; a model in neither shows “cost unknown”. Counts are approximate (characters ÷ 4). “Model accepts images” only matters for the two screenshot options under Experimental.</p></section>
 <section class="group"><h2>Uses this provider</h2><div class="box">
 <div class="prow single"><div class="l row"><span id="ai-sum-l">Meeting summaries</span> ${offMac}</div><div class="r"><button class="switch" role="switch" id="ai-sum" aria-labelledby="ai-sum-l"></button></div></div>
 <div class="prow single"><div class="l row"><span id="ai-fold-l">Suggest a folder for new meetings</span> ${offMac}</div><div class="r"><button class="switch" role="switch" id="ai-fold" aria-labelledby="ai-fold-l"></button></div></div>
@@ -40,10 +39,9 @@ ${row("ai-ctx", "Context window (tokens)", text("ai-ctx", "num"))}
     $("ai-model").placeholder = st.presets.find((p) => p.id === st.preset).model;
     $("ai-key").placeholder = st.has_key ? "Saved in Keychain" : st.preset === "custom" ? "Optional for a local server" : "Paste your key";
     $("ai-key-rm").hidden = !st.has_key;
-    for (const [id, v] of [["ai-in", st.input_price], ["ai-out", st.output_price], ["ai-ctx", st.context]]) {
-      put($(id), v);
-      $(id).disabled = !st.model;
-    }
+    put($("ai-ctx"), st.context);
+    $("ai-ctx").disabled = !st.model;
+    $("ai-price").textContent = !st.model ? "Add a model to see its price" : st.input_price == null ? "Cost unknown" : st.input_price + st.output_price === 0 ? "Free" : `${fmtPrice(st.input_price)} in · ${fmtPrice(st.output_price)} out, per 1M tokens`;
     $("ai-img").setAttribute("aria-checked", st.images);
     $("ai-img").disabled = !st.model;
     $("ai-sum").setAttribute("aria-checked", st.summaries);
@@ -69,8 +67,8 @@ ${row("ai-ctx", "Context window (tokens)", text("ai-ctx", "num"))}
   $("ai-model").onchange = (e) => save("ai_model", e.target.value.trim());
   $("ai-key").onchange = (e) => { const key = e.target.value; e.target.value = ""; setKey(key); };
   $("ai-key-rm").onclick = () => setKey("");
-  // Price and context window are per model: the backend reads ai_in:<model>, ai_out:<model>, ai_ctx:<model>.
-  for (const [id, kind] of [["ai-in", "in"], ["ai-out", "out"], ["ai-ctx", "ctx"]]) $(id).onchange = (e) => save(`ai_${kind}:${st.model}`, e.target.value.trim());
+  // The context window is per model: the backend reads ai_ctx:<model>.
+  $("ai-ctx").onchange = (e) => save(`ai_ctx:${st.model}`, e.target.value.trim());
   $("ai-img").onclick = () => save(`ai_img:${st.model}`, !st.images);
   $("ai-sum").onclick = () => save("ai_summaries", !st.summaries);
   $("ai-fold").onclick = () => save("ai_folders", !st.folders);
@@ -147,6 +145,9 @@ ${row("dec-model", "Model", text("dec-model"))}
 
 const fmtTokens = (n) => (n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(n));
 const fmtCost = (c) => (c < 0.001 ? "<$0.001" : "$" + c.toFixed(c < 0.1 ? 3 : 2));
+const fmtPrice = (p) => "$" + +p.toFixed(4);
+// A cost of null is a model with no known price; 0 is free (a model on this Mac). Never a guess.
+const costText = (c) => (c == null ? "cost unknown" : c === 0 ? "free" : "≈ " + fmtCost(c));
 const inline = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/`(.+?)`/g, "<code>$1</code>");
 // Models answer in Markdown. Headings, bullets and paragraphs are enough here; everything is escaped first.
 function md(text) {
@@ -190,7 +191,7 @@ ${blocked ? `<p class="s" id="why">${esc(blocked)}</p>` : ""}${error ? `<p class
 ${editing ? `<div class="edit"><label class="xs" for="prompt">Prompt</label><textarea class="field" id="prompt" rows="6">${esc(prompt)}</textarea>
 <div class="foot"><input class="field grow" id="tname" placeholder="Template name" aria-label="Template name" value="${picked && !picked.builtin ? esc(picked.name) : ""}"><button class="btn" id="save">Save as template</button></div>
 <div class="foot"><button class="btn quiet" id="del"${picked && !picked.builtin ? "" : " hidden"}>Delete template</button><span class="sp"></span><button class="btn quiet" id="cancel">Cancel</button><button class="btn primary" id="run"${busy || blocked ? " disabled" : ""}>Generate</button></div></div>` : ""}
-${current ? `<p class="xs meta">Generated ${when} with ${esc(current.model)} via ${esc(current.provider)} · ${fmtTokens(current.tokens_in + current.tokens_out)} tokens${current.cost == null ? "" : " · ≈ " + fmtCost(current.cost)}${current.off_device ? ` · <span class="pill alert">sent text off this Mac</span>` : ""}</p><div class="out">${md(current.text)}</div>` : blocked || busy ? "" : '<p class="s">No summary yet.</p>'}`;
+${current ? `<p class="xs meta">Generated ${when} with ${esc(current.model)} via ${esc(current.provider)} · ${fmtTokens(current.tokens_in + current.tokens_out)} tokens${" · " + costText(current.cost)}${current.off_device ? ` · <span class="pill alert">sent text off this Mac</span>` : ""}</p><div class="out">${md(current.text)}</div>` : blocked || busy ? "" : '<p class="s">No summary yet.</p>'}`;
 
       $("tpl").onchange = (e) => {
         const t = templates.find((t) => String(t.id) === e.target.value);
@@ -253,7 +254,7 @@ async function chat(pane, m, ready) {
       const waiting = asking.get(m.id);
       const said = (t) => `<div class="msg me"><div class="from">You</div><p>${esc(t.question)}</p></div>` + (t.answer == null ? "" : `<div class="msg"><div class="from">${esc(t.model)}</div><div class="out">${md(t.answer)}</div></div>`);
       const turns = current.turns.map(said).join("") + (waiting ? said({ question: waiting.question }) + '<p class="s" role="status">Thinking…</p>' : "");
-      pane.innerHTML = `<div class="hdr"><span><b>${fmtTokens(current.context_tokens)}</b> tokens in context</span>${current.turns.length && current.cost != null ? `<span><b>≈ ${fmtCost(current.cost)}</b> this chat</span>` : ""}${st.off_device ? (withImages(st) ? offImg : offMac) : ""}</div>
+      pane.innerHTML = `<div class="hdr"><span><b>${fmtTokens(current.context_tokens)}</b> tokens in context</span>${current.turns.length ? `<span><b>${costText(current.cost)}</b>${current.cost ? " this chat" : ""}</span>` : ""}${st.off_device ? (withImages(st) ? offImg : offMac) : ""}</div>
 ${current.over_window ? `<p class="warn" role="status">This chat is about ${fmtTokens(current.context_tokens)} tokens, over the ${fmtTokens(current.window)} window you entered for ${esc(st.model)}. The provider may refuse it or drop the start of the transcript.</p>` : ""}
 <div class="log">${turns || '<p class="s">Ask anything about this meeting. Each question sends the transcript, the summary and this chat again.</p>'}</div>
 ${blocked ? `<p class="s">${esc(blocked)}</p>` : ""}${error ? `<p class="err" role="alert">${esc(error)}</p>` : ""}
