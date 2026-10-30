@@ -1,6 +1,7 @@
 //! Meeting capture: record the mic and the call app's audio as two tracks, transcribe after stop,
 //! keep the result in SQLite, export it as Markdown or text.
 mod capture;
+pub(crate) mod captions;
 pub mod chat;
 mod media;
 mod screen;
@@ -57,6 +58,7 @@ pub fn setup(app: &tauri::App, root: &Path) -> Result<(), Box<dyn std::error::Er
         shots::init(&conn)?;
         summary::init(&conn)?;
         speakers::init(&conn)?;
+        captions::init(&conn)?;
         chat::init(&conn)?;
         store::recover(&conn)?
     };

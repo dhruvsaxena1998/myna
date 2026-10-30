@@ -4,6 +4,7 @@ use crate::{
     diarize::{self, Diarizer},
 };
 use super::{
+    captions,
     mute::{self, Event, State},
     speakers::{self, Speaker},
     store::{self, Meeting, Segment, ME, THEM},
@@ -136,6 +137,18 @@ fn separate(
     }
 }
 
+/// Suggests each speaker the name the call's captions gave them, or says the captions weren't there to ask. A
+/// caption table that can't be read costs the names, not the transcript.
+fn name_from_captions(db: &Mutex<Connection>, id: i64, speakers: &mut [Speaker], lines: &[Utterance], clusters: &[Option<u32>]) {
+    let conn = db.lock().unwrap();
+    let events = captions::list(&conn, id).unwrap_or_default();
+    let spans: Vec<(u64, u64)> = lines.iter().map(|u| (u.start_ms, u.end_ms)).collect();
+    captions::suggest(speakers, &spans, clusters, &events);
+    if !speakers.is_empty() && captions::unavailable(&events) {
+        store::add_note(&conn, id, "Captions unavailable: turn captions on in the call to name speakers automatically.");
+    }
+}
+
 /// Transcribes a recorded meeting's tracks, tells the system track's speakers apart and stores the segments.
 /// `diarizer` is only called when the system track has speech. The caller records a failure.
 pub fn run(
@@ -158,7 +171,8 @@ pub fn run(
     };
     let me_lines = transcribe_track(&mic, t, &mut report)?;
     let them_lines = transcribe_track(&them, t, &mut report)?;
-    let (clusters, speakers) = separate(db, id, &them, &them_lines, diarizer);
+    let (clusters, mut speakers) = separate(db, id, &them, &them_lines, diarizer);
+    name_from_captions(db, id, &mut speakers, &them_lines, &clusters);
     report(them.len());
     let duration_ms = mic.len() as u64 * 1000 / RATE as u64;
     // A timeline that cannot be read fails the meeting (retryable) instead of letting every line in.
@@ -628,6 +642,74 @@ mod tests {
         assert!(text(&conn).contains("Speaker 2: line 1"), "{}", text(&conn));
         speakers::rename(&conn, next, 2, "Priya", false).unwrap();
         assert!(text(&conn).contains("Priya: line 1"), "{}", text(&conn));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `TwelveSeconds` plus the LLM pass, recording what it is asked to tidy.
+    struct TwelveSecondsPolished(std::cell::RefCell<Vec<String>>);
+    impl Transcriber for TwelveSecondsPolished {
+        fn transcribe(&mut self, s: &[f32]) -> Result<String, String> {
+            TwelveSeconds.transcribe(s)
+        }
+        fn transcribe_timed(&mut self, s: &[f32]) -> Result<Vec<Utterance>, String> {
+            TwelveSeconds.transcribe_timed(s)
+        }
+        fn polish(&self, text: &str) -> Option<String> {
+            self.0.borrow_mut().push(text.into());
+            None
+        }
+    }
+
+    #[test]
+    fn caption_names_are_suggested_not_applied_and_never_reach_a_provider() {
+        let root = std::env::temp_dir().join(format!("myna-meet-{}-captions", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let db = Mutex::new(Connection::open_in_memory().unwrap());
+        {
+            let conn = db.lock().unwrap();
+            store::init(&conn).unwrap();
+            speakers::init(&conn).unwrap();
+            captions::init(&conn).unwrap();
+        }
+        let turns = || vec![Turn { start_ms: 0, end_ms: 12_000, speaker: 7 }, Turn { start_ms: 12_000, end_ms: 24_000, speaker: 3 }];
+        let id = add_call(&db, &root, &[(0, 1), (1, 2)]);
+        {
+            let conn = db.lock().unwrap();
+            (1..=5).for_each(|i| captions::add(&conn, id, i * 2000, Some("Lena Ström")).unwrap());
+            (7..=11).for_each(|i| captions::add(&conn, id, i * 2000, Some("Tom")).unwrap());
+        }
+        let mut t = TwelveSecondsPolished(Default::default());
+        run(&db, &root, id, &mut t, || Ok(Box::new(Scripted3(turns())))).unwrap();
+        let conn = db.lock().unwrap();
+        let people = speakers::list(&conn, id).unwrap();
+        assert_eq!(people.iter().map(|s| (s.name.as_deref(), s.suggested.as_deref(), s.from_captions)).collect::<Vec<_>>(), [(None, Some("Lena Ström"), true), (None, Some("Tom"), true)]);
+        assert_eq!(store::get(&conn, id).unwrap().note, None, "captions were there");
+        // Suggested, not applied: lines say "Speaker N" until the user confirms, and a provider is only ever told that.
+        let (m, segs) = (store::get(&conn, id).unwrap(), store::segments(&conn, id).unwrap());
+        assert!(export_named(&m, &segs, &people, Format::Text).contains("Speaker 1: line 0"));
+        let sent = export(&m, &segs, Format::Text);
+        assert!(!sent.contains("Lena") && !sent.contains("Tom") && sent.contains("Speaker 1: line 0"), "{sent}");
+        assert!(t.0.borrow().iter().all(|text| !text.contains("Lena") && !text.contains("Tom")), "the LLM cleanup got {:?}", t.0.borrow());
+        // Confirming is renaming, the same as for a remembered voice.
+        speakers::rename(&conn, id, 1, "Lena Ström", false).unwrap();
+        assert_eq!(speakers::list(&conn, id).unwrap()[0].suggested, None);
+        drop(conn);
+
+        // Captions off: the extension reported but never saw a name. Said once, the speakers stay "Speaker N".
+        let off = add_call(&db, &root, &[(0, 3), (1, 4)]);
+        captions::add(&db.lock().unwrap(), off, 2000, None).unwrap();
+        for _ in 0..2 {
+            run(&db, &root, off, &mut TwelveSeconds, || Ok(Box::new(Scripted3(turns())))).unwrap();
+        }
+        let conn = db.lock().unwrap();
+        assert_eq!(store::get(&conn, off).unwrap().note.as_deref(), Some("Captions unavailable: turn captions on in the call to name speakers automatically."));
+        assert!(speakers::list(&conn, off).unwrap().iter().all(|s| s.suggested.is_none()));
+        drop(conn);
+
+        // No extension at all: nothing to say.
+        let none = add_call(&db, &root, &[(0, 5), (1, 6)]);
+        run(&db, &root, none, &mut TwelveSeconds, || Ok(Box::new(Scripted3(turns())))).unwrap();
+        assert_eq!(store::get(&db.lock().unwrap(), none).unwrap().note, None);
         let _ = std::fs::remove_dir_all(&root);
     }
 

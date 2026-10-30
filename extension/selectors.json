@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "sites": {
     "meet": [
       { "selector": "button[data-is-muted][aria-label*=\"microphone\" i]", "attr": "data-is-muted", "muted": "true", "live": "false" }
@@ -7,6 +7,15 @@
     "teams": [
       { "selector": "button[data-tid=\"toggle-mute\"]", "attr": "aria-label", "muted": "Unmute mic", "live": "Mute mic" },
       { "selector": "button#mic-button", "attr": "aria-pressed", "muted": "true", "live": "false" }
+    ]
+  },
+  "captions": {
+    "meet": [
+      { "selector": "div[role=\"region\"][aria-label*=\"aption\" i] .KcIKyf" }
+    ],
+    "teams": [
+      { "selector": "[data-tid=\"closed-caption-v2-virtual-list-content\"] [data-tid=\"author\"]" },
+      { "selector": "[data-tid=\"closed-caption-renderer-wrapper\"] .ui-chat__message__author" }
     ]
   }
 }

@@ -160,7 +160,7 @@ mod tests {
         let them = |text: &str, cluster| Segment { cluster: Some(cluster), ..seg(THEM, text, State::Unmuted) };
         let lines = [them("Shall we start?", 1), seg(ME, "The budget is forty thousand.", State::Muted), them("Got it.", 2)];
         store::finish(&db, id, 1, &lines).unwrap();
-        let people = [1, 2].map(|cluster| speakers::Speaker { cluster, name: None, suggested: None, print: None });
+        let people = [1, 2].map(|cluster| speakers::Speaker { cluster, name: None, suggested: None, from_captions: false, print: None });
         speakers::replace(&db, id, &people).unwrap();
         speakers::rename(&db, id, 1, "Priya Natarajan", false).unwrap();
         speakers::rename(&db, id, 2, "Quentin", false).unwrap();
@@ -172,6 +172,22 @@ mod tests {
         let body = seen.recv().unwrap().body;
         assert!(body.contains("Them: Shall we start?"), "{body}");
         assert!(!body.contains("Priya") && !body.contains("Quentin") && !body.contains("Speaker 1"), "{body}");
+    }
+
+    #[test]
+    fn a_caption_name_never_goes_into_a_triage_question() {
+        use crate::meetings::{captions, store};
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        store::init(&db).unwrap();
+        let id = store::create(&db, 1).unwrap();
+        let them = |text: &str| Segment { cluster: Some(1), ..seg(THEM, text, State::Unmuted) };
+        store::finish(&db, id, 1, &[them("Shall we start?"), seg(ME, "The budget is forty thousand.", State::Muted)]).unwrap();
+        captions::plant(&db, id, "Lena Ström");
+        let mut segments = store::segments(&db, id).unwrap();
+        let p = Keyword(Default::default());
+        pass(&mut segments, &p);
+        let asked = p.0.lock().unwrap().join("\n");
+        assert!(asked.contains("Them: Shall we start?") && !asked.contains("Lena") && !asked.contains("Ström"), "{asked}");
     }
 
     #[test]

@@ -26,6 +26,8 @@ pub struct Speaker {
     pub name: Option<String>,
     /// A remembered voice this one sounds like, until the user confirms or dismisses it.
     pub suggested: Option<String>,
+    /// `suggested` came from the call's captions (ticket 11), not from a remembered voice.
+    pub from_captions: bool,
     #[serde(skip)]
     pub print: Option<Print>,
 }
@@ -37,22 +39,25 @@ pub fn init(db: &Connection) -> rusqlite::Result<()> {
             cluster INTEGER NOT NULL,
             name TEXT,
             suggested TEXT,
+            from_captions INTEGER NOT NULL DEFAULT 0,
             print BLOB,
             PRIMARY KEY (meeting_id, cluster)
         );
         CREATE TABLE IF NOT EXISTS voice_profiles (name TEXT PRIMARY KEY COLLATE NOCASE, print BLOB NOT NULL);",
-    )
+    )?;
+    store::add_column(db, "speakers", "from_captions", "INTEGER NOT NULL DEFAULT 0")
 }
 
 /// The speakers of a meeting, in cluster order.
 pub fn list(db: &Connection, meeting: i64) -> rusqlite::Result<Vec<Speaker>> {
-    db.prepare("SELECT cluster, name, suggested, print FROM speakers WHERE meeting_id = ?1 ORDER BY cluster")?
+    db.prepare("SELECT cluster, name, suggested, from_captions, print FROM speakers WHERE meeting_id = ?1 ORDER BY cluster")?
         .query_map([meeting], |r| {
             Ok(Speaker {
                 cluster: r.get(0)?,
                 name: r.get(1)?,
                 suggested: r.get(2)?,
-                print: r.get::<_, Option<Vec<u8>>>(3)?.and_then(|b| voiceprint::from_bytes(&b)),
+                from_captions: r.get(3)?,
+                print: r.get::<_, Option<Vec<u8>>>(4)?.and_then(|b| voiceprint::from_bytes(&b)),
             })
         })?
         .collect()
@@ -64,8 +69,8 @@ pub fn replace(db: &Connection, meeting: i64, speakers: &[Speaker]) -> rusqlite:
     tx.execute("DELETE FROM speakers WHERE meeting_id = ?1", [meeting])?;
     for s in speakers {
         tx.execute(
-            "INSERT INTO speakers (meeting_id, cluster, name, suggested, print) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![meeting, s.cluster, s.name, s.suggested, s.print.as_ref().map(voiceprint::to_bytes)],
+            "INSERT INTO speakers (meeting_id, cluster, name, suggested, from_captions, print) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![meeting, s.cluster, s.name, s.suggested, s.from_captions, s.print.as_ref().map(voiceprint::to_bytes)],
         )?;
     }
     tx.commit()
@@ -118,7 +123,7 @@ pub fn build(audio: &[f32], lines: &[(u64, u64)], clusters: &[Option<u32>], prof
         })
         .collect();
     let suggested = suggest(&prints, profiles);
-    prints.into_iter().zip(suggested).zip(1..).map(|((print, suggested), cluster)| Speaker { cluster, name: None, suggested, print }).collect()
+    prints.into_iter().zip(suggested).zip(1..).map(|((print, suggested), cluster)| Speaker { cluster, name: None, suggested, from_captions: false, print }).collect()
 }
 
 fn speaker_of(db: &Connection, meeting: i64, cluster: u32) -> Result<Speaker, String> {
@@ -134,7 +139,7 @@ pub fn rename(db: &Connection, meeting: i64, cluster: u32, name: &str, remember:
         return Err("Give the speaker a name.".into());
     }
     let speaker = speaker_of(db, meeting, cluster)?;
-    db.execute("UPDATE speakers SET name = ?3, suggested = NULL WHERE meeting_id = ?1 AND cluster = ?2", params![meeting, cluster, name]).map_err(|e| e.to_string())?;
+    db.execute("UPDATE speakers SET name = ?3, suggested = NULL, from_captions = 0 WHERE meeting_id = ?1 AND cluster = ?2", params![meeting, cluster, name]).map_err(|e| e.to_string())?;
     let Some(print) = speaker.print.filter(|_| remember) else { return Ok(false) };
     // The same name again adds to what is remembered, so a voice sharpens over meetings.
     let print = match profiles(db).into_iter().find(|(n, _)| n.eq_ignore_ascii_case(name)) {
@@ -151,7 +156,7 @@ pub fn rename(db: &Connection, meeting: i64, cluster: u32, name: &str, remember:
 
 /// Drops a suggested name; the speaker goes back to "Speaker N".
 pub fn dismiss(db: &Connection, meeting: i64, cluster: u32) -> Result<(), String> {
-    db.execute("UPDATE speakers SET suggested = NULL WHERE meeting_id = ?1 AND cluster = ?2", params![meeting, cluster]).map_err(|e| e.to_string())?;
+    db.execute("UPDATE speakers SET suggested = NULL, from_captions = 0 WHERE meeting_id = ?1 AND cluster = ?2", params![meeting, cluster]).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -163,7 +168,11 @@ pub fn merge(db: &Connection, meeting: i64, from: u32, into: u32) -> Result<(), 
     }
     let (a, b) = (speaker_of(db, meeting, from)?, speaker_of(db, meeting, into)?);
     let name = b.name.or(a.name);
-    let suggested = if name.is_some() { None } else { b.suggested.or(a.suggested) };
+    let (suggested, from_captions) = match (&name, b.suggested.is_some()) {
+        (Some(_), _) => (None, false),
+        (None, true) => (b.suggested, b.from_captions),
+        (None, false) => (a.suggested, a.from_captions),
+    };
     let print = match (&b.print, &a.print) {
         (Some(x), Some(y)) => Some(voiceprint::blend(x, y)),
         (x, y) => x.clone().or_else(|| y.clone()),
@@ -172,8 +181,8 @@ pub fn merge(db: &Connection, meeting: i64, from: u32, into: u32) -> Result<(), 
     let tx = db.unchecked_transaction().map_err(e)?;
     tx.execute("UPDATE segments SET cluster = ?3 WHERE meeting_id = ?1 AND cluster = ?2", params![meeting, from, into]).map_err(e)?;
     tx.execute(
-        "UPDATE speakers SET name = ?3, suggested = ?4, print = ?5 WHERE meeting_id = ?1 AND cluster = ?2",
-        params![meeting, into, name, suggested, print.as_ref().map(voiceprint::to_bytes)],
+        "UPDATE speakers SET name = ?3, suggested = ?4, from_captions = ?5, print = ?6 WHERE meeting_id = ?1 AND cluster = ?2",
+        params![meeting, into, name, suggested, from_captions, print.as_ref().map(voiceprint::to_bytes)],
     )
     .map_err(e)?;
     tx.execute("DELETE FROM speakers WHERE meeting_id = ?1 AND cluster = ?2", params![meeting, from]).map_err(e)?;
@@ -240,7 +249,7 @@ mod tests {
     }
 
     fn speaker(cluster: u32, x: f32) -> Speaker {
-        Speaker { cluster, name: None, suggested: None, print: Some(print(x)) }
+        Speaker { cluster, name: None, suggested: None, from_captions: false, print: Some(print(x)) }
     }
 
     /// A finished meeting with three speakers: 1 and 2 talk twice each, 3 once.
@@ -331,7 +340,7 @@ mod tests {
         // The next meeting hears the same voice as its speaker 1, and a stranger as 2.
         let next = store::create(&c, 2).unwrap();
         let prints = [Some(print(5.0 + STEP)), Some(print(20.0))];
-        let heard: Vec<Speaker> = prints.iter().zip(suggest(&prints, &profiles(&c))).zip(1..).map(|((p, s), cluster)| Speaker { cluster, name: None, suggested: s, print: p.clone() }).collect();
+        let heard: Vec<Speaker> = prints.iter().zip(suggest(&prints, &profiles(&c))).zip(1..).map(|((p, s), cluster)| Speaker { cluster, name: None, suggested: s, from_captions: false, print: p.clone() }).collect();
         replace(&c, next, &heard).unwrap();
         let shown = |c: &Connection| list(c, next).unwrap().into_iter().map(|s| (s.name, s.suggested)).collect::<Vec<_>>();
         assert_eq!(shown(&c), [(None, Some("Lena".to_string())), (None, None)]);

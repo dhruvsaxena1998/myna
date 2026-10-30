@@ -128,6 +128,20 @@ mod tests {
     }
 
     #[test]
+    fn a_caption_name_never_goes_into_the_folder_request() {
+        let (db, id, _) = setup();
+        {
+            let c = db.lock().unwrap();
+            store::finish(&c, id, 60_000, &[store::Segment { speaker: store::THEM.into(), end_ms: 1000, text: "Welcome to the Acme kickoff.".into(), cluster: Some(1), ..Default::default() }]).unwrap();
+            crate::meetings::captions::plant(&c, id, "Lena Ström");
+        }
+        let (base, seen) = stub::serve(vec![stub::ok("Acme")]);
+        suggest(&db, id, &config(&base)).unwrap();
+        let body = seen.recv().unwrap().body;
+        assert!(body.contains("Speaker 1: Welcome to the Acme kickoff.") && !body.contains("Lena") && !body.contains("Ström"), "{body}");
+    }
+
+    #[test]
     fn nothing_is_sent_when_off_unready_filed_dismissed_or_in_progress() {
         let (db, id, _) = setup();
         let (base, seen) = stub::serve(vec![stub::ok("Acme")]);

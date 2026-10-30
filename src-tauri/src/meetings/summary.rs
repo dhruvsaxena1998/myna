@@ -307,6 +307,23 @@ mod tests {
     }
 
     #[test]
+    fn a_caption_name_never_goes_into_the_prompt() {
+        let db = db();
+        let id = {
+            let c = db.lock().unwrap();
+            let id = store::create(&c, 100).unwrap();
+            store::finish(&c, id, 60_000, &[store::Segment { speaker: store::THEM.into(), end_ms: 1000, text: "Agreed.".into(), cluster: Some(1), ..Default::default() }]).unwrap();
+            crate::meetings::captions::plant(&c, id, "Lena Ström");
+            id
+        };
+        settings::set(&db.lock().unwrap(), "ai_summaries", "true").unwrap();
+        let (base, seen) = stub::serve(vec![stub::ok("ok")]);
+        generate(&db, id, "Summarize", &config(&base), 1).unwrap();
+        let body = seen.recv().unwrap().body;
+        assert!(body.contains("Speaker 1: Agreed.") && !body.contains("Lena") && !body.contains("Ström"), "{body}");
+    }
+
+    #[test]
     fn nothing_is_sent_while_the_toggle_is_off_or_there_is_no_transcript() {
         let db = db();
         let id = done_meeting(&db);
