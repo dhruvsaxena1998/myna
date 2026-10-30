@@ -10,6 +10,7 @@ mod permissions;
 mod popover;
 mod settings;
 mod stt;
+mod uhm;
 mod voz;
 
 use serde::Serialize;
@@ -42,6 +43,9 @@ struct Dictating {
     rec: Mutex<Option<audio::Recording>>,
 }
 struct HotkeyError(Mutex<Option<String>>);
+/// Uhm once loaded, kept between dictations like the speech model.
+#[derive(Default)]
+struct UhmSlot(Mutex<Option<Box<dyn dictation::FillerDetector>>>);
 /// Why the mute hotkey is not registered, when it is not.
 struct MuteHotkeyError(Mutex<Option<String>>);
 /// Bumped whenever the pill is shown, so a stale "hide in 1.2 s" timer does not hide a newer state.
@@ -103,7 +107,11 @@ fn list_models(dir: tauri::State<ModelsDir>, jobs: tauri::State<models::Jobs>, d
             error: result.and_then(|r| r.err()).or(problem),
             custom: custom.is_some(),
             local: custom.is_some_and(stt::Custom::local),
-            unavailable: (m.id == voz::ID).then(voz::unavailable).flatten(),
+            unavailable: match m.id {
+                voz::ID => voz::unavailable(),
+                uhm::ID => uhm::unavailable(),
+                _ => None,
+            },
         }
     };
     let mut models: Vec<_> = models::MODELS.iter().map(|m| row(m, models::status(&dir.0, m), None, None)).collect();
@@ -379,6 +387,53 @@ pub(crate) fn with_engine<R>(app: &AppHandle, f: impl FnOnce(&mut dyn dictation:
     app.state::<dictation::Engine>().with(&id, load, f)
 }
 
+/// Whether an experimental switch is on; every one is off until the user turns it on.
+fn switched_on(app: &AppHandle, key: &str) -> bool {
+    setting(app, key).as_deref() == Some("true")
+}
+
+/// `with_engine`, with the audio's fillers silenced first when Uhm is on for `module` ("dictation" or
+/// "meetings") and installed. Without the model or on any failure it is plain `with_engine`.
+pub(crate) fn with_hushed<R>(
+    app: &AppHandle,
+    module: &str,
+    f: impl FnOnce(&mut dyn dictation::Transcriber) -> R,
+) -> Result<R, String> {
+    with_engine(app, |t| {
+        if !switched_on(app, &format!("uhm_{module}")) {
+            return f(t);
+        }
+        let slot = app.state::<UhmSlot>();
+        let mut slot = slot.0.lock().unwrap();
+        if slot.is_none() {
+            let root = &app.state::<ModelsDir>().0;
+            let model = models::MODELS.iter().find(|m| m.id == uhm::ID).unwrap();
+            let loaded = match models::status(root, model) {
+                models::Status::Installed => uhm::Uhm::load(&root.join(uhm::ID)),
+                _ => Err("Uhm isn't downloaded".into()),
+            };
+            match loaded {
+                Ok(u) => *slot = Some(Box::new(u)),
+                Err(e) => {
+                    eprintln!("Uhm unavailable, transcribing as recorded: {e}");
+                    return f(t);
+                }
+            }
+        }
+        f(&mut dictation::Hushed { t, d: slot.as_mut().unwrap().as_mut() })
+    })
+}
+
+/// The experimental LLM pass for `module`: the text tidied by the AI provider, or None (off, not set up, slow or
+/// failed), in which case the caller keeps the text it has.
+pub(crate) fn polish(app: &AppHandle, module: &str, text: &str) -> Option<String> {
+    if !ai::enabled(&app.state::<Db>().0.lock().unwrap(), &format!("cleanup_{module}")) {
+        return None;
+    }
+    let config = ai::Config::load(&app.state::<Db>().0);
+    config.problem().is_none().then(|| config.polish(text, ai::POLISH_TIMEOUT)).flatten()
+}
+
 fn press(app: &AppHandle) {
     let st = app.state::<Dictating>();
     if st.busy.swap(true, Ordering::SeqCst) {
@@ -397,7 +452,7 @@ fn press(app: &AppHandle) {
             // Load the model while the user is still talking.
             let a = app.clone();
             std::thread::spawn(move || {
-                let _ = with_engine(&a, |_| ());
+                let _ = with_hushed(&a, "dictation", |_| ());
             });
         }
         Err(e) => {
@@ -426,12 +481,12 @@ fn finish(app: &AppHandle, rec: audio::Recording) {
 
     let result = rec.stop().and_then(|clip| {
         show_pill(app, Pill::Transcribing);
-        match with_engine(app, |t| dictation::dictate(&clip, t))?? {
+        match with_hushed(app, "dictation", |t| dictation::dictate(&clip, t))?? {
             dictation::Heard::TooShort => Ok(Pill::Idle { hotkey: hotkey(app), toggle: toggle_mode(app) }),
             dictation::Heard::Silence => Err("Didn't catch that".to_string()),
             dictation::Heard::Text(text) => {
                 let rules = setting(app, "dictation_cleanup").as_deref() != Some("false");
-                let text = cleanup::clean(&text, rules, &cleanup::dictionary(setting(app, "dictionary")));
+                let text = cleanup::clean(&text, rules, &cleanup::dictionary(setting(app, "dictionary")), &|t| polish(app, "dictation", t));
                 if text.is_empty() {
                     return Err("Didn't catch that".to_string()); // it was all fillers
                 }
@@ -538,6 +593,7 @@ pub fn run() {
             app.manage(ModelsDir(models_dir));
             app.manage(Arc::new(models::Jobs::default()));
             app.manage(dictation::Engine::default());
+            app.manage(UhmSlot::default());
             app.manage(Dictating::default());
             app.manage(HotkeyError(Mutex::new(None)));
             app.manage(MuteHotkeyError(Mutex::new(None)));
