@@ -252,8 +252,6 @@ mod tests {
             base_url: base_url.into(),
             model: "llama".into(),
             key: None,
-            input_price: Some(0.25),
-            output_price: Some(2.0),
             context: None,
         }
     }
@@ -295,8 +293,8 @@ mod tests {
         assert_eq!(get(&db.lock().unwrap(), id).unwrap().map(|s| s.text), None);
         let s = generate(&db, id, " Bullets only ", &cfg, 500, Path::new("")).unwrap();
         assert_eq!((s.text.as_str(), s.prompt.as_str(), s.model.as_str(), s.generated_at), ("## Summary\nShip Friday.", "Bullets only", "llama", 500));
-        // 1000 in at $0.25 and 200 out at $2.00 per million; the stub is on loopback, so nothing left the Mac.
-        assert_eq!((s.tokens_in, s.tokens_out, s.cost, s.off_device), (1000, 200, Some(0.00065), false));
+        // The stub is on loopback: nothing left the Mac, and it cost nothing.
+        assert_eq!((s.tokens_in, s.tokens_out, s.cost, s.off_device), (1000, 200, Some(0.0), false));
 
         let body = seen.recv().unwrap().body;
         stub::assert_text_only(&body);

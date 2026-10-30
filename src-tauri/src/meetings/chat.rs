@@ -210,8 +210,6 @@ mod tests {
             base_url: base_url.into(),
             model: "llama".into(),
             key: None,
-            input_price: Some(0.25),
-            output_price: Some(2.0),
             context: None,
         }
     }
@@ -265,23 +263,17 @@ mod tests {
     }
 
     #[test]
-    fn tokens_are_characters_over_four_and_cost_follows_the_price_table() {
+    fn tokens_are_characters_over_four_and_a_local_model_costs_nothing() {
         assert_eq!(tokens(&[]), 0);
         assert_eq!(tokens(&[msg(&"x".repeat(40)), msg(&"é".repeat(8))]), 12); // characters, not bytes
         assert_eq!(tokens(&[msg("abc")]), 0);
 
-        let mut cfg = config("http://localhost/v1");
+        let cfg = config("http://localhost/v1");
         let history = [turn("q", "a", 1000, 200), turn("q", "a", 1_001_000, 300)];
         let u = usage(&cfg, &[msg(&"x".repeat(400))], &history);
         assert_eq!(u.context_tokens, 100);
-        // 1_002_000 in at $0.25 and 500 out at $2.00 per million.
-        assert!((u.cost.unwrap() - 0.2515).abs() < 1e-9, "{:?}", u.cost);
-
-        // A blank price means tokens only; a blank thread has spent nothing.
-        cfg.output_price = None;
-        assert_eq!(usage(&cfg, &[], &history).cost, None);
-        cfg.output_price = Some(2.0);
-        assert_eq!(usage(&cfg, &[], &[]).cost, Some(0.0));
+        // localhost is free; the price math itself is tested in prices.rs.
+        assert_eq!(u.cost, Some(0.0));
     }
 
     #[test]
@@ -310,7 +302,7 @@ mod tests {
 
         let c = send(&db, id, "  Who owns the notes? ", &cfg, Path::new("")).unwrap();
         assert_eq!(c.turns, [turn("Who owns the notes?", "Priya.", 1000, 200)]);
-        assert!((c.usage.cost.unwrap() - 0.00065).abs() < 1e-9);
+        assert_eq!(c.usage.cost, Some(0.0)); // the stub is on loopback
         let req = body(&seen);
         assert_eq!(req["messages"].as_array().unwrap().len(), 2);
         assert!(req["messages"][0]["content"].as_str().unwrap().contains("Summary:\nA short sync."));
@@ -321,7 +313,6 @@ mod tests {
         let roles: Vec<_> = sent.iter().map(|(r, _)| r.as_str()).collect();
         assert_eq!(roles, ["system", "user", "assistant", "user"]);
         assert_eq!((sent[1].1.as_str(), sent[2].1.as_str(), sent[3].1.as_str()), ("Who owns the notes?", "Priya.", "When do we ship?"));
-        assert!((c.usage.cost.unwrap() - 0.0013).abs() < 1e-9); // two turns of 1000 in, 200 out
 
         // Reopening the meeting, or the app, finds the same thread without a request.
         let again = Thread::load(&db.lock().unwrap(), id).unwrap().view(&cfg);

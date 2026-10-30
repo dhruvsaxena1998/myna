@@ -1,6 +1,6 @@
 //! The one AI provider: settings, API key in the Keychain, and a chat-completions client that
 //! OpenAI, OpenRouter, Anthropic's compatibility endpoint and local servers such as Ollama all speak.
-use crate::{settings, Db};
+use crate::{prices, settings, Db};
 use rusqlite::Connection;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -31,9 +31,6 @@ pub struct Config {
     pub model: String,
     /// None for a local server that needs no key.
     pub key: Option<String>,
-    /// Per 1M tokens, entered by the user for this model; None when left blank.
-    pub input_price: Option<f64>,
-    pub output_price: Option<f64>,
     pub context: Option<u64>,
 }
 
@@ -98,7 +95,7 @@ pub fn is_off_device(base_url: &str) -> bool {
     }
 }
 
-/// Price and context window are per model: they live in settings as `ai_in:<model>` and so on.
+/// Context window and the images box are per model: they live in settings as `ai_ctx:<model>` and so on.
 /// The Settings page writes the same keys.
 fn per_model(db: &Connection, kind: &str, model: &str) -> Option<String> {
     settings::get(db, &format!("ai_{kind}:{model}")).map(|v| v.trim().trim_start_matches('$').to_string())
@@ -112,8 +109,6 @@ impl Config {
         Config {
             preset,
             base_url: settings::get(db, "ai_base_url").filter(|u| !u.trim().is_empty()).unwrap_or(preset.base_url.into()),
-            input_price: per_model(db, "in", &model).and_then(|v| v.parse().ok()),
-            output_price: per_model(db, "out", &model).and_then(|v| v.parse().ok()),
             context: per_model(db, "ctx", &model).and_then(|v| v.parse().ok()),
             model,
             key: None,
@@ -207,9 +202,17 @@ impl Config {
         })
     }
 
-    /// Dollars for one request; None unless both prices are filled in.
+    /// Dollars per 1M tokens, (input, output): free on this Mac, else from the model's listing; None when unknown.
+    pub fn price(&self) -> Option<(f64, f64)> {
+        if !self.off_device() {
+            return Some((0.0, 0.0));
+        }
+        prices::lookup((self.preset.id == "openrouter").then_some(self.base_url.as_str()), &self.model)
+    }
+
+    /// Dollars for one request; None when the model's price is unknown, Some(0.0) when it is free.
     pub fn cost(&self, tokens_in: u64, tokens_out: u64) -> Option<f64> {
-        Some((tokens_in as f64 * self.input_price? + tokens_out as f64 * self.output_price?) / 1e6)
+        self.price().map(|p| prices::cost(p, tokens_in, tokens_out))
     }
 }
 
@@ -263,6 +266,7 @@ pub struct State {
     base_url: String,
     model: String,
     has_key: bool,
+    /// Per 1M tokens from the model, not the user; both None for an unknown model, both 0 when free.
     input_price: Option<f64>,
     output_price: Option<f64>,
     context: Option<u64>,
@@ -294,12 +298,13 @@ pub fn ai_state(app: AppHandle) -> State {
             per_model(&conn, "img", &c.model).as_deref() == Some("true"),
         )
     };
+    let price = (!c.model.is_empty()).then(|| c.price()).flatten();
     State {
         presets: PRESETS,
         preset: c.preset.id,
         has_key: c.key.is_some(),
-        input_price: c.input_price,
-        output_price: c.output_price,
+        input_price: price.map(|p| p.0),
+        output_price: price.map(|p| p.1),
         context: c.context,
         summaries,
         folders,
@@ -449,8 +454,6 @@ mod tests {
             base_url: base_url.into(),
             model: "m".into(),
             key: key.map(Into::into),
-            input_price: None,
-            output_price: None,
             context: None,
         }
     }
@@ -602,14 +605,11 @@ mod tests {
     }
 
     #[test]
-    fn cost_needs_both_prices_and_problem_names_what_is_missing() {
+    fn cost_is_free_here_and_problem_names_what_is_missing() {
+        // Never the network: loopback is free before any lookup, and the hosted preset below has no key to ask with.
+        assert_eq!(config("http://localhost:11434/v1", None).cost(1000, 1000), Some(0.0));
+        assert_eq!(config("http://127.0.0.1:1/v1", None).price(), Some((0.0, 0.0)));
         let mut c = config("https://x.test/v1", None);
-        assert_eq!(c.cost(1000, 1000), None);
-        c.input_price = Some(0.25);
-        assert_eq!(c.cost(1000, 1000), None);
-        c.output_price = Some(2.0);
-        assert!((c.cost(1_000_000, 500_000).unwrap() - 1.25).abs() < 1e-9);
-
         assert!(c.problem().unwrap().contains("API key")); // hosted preset, no key
         c.key = Some("k".into());
         assert_eq!(c.problem(), None);
@@ -624,21 +624,18 @@ mod tests {
     }
 
     #[test]
-    fn settings_become_a_config_with_per_model_prices() {
+    fn settings_become_a_config_and_old_price_keys_are_ignored() {
         let db = stub::db();
         assert_eq!(Config::from_settings(&db).base_url, PRESETS[0].base_url);
         settings::set(&db, "ai_preset", "openai").unwrap();
         settings::set(&db, "ai_model", "gpt-x").unwrap();
-        settings::set(&db, "ai_in:gpt-x", "$0.25").unwrap();
-        settings::set(&db, "ai_out:gpt-x", "2").unwrap();
+        settings::set(&db, "ai_in:gpt-x", "$0.25").unwrap(); // typed by hand before prices came from the model
         settings::set(&db, "ai_ctx:gpt-x", "400000").unwrap();
-        settings::set(&db, "ai_in:other", "9").unwrap();
         let c = Config::from_settings(&db);
         assert_eq!((c.preset.id, c.base_url.as_str()), ("openai", "https://api.openai.com/v1"));
-        assert_eq!((c.input_price, c.output_price, c.context), (Some(0.25), Some(2.0), Some(400_000)));
+        assert_eq!(c.context, Some(400_000));
         settings::set(&db, "ai_model", "other").unwrap();
-        let c = Config::from_settings(&db);
-        assert_eq!((c.input_price, c.output_price, c.context), (Some(9.0), None, None));
+        assert_eq!(Config::from_settings(&db).context, None);
     }
 
     /// Writes a throwaway item to the login Keychain, so it stays out of the default run:
