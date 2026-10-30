@@ -170,16 +170,17 @@ pub static MODELS: &[Model] = &[
             who_file!("coreml-fp16/who_voice_banks.f32", "df33ff45ac021f5d014356b4e9ab4b9f91fadd836649962ee6e89eadfcd264e3", 82_248),
         ],
     },
+    // NVIDIA's Nemotron-3 Diarization (Sortformer v3), exported for parakeet-rs 0.4, which no longer loads the v2.1 export.
     Model {
-        id: "sortformer-4spk-v2.1",
+        id: "sortformer-v3",
         task: "diarization",
-        name: "Sortformer 4-speaker",
-        desc: "Open fallback from NVIDIA. Up to four speakers.",
+        name: "Sortformer v3",
+        desc: "Open fallback from NVIDIA. Up to eight speakers.",
         files: &[File {
-            name: "diar_streaming_sortformer_4spk-v2.1.onnx",
-            url: "https://huggingface.co/altunenes/parakeet-rs/resolve/b53b9101fa87271041773b5036aeb8db9d810d40/diar_streaming_sortformer_4spk-v2.1.onnx",
-            sha256: "f010a62654fd6d2adb70166265df2e53f5a766e354d2cce152b4c7966a04d02d",
-            size: 492_243_003,
+            name: "nemotron3_diar_v3.onnx",
+            url: "https://huggingface.co/altunenes/parakeet-rs/resolve/b53b9101fa87271041773b5036aeb8db9d810d40/nemotron-3-diarization/nemotron3_diar_v3.onnx",
+            sha256: "c32d6056f1ca52bdd50a74e1e7c66d91e5147bc29f19ffa4c39cbe5452397d15",
+            size: 402_167_515,
         }],
     },
 ];

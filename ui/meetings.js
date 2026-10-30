@@ -362,7 +362,8 @@ async function meetings() {
     row?.querySelector(".spk")?.focus();
   }
   function outside(e) {
-    if (pop && !pop.contains(e.target) && !e.target.closest("[data-spk]")) closeRename();
+    // The path, not `contains`: a click that redraws the popover detaches its own target before this runs.
+    if (pop && !e.composedPath().includes(pop) && !e.target.closest("[data-spk]")) closeRename();
   }
 
   // "Who is this?": name the speaker (every line of theirs follows), hear their longest clips, or merge them into another.

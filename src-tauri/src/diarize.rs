@@ -5,7 +5,7 @@ use crate::models;
 use std::path::Path;
 
 pub const WHO: &str = "who";
-pub const SORTFORMER: &str = "sortformer-4spk-v2.1";
+pub const SORTFORMER: &str = "sortformer-v3";
 
 /// One stretch of one speaker. The backend numbers its speakers; turns of different speakers may overlap.
 #[derive(Clone, Copy, PartialEq, Debug)]

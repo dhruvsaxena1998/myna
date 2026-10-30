@@ -521,19 +521,20 @@ mod tests {
         }
     }
 
-    /// Six lines of six seconds on the system track, one per voice given; the mic hears one short line.
-    struct SixSeconds;
-    impl Transcriber for SixSeconds {
+    /// A line of twelve seconds on the system track per voice given (a voice print needs ten seconds of speech); the
+    /// mic hears one short line.
+    struct TwelveSeconds;
+    impl Transcriber for TwelveSeconds {
         fn transcribe(&mut self, _: &[f32]) -> Result<String, String> {
             unreachable!("meetings ask for timestamps")
         }
         fn transcribe_timed(&mut self, samples: &[f32]) -> Result<Vec<Utterance>, String> {
-            let n = samples.len() as u64 / (6 * RATE as u64);
-            Ok(if n == 0 { vec![utt(200, 1200, "hello from me")] } else { (0..n).map(|i| utt(i * 6000 + 200, i * 6000 + 5800, &format!("line {i}"))).collect() })
+            let n = samples.len() as u64 / (12 * RATE as u64);
+            Ok(if n == 0 { vec![utt(200, 1200, "hello from me")] } else { (0..n).map(|i| utt(i * 12_000 + 200, i * 12_000 + 11_800, &format!("line {i}"))).collect() })
         }
     }
 
-    /// Adds a recorded meeting to `db`: a short mic line, and a system track of the voices in turn, six seconds each
+    /// Adds a recorded meeting to `db`: a short mic line, and a system track of the voices in turn, twelve seconds each
     /// (person 0 or 1; the seed varies what is said, as a new meeting would).
     fn add_call(db: &Mutex<Connection>, root: &Path, who: &[(u32, u64)]) -> i64 {
         let conn = db.lock().unwrap();
@@ -548,7 +549,7 @@ mod tests {
         mic.finalize().unwrap();
         let mut system = hound::WavWriter::create(dir.join("system.wav"), spec).unwrap();
         for &(person, seed) in who {
-            let samples = if person == 0 { voice(110.0, [700.0, 1200.0], seed, 6) } else { voice(210.0, [450.0, 2300.0], seed, 6) };
+            let samples = if person == 0 { voice(110.0, [700.0, 1200.0], seed, 12) } else { voice(210.0, [450.0, 2300.0], seed, 12) };
             samples.iter().for_each(|&x| system.write_sample((x * 32767.0) as i16).unwrap());
         }
         system.finalize().unwrap();
@@ -569,8 +570,8 @@ mod tests {
 
         // Person 0, person 1, person 0 again. The backend's own numbering (7 and 3) means nothing to the transcript.
         let id = add_call(&db, &root, &[(0, 1), (1, 2), (0, 3)]);
-        let turns = vec![Turn { start_ms: 0, end_ms: 6000, speaker: 7 }, Turn { start_ms: 6000, end_ms: 12_000, speaker: 3 }, Turn { start_ms: 12_000, end_ms: 18_000, speaker: 7 }];
-        run(&db, &root, id, &mut SixSeconds, || Ok(Box::new(Scripted3(turns)))).unwrap();
+        let turns = vec![Turn { start_ms: 0, end_ms: 12_000, speaker: 7 }, Turn { start_ms: 12_000, end_ms: 24_000, speaker: 3 }, Turn { start_ms: 24_000, end_ms: 36_000, speaker: 7 }];
+        run(&db, &root, id, &mut TwelveSeconds, || Ok(Box::new(Scripted3(turns)))).unwrap();
         let conn = db.lock().unwrap();
         assert_eq!(them_clusters(&conn, id), [Some(1), Some(2), Some(1)]);
         let got = store::segments(&conn, id).unwrap();
@@ -596,8 +597,8 @@ mod tests {
 
         // The next call: person 1 first, then Priya, each saying new things. Only Priya's voice is suggested.
         let next = add_call(&db, &root, &[(1, 12), (0, 13)]);
-        let turns = vec![Turn { start_ms: 0, end_ms: 6000, speaker: 0 }, Turn { start_ms: 6000, end_ms: 12_000, speaker: 1 }];
-        run(&db, &root, next, &mut SixSeconds, || Ok(Box::new(Scripted3(turns)))).unwrap();
+        let turns = vec![Turn { start_ms: 0, end_ms: 12_000, speaker: 0 }, Turn { start_ms: 12_000, end_ms: 24_000, speaker: 1 }];
+        run(&db, &root, next, &mut TwelveSeconds, || Ok(Box::new(Scripted3(turns)))).unwrap();
         let conn = db.lock().unwrap();
         let heard: Vec<_> = speakers::list(&conn, next).unwrap().iter().map(|s| (s.name.clone(), s.suggested.clone())).collect();
         assert_eq!(heard, [(None, None), (None, Some("Priya".to_string()))]);

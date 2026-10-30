@@ -15,8 +15,9 @@ const MELS: usize = 20;
 const FLOOR_DB: f64 = 30.0;
 /// And nothing quieter than this (dB of a frame's summed squares, full scale 1.0) is a voice, whoever else is quiet.
 const SILENCE_DB: f64 = -45.0;
-/// Three seconds of voiced frames: less than that says too little about a voice.
-const MIN_FRAMES: usize = 300;
+/// Ten seconds of voiced frames. Less than that says more about the words than about the voice: on `say`
+/// voices one 15-second passage sat as far from another passage of the same voice as from a different voice.
+const MIN_FRAMES: usize = 1000;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Print {
@@ -180,28 +181,28 @@ pub(super) mod tests {
 
     #[test]
     fn the_same_voice_sounds_nearer_than_a_different_one() {
-        let a1 = compute(&voice(110.0, [700.0, 1200.0], 1, 8)).unwrap();
-        let a2 = compute(&voice(110.0, [700.0, 1200.0], 2, 8)).unwrap();
-        let b = compute(&voice(210.0, [450.0, 2300.0], 3, 8)).unwrap();
+        let a1 = compute(&voice(110.0, [700.0, 1200.0], 1, 12)).unwrap();
+        let a2 = compute(&voice(110.0, [700.0, 1200.0], 2, 12)).unwrap();
+        let b = compute(&voice(210.0, [450.0, 2300.0], 3, 12)).unwrap();
         let (same, other) = (distance(&a1, &a2), distance(&a1, &b));
         assert!(same * 2.0 < other, "same {same}, other {other}");
     }
 
     #[test]
     fn too_little_speech_or_silence_has_no_print() {
-        assert_eq!(compute(&voice(110.0, [700.0, 1200.0], 1, 2)), None);
+        assert_eq!(compute(&voice(110.0, [700.0, 1200.0], 1, 6)), None, "six seconds is too little");
         assert_eq!(compute(&vec![0.0; 16_000 * 10]), None);
         assert_eq!(compute(&[]), None);
     }
 
     #[test]
     fn pauses_do_not_change_a_print() {
-        let talk = voice(110.0, [700.0, 1200.0], 1, 6);
+        let talk = voice(110.0, [700.0, 1200.0], 1, 12);
         let mut padded = talk.clone();
         padded.extend(vec![0.0; 16_000 * 4]);
         padded.extend(&talk);
         let (a, b) = (compute(&talk).unwrap(), compute(&padded).unwrap());
-        assert!(distance(&a, &b) < 0.05 * distance(&a, &compute(&voice(210.0, [450.0, 2300.0], 3, 6)).unwrap()), "{a:?} {b:?}");
+        assert!(distance(&a, &b) < 0.05 * distance(&a, &compute(&voice(210.0, [450.0, 2300.0], 3, 12)).unwrap()), "{a:?} {b:?}");
     }
 
     #[test]
@@ -219,7 +220,7 @@ pub(super) mod tests {
 
     #[test]
     fn prints_survive_storage_and_bad_blobs_are_refused() {
-        let p = compute(&voice(110.0, [700.0, 1200.0], 1, 6)).unwrap();
+        let p = compute(&voice(110.0, [700.0, 1200.0], 1, 12)).unwrap();
         assert_eq!(from_bytes(&to_bytes(&p)), Some(p));
         for bad in [&[][..], &[0u8; 99], &[0u8; 101]] {
             assert_eq!(from_bytes(bad), None);

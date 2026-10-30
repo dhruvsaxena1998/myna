@@ -10,8 +10,10 @@ use rusqlite::{params, Connection};
 use serde::Serialize;
 use std::cmp::Reverse;
 
-/// Two voices closer than this are, for a suggestion, the same person.
-const MATCH: f32 = 3.0;
+/// Two voices closer than this are, for a suggestion, the same person. Set on `say` voices (see the ignored test
+/// below): with a minute of speech a side, the same voice read different passages 1.5 to 4.3 apart and different
+/// voices at least 9.2 apart. Real people, rooms and codecs are noisier than that.
+const MATCH: f32 = 6.0;
 const CLIPS: usize = 3;
 /// A clip plays at most this long, so a long monologue doesn't turn "who is this?" into a minute of listening.
 pub const CLIP_MAX_MS: u64 = 15_000;
@@ -258,7 +260,7 @@ mod tests {
         let (lena, tom) = (("Lena".to_string(), print(0.0)), ("Tom".to_string(), print(5.0)));
         let table: [(&str, Vec<Option<Print>>, Vec<(String, Print)>, Vec<Option<&str>>); 7] = [
             ("close", vec![Some(print(STEP))], vec![lena.clone()], vec![Some("Lena")]),
-            ("too far", vec![Some(print(2.0))], vec![lena.clone()], vec![None]),
+            ("too far", vec![Some(print(3.0))], vec![lena.clone()], vec![None]),
             ("no print, no suggestion", vec![None], vec![lena.clone()], vec![None]),
             ("nothing remembered", vec![Some(print(0.0))], vec![], vec![None]),
             ("one voice goes to the nearer speaker", vec![Some(print(0.2)), Some(print(STEP))], vec![lena.clone()], vec![None, Some("Lena")]),
@@ -378,29 +380,36 @@ mod tests {
         assert_eq!(list(&c, id).unwrap()[0].name.as_deref(), Some("Priya"));
     }
 
-    // Real voices, to pick MATCH from: each `say` voice reads two different passages; a voice must be nearer to
-    // itself than to any other. Prints every distance. By hand, in release (needs macOS `say`):
-    // `cargo test --release -- --ignored say_voices --nocapture`
+    // Real voices, to pick MATCH from: each `say` voice reads six passages; a voice's first three against its other
+    // three (about a minute a side, as in a meeting) must be nearer than any pair of different voices. Prints every
+    // distance. By hand, in release (needs macOS `say`): `cargo test --release -- --ignored say_voices --nocapture`
     #[test]
     #[ignore]
     fn say_voices_are_nearer_to_themselves_than_to_each_other_by_a_margin_around_match() {
         let passages = [
-            "Good morning everyone. Let's start with the roadmap review for the next quarter, and then go through the open risks and the staffing plan for the platform team.",
-            "Thanks for having me. I want to flag that the launch date depends on the security review, which is not finished yet, so we should not promise anything to customers.",
+            "Good morning everyone. Let's start with the roadmap review for the next quarter, and then go through the open risks and the staffing plan for the platform team. After that we can look at the budget and decide what to cut if the numbers do not work out.",
+            "Thanks for having me. I want to flag that the launch date depends on the security review, which is not finished yet, so we should not promise anything to customers. The vendor said they need another two weeks, and I would rather be late than ship something we have not tested.",
+            "On the data side, the migration finished over the weekend without any downtime. We moved about forty million rows, and the only problem was a slow index that we rebuilt on Sunday night. Reports are now running from the new warehouse, and the dashboards look correct.",
+            "I disagree a little. The customers we talked to last week did not care about the new editor at all. They kept asking about permissions and audit logs, and two of them said they would not renew without single sign on. I think we are building the wrong thing first.",
+            "Let me summarize what we agreed. Maria owns the pricing proposal, Jonas will write the migration guide, and I will talk to legal about the contract language. We meet again on Thursday, and if anything blocks you before then, please send a message in the channel.",
+            "One more thing about hiring. We have three open roles and only two interviewers with free time, so we need to either pause one role or bring in help from the other team. My suggestion is to pause the design role until the spring, because the backend work is the real bottleneck.",
         ];
         let dir = std::env::temp_dir().join(format!("myna-say-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let listed = String::from_utf8(std::process::Command::new("say").args(["-v", "?"]).output().unwrap().stdout).unwrap();
         let voices: Vec<&str> = ["Samantha", "Daniel", "Karen", "Fred", "Alex", "Victoria", "Moira", "Tessa", "Rishi", "Fiona"].into_iter().filter(|v| listed.contains(v)).collect();
         assert!(voices.len() >= 4, "need a few voices, have {voices:?}");
-        let say = |voice: &str, text: &str, n: usize| {
-            let (aiff, wav) = (dir.join(format!("{voice}{n}.aiff")), dir.join(format!("{voice}{n}.wav")));
-            assert!(std::process::Command::new("say").args(["-v", voice, "-o"]).arg(&aiff).arg(text).status().unwrap().success());
-            assert!(std::process::Command::new("afconvert").args(["-f", "WAVE", "-d", "LEI16@16000", "-c", "1"]).arg(&aiff).arg(&wav).status().unwrap().success());
-            let samples: Vec<f32> = hound::WavReader::open(&wav).unwrap().samples::<i16>().map(|s| s.unwrap() as f32 / 32768.0).collect();
-            voiceprint::compute(&samples).unwrap_or_else(|| panic!("{voice} said too little"))
+        let say = |voice: &str, texts: &[&str], first: usize| {
+            let mut heard: Vec<f32> = vec![];
+            for (n, text) in texts.iter().enumerate() {
+                let (aiff, wav) = (dir.join(format!("{voice}{}.aiff", first + n)), dir.join(format!("{voice}{}.wav", first + n)));
+                assert!(std::process::Command::new("say").args(["-v", voice, "-o"]).arg(&aiff).arg(text).status().unwrap().success());
+                assert!(std::process::Command::new("afconvert").args(["-f", "WAVE", "-d", "LEI16@16000", "-c", "1"]).arg(&aiff).arg(&wav).status().unwrap().success());
+                heard.extend(hound::WavReader::open(&wav).unwrap().samples::<i16>().map(|s| s.unwrap() as f32 / 32768.0));
+            }
+            voiceprint::compute(&heard).unwrap_or_else(|| panic!("{voice} said too little"))
         };
-        let prints: Vec<[Print; 2]> = voices.iter().map(|v| [say(v, passages[0], 0), say(v, passages[1], 1)]).collect();
+        let prints: Vec<[Print; 2]> = voices.iter().map(|v| [say(v, &passages[..3], 0), say(v, &passages[3..], 3)]).collect();
         let (mut same, mut other) = (0f32, f32::MAX);
         for (i, a) in prints.iter().enumerate() {
             same = same.max(voiceprint::distance(&a[0], &a[1]));
