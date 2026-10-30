@@ -65,15 +65,16 @@ const TASKS = [
 ];
 
 // Models whose use needs the "Powered by Desert Ant Labs" credit while selected.
-const BY_DESERT_ANT = new Set(["voz"]);
-// The Voz SDK phones home on every model load, so its row says so whether or not it is selected.
+const BY_DESERT_ANT = new Set(["voz", "who"]);
+// The Desert Ant SDK phones home on every model load, so these rows say so whether or not they are selected.
 const OFF_DEVICE = {
   voz: "Sends a license check to Desert Ant when the model loads. No audio or text.",
   uhm: "Sends a license check to Desert Ant when the model loads. No audio or text.",
+  who: "Sends a license check to Desert Ant when the model loads. No audio or text.",
 };
 
 const NEEDS_IMAGES = "Check “Model accepts images” for your model under AI provider first, or nothing is sent.";
-const PAGES = [["modules", "Modules", "gear"], ["dictation", "Dictation", "mic"], ["meetings", "Meetings", "list"], ["models", "Models", "dl"], ["ai", "AI provider", "spark"], ["experimental", "Experimental", "lock"]];
+const PAGES = [["modules", "Modules", "gear"], ["dictation", "Dictation", "mic"], ["meetings", "Meetings", "list"], ["models", "Models", "dl"], ["ai", "AI provider", "spark"], ["decision", "Decision provider", "check"], ["experimental", "Experimental", "lock"]];
 const KEY_SYMBOLS = { Alt: "⌥", Option: "⌥", Control: "⌃", Ctrl: "⌃", Shift: "⇧", Super: "⌘", Command: "⌘", Cmd: "⌘" };
 const fmtKey = (k) => k.split("+").map((p) => KEY_SYMBOLS[p] || p.replace(/^(Key|Digit)/, "")).join("");
 
@@ -98,6 +99,7 @@ async function settings() {
   if (settingsPage === "models") return modelsPage(page);
   if (settingsPage === "dictation") return dictationPage(page);
   if (settingsPage === "ai") return ai.settings(page);
+  if (settingsPage === "decision") return ai.decision(page);
   if (settingsPage === "meetings") return meetingsPage(page);
   if (settingsPage === "experimental") return experimentalPage(page);
   page.innerHTML = '<section class="group"><h2>Enable</h2><div class="box"></div></section>';
@@ -191,11 +193,11 @@ async function dictationPage(page) {
 
 // Off-by-default passes, each with its own Dictation / Meetings switch pair.
 async function experimentalPage(page) {
-  const [st, { models }] = await Promise.all([invoke("ai_state"), invoke("list_models")]);
+  const [st, { models }, dec] = await Promise.all([invoke("ai_state"), invoke("list_models"), invoke("decision_state")]);
   const m = models.find((x) => x.id === "uhm");
   const pair = (id, keys, what) => `<div class="r pair">${["Dictation", "Meetings"].map((name, i) => `<label>${sw(id + i, keys[i], what + " for " + name)} ${name}</label>`).join("")}</div>`;
   const on = {};
-  for (const k of ["uhm_dictation", "uhm_meetings", "ai_cleanup_dictation", "ai_cleanup_meetings"]) on[k] = (await get(k)) === "true";
+  for (const k of ["uhm_dictation", "uhm_meetings", "ai_cleanup_dictation", "ai_cleanup_meetings", "ai_triage"]) on[k] = (await get(k)) === "true";
   const imgPill = st.off_device ? ' <span class="pill alert">sends images off this Mac</span>' : "";
   const need = (on) => on && !st.images;
   const size = `<span class="size">${fmtSize(m.size)}</span>`;
@@ -211,8 +213,11 @@ async function experimentalPage(page) {
 <section class="group"><h2>Screenshots</h2><div class="box">
 <div class="prow"><div class="l row">AI screenshot relevance${imgPill}</div><div class="d${need(st.relevance) ? " err" : ""}">${esc(need(st.relevance) ? NEEDS_IMAGES : "While recording, asks your AI provider whether a new screenshot adds anything over the last one kept, and keeps it only on yes. The perceptual-hash check always runs first. Only sent while your mic is live.")}</div><div class="r">${sw("rel", st.relevance, "AI screenshot relevance")}</div></div>
 <div class="prow"><div class="l row">Include screenshots in summaries and chat${imgPill}</div><div class="d${need(st.shots) ? " err" : ""}">${esc(need(st.shots) ? NEEDS_IMAGES : "Attaches up to 20 downscaled kept screenshots to each summary and chat request, only from stretches of the transcript that are shown.")}</div><div class="r">${sw("shots", st.shots, "Include screenshots in summaries and chat")}</div></div>
-</div><p class="note">Off by default. Both need “Model accepts images” checked for your model under AI provider. Window video is never sent.</p></section>${on.uhm_dictation || on.uhm_meetings ? '<section class="group"><div class="box"><div class="prow single"><div class="l s">Powered by Desert Ant Labs</div></div></div></section>' : ""}`;
+</div><p class="note">Off by default. Both need “Model accepts images” checked for your model under AI provider. Window video is never sent.</p></section><section class="group"><h2>Meetings</h2><div class="box">
+<div class="prow"><div class="l row">Auto-include relevant muted segments${dec.off_device ? ' <span class="pill alert">sends text off this Mac</span>' : ""}</div><div class="d${dec.problem ? " err" : ""}">${esc(dec.problem || "Asks your decision provider whether each possibly-muted segment belongs in the conversation, using only that segment and the two lines around it. Text only, never audio.")}</div><div class="r">${sw("triage", on.ai_triage, "Auto-include relevant muted segments")}</div></div>
+</div></section>${on.uhm_dictation || on.uhm_meetings ? '<section class="group"><div class="box"><div class="prow single"><div class="l s">Powered by Desert Ant Labs</div></div></div></section>' : ""}`;
   ["uhm_dictation", "uhm_meetings"].forEach((k, i) => { page.querySelector("#uhm" + i).onclick = (e) => set(k, flip(e.currentTarget)); });
+  page.querySelector("#triage").onclick = (e) => set("ai_triage", flip(e.currentTarget));
   ["ai_cleanup_dictation", "ai_cleanup_meetings"].forEach((k, i) => { page.querySelector("#llm" + i).onclick = (e) => set(k, flip(e.currentTarget)); });
   [["rel", "ai_relevance"], ["shots", "ai_shots"]].forEach(([id, k]) => { page.querySelector("#" + id).onclick = (e) => set(k, flip(e.currentTarget)).then(() => experimentalPage(page)); });
   page.querySelectorAll("[data-act]").forEach((b) => { b.onclick = async () => { await invoke(b.dataset.act, { id: "uhm" }); experimentalPage(page); }; });
@@ -326,7 +331,8 @@ async function modelsPage(page) {
     let desertAnt = false;
     for (const [task, heading] of tasks) {
       const rows = models.filter((m) => m.task === task);
-      const chosen = (await get("model_" + task)) || rows[0].id;
+      // Same fallback as the backend: the first model that can run on this Mac.
+      const chosen = (await get("model_" + task)) || (rows.find((m) => !m.unavailable) || rows[0]).id;
       desertAnt ||= BY_DESERT_ANT.has(chosen);
       const sec = document.createElement("section");
       sec.className = "group";

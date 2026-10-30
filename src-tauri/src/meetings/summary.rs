@@ -1,6 +1,7 @@
 //! The Summary tab: prompt templates (three built in, the rest the user's) and one stored AI
 //! summary per meeting, so reopening a meeting never costs a request.
 use super::{
+    mute::State,
     store,
     transcript::{self, Format},
     vision,
@@ -22,6 +23,9 @@ const BUILT_IN: [(&str, &str); 3] = [
     ("Action items", "List the action items from this meeting as bullets, naming the owner when the transcript does. If there are none, say so."),
     ("Decisions", "List the decisions made in this meeting as bullets. If there are none, say so."),
 ];
+
+const COLLAPSED_NOTE: &str = "\n\nSome lines from the user's microphone were captured while it may have been muted. \
+    They may be self-talk or side remarks rather than part of the conversation, so treat them with care.";
 
 #[derive(Serialize, Debug)]
 pub struct Template {
@@ -163,9 +167,11 @@ fn generate(db: &Mutex<Connection>, id: i64, prompt: &str, cfg: &Config, now: i6
     // Frames only with the experimental toggle and the model's images box on, and only from shown stretches.
     let shots = vision::chosen(&db.lock().unwrap(), id, &frames.join(id.to_string()), &all, &cfg.model);
     let images = vision::load(&shots);
+    // Lines from a muted or unknown mic that made it in (by the user or by triage) may not be part of the conversation.
+    let note = if segments.iter().any(|s| s.mute != State::Unmuted) { COLLAPSED_NOTE } else { "" };
     let reply = cfg.complete_images(
         &[
-            Message { role: "system", content: prompt.into() },
+            Message { role: "system", content: format!("{prompt}{note}") },
             Message { role: "user", content: transcript::export(&meeting, &segments, Format::Text) },
         ],
         &images,
@@ -360,6 +366,31 @@ mod tests {
         };
         assert!(generate(&db, only, "p", &config(&base), 2, Path::new("")).unwrap_err().contains("no transcript"));
         assert!(seen.try_recv().is_err());
+    }
+
+    #[test]
+    fn the_prompt_warns_about_collapsed_lines_only_when_some_made_it_in() {
+        let db = db();
+        settings::set(&db.lock().unwrap(), "ai_summaries", "true").unwrap();
+        let (base, seen) = stub::serve(vec![stub::ok("a"), stub::ok("b")]);
+        let live = done_meeting(&db);
+        generate(&db, live, "Bullets", &config(&base), 1, Path::new("")).unwrap();
+        let req: serde_json::Value = serde_json::from_str(&seen.recv().unwrap().body).unwrap();
+        assert_eq!(req["messages"][0]["content"], "Bullets");
+
+        let with_aside = {
+            let c = db.lock().unwrap();
+            let id = store::create(&c, 100).unwrap();
+            let aside = store::Segment { text: "Maybe me.".into(), mute: State::Muted, included: true, auto: true, ..Default::default() };
+            store::finish(&c, id, 1000, &[store::Segment { text: "Live.".into(), ..Default::default() }, aside]).unwrap();
+            id
+        };
+        generate(&db, with_aside, "Bullets", &config(&base), 2, Path::new("")).unwrap();
+        let req: serde_json::Value = serde_json::from_str(&seen.recv().unwrap().body).unwrap();
+        let system = req["messages"][0]["content"].as_str().unwrap();
+        assert!(system.starts_with("Bullets") && system.contains("self-talk"), "{system}");
+        // The stored prompt is still the user's own, so the editor reopens prefilled with it.
+        assert_eq!(get(&db.lock().unwrap(), with_aside).unwrap().unwrap().prompt, "Bullets");
     }
 
     #[test]

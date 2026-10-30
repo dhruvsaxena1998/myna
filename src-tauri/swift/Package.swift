@@ -10,6 +10,7 @@ let sdk: [Package.Dependency] = [
 let voz: [Target.Dependency] = [
     .product(name: "Voz", package: "desert-ant-core"),
     .product(name: "Uhm", package: "desert-ant-core"),
+    .product(name: "Who", package: "desert-ant-core"),
 ]
 #else
 let sdk: [Package.Dependency] = []

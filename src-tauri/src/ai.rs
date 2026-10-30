@@ -58,7 +58,7 @@ pub struct Reply {
 // The key lives in the macOS Keychain, one item per preset so switching presets never sends one
 // provider's key to another provider's host.
 #[cfg(target_os = "macos")]
-mod keychain {
+pub(crate) mod keychain {
     use security_framework::passwords::{delete_generic_password, get_generic_password, set_generic_password};
     const SERVICE: &str = "com.dhruvsaxena.myna.ai";
     const NOT_FOUND: i32 = -25300; // errSecItemNotFound
@@ -78,7 +78,7 @@ mod keychain {
 }
 
 #[cfg(not(target_os = "macos"))]
-mod keychain {
+pub(crate) mod keychain {
     pub fn get(_: &str) -> Option<String> { None }
     pub fn set(_: &str, _: &str) -> Result<(), String> { Err("The Keychain is only on macOS".into()) }
     pub fn remove(_: &str) -> Result<(), String> { Ok(()) }
@@ -86,6 +86,16 @@ mod keychain {
 
 fn preset(id: Option<&str>) -> &'static Preset {
     PRESETS.iter().find(|p| Some(p.id) == id).unwrap_or(&PRESETS[0])
+}
+
+/// False only for a loopback address; an unreadable URL counts as leaving.
+pub fn is_off_device(base_url: &str) -> bool {
+    match Url::parse(base_url).ok().and_then(|u| u.host().map(|h| h.to_owned())) {
+        Some(Host::Domain(d)) => d != "localhost",
+        Some(Host::Ipv4(ip)) => !ip.is_loopback(),
+        Some(Host::Ipv6(ip)) => !ip.is_loopback(),
+        None => true,
+    }
 }
 
 /// Price and context window are per model: they live in settings as `ai_in:<model>` and so on.
@@ -132,12 +142,7 @@ impl Config {
 
     /// Whether a request would leave this Mac: false only for a loopback host such as local Ollama.
     pub fn off_device(&self) -> bool {
-        match Url::parse(&self.base_url).ok().and_then(|u| u.host().map(|h| h.to_owned())) {
-            Some(Host::Domain(d)) => d != "localhost",
-            Some(Host::Ipv4(ip)) => !ip.is_loopback(),
-            Some(Host::Ipv6(ip)) => !ip.is_loopback(),
-            None => true,
-        }
+        is_off_device(&self.base_url)
     }
 
     /// The one request that leaves for a provider: a model and text messages, nothing else. Window video is never
@@ -382,10 +387,19 @@ pub mod stub {
     pub fn assert_text_only(body: &str) {
         let body: serde_json::Value = serde_json::from_str(body).unwrap();
         let keys: Vec<_> = body.as_object().unwrap().keys().map(String::as_str).collect();
-        assert_eq!(keys, ["messages", "model"], "unexpected parts in the request: {body}");
-        for m in body["messages"].as_array().unwrap() {
-            assert_eq!(m.as_object().unwrap().len(), 2, "a message with more than a role and text: {m}");
-            assert!(m["role"].is_string() && m["content"].is_string(), "not plain text: {m}");
+        if body.get("messages").is_none() {
+            // A decision-provider request (triage): a question, its context or input, the choices, and at most a model.
+            assert!(keys == ["choices", "context", "question"] || keys == ["choices", "input", "model"], "unexpected parts in the request: {body}");
+            for k in keys.iter().filter(|k| **k != "choices") {
+                assert!(body[*k].is_string(), "not plain text: {k} in {body}");
+            }
+            assert!(body["choices"].as_array().unwrap().iter().all(|c| c.is_string()), "choices are not plain text: {body}");
+        } else {
+            assert_eq!(keys, ["messages", "model"], "unexpected parts in the request: {body}");
+            for m in body["messages"].as_array().unwrap() {
+                assert_eq!(m.as_object().unwrap().len(), 2, "a message with more than a role and text: {m}");
+                assert!(m["role"].is_string() && m["content"].is_string(), "not plain text: {m}");
+            }
         }
         let text = body.to_string();
         assert!(!text.contains(".mp4") && !text.contains("window.mp4") && !text.contains("\"video"), "{text}");
@@ -470,6 +484,9 @@ mod tests {
         assert!(result.is_err(), "the check must reject a message with a video part");
         let result = std::panic::catch_unwind(|| stub::assert_text_only(r#"{"model":"m","messages":[],"video":"/x/window.mp4"}"#));
         assert!(result.is_err(), "the check must reject a video beside the messages");
+        let result = std::panic::catch_unwind(|| stub::assert_text_only(r#"{"question":"q","context":"c","choices":["yes","no"],"image":"data:image/jpeg;base64,AA"}"#));
+        assert!(result.is_err(), "the check must reject an extra part on a decision request");
+        stub::assert_text_only(r#"{"question":"q","context":"c","choices":["yes","no"]}"#);
     }
 
     #[test]

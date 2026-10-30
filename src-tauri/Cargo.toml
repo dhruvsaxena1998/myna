@@ -24,7 +24,7 @@ cpal = "0.18.2"
 arboard = "3.7.0"
 hound = "3.5.1"
 libc = "0.2"
-parakeet-rs = "0.4.3"
+parakeet-rs = { version = "0.4.3", features = ["sortformer"] }
 whisper-rs = { version = "0.16", features = ["metal"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]

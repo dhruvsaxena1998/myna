@@ -22,11 +22,12 @@ const RELEVANCE_PROMPT: &str = "You decide which screenshots of a meeting window
 
 /// The frames that may go to a provider with a summary or chat request, at most `MAX_IMAGES`, spread over the meeting.
 /// A frame taken while a line that is not in the transcript was being spoken (`Segment::shown`) is left out, so
-/// muted or hidden time never sends a picture.
+/// muted or hidden time never sends a picture. A line the triage pass pulled in (`auto`) blocks its frames too: the user
+/// has not agreed to it yet, so only their own inclusion lets a picture from that moment out.
 // shortcut: a muted stretch with nobody speaking has no hidden segment, so its frames still go; there is no speech
 // there to protect. Tighten to the mute timeline if a frame itself should be held back during mute.
 pub fn allowed(shots: &[Shot], segments: &[Segment]) -> Vec<Shot> {
-    let kept: Vec<&Shot> = shots.iter().filter(|s| !segments.iter().any(|g| !g.shown() && g.start_ms <= s.at_ms && s.at_ms <= g.end_ms)).collect();
+    let kept: Vec<&Shot> = shots.iter().filter(|s| !segments.iter().any(|g| (!g.shown() || g.auto) && g.start_ms <= s.at_ms && s.at_ms <= g.end_ms)).collect();
     let n = kept.len().min(MAX_IMAGES);
     (0..n).map(|i| kept[i * kept.len() / n].clone()).collect()
 }
@@ -114,6 +115,13 @@ mod tests {
         assert_eq!(at(&allowed(&shots, &segments)), [5_000, 25_000, 45_000]);
         // The segment boundary belongs to the hidden line.
         assert_eq!(at(&allowed(&[shot(10_000), shot(40_000)], &segments)), Vec::<u64>::new());
+    }
+
+    #[test]
+    fn frames_in_auto_included_lines_are_held_back_until_the_user_confirms_them() {
+        let auto = Segment { auto: true, ..seg(10_000, 20_000, State::Muted, true) };
+        let user = seg(30_000, 40_000, State::Muted, true);
+        assert_eq!(at(&allowed(&[shot(5_000), shot(15_000), shot(35_000)], &[auto, user])), [5_000, 35_000]);
     }
 
     #[test]

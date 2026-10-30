@@ -1,9 +1,14 @@
 //! From two recorded tracks to a Me / Them transcript, and from a transcript to Markdown or plain text.
-use crate::dictation::{Transcriber, Utterance};
+use crate::{
+    dictation::{Transcriber, Utterance},
+    diarize::{self, Diarizer},
+};
 use super::{
     mute::{self, Event, State},
+    speakers::{self, Speaker},
     store::{self, Meeting, Segment, ME, THEM},
     track::{read_track, RATE},
+    triage,
 };
 use rusqlite::Connection;
 use std::{ops::Range, path::Path, sync::Mutex};
@@ -63,24 +68,36 @@ pub fn transcribe_track(
 
 /// Interleaves both speakers by start time and joins runs of one speaker into paragraphs. Each mic line gets its
 /// mute state first, and lines only join when their state matches, so a muted aside never merges into a live one.
-pub fn assemble(me: Vec<Utterance>, them: Vec<Utterance>, mutes: &[Event], always: bool) -> Vec<Segment> {
+/// Each line from the system track comes with its speaker (see `diarize::assign`); lines only join within one.
+pub fn assemble(me: Vec<Utterance>, them: Vec<(Utterance, Option<u32>)>, mutes: &[Event], always: bool) -> Vec<Segment> {
     let tag = |speaker: &'static str| {
-        move |u: Utterance| Segment {
+        move |(u, cluster): (Utterance, Option<u32>)| Segment {
             speaker: speaker.into(),
             start_ms: u.start_ms,
             end_ms: u.end_ms,
             text: u.text.trim().into(),
             mute: if speaker == ME { mute::state(mutes, u.start_ms, u.end_ms, always) } else { State::Unmuted },
+            cluster,
             ..Default::default()
         }
     };
-    let mut all: Vec<Segment> =
-        me.into_iter().map(tag(ME)).chain(them.into_iter().map(tag(THEM))).filter(|s| !s.text.is_empty()).collect();
+    let mut all: Vec<Segment> = me
+        .into_iter()
+        .map(|u| (u, None))
+        .map(tag(ME))
+        .chain(them.into_iter().map(tag(THEM)))
+        .filter(|s| !s.text.is_empty())
+        .collect();
     all.sort_by_key(|s| s.start_ms);
     let mut out: Vec<Segment> = vec![];
     for s in all {
         match out.last_mut() {
-            Some(prev) if prev.speaker == s.speaker && prev.mute == s.mute && s.start_ms.saturating_sub(prev.end_ms) <= MERGE_GAP_MS => {
+            Some(prev)
+                if prev.speaker == s.speaker
+                    && prev.cluster == s.cluster
+                    && prev.mute == s.mute
+                    && s.start_ms.saturating_sub(prev.end_ms) <= MERGE_GAP_MS =>
+            {
                 prev.text.push(' ');
                 prev.text.push_str(&s.text);
                 prev.end_ms = prev.end_ms.max(s.end_ms);
@@ -91,13 +108,49 @@ pub fn assemble(me: Vec<Utterance>, them: Vec<Utterance>, mutes: &[Event], alway
     out
 }
 
-/// Transcribes a recorded meeting's tracks and stores the segments. The caller records a failure.
-pub fn run(db: &Mutex<Connection>, audio: &Path, id: i64, t: &mut dyn Transcriber) -> Result<(), String> {
+/// Which speaker each line on the system track belongs to, and the speakers' voice prints. A diarizer that
+/// can't load or fails costs the speaker labels, not the transcript: the lines stay "Them" and the meeting says why.
+fn separate(
+    db: &Mutex<Connection>,
+    id: i64,
+    track: &[i16],
+    lines: &[Utterance],
+    diarizer: impl FnOnce() -> Result<Box<dyn Diarizer>, String>,
+) -> (Vec<Option<u32>>, Vec<Speaker>) {
+    if lines.is_empty() {
+        return (vec![], vec![]);
+    }
+    let floats: Vec<f32> = track.iter().map(|&s| s as f32 / 32768.0).collect();
+    let spans: Vec<(u64, u64)> = lines.iter().map(|u| (u.start_ms, u.end_ms)).collect();
+    match diarizer().and_then(|mut d| d.diarize(&floats)) {
+        Ok(turns) => {
+            let clusters = diarize::assign(&spans, &turns);
+            let profiles = speakers::profiles(&db.lock().unwrap());
+            let speakers = speakers::build(&floats, &spans, &clusters, &profiles);
+            (clusters, speakers)
+        }
+        Err(e) => {
+            store::add_note(&db.lock().unwrap(), id, &format!("Speakers weren't separated: {e}"));
+            (vec![None; lines.len()], vec![])
+        }
+    }
+}
+
+/// Transcribes a recorded meeting's tracks, tells the system track's speakers apart and stores the segments.
+/// `diarizer` is only called when the system track has speech. The caller records a failure.
+pub fn run(
+    db: &Mutex<Connection>,
+    audio: &Path,
+    id: i64,
+    t: &mut dyn Transcriber,
+    diarizer: impl FnOnce() -> Result<Box<dyn Diarizer>, String>,
+) -> Result<(), String> {
     let dir = audio.join(id.to_string());
     let mic = read_track(&dir.join("mic.wav")).map_err(|e| format!("No microphone audio to transcribe ({e})"))?;
     let system = dir.join("system.wav");
     let them = if system.exists() { read_track(&system)? } else { vec![] };
-    let total = (mic.len() + them.len()).max(1);
+    // The system track goes through twice: once for its words, once for its speakers.
+    let total = (mic.len() + them.len() * 2).max(1);
     let mut done = 0;
     let mut report = |n: usize| {
         done += n;
@@ -105,13 +158,22 @@ pub fn run(db: &Mutex<Connection>, audio: &Path, id: i64, t: &mut dyn Transcribe
     };
     let me_lines = transcribe_track(&mic, t, &mut report)?;
     let them_lines = transcribe_track(&them, t, &mut report)?;
+    let (clusters, speakers) = separate(db, id, &them, &them_lines, diarizer);
+    report(them.len());
     let duration_ms = mic.len() as u64 * 1000 / RATE as u64;
     // A timeline that cannot be read fails the meeting (retryable) instead of letting every line in.
     let (mutes, always) = {
         let conn = db.lock().unwrap();
         (store::mute_events(&conn, id).map_err(|e| e.to_string())?, mute::always_record(&conn, id))
     };
+    let them_lines = them_lines.into_iter().zip(clusters.into_iter().chain(std::iter::repeat(None))).collect();
     let mut segments = assemble(me_lines, them_lines, &mutes, always);
+    // Experimental triage first, so a line it includes also gets the LLM pass below.
+    if segments.iter().any(|s| !s.shown()) {
+        if let Some(provider) = t.decision_provider() {
+            triage::pass(&mut segments, provider);
+        }
+    }
     // The optional LLM pass, outside the database lock. Only lines that are in the transcript go to a provider, and
     // the first one it cannot do (slow, down) ends the pass, so a dead network costs one timeout, not one per line.
     for s in segments.iter_mut().filter(|s| s.shown()) {
@@ -120,7 +182,9 @@ pub fn run(db: &Mutex<Connection>, audio: &Path, id: i64, t: &mut dyn Transcribe
             None => break,
         }
     }
-    store::finish(&db.lock().unwrap(), id, duration_ms, &segments).map_err(|e| e.to_string())
+    let conn = db.lock().unwrap();
+    speakers::replace(&conn, id, &speakers).map_err(|e| e.to_string())?;
+    store::finish(&conn, id, duration_ms, &segments).map_err(|e| e.to_string())
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -173,14 +237,32 @@ fn minutes(ms: u64) -> String {
     if ms < 60_000 { "<1 min".into() } else { format!("{} min", (ms + 30_000) / 60_000) }
 }
 
+/// Who a line is from: Me, the name the user gave the speaker, or "Speaker N" until they do; "Them" when the
+/// system track's speakers weren't separated.
+fn who(s: &Segment, speakers: &[Speaker]) -> String {
+    match s.cluster {
+        Some(c) if s.speaker == THEM => {
+            speakers.iter().find(|p| p.cluster == c).and_then(|p| p.name.clone()).unwrap_or_else(|| format!("Speaker {c}"))
+        }
+        _ => label(&s.speaker).into(),
+    }
+}
+
+/// What goes to an AI provider: lines from `shown()` only, and speakers as Me, "Speaker N" or Them, never the
+/// names the user gave them.
 pub fn export(m: &Meeting, segments: &[Segment], format: Format) -> String {
+    export_named(m, segments, &[], format)
+}
+
+/// The user's own copy, with the names they gave their speakers.
+pub fn export_named(m: &Meeting, segments: &[Segment], speakers: &[Speaker], format: Format) -> String {
     let meta = format!("{} · {} · {}", when(m.started_at), minutes(m.duration_ms), m.app.as_deref().unwrap_or("Mic only"));
     let mut out = match format {
         Format::Markdown => format!("# {}\n\n{meta}\n\n", m.title),
         Format::Text => format!("{}\n{meta}\n\n", m.title),
     };
     for s in segments.iter().filter(|s| s.shown()) {
-        let (who, at) = (label(&s.speaker), clock(s.start_ms));
+        let (who, at) = (who(s, speakers), clock(s.start_ms));
         out += &match format {
             Format::Markdown => format!("**{who}** · {at}\n\n{}\n\n", s.text),
             Format::Text => format!("[{at}] {who}: {}\n\n", s.text),
@@ -202,10 +284,20 @@ pub fn file_name(m: &Meeting, format: Format) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{dictation, models};
+    use crate::{dictation, diarize::Turn, meetings::voiceprint::tests::voice, models};
 
     fn utt(start_ms: u64, end_ms: u64, text: &str) -> Utterance {
         Utterance { start_ms, end_ms, text: text.into() }
+    }
+
+    /// Lines from the system track with no speaker separation.
+    fn unsplit(lines: Vec<Utterance>) -> Vec<(Utterance, Option<u32>)> {
+        lines.into_iter().map(|u| (u, None)).collect()
+    }
+
+    /// No speaker model in this test: the meeting still transcribes.
+    fn no_diarizer() -> Result<Box<dyn Diarizer>, String> {
+        Err("The Who model isn't downloaded.".into())
     }
 
     /// Loud noise with a silent gap at `gap_ms`, so cuts have an obvious place to go.
@@ -262,7 +354,7 @@ mod tests {
         let me = vec![utt(0, 3000, "Hi there."), utt(4000, 6000, "How are you?"), utt(30_000, 31_000, "Bye.")];
         let them = vec![utt(7000, 9000, "Good."), utt(9500, 10_000, "You?"), utt(12_000, 12_500, "  ")];
         let live = [Event { at_ms: 0, muted: false, source: mute::Source::Manual }];
-        let got: Vec<_> = assemble(me, them, &live, false).into_iter().map(|s| (s.speaker, s.start_ms, s.text)).collect();
+        let got: Vec<_> = assemble(me, unsplit(them), &live, false).into_iter().map(|s| (s.speaker, s.start_ms, s.text)).collect();
         assert_eq!(
             got,
             [
@@ -371,6 +463,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         let conn = Connection::open_in_memory().unwrap();
         store::init(&conn).unwrap();
+        speakers::init(&conn).unwrap();
         let id = store::create(&conn, 1_793_000_000).unwrap();
         store::set_transcribing(&conn, id).unwrap();
         let dir = root.join(id.to_string());
@@ -391,7 +484,7 @@ mod tests {
     #[test]
     fn two_tracks_become_me_and_them_segments_in_time_order() {
         let (db, root, id) = fixture("both", 0.2, &["mic.wav", "system.wav"]);
-        run(&db, &root, id, &mut Scripted).unwrap();
+        run(&db, &root, id, &mut Scripted, no_diarizer).unwrap();
         let conn = db.lock().unwrap();
         let m = store::get(&conn, id).unwrap();
         assert_eq!((m.status.as_str(), m.duration_ms, m.progress), ("done", 3000, 1.0));
@@ -427,12 +520,115 @@ mod tests {
                     crate::settings::set(&conn, mute::ALWAYS_KEY, r#"["zoom.us"]"#).unwrap();
                 }
             }
-            run(&db, &root, id, &mut Scripted).unwrap();
+            run(&db, &root, id, &mut Scripted, no_diarizer).unwrap();
             let got = store::segments(&db.lock().unwrap(), id).unwrap();
             let state_of = |who| got.iter().find(|s| s.speaker == who).unwrap().mute;
             assert_eq!((state_of(ME), state_of(THEM)), (want, State::Unmuted), "{name}");
             let _ = std::fs::remove_dir_all(&root);
         }
+    }
+
+    // The command-layer test for speakers: a fake diarizer over a synthetic two-voice call. Clusters come out
+    // numbered by who speaks first, a rename shows on every line of that speaker, a merge folds a split speaker back,
+    // and a voice the user asked to remember is suggested in the next meeting.
+    struct Scripted3(Vec<Turn>);
+    impl Diarizer for Scripted3 {
+        fn diarize(&mut self, audio: &[f32]) -> Result<Vec<Turn>, String> {
+            assert!(audio.len() >= 12 * RATE as usize, "the whole system track goes through");
+            Ok(self.0.clone())
+        }
+    }
+
+    /// A line of twelve seconds on the system track per voice given (a voice print needs ten seconds of speech); the
+    /// mic hears one short line.
+    struct TwelveSeconds;
+    impl Transcriber for TwelveSeconds {
+        fn transcribe(&mut self, _: &[f32]) -> Result<String, String> {
+            unreachable!("meetings ask for timestamps")
+        }
+        fn transcribe_timed(&mut self, samples: &[f32]) -> Result<Vec<Utterance>, String> {
+            let n = samples.len() as u64 / (12 * RATE as u64);
+            Ok(if n == 0 { vec![utt(200, 1200, "hello from me")] } else { (0..n).map(|i| utt(i * 12_000 + 200, i * 12_000 + 11_800, &format!("line {i}"))).collect() })
+        }
+    }
+
+    /// Adds a recorded meeting to `db`: a short mic line, and a system track of the voices in turn, twelve seconds each
+    /// (person 0 or 1; the seed varies what is said, as a new meeting would).
+    fn add_call(db: &Mutex<Connection>, root: &Path, who: &[(u32, u64)]) -> i64 {
+        let conn = db.lock().unwrap();
+        let id = store::create(&conn, 1_793_000_000).unwrap();
+        store::set_transcribing(&conn, id).unwrap();
+        store::add_mute_event(&conn, id, &live(0)).unwrap(); // a mic line with no mute source would be collapsed out of the transcript
+        let dir = root.join(id.to_string());
+        std::fs::create_dir_all(&dir).unwrap();
+        let spec = hound::WavSpec { channels: 1, sample_rate: RATE, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
+        let mut mic = hound::WavWriter::create(dir.join("mic.wav"), spec).unwrap();
+        (0..RATE).for_each(|n| mic.write_sample(((2.0 * std::f32::consts::PI * 300.0 * n as f32 / RATE as f32).sin() * 16_000.0) as i16).unwrap());
+        mic.finalize().unwrap();
+        let mut system = hound::WavWriter::create(dir.join("system.wav"), spec).unwrap();
+        for &(person, seed) in who {
+            let samples = if person == 0 { voice(110.0, [700.0, 1200.0], seed, 12) } else { voice(210.0, [450.0, 2300.0], seed, 12) };
+            samples.iter().for_each(|&x| system.write_sample((x * 32767.0) as i16).unwrap());
+        }
+        system.finalize().unwrap();
+        id
+    }
+
+    fn them_clusters(conn: &Connection, id: i64) -> Vec<Option<u32>> {
+        store::segments(conn, id).unwrap().iter().filter(|s| s.speaker == THEM).map(|s| s.cluster).collect()
+    }
+
+    #[test]
+    fn speakers_are_separated_renamed_merged_and_remembered_into_the_next_meeting() {
+        let root = std::env::temp_dir().join(format!("myna-meet-{}-speakers", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let db = Mutex::new(Connection::open_in_memory().unwrap());
+        store::init(&db.lock().unwrap()).unwrap();
+        speakers::init(&db.lock().unwrap()).unwrap();
+
+        // Person 0, person 1, person 0 again. The backend's own numbering (7 and 3) means nothing to the transcript.
+        let id = add_call(&db, &root, &[(0, 1), (1, 2), (0, 3)]);
+        let turns = vec![Turn { start_ms: 0, end_ms: 12_000, speaker: 7 }, Turn { start_ms: 12_000, end_ms: 24_000, speaker: 3 }, Turn { start_ms: 24_000, end_ms: 36_000, speaker: 7 }];
+        run(&db, &root, id, &mut TwelveSeconds, || Ok(Box::new(Scripted3(turns)))).unwrap();
+        let conn = db.lock().unwrap();
+        assert_eq!(them_clusters(&conn, id), [Some(1), Some(2), Some(1)]);
+        let got = store::segments(&conn, id).unwrap();
+        assert_eq!(got.iter().find(|s| s.speaker == ME).unwrap().cluster, None, "the mic is always Me");
+        let people = speakers::list(&conn, id).unwrap();
+        assert_eq!(people.iter().map(|s| (s.cluster, s.name.clone(), s.suggested.clone(), s.print.is_some())).collect::<Vec<_>>(), [(1, None, None, true), (2, None, None, true)]);
+
+        // Rename once; every line of that speaker reads the new name, and the other speaker does not.
+        let m = store::get(&conn, id).unwrap();
+        assert!(speakers::rename(&conn, id, 1, "Priya", true).unwrap());
+        let named = export_named(&m, &store::segments(&conn, id).unwrap(), &speakers::list(&conn, id).unwrap(), Format::Text);
+        assert_eq!(named.matches("Priya:").count(), 2, "{named}");
+        assert!(named.contains("Speaker 2: line 1") && named.contains("Me: hello from me"), "{named}");
+        // What goes to a provider never carries the name.
+        let sent = export(&m, &store::segments(&conn, id).unwrap(), Format::Text);
+        assert!(!sent.contains("Priya") && sent.contains("Speaker 1: line 0") && sent.contains("Speaker 2: line 1"), "{sent}");
+
+        // A speaker split in two is folded back together.
+        speakers::merge(&conn, id, 2, 1).unwrap();
+        assert_eq!(them_clusters(&conn, id), [Some(1); 3]);
+        assert_eq!(speakers::list(&conn, id).unwrap().len(), 1);
+        drop(conn);
+
+        // The next call: person 1 first, then Priya, each saying new things. Only Priya's voice is suggested.
+        let next = add_call(&db, &root, &[(1, 12), (0, 13)]);
+        let turns = vec![Turn { start_ms: 0, end_ms: 12_000, speaker: 0 }, Turn { start_ms: 12_000, end_ms: 24_000, speaker: 1 }];
+        run(&db, &root, next, &mut TwelveSeconds, || Ok(Box::new(Scripted3(turns)))).unwrap();
+        let conn = db.lock().unwrap();
+        let heard: Vec<_> = speakers::list(&conn, next).unwrap().iter().map(|s| (s.name.clone(), s.suggested.clone())).collect();
+        assert_eq!(heard, [(None, None), (None, Some("Priya".to_string()))]);
+        // Suggested, not applied: the line still reads "Speaker 2" until the user confirms.
+        let text = |conn: &Connection| {
+            let m = store::get(conn, next).unwrap();
+            export_named(&m, &store::segments(conn, next).unwrap(), &speakers::list(conn, next).unwrap(), Format::Text)
+        };
+        assert!(text(&conn).contains("Speaker 2: line 1"), "{}", text(&conn));
+        speakers::rename(&conn, next, 2, "Priya", false).unwrap();
+        assert!(text(&conn).contains("Priya: line 1"), "{}", text(&conn));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// `Scripted` plus the LLM pass: shouts each line it is given, or fails after `ok` lines.
@@ -463,12 +659,52 @@ mod tests {
             store::add_mute_event(&conn, id, &off(0)).unwrap();
         }
         let mut t = Polishing { asked: Default::default(), ok: 9 };
-        run(&db, &root, id, &mut t).unwrap();
+        run(&db, &root, id, &mut t, no_diarizer).unwrap();
         assert_eq!(*t.asked.borrow(), ["hi from them"]);
         let got = store::segments(&db.lock().unwrap(), id).unwrap();
         let text_of = |who| got.iter().find(|s| s.speaker == who).unwrap().text.clone();
         assert_eq!((text_of(ME).as_str(), text_of(THEM).as_str()), ("hello from me", "HI FROM THEM"));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_diarizer_that_cannot_run_costs_the_labels_not_the_transcript() {
+        let (db, root, id) = fixture("nodiar", 0.2, &["mic.wav", "system.wav"]);
+        for _ in 0..2 {
+            run(&db, &root, id, &mut Scripted, no_diarizer).unwrap();
+        }
+        let conn = db.lock().unwrap();
+        let m = store::get(&conn, id).unwrap();
+        assert_eq!(m.status, "done");
+        // Said once, however many times it was retried.
+        assert_eq!(m.note.as_deref(), Some("Speakers weren't separated: The Who model isn't downloaded."));
+        assert_eq!(them_clusters(&conn, id), [None]);
+        assert!(speakers::list(&conn, id).unwrap().is_empty());
+        assert!(export(&m, &store::segments(&conn, id).unwrap(), Format::Text).contains("Them: hi from them"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_failing_diarizer_is_reported_like_a_missing_one() {
+        struct Broken;
+        impl Diarizer for Broken {
+            fn diarize(&mut self, _: &[f32]) -> Result<Vec<Turn>, String> {
+                Err("Core ML said no.".into())
+            }
+        }
+        let (db, root, id) = fixture("brokendiar", 0.2, &["mic.wav", "system.wav"]);
+        run(&db, &root, id, &mut Scripted, || Ok(Box::new(Broken))).unwrap();
+        let conn = db.lock().unwrap();
+        assert_eq!(store::get(&conn, id).unwrap().note.as_deref(), Some("Speakers weren't separated: Core ML said no."));
+        assert_eq!(store::get(&conn, id).unwrap().status, "done");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn lines_only_join_within_one_speaker() {
+        let them = vec![(utt(0, 2000, "One."), Some(1)), (utt(2500, 4000, "Two."), Some(2)), (utt(4200, 5000, "Three."), Some(2)), (utt(5500, 6000, "Four."), None)];
+        let got: Vec<_> = assemble(vec![], them, &[], false).into_iter().map(|s| (s.cluster, s.text)).collect();
+        assert_eq!(got, [(Some(1), "One.".to_string()), (Some(2), "Two. Three.".into()), (None, "Four.".into())]);
     }
 
     #[test]
@@ -480,17 +716,59 @@ mod tests {
             store::add_mute_event(&conn, id, &live(0)).unwrap();
         }
         let mut t = Polishing { asked: Default::default(), ok: 0 };
-        run(&db, &root, id, &mut t).unwrap();
+        run(&db, &root, id, &mut t, no_diarizer).unwrap();
         assert_eq!(t.asked.borrow().len(), 1, "one timeout, not one per line");
         let texts: Vec<_> = store::segments(&db.lock().unwrap(), id).unwrap().into_iter().map(|s| s.text).collect();
         assert_eq!(texts, ["hello from me", "hi from them"]);
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    struct Yes;
+    impl crate::decision::DecisionProvider for Yes {
+        fn decide(&self, _: &str, _: &str) -> Result<bool, String> {
+            Ok(true)
+        }
+    }
+    /// Says yes to everything, and counts the times the pass asks for its provider.
+    struct Triaging(Yes, std::cell::Cell<usize>);
+    impl Transcriber for Triaging {
+        fn transcribe(&mut self, s: &[f32]) -> Result<String, String> {
+            Scripted.transcribe(s)
+        }
+        fn transcribe_timed(&mut self, s: &[f32]) -> Result<Vec<Utterance>, String> {
+            Scripted.transcribe_timed(s)
+        }
+        fn decision_provider(&self) -> Option<&dyn crate::decision::DecisionProvider> {
+            self.1.set(self.1.get() + 1);
+            Some(&self.0)
+        }
+    }
+
+    #[test]
+    fn triage_includes_a_muted_line_and_the_provider_is_only_set_up_when_one_exists() {
+        let (db, root, id) = fixture("triage", 0.2, &["mic.wav", "system.wav"]);
+        store::add_mute_event(&db.lock().unwrap(), id, &off(0)).unwrap();
+        let mut t = Triaging(Yes, Default::default());
+        run(&db, &root, id, &mut t, no_diarizer).unwrap();
+        let got = store::segments(&db.lock().unwrap(), id).unwrap();
+        let me = got.iter().find(|s| s.speaker == ME).unwrap();
+        assert_eq!((me.mute, me.included, me.auto, me.shown()), (State::Muted, true, true, true));
+        assert_eq!(t.1.get(), 1);
+
+        // A live mic has nothing collapsed, so Laya would never be started for it.
+        let (db, root2, id) = fixture("triage-none", 0.2, &["mic.wav", "system.wav"]);
+        store::add_mute_event(&db.lock().unwrap(), id, &live(0)).unwrap();
+        let mut t = Triaging(Yes, Default::default());
+        run(&db, &root2, id, &mut t, no_diarizer).unwrap();
+        assert_eq!(t.1.get(), 0);
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&root2);
+    }
+
     #[test]
     fn mic_only_meeting_still_transcribes() {
         let (db, root, id) = fixture("mic", 0.2, &["mic.wav"]);
-        run(&db, &root, id, &mut Scripted).unwrap();
+        run(&db, &root, id, &mut Scripted, || unreachable!("no system track, nothing to separate")).unwrap();
         let conn = db.lock().unwrap();
         assert!(!store::get(&conn, id).unwrap().has_them);
         assert_eq!(store::segments(&conn, id).unwrap().len(), 1);
@@ -500,7 +778,7 @@ mod tests {
     #[test]
     fn missing_mic_track_is_an_error_not_an_empty_transcript() {
         let (db, root, id) = fixture("none", 0.2, &[]);
-        let err = run(&db, &root, id, &mut Scripted).unwrap_err();
+        let err = run(&db, &root, id, &mut Scripted, no_diarizer).unwrap_err();
         assert!(err.contains("No microphone audio"), "{err}");
         assert_eq!(store::get(&db.lock().unwrap(), id).unwrap().status, "transcribing");
         let _ = std::fs::remove_dir_all(&root);
