@@ -15,6 +15,7 @@ mod track;
 mod transcript;
 mod triage;
 mod video;
+mod vision;
 mod voiceprint;
 
 use crate::{decision::DecisionProvider, dictation::{Transcriber, Utterance}, diarize, permissions, settings, with_hushed, Db, ModelsDir};

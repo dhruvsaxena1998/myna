@@ -10,7 +10,7 @@
     presets: [{ id: "openrouter", name: "OpenRouter", base_url: "https://openrouter.ai/api/v1", model: "openai/gpt-5-mini" }, { id: "custom", name: "Custom (OpenAI-compatible)", base_url: "http://localhost:11434/v1", model: "llama3.1" }],
     preset: q.has("local") ? "custom" : "openrouter", base_url: "https://openrouter.ai/api/v1", model: "gpt-5-mini", has_key: !q.has("unready"),
     input_price: q.has("noprice") ? null : 0.25, output_price: q.has("noprice") ? null : 2, context: q.has("window") ? Number(q.get("window")) : 400000,
-    summaries: true, folders: false, chat: !q.has("off"), problem: q.has("unready") ? "Add an API key under AI provider in Settings." : null, off_device: !q.has("local"),
+    summaries: true, folders: false, chat: !q.has("off"), images: q.has("images"), relevance: q.has("shots"), shots: q.has("shots"), problem: q.has("unready") ? "Add an API key under AI provider in Settings." : null, off_device: !q.has("local"),
   };
   const dpresets = [{ id: "laya", name: "Laya", base_url: "", wire: "jev", model: "" }, { id: "jev", name: "Jev", base_url: "https://api.jev.ai/v1", wire: "jev", model: "" }, { id: "openai", name: "OpenAI Decisions", base_url: "https://api.openai.com/v1", wire: "openai", model: "gpt-5-mini" }, { id: "custom", name: "Custom", base_url: "http://localhost:8000/v1", wire: "jev", model: "" }];
   const laya = q.get("laya") || "none";
@@ -67,6 +67,7 @@
       turns.push({ question, answer: `You asked: “${question}”. In this mock the answer is canned.`, model: ai.model, tokens_in: 3400, tokens_out: 30 });
       return usage();
     },
+    list_models: () => ({ models: [{ id: "uhm", name: "Uhm", size: 120e6, status: "installed", downloading: null, error: null, unavailable: null }] }),
     decision_state: () => decState(),
     decision_set_key: ({ key }) => { dec.has_key = !!key.trim(); },
     laya_setup: () => { dec.laya.error = null; dec.laya.step = "Creating the environment"; setTimeout(() => { dec.laya.step = "Installing Laya"; }, 1200); setTimeout(() => { dec.laya.step = null; dec.laya.installed = true; }, 2400); },
@@ -76,7 +77,14 @@
       if (key === "decision_wire") dec.wire = value;
       if (key === "decision_base_url") dec.base_url = value;
       if (key === "decision_model") dec.model = value;
-      if (key === "ai_triage") dec.triage = value === "true"; if (key === "ai_chat") ai.chat = value === "true"; if (key === "ai_summaries") ai.summaries = value === "true"; },
+      const on = value === "true";
+      if (key === "ai_triage") dec.triage = on;
+      if (key === "ai_chat") ai.chat = on;
+      if (key === "ai_summaries") ai.summaries = on;
+      if (key === "ai_relevance") ai.relevance = on;
+      if (key === "ai_shots") ai.shots = on;
+      if (key.startsWith("ai_img:")) ai.images = on;
+    },
   };
   // The page is written in after this script runs, so wait for the tab to exist.
   const tab = q.get("tab");

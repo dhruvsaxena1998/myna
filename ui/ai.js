@@ -4,6 +4,9 @@
 const ai = (() => {
 // Shown only while a request would leave the Mac, so a local server shows none.
 const offMac = '<span class="pill alert offdev">sends text off this Mac</span>';
+const offImg = '<span class="pill alert offdev">sends images off this Mac</span>';
+// Screenshots go with summaries and chat only when the experimental toggle and the model's images box are both on.
+const withImages = (st) => st.shots && st.images;
 
 async function settings(page) {
   let st = await invoke("ai_state");
@@ -20,7 +23,8 @@ ${row("ai-model", "Model", text("ai-model"))}
 ${row("ai-in", "Input price per 1M tokens", text("ai-in", "num"))}
 ${row("ai-out", "Output price per 1M tokens", text("ai-out", "num"))}
 ${row("ai-ctx", "Context window (tokens)", text("ai-ctx", "num"))}
-</div><p class="note">Saved for the model named above. Counts are approximate (characters ÷ 4). Leave prices blank to show tokens only.</p></section>
+<div class="prow single"><div class="l" id="ai-img-l">Model accepts images</div><div class="r"><button class="switch" role="switch" id="ai-img" aria-labelledby="ai-img-l"></button></div></div>
+</div><p class="note">Saved for the model named above. Counts are approximate (characters ÷ 4). Leave prices blank to show tokens only. “Model accepts images” only matters for the two screenshot options under Experimental.</p></section>
 <section class="group"><h2>Uses this provider</h2><div class="box">
 <div class="prow single"><div class="l row"><span id="ai-sum-l">Meeting summaries</span> ${offMac}</div><div class="r"><button class="switch" role="switch" id="ai-sum" aria-labelledby="ai-sum-l"></button></div></div>
 <div class="prow single"><div class="l row"><span id="ai-fold-l">Suggest a folder for new meetings</span> ${offMac}</div><div class="r"><button class="switch" role="switch" id="ai-fold" aria-labelledby="ai-fold-l"></button></div></div>
@@ -40,6 +44,8 @@ ${row("ai-ctx", "Context window (tokens)", text("ai-ctx", "num"))}
       put($(id), v);
       $(id).disabled = !st.model;
     }
+    $("ai-img").setAttribute("aria-checked", st.images);
+    $("ai-img").disabled = !st.model;
     $("ai-sum").setAttribute("aria-checked", st.summaries);
     $("ai-fold").setAttribute("aria-checked", st.folders);
     $("ai-chat").setAttribute("aria-checked", st.chat);
@@ -65,6 +71,7 @@ ${row("ai-ctx", "Context window (tokens)", text("ai-ctx", "num"))}
   $("ai-key-rm").onclick = () => setKey("");
   // Price and context window are per model: the backend reads ai_in:<model>, ai_out:<model>, ai_ctx:<model>.
   for (const [id, kind] of [["ai-in", "in"], ["ai-out", "out"], ["ai-ctx", "ctx"]]) $(id).onchange = (e) => save(`ai_${kind}:${st.model}`, e.target.value.trim());
+  $("ai-img").onclick = () => save(`ai_img:${st.model}`, !st.images);
   $("ai-sum").onclick = () => save("ai_summaries", !st.summaries);
   $("ai-fold").onclick = () => save("ai_folders", !st.folders);
   $("ai-chat").onclick = () => save("ai_chat", !st.chat);
@@ -178,6 +185,7 @@ async function summary(pane, m, ready) {
       if (!picked) options.push('<option value="" selected>Custom prompt</option>');
       const when = current && new Date(current.generated_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
       pane.innerHTML = `<div class="tpl"><select class="field grow" id="tpl" aria-label="Template">${options.join("")}</select><button class="btn" id="go"${busy || blocked ? " disabled" : ""}>${icon("spark", "sm")} ${current ? "Regenerate" : "Generate"}</button></div>
+${withImages(st) && st.off_device && !blocked ? `<p class="xs meta">Up to 20 screenshots from the transcript’s live stretches go with the request · ${offImg}</p>` : ""}
 ${blocked ? `<p class="s" id="why">${esc(blocked)}</p>` : ""}${error ? `<p class="err" role="alert">${esc(error)}</p>` : ""}${busy ? '<p class="s" role="status">Generating…</p>' : ""}
 ${editing ? `<div class="edit"><label class="xs" for="prompt">Prompt</label><textarea class="field" id="prompt" rows="6">${esc(prompt)}</textarea>
 <div class="foot"><input class="field grow" id="tname" placeholder="Template name" aria-label="Template name" value="${picked && !picked.builtin ? esc(picked.name) : ""}"><button class="btn" id="save">Save as template</button></div>
@@ -245,7 +253,7 @@ async function chat(pane, m, ready) {
       const waiting = asking.get(m.id);
       const said = (t) => `<div class="msg me"><div class="from">You</div><p>${esc(t.question)}</p></div>` + (t.answer == null ? "" : `<div class="msg"><div class="from">${esc(t.model)}</div><div class="out">${md(t.answer)}</div></div>`);
       const turns = current.turns.map(said).join("") + (waiting ? said({ question: waiting.question }) + '<p class="s" role="status">Thinking…</p>' : "");
-      pane.innerHTML = `<div class="hdr"><span><b>${fmtTokens(current.context_tokens)}</b> tokens in context</span>${current.turns.length && current.cost != null ? `<span><b>≈ ${fmtCost(current.cost)}</b> this chat</span>` : ""}${st.off_device ? offMac : ""}</div>
+      pane.innerHTML = `<div class="hdr"><span><b>${fmtTokens(current.context_tokens)}</b> tokens in context</span>${current.turns.length && current.cost != null ? `<span><b>≈ ${fmtCost(current.cost)}</b> this chat</span>` : ""}${st.off_device ? (withImages(st) ? offImg : offMac) : ""}</div>
 ${current.over_window ? `<p class="warn" role="status">This chat is about ${fmtTokens(current.context_tokens)} tokens, over the ${fmtTokens(current.window)} window you entered for ${esc(st.model)}. The provider may refuse it or drop the start of the transcript.</p>` : ""}
 <div class="log">${turns || '<p class="s">Ask anything about this meeting. Each question sends the transcript, the summary and this chat again.</p>'}</div>
 ${blocked ? `<p class="s">${esc(blocked)}</p>` : ""}${error ? `<p class="err" role="alert">${esc(error)}</p>` : ""}
