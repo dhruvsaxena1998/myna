@@ -74,7 +74,7 @@ const OFF_DEVICE = {
 };
 
 const NEEDS_IMAGES = "Check “Model accepts images” for your model under AI provider first, or nothing is sent.";
-const PAGES = [["modules", "Modules", "gear"], ["dictation", "Dictation", "mic"], ["meetings", "Meetings", "list"], ["models", "Models", "dl"], ["ai", "AI provider", "spark"], ["decision", "Decision provider", "check"], ["experimental", "Experimental", "lock"]];
+const PAGES = [["modules", "Modules", "gear"], ["dictation", "Dictation", "mic"], ["meetings", "Meetings", "list"], ["models", "Models", "dl"], ["ai", "AI provider", "spark"], ["decision", "Decision provider", "check"], ["experimental", "Experimental", "lock"], ["about", "About", "spark"]];
 const KEY_SYMBOLS = { Alt: "⌥", Option: "⌥", Control: "⌃", Ctrl: "⌃", Shift: "⇧", Super: "⌘", Command: "⌘", Cmd: "⌘" };
 const fmtKey = (k) => k.split("+").map((p) => KEY_SYMBOLS[p] || p.replace(/^(Key|Digit)/, "")).join("");
 
@@ -102,6 +102,7 @@ async function settings() {
   if (settingsPage === "decision") return ai.decision(page);
   if (settingsPage === "meetings") return meetingsPage(page);
   if (settingsPage === "experimental") return experimentalPage(page);
+  if (settingsPage === "about") return aboutPage(page);
   page.innerHTML = '<section class="group"><h2>Enable</h2><div class="box"></div></section>';
   page.querySelector(".box").append(...(await modulesForm()).children);
 }
@@ -291,6 +292,31 @@ async function meetingsPage(page) {
       set("mic_always_apps", JSON.stringify(always));
     };
   });
+}
+
+// The updater's answer is shown, not acted on, until the person clicks Install.
+async function aboutPage(page) {
+  const version = await window.__TAURI__.app.getVersion();
+  page.innerHTML = `<section class="group"><div class="box"><div class="prow"><div class="l">Myna ${esc(version)}</div><div class="d" id="upd" role="status">Updates come from GitHub Releases.</div><div class="r"><button class="btn" id="upd-check">Check for updates</button></div></div></div></section>`;
+  const msg = page.querySelector("#upd"), btn = page.querySelector("#upd-check");
+  const show = (text, err) => { msg.textContent = text; msg.classList.toggle("err", !!err); };
+  const check = async () => {
+    btn.disabled = true;
+    show("Checking…");
+    try {
+      const next = await invoke("update_check");
+      if (!next) { show("Myna is up to date."); btn.disabled = false; return; }
+      show(`Myna ${next} is available.`);
+      btn.textContent = "Install and restart";
+      btn.disabled = false;
+      btn.onclick = async () => {
+        btn.disabled = true;
+        show("Downloading…");
+        try { await invoke("update_install"); } catch (e) { show(String(e), true); btn.disabled = false; }
+      };
+    } catch (e) { show(String(e), true); btn.disabled = false; }
+  };
+  btn.onclick = check;
 }
 
 async function modelsPage(page) {
