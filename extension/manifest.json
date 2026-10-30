@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Myna",
   "version": "0.1.0",
-  "description": "Tells Myna on this Mac whether your mic is muted in Google Meet or Teams on the web.",
+  "description": "Tells Myna on this Mac whether your mic is muted, and who the captions show speaking, in Google Meet or Teams on the web.",
   "permissions": ["storage"],
   "host_permissions": ["http://127.0.0.1/*", "https://raw.githubusercontent.com/dhruvsaxena1998/myna/*"],
   "background": { "service_worker": "background.js" },

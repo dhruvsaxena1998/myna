@@ -102,7 +102,7 @@ pub fn init(db: &Connection) -> rusqlite::Result<()> {
     add_column(db, "segments", "auto", "INTEGER NOT NULL DEFAULT 0")
 }
 
-fn add_column(db: &Connection, table: &str, column: &str, ddl: &str) -> rusqlite::Result<()> {
+pub(super) fn add_column(db: &Connection, table: &str, column: &str, ddl: &str) -> rusqlite::Result<()> {
     let has = db.prepare(&format!("SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1"))?.exists([column])?;
     if !has {
         db.execute(&format!("ALTER TABLE {table} ADD COLUMN {column} {ddl}"), [])?;

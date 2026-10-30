@@ -3,7 +3,7 @@
 // Query switches: ?window=N sets the model's context window, ?noprice blanks the prices, ?local is a local
 // provider (no off-device pill), ?off turns chat off, ?unready has no API key, ?slow makes answers take 3 s,
 // ?auto shows the muted line as included by triage, ?preset=jev|openai|custom|laya picks the decision preset, ?laya=none|installed|running|error is Laya's state,
-// ?upd offers an update and ?updfail fails the check, ?ext shows the browser extension as connected, ?tab=chat opens that inspector tab, ?empty starts with no chat turns, ?nomedia has no audio, video or screenshots on disk. A question containing "fail" gets an error.
+// ?upd offers an update and ?updfail fails the check, ?ext shows the browser extension as connected, ?captions has the two other speakers suggested from the call's captions, ?nocaptions shows the "captions unavailable" note, ?tab=chat opens that inspector tab, ?empty starts with no chat turns, ?nomedia has no audio, video or screenshots on disk. A question containing "fail" gets an error.
 (() => {
   const q = new URLSearchParams(location.search);
   const ai = {
@@ -21,7 +21,10 @@
     return { presets: dpresets, ...dec, base_url: dec.base_url || p.base_url, problem, off_device: dec.preset === "laya" ? false : dec.preset !== "custom" || !/localhost|127\.0\.0\.1/.test(dec.base_url || p.base_url) };
   };
   const meeting = { id: 1, title: "Design review · Meetings module", started_at: Math.floor(Date.now() / 1000) - 7200, duration_ms: 42 * 60000, app: "Google Meet · Chrome", note: null, status: "done", progress: 1, error: null, segments: 6, has_them: true, folder_id: null };
-  const line = (speaker, start_ms, text, extra = {}) => ({ id: start_ms + 1, speaker, start_ms, end_ms: start_ms + 8000, text, mute: "unmuted", included: false, ...extra });
+  const line = (speaker, start_ms, text, extra = {}) => ({ id: start_ms + 1, speaker, start_ms, end_ms: start_ms + 8000, text, mute: "unmuted", included: false, cluster: speaker === "them" && separated ? (start_ms < 780000 ? 1 : 2) : null, ...extra });
+  const separated = q.has("captions") || q.has("nocaptions"); // the speakers are told apart, so there are names to suggest
+  let speakers = separated ? [{ cluster: 1, name: null, suggested: q.has("captions") ? "Priya Natarajan" : null, from_captions: true }, { cluster: 2, name: null, suggested: q.has("captions") ? "Tom Becker" : null, from_captions: true }] : [];
+  if (q.has("nocaptions")) meeting.note = "Captions unavailable: turn captions on in the call to name speakers automatically.";
   const segments = [
     line("them", 71000, "Then it's unknown, which we treat the same as muted. The popover says \"manual\" so you know."),
     line("me", 758000, "Okay so the thing I keep coming back to is the mute case. If I'm muted in Meet and the app keeps recording, where does that speech go?"),
@@ -54,7 +57,10 @@
     list_models: () => ({ models: [{ id: "uhm", size: 47e6, status: "missing", downloading: null, error: null, unavailable: null }] }),
     get_setting: ({ key }) => (key === "ai_triage" ? String(dec.triage) : null),
     list_folders: () => [{ id: 1, name: "Acme" }],
-    get_meeting: () => ({ meeting, segments, shots: [], shots_taken: 0, audio: [], video: null, media_bytes }),
+    get_meeting: () => ({ meeting, segments, speakers, shots: [], shots_taken: 0, audio: [], video: null, media_bytes }),
+    speaker_rename: ({ cluster, name }) => { Object.assign(speakers.find((p) => p.cluster === cluster), { name, suggested: null }); return false; },
+    speaker_dismiss: ({ cluster }) => { speakers.find((p) => p.cluster === cluster).suggested = null; },
+    speaker_clips: () => [],
     delete_media: () => { media_bytes = 0; },
     video_estimate: () => "about 400 MB for an hour",
     ai_state: () => ai,

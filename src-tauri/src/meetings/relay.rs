@@ -2,7 +2,7 @@
 //! A tiny HTTP server on 127.0.0.1 only. Every request must carry the pairing token Myna shows in Settings, come
 //! from this host and from an extension (never a web page), and be a known message, so another process or page
 //! on this Mac can't spoof mute state. Reports feed the same timeline as the manual toggle (`mute::Source::Extension`).
-use super::{mute::{Event, Source}, Recorder};
+use super::{captions, mute::{Event, Source}, Recorder};
 use crate::{settings, Db};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -37,12 +37,14 @@ impl Site {
     }
 }
 
-/// What the extension may send. A new kind of message (ticket 11) is a new variant; anything else is rejected.
+/// What the extension may send. A new kind of message is a new variant; anything else is rejected.
 #[derive(Deserialize, PartialEq, Debug)]
 #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Message {
     /// `muted` null means the extension can't read the button: "mute unknown".
     Mute { site: Site, muted: Option<bool> },
+    /// Who the call's captions show as speaking now; null when captions are off or unreadable. Myna stamps the time.
+    Caption { site: Site, name: Option<String> },
 }
 
 #[derive(PartialEq, Debug)]
@@ -129,7 +131,11 @@ fn route(h: &Head, token: &str) -> Result<(), Reject> {
 }
 
 pub fn parse_message(body: &[u8]) -> Result<Message, Reject> {
-    serde_json::from_slice(body).map_err(|_| Reject::BadRequest)
+    match serde_json::from_slice(body).map_err(|_| Reject::BadRequest)? {
+        // A name is page text: kept only if it is a plain, short one, trimmed.
+        Message::Caption { site, name: Some(n) } => Ok(Message::Caption { site, name: Some(captions::valid(&n).ok_or(Reject::BadRequest)?.to_string()) }),
+        m => Ok(m),
+    }
 }
 
 /// Whole-request check on what came off the wire: the head, then the body the head promised.
@@ -214,6 +220,16 @@ fn apply(app: &AppHandle, site: Site, muted: Option<bool>) {
     }
 }
 
+/// A caption report at the recording's clock, kept for naming speakers once the meeting is transcribed.
+fn apply_caption(app: &AppHandle, site: Site, name: Option<&str>) {
+    let rec = app.state::<Recorder>();
+    let slot = rec.0.lock().unwrap();
+    STATE.lock().unwrap().seen = Some((Instant::now(), site));
+    if let Some(a) = slot.as_ref() {
+        let _ = captions::add(&app.state::<Db>().0.lock().unwrap(), a.id, a.started.elapsed().as_millis() as u64, name);
+    }
+}
+
 /// Once a second, from the recorder's clock thread: falls back when the extension has gone quiet.
 pub fn tick(app: &AppHandle) {
     let wrote = {
@@ -268,6 +284,10 @@ fn serve(app: &AppHandle, mut s: TcpStream) {
     let (code, text) = match accept(&raw, &token) {
         Ok(Message::Mute { site, muted }) => {
             apply(app, site, muted);
+            (204, "No Content")
+        }
+        Ok(Message::Caption { site, name }) => {
+            apply_caption(app, site, name.as_deref());
             (204, "No Content")
         }
         Err(r) => r.status(),
@@ -345,6 +365,22 @@ mod tests {
     }
 
     #[test]
+    fn a_caption_message_gets_through_trimmed_and_the_same_rules_apply() {
+        let caption = |body: &str| accept(&req("POST", "/message", &[], body), T);
+        assert_eq!(caption(r#"{"type":"caption","site":"meet","name":" Lena Ström "}"#), Ok(Message::Caption { site: Site::Meet, name: Some("Lena Ström".into()) }));
+        assert_eq!(caption(r#"{"type":"caption","site":"teams","name":null}"#), Ok(Message::Caption { site: Site::Teams, name: None }));
+        assert_eq!(caption(r#"{"type":"caption","site":"teams"}"#), Ok(Message::Caption { site: Site::Teams, name: None }), "a missing name reads as unreadable");
+        let max = format!(r#"{{"type":"caption","site":"meet","name":"{}"}}"#, "é".repeat(captions::MAX_NAME));
+        assert!(max.len() < MAX_BODY && caption(&max).is_ok(), "the longest name fits the body cap");
+        let bad = accept(&req("POST", "/message", &[("Authorization", "Bearer nope")], r#"{"type":"caption","site":"meet","name":"Lena"}"#), T);
+        assert_eq!(bad, Err(Reject::Unauthorized));
+        let page = accept(&req("POST", "/message", &[("Origin", "https://evil.example")], r#"{"type":"caption","site":"meet","name":"Lena"}"#), T);
+        assert_eq!(page, Err(Reject::Forbidden));
+        let huge = format!(r#"{{"type":"caption","site":"meet","name":"{}"}}"#, "x".repeat(2000));
+        assert_eq!(caption(&huge), Err(Reject::TooLarge));
+    }
+
+    #[test]
     fn anything_unpaired_or_not_from_an_extension_is_refused() {
         let bad = |extra: &[(&str, &str)]| accept(&req("POST", "/message", extra, MUTED), T);
         let table = [
@@ -377,6 +413,12 @@ mod tests {
             ("muted not a bool", msg(r#"{"type":"mute","site":"meet","muted":"yes"}"#)),
             ("extra field", msg(r#"{"type":"mute","site":"meet","muted":true,"x":1}"#)),
             ("no site", msg(r#"{"type":"mute","muted":true}"#)),
+            ("caption name not a string", msg(r#"{"type":"caption","site":"meet","name":7}"#)),
+            ("caption name empty", msg(r#"{"type":"caption","site":"meet","name":"  "}"#)),
+            ("caption name too long", msg(&format!(r#"{{"type":"caption","site":"meet","name":"{}"}}"#, "x".repeat(captions::MAX_NAME + 1)))),
+            ("caption name with a control character", msg(r#"{"type":"caption","site":"teams","name":"a\nb"}"#)),
+            ("caption extra field", msg(r#"{"type":"caption","site":"meet","name":"Lena","text":"hi"}"#)),
+            ("caption unknown site", msg(r#"{"type":"caption","site":"zoom","name":"Lena"}"#)),
         ];
         for (name, got) in table {
             assert_eq!(got, Err(Reject::BadRequest), "{name}");

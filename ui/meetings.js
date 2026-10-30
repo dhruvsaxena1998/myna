@@ -408,8 +408,8 @@ async function meetings() {
     pop.setAttribute("aria-label", "Who is this?");
     const others = people.filter((x) => x.cluster !== cluster);
     const main = () => `<div class="arrow"></div><h3>Who is this?</h3><input class="field" id="spk-name" aria-label="Speaker name" maxlength="80" placeholder="Speaker ${cluster}" value="${esc(p.name || p.suggested || "")}">`
-      + (sugg ? '<div class="s">Sounds like a voice you remembered. <button class="btn quiet" data-dismiss>Dismiss</button></div>' : "")
-      + `<label class="row pick"><input type="checkbox" id="spk-remember"${sugg ? " checked" : ""}><span class="radio"></span>Remember this voice for future meetings</label>`
+      + (sugg ? `<div class="s">${p.from_captions ? "Named by the call’s captions." : "Sounds like a voice you remembered."} <button class="btn quiet" data-dismiss>Dismiss</button></div>` : "")
+      + `<label class="row pick"><input type="checkbox" id="spk-remember"${sugg && !p.from_captions ? " checked" : ""}><span class="radio"></span>Remember this voice for future meetings</label>`
       + (clips.length ? `<div class="xs head">Longest clips from this speaker</div>${clips.map((c) => `<div class="clip"><button class="btn quiet icon" data-clip="${c.id}" data-secs="${c.secs}" aria-label="Play the clip from ${clock(c.start_ms / 1000)}">${icon("play", "sm")}</button><span class="wave" aria-hidden="true"></span><span class="mono">${clock(c.start_ms / 1000)} · ${c.secs} s</span></div>`).join("")}` : "")
       + `<div class="foot"><button class="btn quiet" data-merge${others.length ? "" : " disabled"}>Merge into…</button><button class="btn primary" data-save>Rename ${n} segment${n === 1 ? "" : "s"}</button></div>`;
     const mergeView = () => `<div class="arrow"></div><h3>Merge ${esc(speakerName(cluster))} into…</h3>${others.map((o) => `<button class="mi" data-into="${o.cluster}">${esc(speakerName(o.cluster))}<span class="xs">${count(o.cluster)} segment${count(o.cluster) === 1 ? "" : "s"}</span></button>`).join("")}<div class="foot"><button class="btn quiet" data-back>Back</button></div>`;

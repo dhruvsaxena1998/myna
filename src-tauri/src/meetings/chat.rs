@@ -249,6 +249,22 @@ mod tests {
     }
 
     #[test]
+    fn a_caption_name_never_goes_into_the_chat_context() {
+        let db = db();
+        let id = {
+            let c = db.lock().unwrap();
+            let id = store::create(&c, 100).unwrap();
+            store::finish(&c, id, 60_000, &[Segment { speaker: store::THEM.into(), end_ms: 1000, text: "Agreed.".into(), cluster: Some(1), ..Default::default() }]).unwrap();
+            crate::meetings::captions::plant(&c, id, "Lena Ström");
+            id
+        };
+        let (base, seen) = stub::serve(vec![stub::ok("ok")]);
+        send(&db, id, "Who spoke?", &config(&base), Path::new("")).unwrap();
+        let req = body(&seen).to_string();
+        assert!(req.contains("Speaker 1: Agreed.") && !req.contains("Lena") && !req.contains("Ström"), "{req}");
+    }
+
+    #[test]
     fn tokens_are_characters_over_four_and_cost_follows_the_price_table() {
         assert_eq!(tokens(&[]), 0);
         assert_eq!(tokens(&[msg(&"x".repeat(40)), msg(&"é".repeat(8))]), 12); // characters, not bytes
