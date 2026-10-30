@@ -3,7 +3,8 @@
 // Query switches: ?window=N sets the model's context window, ?noprice blanks the prices, ?local is a local
 // provider (no off-device pill), ?off turns chat off, ?unready has no API key, ?slow makes answers take 3 s,
 // ?auto shows the muted line as included by triage, ?preset=jev|openai|custom|laya picks the decision preset, ?laya=none|installed|running|error is Laya's state,
-// ?upd offers an update and ?updfail fails the check, ?ext shows the browser extension as connected, ?captions has the two other speakers suggested from the call's captions, ?nocaptions shows the "captions unavailable" note, ?tab=chat opens that inspector tab, ?empty starts with no chat turns, ?nomedia has no audio, video or screenshots on disk. A question containing "fail" gets an error.
+// ?upd offers an update and ?updfail fails the check, ?ext shows the browser extension as connected, ?captions has the two other speakers suggested from the call's captions, ?nocaptions shows the "captions unavailable" note, ?tab=chat opens that inspector tab, ?empty starts with no chat turns, ?nomedia has no audio, video or screenshots on disk.
+// #popover: ?pop=rec is a live recording, ?pop=off has Meetings switched off. #pill: ?pill=idle|listening|transcribing|done|error|mic. A question containing "fail" gets an error.
 (() => {
   const q = new URLSearchParams(location.search);
   const ai = {
@@ -76,6 +77,11 @@
     list_models: () => ({ models: [{ id: "uhm", name: "Uhm", size: 120e6, status: "installed", downloading: null, error: null, unavailable: null }] }),
     update_check: async () => { await wait(500); if (q.has("updfail")) throw "Could not reach the update server."; return q.has("upd") ? "0.2.0" : null; },
     update_install: () => {},
+    popover_view: () => {
+      const rec = q.get("pop") === "rec", on = q.get("pop") !== "off";
+      return { state: rec ? { kind: "recording", started_at: Math.floor(Date.now() / 1000) - 848, app: "Google Chrome", note: null, shots: null } : { kind: "idle" },
+        can_start: on && !rec, meetings: on, dictation: { hotkey: "Alt+Space", toggle: false, error: false }, mic: rec ? { live: true, how: "mirrored" } : null, recent: on ? [meeting] : [] };
+    },
     decision_state: () => decState(),
     decision_set_key: ({ key }) => { dec.has_key = !!key.trim(); },
     laya_setup: () => { dec.laya.error = null; dec.laya.step = "Creating the environment"; setTimeout(() => { dec.laya.step = "Installing Laya"; }, 1200); setTimeout(() => { dec.laya.step = null; dec.laya.installed = true; }, 2400); },
@@ -100,6 +106,12 @@
   window.__TAURI__ = {
     app: { getVersion: async () => "0.1.0" },
     core: { invoke: async (cmd, args) => (commands[cmd] ? commands[cmd](args) : null) },
-    event: { listen: async () => () => {} },
+    // The popover opens, and the pill shows ?pill's state, as soon as the page listens.
+    event: { listen: async (name, fn) => {
+      const pill = { idle: { kind: "idle", hotkey: "Alt+Space", toggle: false }, listening: { kind: "listening", level: 0.7 }, transcribing: { kind: "transcribing" }, done: { kind: "done", words: 42 }, error: { kind: "error", message: "No speech heard" }, mic: { kind: "mic", live: true, how: "mirrored" } }[q.get("pill")];
+      if (name === "popover-open") fn({ payload: null });
+      if (name === "pill" && pill) for (let i = 0; i < 9; i++) fn({ payload: pill });
+      return () => {};
+    } },
   };
 })();

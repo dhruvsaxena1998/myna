@@ -109,7 +109,9 @@ body.set {
 .btn.quiet { background: transparent; border-color: transparent; box-shadow: none; color: var(--ink-2); height: 22px; }
 .btn.quiet:hover { background: var(--sel); color: var(--ink); }
 
-.pill { display: inline-flex; align-items: center; gap: 5px; height: 18px; padding: 0 7px; border-radius: 9px; font-size: 11px; font-weight: 500; }
+/* Status pills: one size and weight everywhere, in three levels. ok is a good state (Installed, Running, Connected),
+   neutral a quiet label, alert needs a look: a failure, a live recording, or data leaving this Mac. */
+.pill { display: inline-flex; align-items: center; gap: 5px; height: 18px; padding: 0 7px; border-radius: 9px; font-size: 11px; font-weight: 500; line-height: 1; white-space: nowrap; vertical-align: middle; flex: none; }
 .pill.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
 .pill.alert { color: var(--alert); background: color-mix(in srgb, var(--alert) 12%, transparent); }
 .pill.neutral { color: var(--ink-2); background: var(--sel); }

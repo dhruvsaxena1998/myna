@@ -238,6 +238,9 @@ fn set_setting(app: AppHandle, db: tauri::State<Db>, key: String, value: String)
     if ["dictation_enabled", "dictation_hotkey", "meetings_enabled", "mute_hotkey"].contains(&key.as_str()) {
         sync_hotkey(&app);
     }
+    if key == "meetings_enabled" {
+        meetings::sync_tray_menu(&app);
+    }
     Ok(())
 }
 

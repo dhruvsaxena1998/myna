@@ -174,6 +174,8 @@ pub fn set_tray_menu(app: &AppHandle, recording: bool) {
         let menu = Menu::new(app)?;
         if recording {
             menu.append(&MenuItem::with_id(app, "stop", "Stop recording", true, None::<&str>)?)?;
+        } else if crate::setting(app, "meetings_enabled").as_deref() == Some("true") {
+            menu.append(&MenuItem::with_id(app, "start", "Start meeting recording", true, None::<&str>)?)?;
         }
         menu.append(&MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?)?;
         menu.append(&MenuItem::with_id(app, "quit", "Quit Myna", true, None::<&str>)?)?;
@@ -184,11 +186,21 @@ pub fn set_tray_menu(app: &AppHandle, recording: bool) {
     }
 }
 
-/// A fallback-menu pick: "stop" only acts on a live recording, the rest go through the popover's paths.
+/// Rebuilds the fallback menu, after Meetings is switched on or off.
+pub fn sync_tray_menu(app: &AppHandle) {
+    let recording = app.state::<Recorder>().0.lock().unwrap().is_some();
+    set_tray_menu(app, recording);
+}
+
+/// A fallback-menu pick: "stop" only acts on a live recording and "start" only without one; the rest go
+/// through the popover's paths.
 pub fn tray_menu_pick(app: &AppHandle, id: &str) {
+    let recording = app.state::<Recorder>().0.lock().unwrap().is_some();
     match id {
-        "stop" if app.state::<Recorder>().0.lock().unwrap().is_some() => {
-            let _ = toggle(app);
+        "stop" | "start" if recording == (id == "stop") => {
+            if let Err(e) = toggle(app) {
+                crate::show_error(app, e);
+            }
         }
         "settings" | "quit" => crate::popover::popover_go(app.clone(), id.into(), None),
         _ => {}

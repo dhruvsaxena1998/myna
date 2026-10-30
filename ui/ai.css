@@ -35,7 +35,6 @@
 .meet .pane .tpl { display: flex; align-items: center; gap: 6px; margin-bottom: 12px; }
 .meet .pane .tpl .field { width: auto; }
 .meet .pane .meta { margin-bottom: 12px; }
-.meet .pane .meta .pill { height: 16px; }
 
 /* Prompt editor under Regenerate */
 .meet .edit { margin-bottom: 14px; }
@@ -53,7 +52,6 @@
 .meet .pane.chat { display: flex; flex-direction: column; overflow: hidden; }
 .meet .chat .hdr { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; color: var(--ink-3); font-size: 11px; padding-bottom: 10px; border-bottom: 1px solid var(--hair); margin-bottom: 10px; flex: none; }
 .meet .chat .hdr b { color: var(--ink-2); font-weight: 500; }
-.meet .chat .hdr .pill { height: 16px; }
 .meet .chat .warn { flex: none; margin: 0 0 10px; padding: 6px 10px; border-radius: var(--r-sm); background: var(--alert-soft); color: var(--alert); font-size: 11.5px; line-height: 1.45; }
 .meet .chat .log { flex: 1; min-height: 0; overflow: auto; }
 .meet .pane.chat > p.s, .meet .pane.chat > p.err { flex: none; margin: 8px 0 0; }

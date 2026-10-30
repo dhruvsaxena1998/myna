@@ -56,7 +56,8 @@ function pickerHtml(shots, windows) {
 
 function viewHtml(v, error, windows) {
   const s = v.state;
-  const toggle = s.kind === "recording" ? row("toggle", "stop", "Stop and transcribe") : v.can_start ? row("toggle", "rec", "Start meeting recording") : "";
+  // With Meetings off there is nothing to start, so offer to switch it on here rather than hide recording entirely.
+  const toggle = s.kind === "recording" ? row("toggle", "stop", "Stop and transcribe") : v.can_start ? row("toggle", "rec", "Start meeting recording") : !v.meetings ? row("meetings-on", "rec", "Turn on Meetings") : "";
   const picker = s.kind === "recording" && s.shots ? pickerHtml(s.shots, windows) : "";
   const recent = v.recent.length
     ? `<div class="sec" role="group" aria-label="Recent meetings"><div class="hd" aria-hidden="true">Recent</div>${v.recent
@@ -129,15 +130,26 @@ async function popover() {
     } else if (act === "mute") {
       try { await invoke("meeting_mute"); } catch (err) { error = String(err); }
       refresh();
+    } else if (act === "meetings-on") {
+      await invoke("set_setting", { key: "meetings_enabled", value: "true" });
+      refresh();
     } else if (act === "meeting") {
       invoke("popover_go", { to: "meetings", id: Number(b.dataset.id) });
     } else {
       invoke("popover_go", { to: act });
     }
   };
-  document.onkeydown = (e) => { if (e.key === "Escape") invoke("popover_hide"); };
-  window.__TAURI__.event.listen("popover-open", ({ payload }) => {
-    shell.style.setProperty("--arrow", payload.arrow + "px");
+  // Esc closes; the arrow keys move through the items, as in a native menu.
+  document.onkeydown = (e) => {
+    if (e.key === "Escape") invoke("popover_hide");
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    e.preventDefault();
+    const items = [...shell.querySelectorAll("button")];
+    const i = items.indexOf(document.activeElement);
+    const down = e.key === "ArrowDown";
+    items[i < 0 ? (down ? 0 : items.length - 1) : (i + (down ? 1 : items.length - 1)) % items.length]?.focus();
+  };
+  window.__TAURI__.event.listen("popover-open", () => {
     error = "";
     windows = null;
     shown = "";

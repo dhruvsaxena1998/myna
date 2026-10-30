@@ -12,13 +12,17 @@ use crate::{
 use serde::Serialize;
 use std::{sync::Mutex, time::{Duration, Instant}};
 use tauri::{
+    window::{Effect, EffectState, EffectsBuilder},
     AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, Rect, WebviewUrl, WebviewWindowBuilder,
     WindowEvent,
 };
 
 const LABEL: &str = "popover";
-/// Logical px. 320 for the popover plus 16 each side so its shadow is not clipped (ui/popover.css matches).
-const WIN_W: f64 = 352.0;
+/// Logical px. The window is the popover: macOS draws its material, corners and shadow.
+const WIN_W: f64 = 320.0;
+const RADIUS: f64 = 10.0;
+/// Between the menubar and the popover, as under Control Center.
+const GAP: f64 = 5.0;
 const SCREEN_MARGIN: f64 = 8.0;
 const RECENT: usize = 3;
 
@@ -167,7 +171,15 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         .inner_size(WIN_W, 200.0)
         .decorations(false)
         .transparent(true)
-        .shadow(false) // the page draws its own
+        // Liquid Glass where macOS has it (26+), the menu material before that, like the system's menubar menus.
+        .effects(
+            EffectsBuilder::new()
+                .effects([Effect::LiquidGlassRegular, Effect::Menu])
+                .state(EffectState::Active)
+                .radius(RADIUS)
+                .build(),
+        )
+        .shadow(true)
         .resizable(false)
         .always_on_top(true)
         .visible_on_all_workspaces(true)
@@ -182,12 +194,6 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         }
     });
     Ok(())
-}
-
-#[derive(Serialize, Clone)]
-struct Open {
-    /// Where the arrow sits, in logical px from the window's left edge.
-    arrow: f64,
 }
 
 /// A tray click: close the popover if it is open, otherwise ask the page to refresh and show itself.
@@ -211,16 +217,15 @@ pub fn toggle(app: &AppHandle, icon: Rect) {
     let mon = app.available_monitors().ok().and_then(|ms| ms.into_iter().find(on_icon));
     let Some(mon) = mon.or_else(|| app.primary_monitor().ok().flatten()) else { return };
     let scale = mon.scale_factor();
-    let (x, arrow) = place(centre, WIN_W * scale, mon.position().x as f64, mon.size().width as f64, SCREEN_MARGIN * scale);
-    *state.at.lock().unwrap() = Some(PhysicalPosition::new(x as i32, (pos.y + size.height) as i32));
-    let _ = app.emit_to(LABEL, "popover-open", Open { arrow: arrow / scale });
+    let x = place(centre, WIN_W * scale, mon.position().x as f64, mon.size().width as f64, SCREEN_MARGIN * scale);
+    *state.at.lock().unwrap() = Some(PhysicalPosition::new(x as i32, (pos.y + size.height + GAP * scale) as i32));
+    let _ = app.emit_to(LABEL, "popover-open", ());
 }
 
 /// Centres a window of `win_w` under an icon at `centre`, keeping it `margin` inside the display.
-/// Returns the window's left edge and the icon's x inside the window (where the arrow points). Physical px.
-fn place(centre: f64, win_w: f64, screen_x: f64, screen_w: f64, margin: f64) -> (f64, f64) {
-    let x = (centre - win_w / 2.0).min(screen_x + screen_w - win_w - margin).max(screen_x + margin);
-    (x, centre - x)
+/// Returns the window's left edge. Physical px.
+fn place(centre: f64, win_w: f64, screen_x: f64, screen_w: f64, margin: f64) -> f64 {
+    (centre - win_w / 2.0).min(screen_x + screen_w - win_w - margin).max(screen_x + margin)
 }
 
 #[cfg(test)]
@@ -305,16 +310,16 @@ mod tests {
     }
 
     #[test]
-    fn popover_centres_under_the_icon_and_arrow_follows_it() {
-        // 1440 wide display, 704 px window, icon centre at 1000.
-        assert_eq!(place(1000.0, 704.0, 0.0, 2880.0, 16.0), (648.0, 352.0));
+    fn popover_centres_under_the_icon() {
+        // 1440 wide display, 640 px window, icon centre at 1000.
+        assert_eq!(place(1000.0, 640.0, 0.0, 2880.0, 16.0), 680.0);
     }
 
     #[test]
-    fn popover_stays_on_the_display_and_arrow_still_points_at_the_icon() {
-        // Icon near the right edge: window pushed left, arrow slides right.
-        assert_eq!(place(2860.0, 704.0, 0.0, 2880.0, 16.0), (2160.0, 700.0));
+    fn popover_stays_on_the_display() {
+        // Icon near the right edge: window pushed left.
+        assert_eq!(place(2860.0, 640.0, 0.0, 2880.0, 16.0), 2224.0);
         // Icon near the left edge of a second display starting at x = 2880.
-        assert_eq!(place(2900.0, 704.0, 2880.0, 2880.0, 16.0), (2896.0, 4.0));
+        assert_eq!(place(2900.0, 640.0, 2880.0, 2880.0, 16.0), 2896.0);
     }
 }

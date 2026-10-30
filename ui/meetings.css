@@ -30,7 +30,6 @@
 .meet .btn.primary:hover { filter: brightness(1.05); }
 .meet .btn.icon { padding: 0; width: 26px; justify-content: center; }
 .meet .btn[disabled] { opacity: 0.45; }
-.meet .pill.neutral { background: var(--sel); color: var(--ink-2); }
 .meet .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); flex: none; display: inline-block; }
 .meet .dot.live { background: var(--alert); box-shadow: 0 0 0 3px var(--alert-soft); }
 
