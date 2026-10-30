@@ -237,7 +237,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         let mut alive = Command::new("sleep").arg("30").spawn().unwrap();
         assert_eq!(wait_ready(&mut alive, port, Duration::from_secs(5)), Ok(()));
-        let silent = free_port().unwrap();
+        let silent = 1; // privileged, so nothing in a parallel test can be listening there
         assert!(wait_ready(&mut alive, silent, Duration::from_millis(400)).unwrap_err().contains("not become ready"));
         alive.kill().unwrap();
         let _ = alive.wait();
