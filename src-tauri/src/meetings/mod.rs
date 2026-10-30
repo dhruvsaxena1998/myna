@@ -5,6 +5,7 @@ pub mod chat;
 mod media;
 mod screen;
 pub(crate) mod mute;
+pub mod relay;
 pub(crate) mod shots;
 pub(crate) mod store;
 pub mod suggest;
@@ -60,6 +61,7 @@ pub fn setup(app: &tauri::App, root: &Path) -> Result<(), Box<dyn std::error::Er
     app.manage(ScreenshotsDir(screenshots));
     app.manage(VideoDir(video));
     app.manage(Recorder::default());
+    relay::start(app.handle());
     for id in queued {
         spawn_transcription(app.handle(), id);
     }
@@ -71,6 +73,7 @@ pub fn setup(app: &tauri::App, root: &Path) -> Result<(), Box<dyn std::error::Er
     let handle = app.handle().clone();
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_secs(1));
+        relay::tick(&handle);
         // Holding the lock keeps a late tick from relabelling the tray after a stop cleared it.
         let rec = handle.state::<Recorder>();
         let slot = rec.0.lock().unwrap();
@@ -151,7 +154,11 @@ pub fn mute_toggle(app: &AppHandle) -> Result<(), String> {
 /// What the popover and the pill say about the mic; None when nothing is recording.
 pub fn mic(conn: &Connection) -> Option<mute::Mic> {
     let id = store::recording(conn)?;
-    Some(mute::mic_now(&store::mute_events(conn, id).ok()?, mute::always_record(conn, id)))
+    let mut m = mute::mic_now(&store::mute_events(conn, id).ok()?, mute::always_record(conn, id));
+    if m.how == "mirrored" {
+        m.how = relay::mirrored();
+    }
+    Some(m)
 }
 
 /// The right-click fallback menu, for when the popover page won't load. Stop shows only while recording.
