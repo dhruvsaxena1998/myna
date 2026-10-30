@@ -1,13 +1,13 @@
 //! Screenshots of the meeting window while recording: pick the window, grab it on a timer, drop the frames that
-//! look like the last one kept. The hash, the dedupe and the choice of window are pure and tested here;
-//! screen.rs does the capture.
-use super::{capture, screen};
+//! look like the last one kept. In window-video mode the same pick feeds video.rs instead. The hash, the dedupe
+//! and the choice of window are pure and tested here; screen.rs does the capture.
+use super::{capture, screen, video};
 use crate::{permissions, Db};
 use rusqlite::{params, Connection};
 use serde::Serialize;
 use std::{
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{channel, Receiver, Sender},
@@ -91,10 +91,11 @@ fn target<'a>(windows: &'a [screen::Window], mic_apps: &[String], chosen: Option
     })
 }
 
-/// Time between screenshots, or None when capture is off. On unless the setting says "off".
+/// Time between screenshots, or None when there are none: capture is off, or it is window video. On unless the
+/// setting says "off" or "video".
 fn interval(mode: Option<String>, secs: Option<String>) -> Option<Duration> {
     let secs = secs.and_then(|s| s.parse().ok()).filter(|s| (5..=600).contains(s)).unwrap_or(15);
-    (mode.as_deref() != Some("off")).then(|| Duration::from_secs(secs))
+    (!matches!(mode.as_deref(), Some("off" | "video"))).then(|| Duration::from_secs(secs))
 }
 
 // ---- storage: one row per frame taken; `file` is empty for the ones dropped as duplicates ----
@@ -141,12 +142,18 @@ pub struct Status {
     pub text: String,
     /// The window picked by hand, if one is.
     pub chosen: Option<u32>,
+    /// Recording window video rather than taking screenshots.
+    pub video: bool,
 }
 
 struct Live {
     chosen: Mutex<Option<u32>>,
     /// None while capture is off.
     text: Mutex<Option<String>>,
+    /// Window video is the capture mode.
+    video_mode: AtomicBool,
+    /// The recorder, once there is a window to record. Dropping it closes the file.
+    video: Mutex<Option<video::Video>>,
     stopped: AtomicBool,
     /// Wakes the loop early: a new pick, or the stop.
     wake: Sender<()>,
@@ -159,7 +166,7 @@ pub fn status() -> Option<Status> {
     let live = LIVE.lock().unwrap().clone()?;
     let text = live.text.lock().unwrap().clone()?;
     let chosen = *live.chosen.lock().unwrap();
-    Some(Status { text, chosen })
+    Some(Status { text, chosen, video: live.video_mode.load(Ordering::SeqCst) })
 }
 
 /// Captures the picked window from now on; None goes back to the app that has the mic.
@@ -170,17 +177,26 @@ pub fn choose(id: Option<u32>) {
     }
 }
 
-/// Dropping it ends the capture; a grab already in flight finishes on its own.
+/// Dropping it ends the capture; a screenshot already in flight finishes on its own, but the video file is
+/// closed before the drop returns, so quitting right after a stop never leaves it half written.
 pub struct Screenshots(Arc<Live>);
 
 impl Screenshots {
-    /// `dir` is where this meeting's frames go; `started` is when its audio began, so frames line up with the transcript.
-    pub fn start(app: &AppHandle, meeting: i64, dir: std::path::PathBuf, started: Instant) -> Self {
+    /// `dir` is where this meeting's frames go and `video` the file window video is written to; `started` is when
+    /// its audio began, so both line up with the transcript.
+    pub fn start(app: &AppHandle, meeting: i64, dir: PathBuf, video: PathBuf, started: Instant) -> Self {
         let (wake, rx) = channel();
-        let live = Arc::new(Live { chosen: Mutex::new(None), text: Mutex::new(None), stopped: AtomicBool::new(false), wake });
+        let live = Arc::new(Live {
+            chosen: Mutex::new(None),
+            text: Mutex::new(None),
+            video_mode: AtomicBool::new(false),
+            video: Mutex::new(None),
+            stopped: AtomicBool::new(false),
+            wake,
+        });
         *LIVE.lock().unwrap() = Some(live.clone());
         let (app, thread_live) = (app.clone(), live.clone());
-        std::thread::spawn(move || run(&app, &thread_live, rx, meeting, &dir, started));
+        std::thread::spawn(move || run(&app, &thread_live, rx, meeting, &dir, &video, started));
         Self(live)
     }
 }
@@ -190,38 +206,78 @@ impl Drop for Screenshots {
         self.0.stopped.store(true, Ordering::SeqCst);
         *LIVE.lock().unwrap() = None;
         let _ = self.0.wake.send(());
+        drop(self.0.video.lock().unwrap().take());
     }
 }
 
-fn run(app: &AppHandle, live: &Live, rx: Receiver<()>, meeting: i64, dir: &Path, started: Instant) {
+fn run(app: &AppHandle, live: &Live, rx: Receiver<()>, meeting: i64, dir: &Path, video: &Path, started: Instant) {
     let (mut dedupe, mut asked) = (Dedupe::default(), false);
     while !live.stopped.load(Ordering::SeqCst) {
         // Read each round, so a change in Settings applies mid-call.
-        let every = interval(crate::setting(app, "meetings_capture"), crate::setting(app, "meetings_interval"));
-        let text = every.map(|_| tick(app, live, meeting, dir, started, &mut dedupe, &mut asked));
+        let mode = crate::setting(app, "meetings_capture");
+        let every = interval(mode.clone(), crate::setting(app, "meetings_interval"));
+        let is_video = mode.as_deref() == Some("video");
+        live.video_mode.store(is_video, Ordering::SeqCst);
+        let text = if is_video {
+            Some(tick_video(live, video, started, &mut asked))
+        } else {
+            // Leaving video mode closes the file; what was recorded stays.
+            drop(live.video.lock().unwrap().take());
+            every.map(|_| tick(app, live, meeting, dir, started, &mut dedupe, &mut asked))
+        };
         *live.text.lock().unwrap() = text;
         let _ = rx.recv_timeout(every.unwrap_or(IDLE));
     }
 }
 
-/// One capture attempt. Returns the status line: the window it grabbed, or what stopped it.
-fn tick(app: &AppHandle, live: &Live, meeting: i64, dir: &Path, started: Instant, dedupe: &mut Dedupe, asked: &mut bool) -> String {
+/// The window to capture now, or the status line saying why there is none.
+fn pick(live: &Live, asked: &mut bool) -> Result<screen::Window, String> {
     if !permissions::granted("Screen Recording") {
         // Once per recording: the recording itself carries on, so this is a nudge, not a gate.
         if !std::mem::replace(asked, true) {
             permissions::request("Screen Recording");
         }
-        return "needs Screen Recording (Settings → Meetings)".into();
+        return Err("needs Screen Recording (Settings → Meetings)".into());
     }
-    let windows = match screen::windows() {
+    let windows = screen::windows()?;
+    let chosen = *live.chosen.lock().unwrap();
+    target(&windows, &capture::mic_apps(), chosen).cloned().ok_or_else(|| "waiting for a call app to use the mic".into())
+}
+
+fn label(window: &screen::Window) -> String {
+    if window.title.is_empty() { window.app.clone() } else { format!("{} · {}", window.app, window.title) }
+}
+
+/// One look at which window the video should follow: starts the recorder on the first, repoints it after.
+fn tick_video(live: &Live, file: &Path, started: Instant, asked: &mut bool) -> String {
+    let window = match pick(live, asked) {
         Ok(w) => w,
         Err(e) => return e,
     };
-    let chosen = *live.chosen.lock().unwrap();
-    let Some(window) = target(&windows, &capture::mic_apps(), chosen) else {
-        return "waiting for a call app to use the mic".into();
+    let label = label(&window);
+    let mut slot = live.video.lock().unwrap();
+    if live.stopped.load(Ordering::SeqCst) {
+        return label; // the stop already closed the video; do not open another
+    }
+    let result = match slot.as_mut() {
+        Some(v) => v.capture(window.id),
+        // One file per meeting: starting again would write over what was recorded before the switch.
+        None if file.exists() => Err("window video was switched off earlier in this call".into()),
+        None => video::Video::start(file, window.id, started).map(|v| *slot = Some(v)),
     };
-    let label = if window.title.is_empty() { window.app.clone() } else { format!("{} · {}", window.app, window.title) };
+    match result {
+        Ok(()) => label,
+        Err(e) => format!("{label}: {e}"),
+    }
+}
+
+/// One capture attempt. Returns the status line: the window it grabbed, or what stopped it.
+fn tick(app: &AppHandle, live: &Live, meeting: i64, dir: &Path, started: Instant, dedupe: &mut Dedupe, asked: &mut bool) -> String {
+    let window = match pick(live, asked) {
+        Ok(w) => w,
+        Err(e) => return e,
+    };
+    let label = label(&window);
     let frame = match screen::grab(window.id, WIDTH) {
         Ok(f) => f,
         Err(e) => return format!("{label}: {e}"),
@@ -371,6 +427,8 @@ mod tests {
         assert_eq!(interval(None, None), Some(Duration::from_secs(15)));
         assert_eq!(interval(s("screenshots"), s("30")), Some(Duration::from_secs(30)));
         assert_eq!(interval(s("off"), s("30")), None);
+        // Window video takes no screenshots, whatever the interval says.
+        assert_eq!(interval(s("video"), s("30")), None);
         // Out of range or not a number: the default, never a tight loop.
         assert_eq!(interval(None, s("0")), Some(Duration::from_secs(15)));
         assert_eq!(interval(None, s("86400")), Some(Duration::from_secs(15)));

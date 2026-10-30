@@ -213,7 +213,9 @@ mod tests {
     }
 
     fn body(seen: &std::sync::mpsc::Receiver<stub::Seen>) -> serde_json::Value {
-        serde_json::from_str(&seen.recv().unwrap().body).unwrap()
+        let raw = seen.recv().unwrap().body;
+        stub::assert_text_only(&raw); // every chat request is text, never a meeting's video
+        serde_json::from_str(&raw).unwrap()
     }
 
     fn msg(text: &str) -> Message {

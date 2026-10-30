@@ -10,7 +10,7 @@
     "windows": [],
     "security": {
       "csp": null,
-      "assetProtocol": { "enable": true, "scope": ["$DATA/Myna/screenshots/**", "$DATA/Myna/audio/**"] }
+      "assetProtocol": { "enable": true, "scope": ["$DATA/Myna/screenshots/**", "$DATA/Myna/audio/**", "$DATA/Myna/video/**"] }
     }
   },
   "bundle": {
