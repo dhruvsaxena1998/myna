@@ -14,6 +14,7 @@ mod popover;
 mod settings;
 mod stt;
 mod uhm;
+mod updates;
 mod voz;
 mod who;
 
@@ -583,6 +584,7 @@ fn open_window_at(app: &AppHandle, label: &str, hash: &str, title: &str, size: (
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             app.set_activation_policy(ActivationPolicy::Accessory);
 
@@ -603,6 +605,7 @@ pub fn run() {
             app.manage(HotkeyError(Mutex::new(None)));
             app.manage(MuteHotkeyError(Mutex::new(None)));
             app.manage(PillEpoch::default());
+            app.manage(updates::Pending::default());
             create_pill(app.handle())?;
             sync_hotkey(app.handle());
 
@@ -669,6 +672,8 @@ pub fn run() {
             decision::decision_set_key,
             laya::laya_setup,
             laya::laya_stop,
+            updates::update_check,
+            updates::update_install,
             meetings::suggest::folder_suggest,
             meetings::suggest::folder_suggest_dismiss,
             meetings::summary::template_list,
