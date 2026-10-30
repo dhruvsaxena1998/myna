@@ -1,5 +1,0 @@
-{
-  "identifier": "default",
-  "windows": ["onboarding", "settings", "meetings", "pill", "popover"],
-  "permissions": ["core:default"]
-}
