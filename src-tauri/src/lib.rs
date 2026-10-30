@@ -11,6 +11,7 @@ mod models;
 mod paste;
 mod permissions;
 mod popover;
+mod prices;
 mod settings;
 mod stt;
 mod uhm;
