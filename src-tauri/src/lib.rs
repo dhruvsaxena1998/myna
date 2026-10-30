@@ -3,6 +3,7 @@ mod audio;
 mod cleanup;
 mod decision;
 mod dictation;
+mod diarize;
 mod hotkey;
 mod laya;
 mod meetings;
@@ -14,6 +15,7 @@ mod settings;
 mod stt;
 mod uhm;
 mod voz;
+mod who;
 
 use serde::Serialize;
 use std::{
@@ -112,7 +114,7 @@ fn list_models(dir: tauri::State<ModelsDir>, jobs: tauri::State<models::Jobs>, d
             unavailable: match m.id {
                 voz::ID => voz::unavailable(),
                 uhm::ID => uhm::unavailable(),
-                _ => None,
+                id => diarize::unavailable(id),
             },
         }
     };
@@ -674,6 +676,10 @@ pub fn run() {
             meetings::summary::template_delete,
             meetings::summary::summary_get,
             meetings::summary::summary_generate,
+            meetings::speakers::speaker_rename,
+            meetings::speakers::speaker_dismiss,
+            meetings::speakers::speaker_merge,
+            meetings::speakers::speaker_clips,
             meetings::chat::chat_get,
             meetings::chat::chat_send
         ])

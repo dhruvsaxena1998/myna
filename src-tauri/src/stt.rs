@@ -461,7 +461,7 @@ mod tests {
         assert_eq!(resolve("nope", &root, &[]).unwrap_err(), "Unknown speech model");
         assert_eq!(resolve(PARAKEET, &root, &[]).unwrap_err(), "Download a speech model in Settings");
         assert_eq!(resolve(WHISPER, &root, &[]).unwrap_err(), "Download a speech model in Settings");
-        assert!(resolve("sortformer-4spk-v2.1", &root, &[]).unwrap_err().contains("can't dictate yet"));
+        assert!(resolve("sortformer-v3", &root, &[]).unwrap_err().contains("can't dictate yet"));
 
         // A repo model: absent until downloaded, then loadable from its own folder.
         let mut repo = Custom::new(Runtime::Whisper, "o/r", |_| Ok(listing(&[("ggml-t.bin", 8, Some("h"))]))).unwrap();

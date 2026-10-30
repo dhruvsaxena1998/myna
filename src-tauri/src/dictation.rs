@@ -113,12 +113,16 @@ pub fn dictate(clip: &audio::Clip, t: &mut dyn Transcriber) -> Result<Heard, Str
 
 pub struct Parakeet(parakeet_rs::ParakeetTDT);
 
+/// ONNX Runtime allows one environment per process, so every model load shares this one.
+pub fn ort_config() -> Result<ExecutionConfig, String> {
+    static ENV: OnceLock<Result<Environment, String>> = OnceLock::new();
+    let env = ENV.get_or_init(|| parakeet_rs::ort::init().build().map_err(|e| e.to_string())).clone()?;
+    Ok(ExecutionConfig::new().with_environment(env))
+}
+
 impl Parakeet {
     pub fn load(dir: &Path) -> Result<Self, String> {
-        // ONNX Runtime allows one environment per process, so every model load shares this one.
-        static ENV: OnceLock<Result<Environment, String>> = OnceLock::new();
-        let env = ENV.get_or_init(|| parakeet_rs::ort::init().build().map_err(|e| e.to_string())).clone()?;
-        parakeet_rs::ParakeetTDT::from_pretrained(dir, Some(ExecutionConfig::new().with_environment(env)))
+        parakeet_rs::ParakeetTDT::from_pretrained(dir, Some(ort_config()?))
             .map(Self)
             .map_err(|e| e.to_string())
     }

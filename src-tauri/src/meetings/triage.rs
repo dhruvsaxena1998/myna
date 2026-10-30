@@ -149,6 +149,31 @@ mod tests {
         assert!(!second["context"].as_str().unwrap().contains("launch"), "{second}");
     }
 
+    /// A speaker the user has named stays in the speakers table; the request carries only "Them".
+    #[test]
+    fn a_renamed_speaker_is_never_named_in_the_request() {
+        use crate::meetings::{speakers, store};
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        store::init(&db).unwrap();
+        speakers::init(&db).unwrap();
+        let id = store::create(&db, 1).unwrap();
+        let them = |text: &str, cluster| Segment { cluster: Some(cluster), ..seg(THEM, text, State::Unmuted) };
+        let lines = [them("Shall we start?", 1), seg(ME, "The budget is forty thousand.", State::Muted), them("Got it.", 2)];
+        store::finish(&db, id, 1, &lines).unwrap();
+        let people = [1, 2].map(|cluster| speakers::Speaker { cluster, name: None, suggested: None, print: None });
+        speakers::replace(&db, id, &people).unwrap();
+        speakers::rename(&db, id, 1, "Priya Natarajan", false).unwrap();
+        speakers::rename(&db, id, 2, "Quentin", false).unwrap();
+
+        let mut segments = store::segments(&db, id).unwrap();
+        let (base, seen) = stub::serve(vec![(200, r#"{"choice":"yes"}"#.into())]);
+        pass(&mut segments, adapter(Wire::Jev, &base, Some("k".into()), "").as_ref());
+        assert!(segments[1].auto, "the pass ran");
+        let body = seen.recv().unwrap().body;
+        assert!(body.contains("Them: Shall we start?"), "{body}");
+        assert!(!body.contains("Priya") && !body.contains("Quentin") && !body.contains("Speaker 1"), "{body}");
+    }
+
     #[test]
     fn long_text_is_cut() {
         let long = "x".repeat(5000);

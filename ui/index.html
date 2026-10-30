@@ -65,11 +65,12 @@ const TASKS = [
 ];
 
 // Models whose use needs the "Powered by Desert Ant Labs" credit while selected.
-const BY_DESERT_ANT = new Set(["voz"]);
-// The Voz SDK phones home on every model load, so its row says so whether or not it is selected.
+const BY_DESERT_ANT = new Set(["voz", "who"]);
+// The Desert Ant SDK phones home on every model load, so these rows say so whether or not they are selected.
 const OFF_DEVICE = {
   voz: "Sends a license check to Desert Ant when the model loads. No audio or text.",
   uhm: "Sends a license check to Desert Ant when the model loads. No audio or text.",
+  who: "Sends a license check to Desert Ant when the model loads. No audio or text.",
 };
 
 const PAGES = [["modules", "Modules", "gear"], ["dictation", "Dictation", "mic"], ["meetings", "Meetings", "list"], ["models", "Models", "dl"], ["ai", "AI provider", "spark"], ["decision", "Decision provider", "check"], ["experimental", "Experimental", "lock"]];
@@ -322,7 +323,8 @@ async function modelsPage(page) {
     let desertAnt = false;
     for (const [task, heading] of tasks) {
       const rows = models.filter((m) => m.task === task);
-      const chosen = (await get("model_" + task)) || rows[0].id;
+      // Same fallback as the backend: the first model that can run on this Mac.
+      const chosen = (await get("model_" + task)) || (rows.find((m) => !m.unavailable) || rows[0]).id;
       desertAnt ||= BY_DESERT_ANT.has(chosen);
       const sec = document.createElement("section");
       sec.className = "group";
