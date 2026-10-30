@@ -1,4 +1,4 @@
-// C entry points for Apple-only runtimes. Rust declares them in src/voz.rs and src/uhm.rs.
+// C entry points for Apple-only runtimes. Rust declares them in src/voz.rs, src/uhm.rs and src/meetings/video.rs.
 // Strings that cross over are malloc'd here and handed back to `myna_string_free`.
 import Foundation
 #if canImport(Voz)
@@ -6,20 +6,15 @@ import Voz
 import Uhm
 #endif
 
-private func cString(_ s: String) -> UnsafeMutablePointer<CChar> { strdup(s)! }
+func cString(_ s: String) -> UnsafeMutablePointer<CChar> { strdup(s)! }
 
 @_cdecl("myna_string_free")
 public func mynaStringFree(_ s: UnsafeMutablePointer<CChar>?) { free(s) }
 
-#if canImport(Voz)
 /// Runs async SDK calls to completion; the Rust caller is already on its own thread.
-private final class Outcome<T>: @unchecked Sendable { var value: Result<T, Error>? }
+final class Outcome<T>: @unchecked Sendable { var value: Result<T, Error>? }
 
-private struct MissingFiles: Error, CustomStringConvertible {
-    var description: String { "Voz's model files aren't in the models folder." }
-}
-
-private func wait<T>(_ body: @escaping @Sendable () async throws -> T) throws -> T {
+func wait<T>(_ body: @escaping @Sendable () async throws -> T) throws -> T {
     let outcome = Outcome<T>()
     let done = DispatchSemaphore(value: 0)
     Task.detached {
@@ -28,6 +23,11 @@ private func wait<T>(_ body: @escaping @Sendable () async throws -> T) throws ->
     }
     done.wait()
     return try outcome.value!.get()
+}
+
+#if canImport(Voz)
+private struct MissingFiles: Error, CustomStringConvertible {
+    var description: String { "Voz's model files aren't in the models folder." }
 }
 #endif
 

@@ -107,7 +107,9 @@ mod tests {
         let found = suggest(&db, id, &cfg).unwrap().unwrap();
         assert_eq!((found.id, found.name.as_str()), (acme, "Acme"));
         // Only folder names and the shown lines were sent; the muted line stayed here.
-        let req: serde_json::Value = serde_json::from_str(&seen.recv().unwrap().body).unwrap();
+        let body = seen.recv().unwrap().body;
+        stub::assert_text_only(&body);
+        let req: serde_json::Value = serde_json::from_str(&body).unwrap();
         let sent = req["messages"][1]["content"].as_str().unwrap();
         assert!(sent.contains("- Acme") && sent.contains("- 1:1s") && sent.contains("Acme kickoff."), "{sent}");
         assert!(!sent.contains("Muted secret."), "{sent}");

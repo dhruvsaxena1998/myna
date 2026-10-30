@@ -656,6 +656,8 @@ pub fn run() {
             meetings::move_meeting,
             meetings::screenshot_windows,
             meetings::screenshot_pick,
+            meetings::delete_media,
+            meetings::video_estimate,
             ai::ai_state,
             ai::ai_set_key,
             meetings::suggest::folder_suggest,
