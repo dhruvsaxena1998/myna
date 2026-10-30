@@ -81,7 +81,7 @@ mod tests {
     use crate::meetings::mute::State;
 
     fn config(base_url: &str) -> Config {
-        Config { preset: &ai::PRESETS[3], base_url: base_url.into(), model: "llama".into(), key: None, input_price: None, output_price: None, context: None }
+        Config { preset: &ai::PRESETS[3], base_url: base_url.into(), model: "llama".into(), key: None, context: None }
     }
 
     /// A finished Inbox meeting that mentions Acme, with the toggle on and two folders.

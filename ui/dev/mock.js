@@ -1,7 +1,7 @@
 // A mocked Tauri backend for dev/index.html: the commands the Meetings window and the AI tabs call,
 // answered from memory. Nothing here talks to the network or the disk. State resets on reload.
-// Query switches: ?window=N sets the model's context window, ?noprice blanks the prices, ?local is a local
-// provider (no off-device pill), ?off turns chat off, ?unready has no API key, ?slow makes answers take 3 s,
+// Query switches: ?window=N sets the model's context window, ?noprice is a model with no known price ("cost unknown"), ?local is a local
+// provider (no off-device pill, free), ?off turns chat off, ?unready has no API key, ?slow makes answers take 3 s,
 // ?auto shows the muted line as included by triage, ?preset=jev|openai|custom|laya picks the decision preset, ?laya=none|installed|running|error is Laya's state,
 // ?upd offers an update and ?updfail fails the check, ?ext shows the browser extension as connected, ?captions has the two other speakers suggested from the call's captions, ?nocaptions shows the "captions unavailable" note, ?tab=chat opens that inspector tab, ?empty starts with no chat turns, ?nomedia has no audio, video or screenshots on disk. A question containing "fail" gets an error.
 (() => {
@@ -9,7 +9,7 @@
   const ai = {
     presets: [{ id: "openrouter", name: "OpenRouter", base_url: "https://openrouter.ai/api/v1", model: "openai/gpt-5-mini" }, { id: "custom", name: "Custom (OpenAI-compatible)", base_url: "http://localhost:11434/v1", model: "llama3.1" }],
     preset: q.has("local") ? "custom" : "openrouter", base_url: "https://openrouter.ai/api/v1", model: "gpt-5-mini", has_key: !q.has("unready"),
-    input_price: q.has("noprice") ? null : 0.25, output_price: q.has("noprice") ? null : 2, context: q.has("window") ? Number(q.get("window")) : 400000,
+    input_price: q.has("noprice") ? null : q.has("local") ? 0 : 0.25, output_price: q.has("noprice") ? null : q.has("local") ? 0 : 2, context: q.has("window") ? Number(q.get("window")) : 400000,
     summaries: true, folders: false, chat: !q.has("off"), images: q.has("images"), relevance: q.has("shots"), shots: q.has("shots"), problem: q.has("unready") ? "Add an API key under AI provider in Settings." : null, off_device: !q.has("local"),
   };
   const dpresets = [{ id: "laya", name: "Laya", base_url: "", wire: "jev", model: "" }, { id: "jev", name: "Jev", base_url: "https://api.jev.ai/v1", wire: "jev", model: "" }, { id: "openai", name: "OpenAI Decisions", base_url: "https://api.openai.com/v1", wire: "openai", model: "gpt-5-mini" }, { id: "custom", name: "Custom", base_url: "http://localhost:8000/v1", wire: "jev", model: "" }];
@@ -33,7 +33,7 @@
     line("them", 802000, "Yes, I'll take that."),
     line("me", 900000, "Sorry, I was on mute. The budget number was forty thousand.", { mute: "muted", included: q.has("auto"), auto: q.has("auto") }),
   ];
-  const summary = { text: "## Summary\nThree-person review of the Meetings module.\n## Decisions\n- Muted and unknown segments are collapsed, never sent to a provider unless included.\n## Action items\n- Tom: measure the screenshot hash threshold on 3 recorded calls.", prompt: "Summarize this meeting.", model: "gpt-5-mini", provider: "OpenRouter", tokens_in: 9000, tokens_out: 120, cost: 0.002, off_device: true, generated_at: Math.floor(Date.now() / 1000) };
+  const summary = { text: "## Summary\nThree-person review of the Meetings module.\n## Decisions\n- Muted and unknown segments are collapsed, never sent to a provider unless included.\n## Action items\n- Tom: measure the screenshot hash threshold on 3 recorded calls.", prompt: "Summarize this meeting.", model: "gpt-5-mini", provider: "OpenRouter", tokens_in: 9000, tokens_out: 120, cost: q.has("noprice") ? null : q.has("local") ? 0 : 0.002, off_device: true, generated_at: Math.floor(Date.now() / 1000) };
   const templates = [{ id: 1, name: "Summary", prompt: "Summarize this meeting.", builtin: true }];
   const turns = [];
   if (!q.has("empty")) {
@@ -41,12 +41,12 @@
     turns.push({ question: "Did anyone object to the extension approach?", answer: "No. Priya asked how apps without readable mute state are handled, and accepted \"unknown is treated as muted\".\n\n- Unknown counts as muted\n- Meet ships first", model: ai.model, tokens_in: 3300, tokens_out: 60 });
   }
 
-  // Same arithmetic as the Rust side: characters ÷ 4, cost from the entered prices, warning past the window.
+  // Same arithmetic as the Rust side: characters ÷ 4, cost from the model's price, warning past the window.
   const usage = () => {
     const chars = segments.filter((s) => s.mute === "unmuted" || s.included).reduce((n, s) => n + s.text.length, 0) + summary.text.length + turns.reduce((n, t) => n + t.question.length + t.answer.length, 0);
     const context_tokens = Math.floor(chars / 4);
-    const spent = turns.reduce((n, t) => n + t.tokens_in * (ai.input_price ?? NaN) + t.tokens_out * (ai.output_price ?? NaN), 0) / 1e6;
-    return { turns: [...turns], context_tokens, cost: Number.isNaN(spent) ? null : spent, window: ai.context, over_window: ai.context != null && context_tokens > ai.context };
+    const spent = ai.input_price == null ? null : turns.reduce((n, t) => n + t.tokens_in * ai.input_price + t.tokens_out * ai.output_price, 0) / 1e6;
+    return { turns: [...turns], context_tokens, cost: spent, window: ai.context, over_window: ai.context != null && context_tokens > ai.context };
   };
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   let media_bytes = q.has("nomedia") ? 0 : 412e6; // ?nomedia is a meeting whose audio, video and screenshots are gone
