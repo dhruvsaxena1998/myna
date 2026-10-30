@@ -42,6 +42,12 @@ pub struct Message {
     pub content: String,
 }
 
+/// A screenshot to attach to the last message, with the words that say when it was taken.
+pub struct Image {
+    pub caption: String,
+    pub jpeg: Vec<u8>,
+}
+
 #[derive(Debug)]
 pub struct Reply {
     pub text: String,
@@ -158,11 +164,14 @@ impl Config {
     }
 
     fn complete_within(&self, messages: &[Message], within: Duration) -> Result<Reply, String> {
+        self.complete_images(messages, &[], within)
+    }
+
+    /// Like `complete`, with `images` attached to the last message. Only callers that checked `images_on` pass any;
+    /// with none the body is exactly the text-only one.
+    pub fn complete_images(&self, messages: &[Message], images: &[Image], within: Duration) -> Result<Reply, String> {
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
-        let body = json!({
-            "model": self.model,
-            "messages": messages.iter().map(|m| json!({"role": m.role, "content": m.content})).collect::<Vec<_>>(),
-        });
+        let body = request_body(&self.model, messages, images);
         let agent = ureq::AgentBuilder::new()
             .timeout_connect(Duration::from_secs(10).min(within))
             .timeout(within)
@@ -199,6 +208,30 @@ impl Config {
     }
 }
 
+/// The request body: a model and messages. Images ride as extra parts of the last message, each after a text part
+/// that says when it was taken; that is the only way anything but text gets in.
+fn request_body(model: &str, messages: &[Message], images: &[Image]) -> Value {
+    use base64::Engine;
+    let last = messages.len().saturating_sub(1);
+    let messages: Vec<Value> = messages
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            if i != last || images.is_empty() {
+                return json!({"role": m.role, "content": m.content});
+            }
+            let mut parts = vec![json!({"type": "text", "text": m.content})];
+            for img in images {
+                let url = format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(&img.jpeg));
+                parts.push(json!({"type": "text", "text": img.caption}));
+                parts.push(json!({"type": "image_url", "image_url": {"url": url}}));
+            }
+            json!({"role": m.role, "content": parts})
+        })
+        .collect();
+    json!({"model": model, "messages": messages})
+}
+
 /// How long dictation waits on the provider before it pastes the local text.
 pub const POLISH_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -209,6 +242,12 @@ const POLISH_PROMPT: &str = "You tidy dictated speech. Fix grammar and punctuati
 /// A per-feature switch ("summaries" and so on); off until the user turns it on.
 pub fn enabled(db: &Connection, feature: &str) -> bool {
     settings::get(db, &format!("ai_{feature}")).as_deref() == Some("true")
+}
+
+/// Whether screenshots may go to the provider for `feature` ("relevance" or "shots"): its Experimental toggle is on
+/// and the model's "supports images" box is checked. Off unless both are, so images never go out by default.
+pub fn images_on(db: &Connection, feature: &str, model: &str) -> bool {
+    enabled(db, feature) && per_model(db, "img", model).as_deref() == Some("true")
 }
 
 /// What the Settings page and the Summary tab render; the shape is the contract with ui/ai.js.
@@ -225,6 +264,10 @@ pub struct State {
     summaries: bool,
     folders: bool,
     chat: bool,
+    /// The model's "supports images" box, and the two Experimental toggles that use it.
+    images: bool,
+    relevance: bool,
+    shots: bool,
     /// Why a request cannot be sent yet.
     problem: Option<&'static str>,
     /// Whether a request would leave this Mac; drives the "sends text off this Mac" pill.
@@ -235,9 +278,16 @@ pub struct State {
 pub fn ai_state(app: AppHandle) -> State {
     let db = app.state::<Db>();
     let c = Config::load(&db.0);
-    let (summaries, folders, chat) = {
+    let (summaries, folders, chat, relevance, shots, images) = {
         let conn = db.0.lock().unwrap();
-        (enabled(&conn, "summaries"), enabled(&conn, "folders"), enabled(&conn, "chat"))
+        (
+            enabled(&conn, "summaries"),
+            enabled(&conn, "folders"),
+            enabled(&conn, "chat"),
+            enabled(&conn, "relevance"),
+            enabled(&conn, "shots"),
+            per_model(&conn, "img", &c.model).as_deref() == Some("true"),
+        )
     };
     State {
         presets: PRESETS,
@@ -249,6 +299,9 @@ pub fn ai_state(app: AppHandle) -> State {
         summaries,
         folders,
         chat,
+        images,
+        relevance,
+        shots,
         problem: c.problem(),
         off_device: c.off_device(),
         model: c.model,
@@ -338,6 +391,34 @@ pub mod stub {
         assert!(!text.contains(".mp4") && !text.contains("window.mp4") && !text.contains("\"video"), "{text}");
     }
 
+    /// For a request that may carry screenshots (the experimental toggle is on): the same checks as `assert_text_only`,
+    /// except that the last message's content may be parts, and the only non-text part allowed is an inline JPEG.
+    /// Returns the JPEG bytes in order. Video and file parts, and any extra key, still fail.
+    pub fn assert_images_only(body: &str) -> Vec<Vec<u8>> {
+        use base64::Engine;
+        let body: serde_json::Value = serde_json::from_str(body).unwrap();
+        let keys: Vec<_> = body.as_object().unwrap().keys().map(String::as_str).collect();
+        assert_eq!(keys, ["messages", "model"], "unexpected parts in the request: {body}");
+        let mut jpegs = vec![];
+        for m in body["messages"].as_array().unwrap() {
+            assert_eq!(m.as_object().unwrap().len(), 2, "a message with more than a role and content: {m}");
+            let Some(parts) = m["content"].as_array() else { assert!(m["content"].is_string(), "not text or parts: {m}"); continue };
+            for p in parts {
+                match p["type"].as_str() {
+                    Some("text") => assert!(p["text"].is_string()),
+                    Some("image_url") => {
+                        let url = p["image_url"]["url"].as_str().unwrap();
+                        let data = url.strip_prefix("data:image/jpeg;base64,").unwrap_or_else(|| panic!("not an inline JPEG: {url}"));
+                        jpegs.push(base64::engine::general_purpose::STANDARD.decode(data).unwrap());
+                    }
+                    other => panic!("a {other:?} part in the request: {p}"),
+                }
+            }
+        }
+        assert!(!body.to_string().contains(".mp4"), "{body}");
+        jpegs
+    }
+
     /// A chat-completions reply carrying `text`, with token counts.
     pub fn ok(text: &str) -> (u16, String) {
         (200, format!(r#"{{"choices":[{{"message":{{"content":{text:?}}}}}],"usage":{{"prompt_tokens":1000,"completion_tokens":200}}}}"#))
@@ -389,6 +470,32 @@ mod tests {
         assert!(result.is_err(), "the check must reject a message with a video part");
         let result = std::panic::catch_unwind(|| stub::assert_text_only(r#"{"model":"m","messages":[],"video":"/x/window.mp4"}"#));
         assert!(result.is_err(), "the check must reject a video beside the messages");
+    }
+
+    #[test]
+    fn images_ride_on_the_last_message_with_a_caption_and_text_only_stays_text_only() {
+        let (base, seen) = stub::serve(vec![stub::ok("ok"), stub::ok("ok")]);
+        let images = [Image { caption: "Screenshot at 00:05".into(), jpeg: b"abc".to_vec() }];
+        config(&base, None).complete_images(&user("hi"), &images, Duration::from_secs(5)).unwrap();
+        let body = seen.recv().unwrap().body;
+        assert_eq!(stub::assert_images_only(&body), [b"abc".to_vec()]);
+        assert!(std::panic::catch_unwind(|| stub::assert_text_only(&body)).is_err(), "the text-only check must reject images");
+        let v: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["messages"][0]["content"], "Be brief."); // earlier messages stay plain text
+        assert_eq!(v["messages"][1]["content"][1]["text"], "Screenshot at 00:05");
+        // No images: the body is the plain one.
+        config(&base, None).complete_images(&user("hi"), &[], Duration::from_secs(5)).unwrap();
+        stub::assert_text_only(&seen.recv().unwrap().body);
+    }
+
+    #[test]
+    fn images_are_on_only_with_the_toggle_and_the_models_box() {
+        let db = stub::db();
+        assert!(!images_on(&db, "shots", "m"));
+        settings::set(&db, "ai_shots", "true").unwrap();
+        assert!(!images_on(&db, "shots", "m"));
+        settings::set(&db, "ai_img:m", "true").unwrap();
+        assert!(images_on(&db, "shots", "m") && !images_on(&db, "relevance", "m") && !images_on(&db, "shots", "n"));
     }
 
     #[test]

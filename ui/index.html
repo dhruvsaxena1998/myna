@@ -72,6 +72,7 @@ const OFF_DEVICE = {
   uhm: "Sends a license check to Desert Ant when the model loads. No audio or text.",
 };
 
+const NEEDS_IMAGES = "Check “Model accepts images” for your model under AI provider first, or nothing is sent.";
 const PAGES = [["modules", "Modules", "gear"], ["dictation", "Dictation", "mic"], ["meetings", "Meetings", "list"], ["models", "Models", "dl"], ["ai", "AI provider", "spark"], ["experimental", "Experimental", "lock"]];
 const KEY_SYMBOLS = { Alt: "⌥", Option: "⌥", Control: "⌃", Ctrl: "⌃", Shift: "⇧", Super: "⌘", Command: "⌘", Cmd: "⌘" };
 const fmtKey = (k) => k.split("+").map((p) => KEY_SYMBOLS[p] || p.replace(/^(Key|Digit)/, "")).join("");
@@ -195,6 +196,8 @@ async function experimentalPage(page) {
   const pair = (id, keys, what) => `<div class="r pair">${["Dictation", "Meetings"].map((name, i) => `<label>${sw(id + i, keys[i], what + " for " + name)} ${name}</label>`).join("")}</div>`;
   const on = {};
   for (const k of ["uhm_dictation", "uhm_meetings", "ai_cleanup_dictation", "ai_cleanup_meetings"]) on[k] = (await get(k)) === "true";
+  const imgPill = st.off_device ? ' <span class="pill alert">sends images off this Mac</span>' : "";
+  const need = (on) => on && !st.images;
   const size = `<span class="size">${fmtSize(m.size)}</span>`;
   const state = m.unavailable ? '<span class="pill alert">Unavailable</span>'
     : m.downloading !== null ? `${size}<span class="prog" role="progressbar" aria-label="Downloading Uhm" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(100 * m.downloading / m.size)}"><i style="width:${(100 * m.downloading / m.size).toFixed(1)}%"></i></span><button class="btn quiet" data-act="cancel_model">Cancel</button>`
@@ -204,9 +207,14 @@ async function experimentalPage(page) {
 <div class="prow single"><div class="l row">Uhm model <span class="xs">by Desert Ant</span> <span class="pill alert">Off-device</span></div><div class="r">${state}</div><div class="d${m.error || m.unavailable ? " err" : ""}">${esc(m.error || m.unavailable || OFF_DEVICE.uhm)}</div></div>
 <div class="prow"><div class="l">Uhm filler detection</div><div class="d">Finds “uh” and “um” in the audio itself and silences them before transcription. Needs the model above. Runs on this Mac.</div>${pair("uhm", [on.uhm_dictation, on.uhm_meetings], "Uhm")}</div>
 <div class="prow"><div class="l row">LLM cleanup${st.off_device ? ' <span class="pill alert">sends text off this Mac</span>' : ""}</div><div class="d${st.problem ? " err" : ""}">${esc(st.problem || "Sends the text to your AI provider to tidy grammar and phrasing. Falls back to the local text after 3 s.")}</div>${pair("llm", [on.ai_cleanup_dictation, on.ai_cleanup_meetings], "LLM cleanup")}</div>
-</div><p class="note">Off by default. Each can be on for Dictation and Meetings separately. In Dictation the order is Uhm, speech to text, filler rules, LLM, then your dictionary. Meetings run Uhm and the LLM only, and only send lines that are in the transcript.</p></section>${on.uhm_dictation || on.uhm_meetings ? '<section class="group"><div class="box"><div class="prow single"><div class="l s">Powered by Desert Ant Labs</div></div></div></section>' : ""}`;
+</div><p class="note">Off by default. Each can be on for Dictation and Meetings separately. In Dictation the order is Uhm, speech to text, filler rules, LLM, then your dictionary. Meetings run Uhm and the LLM only, and only send lines that are in the transcript.</p></section>
+<section class="group"><h2>Screenshots</h2><div class="box">
+<div class="prow"><div class="l row">AI screenshot relevance${imgPill}</div><div class="d${need(st.relevance) ? " err" : ""}">${esc(need(st.relevance) ? NEEDS_IMAGES : "While recording, asks your AI provider whether a new screenshot adds anything over the last one kept, and keeps it only on yes. The perceptual-hash check always runs first. Only sent while your mic is live.")}</div><div class="r">${sw("rel", st.relevance, "AI screenshot relevance")}</div></div>
+<div class="prow"><div class="l row">Include screenshots in summaries and chat${imgPill}</div><div class="d${need(st.shots) ? " err" : ""}">${esc(need(st.shots) ? NEEDS_IMAGES : "Attaches up to 20 downscaled kept screenshots to each summary and chat request, only from stretches of the transcript that are shown.")}</div><div class="r">${sw("shots", st.shots, "Include screenshots in summaries and chat")}</div></div>
+</div><p class="note">Off by default. Both need “Model accepts images” checked for your model under AI provider. Window video is never sent.</p></section>${on.uhm_dictation || on.uhm_meetings ? '<section class="group"><div class="box"><div class="prow single"><div class="l s">Powered by Desert Ant Labs</div></div></div></section>' : ""}`;
   ["uhm_dictation", "uhm_meetings"].forEach((k, i) => { page.querySelector("#uhm" + i).onclick = (e) => set(k, flip(e.currentTarget)); });
   ["ai_cleanup_dictation", "ai_cleanup_meetings"].forEach((k, i) => { page.querySelector("#llm" + i).onclick = (e) => set(k, flip(e.currentTarget)); });
+  [["rel", "ai_relevance"], ["shots", "ai_shots"]].forEach(([id, k]) => { page.querySelector("#" + id).onclick = (e) => set(k, flip(e.currentTarget)).then(() => experimentalPage(page)); });
   page.querySelectorAll("[data-act]").forEach((b) => { b.onclick = async () => { await invoke(b.dataset.act, { id: "uhm" }); experimentalPage(page); }; });
   if (m.downloading !== null) pollTimer = setTimeout(() => page.isConnected && experimentalPage(page), 500);
 }

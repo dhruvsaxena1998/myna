@@ -3,7 +3,7 @@
 <title>Myna UI with a mocked backend</title>
 <!-- Dev harness: runs the real ui/index.html in a plain browser, with mock.js standing in for the Tauri backend.
      cd ui && python3 -m http.server 8765, then open http://localhost:8765/dev/#meetings/1 (or #meetings, or #settings).
-     Dark mode follows the browser. See mock.js for the query switches (?tab=chat, ?window=100, ?local, ?noprice, ?off, ?unready, ?empty). -->
+     Dark mode follows the browser. See mock.js for the query switches (?tab=chat, ?window=100, ?local, ?noprice, ?off, ?unready, ?empty, ?images, ?shots). -->
 <script src="mock.js"></script>
 <script>
 // Fetch the real page and write it over this one, so index.html stays the only copy of the app's script.

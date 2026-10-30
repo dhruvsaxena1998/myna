@@ -12,6 +12,7 @@ pub mod summary;
 mod track;
 mod transcript;
 mod video;
+mod vision;
 
 use crate::{dictation::{Transcriber, Utterance}, permissions, with_hushed, Db};
 use rusqlite::Connection;
