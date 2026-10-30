@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "sites": {
+    "meet": [
+      { "selector": "button[data-is-muted][aria-label*=\"microphone\" i]", "attr": "data-is-muted", "muted": "true", "live": "false" }
+    ],
+    "teams": [
+      { "selector": "button[data-tid=\"toggle-mute\"]", "attr": "aria-label", "muted": "Unmute mic", "live": "Mute mic" },
+      { "selector": "button#mic-button", "attr": "aria-pressed", "muted": "true", "live": "false" }
+    ]
+  }
+}
