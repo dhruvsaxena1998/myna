@@ -354,7 +354,7 @@ async function meetings() {
     row.className = "seg-row";
     row.dataset.ms = s.start_ms;
     const me = s.speaker === "me";
-    const mark = s.included ? ` <span class="pill neutral">Included</span><button class="btn quiet" data-undo="${s.id}">Undo</button>` : "";
+    const mark = s.included ? ` <span class="pill neutral">${s.auto ? "Auto-included" : "Included"}</span><button class="btn quiet" data-undo="${s.id}">Undo</button>` : "";
     row.innerHTML = `<div class="who${me ? " me" : ""}">${me ? "Me" : "Them"}<span class="t">${clock(s.start_ms / 1000)}</span></div><p class="said">${esc(s.text)}${mark}</p>`;
     return row;
   }

@@ -52,7 +52,7 @@ pub struct Reply {
 // The key lives in the macOS Keychain, one item per preset so switching presets never sends one
 // provider's key to another provider's host.
 #[cfg(target_os = "macos")]
-mod keychain {
+pub(crate) mod keychain {
     use security_framework::passwords::{delete_generic_password, get_generic_password, set_generic_password};
     const SERVICE: &str = "com.dhruvsaxena.myna.ai";
     const NOT_FOUND: i32 = -25300; // errSecItemNotFound
@@ -72,7 +72,7 @@ mod keychain {
 }
 
 #[cfg(not(target_os = "macos"))]
-mod keychain {
+pub(crate) mod keychain {
     pub fn get(_: &str) -> Option<String> { None }
     pub fn set(_: &str, _: &str) -> Result<(), String> { Err("The Keychain is only on macOS".into()) }
     pub fn remove(_: &str) -> Result<(), String> { Ok(()) }
@@ -80,6 +80,16 @@ mod keychain {
 
 fn preset(id: Option<&str>) -> &'static Preset {
     PRESETS.iter().find(|p| Some(p.id) == id).unwrap_or(&PRESETS[0])
+}
+
+/// False only for a loopback address; an unreadable URL counts as leaving.
+pub fn is_off_device(base_url: &str) -> bool {
+    match Url::parse(base_url).ok().and_then(|u| u.host().map(|h| h.to_owned())) {
+        Some(Host::Domain(d)) => d != "localhost",
+        Some(Host::Ipv4(ip)) => !ip.is_loopback(),
+        Some(Host::Ipv6(ip)) => !ip.is_loopback(),
+        None => true,
+    }
 }
 
 /// Price and context window are per model: they live in settings as `ai_in:<model>` and so on.
@@ -126,12 +136,7 @@ impl Config {
 
     /// Whether a request would leave this Mac: false only for a loopback host such as local Ollama.
     pub fn off_device(&self) -> bool {
-        match Url::parse(&self.base_url).ok().and_then(|u| u.host().map(|h| h.to_owned())) {
-            Some(Host::Domain(d)) => d != "localhost",
-            Some(Host::Ipv4(ip)) => !ip.is_loopback(),
-            Some(Host::Ipv6(ip)) => !ip.is_loopback(),
-            None => true,
-        }
+        is_off_device(&self.base_url)
     }
 
     /// The one request that leaves for a provider: a model and text messages, nothing else. Window video is never

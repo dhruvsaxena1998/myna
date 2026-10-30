@@ -4,6 +4,7 @@ use super::{
     mute::{self, Event, State},
     store::{self, Meeting, Segment, ME, THEM},
     track::{read_track, RATE},
+    triage,
 };
 use rusqlite::Connection;
 use std::{ops::Range, path::Path, sync::Mutex};
@@ -112,6 +113,12 @@ pub fn run(db: &Mutex<Connection>, audio: &Path, id: i64, t: &mut dyn Transcribe
         (store::mute_events(&conn, id).map_err(|e| e.to_string())?, mute::always_record(&conn, id))
     };
     let mut segments = assemble(me_lines, them_lines, &mutes, always);
+    // Experimental triage first, so a line it includes also gets the LLM pass below.
+    if segments.iter().any(|s| !s.shown()) {
+        if let Some(provider) = t.decision_provider() {
+            triage::pass(&mut segments, provider);
+        }
+    }
     // The optional LLM pass, outside the database lock. Only lines that are in the transcript go to a provider, and
     // the first one it cannot do (slow, down) ends the pass, so a dead network costs one timeout, not one per line.
     for s in segments.iter_mut().filter(|s| s.shown()) {
@@ -485,6 +492,48 @@ mod tests {
         let texts: Vec<_> = store::segments(&db.lock().unwrap(), id).unwrap().into_iter().map(|s| s.text).collect();
         assert_eq!(texts, ["hello from me", "hi from them"]);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    struct Yes;
+    impl crate::decision::DecisionProvider for Yes {
+        fn decide(&self, _: &str, _: &str) -> Result<bool, String> {
+            Ok(true)
+        }
+    }
+    /// Says yes to everything, and counts the times the pass asks for its provider.
+    struct Triaging(Yes, std::cell::Cell<usize>);
+    impl Transcriber for Triaging {
+        fn transcribe(&mut self, s: &[f32]) -> Result<String, String> {
+            Scripted.transcribe(s)
+        }
+        fn transcribe_timed(&mut self, s: &[f32]) -> Result<Vec<Utterance>, String> {
+            Scripted.transcribe_timed(s)
+        }
+        fn decision_provider(&self) -> Option<&dyn crate::decision::DecisionProvider> {
+            self.1.set(self.1.get() + 1);
+            Some(&self.0)
+        }
+    }
+
+    #[test]
+    fn triage_includes_a_muted_line_and_the_provider_is_only_set_up_when_one_exists() {
+        let (db, root, id) = fixture("triage", 0.2, &["mic.wav", "system.wav"]);
+        store::add_mute_event(&db.lock().unwrap(), id, &off(0)).unwrap();
+        let mut t = Triaging(Yes, Default::default());
+        run(&db, &root, id, &mut t).unwrap();
+        let got = store::segments(&db.lock().unwrap(), id).unwrap();
+        let me = got.iter().find(|s| s.speaker == ME).unwrap();
+        assert_eq!((me.mute, me.included, me.auto, me.shown()), (State::Muted, true, true, true));
+        assert_eq!(t.1.get(), 1);
+
+        // A live mic has nothing collapsed, so Laya would never be started for it.
+        let (db, root2, id) = fixture("triage-none", 0.2, &["mic.wav", "system.wav"]);
+        store::add_mute_event(&db.lock().unwrap(), id, &live(0)).unwrap();
+        let mut t = Triaging(Yes, Default::default());
+        run(&db, &root2, id, &mut t).unwrap();
+        assert_eq!(t.1.get(), 0);
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&root2);
     }
 
     #[test]
