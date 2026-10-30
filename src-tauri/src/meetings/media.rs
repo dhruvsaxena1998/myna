@@ -59,7 +59,7 @@ pub fn delete_one(db: &Connection, dirs: Dirs, id: i64) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::meetings::{shots, store::Segment, summary};
+    use crate::meetings::{chat, shots, store::Segment, summary};
     use std::path::PathBuf;
 
     struct Disk {
@@ -102,6 +102,7 @@ mod tests {
         store::init(&c).unwrap();
         shots::init(&c).unwrap();
         summary::init(&c).unwrap();
+        chat::init(&c).unwrap();
         c
     }
 
@@ -116,10 +117,14 @@ mod tests {
         }
         c.execute("INSERT INTO summaries VALUES (?1, 'The summary.', 'p', 'm', 'x', 1, 1, NULL, 0, 1)", [id]).unwrap();
         c.execute("INSERT INTO screenshots VALUES (?1, 0, '0.jpg')", [id]).unwrap();
+        c.execute("INSERT INTO chat_turns (meeting_id, question, answer, model, tokens_in, tokens_out) VALUES (?1, 'Who owns it?', 'Priya.', 'm', 1, 1)", [id]).unwrap();
         id
     }
 
+    /// What must survive: transcript segments, whether the summary and chat are still there, and screenshot rows.
     fn kept(c: &Connection, id: i64) -> (usize, bool, i64) {
+        let chat: i64 = c.query_row("SELECT COUNT(*) FROM chat_turns WHERE meeting_id = ?1", [id], |r| r.get(0)).unwrap();
+        assert_eq!(chat, 1, "meeting {id}'s chat was deleted");
         (
             store::segments(c, id).unwrap().len(),
             c.query_row("SELECT COUNT(*) FROM summaries WHERE meeting_id = ?1", [id], |r| r.get::<_, i64>(0)).unwrap() == 1,
