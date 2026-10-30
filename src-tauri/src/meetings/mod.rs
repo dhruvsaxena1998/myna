@@ -2,6 +2,7 @@
 //! keep the result in SQLite, export it as Markdown or text.
 mod capture;
 pub mod chat;
+mod media;
 mod screen;
 pub(crate) mod mute;
 pub(crate) mod shots;
@@ -11,6 +12,7 @@ pub mod summary;
 mod track;
 mod transcript;
 mod triage;
+mod video;
 
 use crate::{decision::DecisionProvider, dictation::{Transcriber, Utterance}, permissions, with_hushed, Db};
 use rusqlite::Connection;
@@ -27,6 +29,7 @@ pub const TRAY_ID: &str = "main";
 
 pub struct AudioDir(PathBuf);
 pub struct ScreenshotsDir(PathBuf);
+pub struct VideoDir(PathBuf);
 
 struct Active {
     id: i64,
@@ -40,9 +43,10 @@ struct Active {
 struct Recorder(Mutex<Option<Active>>);
 
 pub fn setup(app: &tauri::App, root: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let (audio, screenshots) = (root.join("audio"), root.join("screenshots"));
+    let (audio, screenshots, video) = (root.join("audio"), root.join("screenshots"), root.join("video"));
     fs::create_dir_all(&audio)?;
     fs::create_dir_all(&screenshots)?;
+    fs::create_dir_all(&video)?;
     let queued = {
         let db = app.state::<Db>();
         let conn = db.0.lock().unwrap();
@@ -54,10 +58,16 @@ pub fn setup(app: &tauri::App, root: &Path) -> Result<(), Box<dyn std::error::Er
     };
     app.manage(AudioDir(audio));
     app.manage(ScreenshotsDir(screenshots));
+    app.manage(VideoDir(video));
     app.manage(Recorder::default());
     for id in queued {
         spawn_transcription(app.handle(), id);
     }
+    let handle = app.handle().clone();
+    std::thread::spawn(move || loop {
+        sweep(&handle);
+        std::thread::sleep(RETENTION_EVERY);
+    });
     let handle = app.handle().clone();
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_secs(1));
@@ -69,6 +79,18 @@ pub fn setup(app: &tauri::App, root: &Path) -> Result<(), Box<dyn std::error::Er
         }
     });
     Ok(())
+}
+
+/// How often the retention rule runs, besides at launch. Changing the setting does not run it: a select that fires
+/// on every arrow key must not delete anything on the way to the value the user means.
+const RETENTION_EVERY: Duration = Duration::from_secs(3600);
+
+/// Deletes the audio, video and screenshots of finished meetings older than the retention setting. Never touches
+/// transcripts, summaries or chats.
+fn sweep(app: &AppHandle) {
+    let Some(days) = media::retention_days(crate::setting(app, "meetings_retention_days")) else { return };
+    let (audio, frames, video) = (app.state::<AudioDir>(), app.state::<ScreenshotsDir>(), app.state::<VideoDir>());
+    media::sweep(&app.state::<Db>().0.lock().unwrap(), [&audio.0, &video.0, &frames.0], now(), days);
 }
 
 /// Quit path: stop capturing so both files are closed; the next launch transcribes them.
@@ -177,7 +199,8 @@ fn begin(app: &AppHandle) -> Result<Active, String> {
     })?;
     let _ = store::set_source(&db.0.lock().unwrap(), id, capture.app.as_deref(), capture.note.as_deref());
     let frames = app.state::<ScreenshotsDir>().0.join(id.to_string());
-    Ok(Active { id, started, _capture: capture, _shots: shots::Screenshots::start(app, id, frames, started) })
+    let video = app.state::<VideoDir>().0.join(id.to_string()).join("window.mp4");
+    Ok(Active { id, started, _capture: capture, _shots: shots::Screenshots::start(app, id, frames, video, started) })
 }
 
 fn clear_tray_title(app: &AppHandle) {
@@ -269,20 +292,51 @@ pub struct Detail {
     shots_taken: usize,
     /// The track files on disk (mic, and system audio when it was tapped), for the player.
     audio: Vec<String>,
+    /// The window video, when one was recorded and is still on disk.
+    video: Option<String>,
+    /// What the meeting's audio, video and screenshots weigh on disk; 0 once they are deleted.
+    media_bytes: u64,
 }
 
 #[tauri::command]
-pub fn get_meeting(db: tauri::State<Db>, audio: tauri::State<AudioDir>, frames: tauri::State<ScreenshotsDir>, id: i64) -> Result<Detail, String> {
+pub fn get_meeting(
+    db: tauri::State<Db>,
+    audio: tauri::State<AudioDir>,
+    frames: tauri::State<ScreenshotsDir>,
+    video: tauri::State<VideoDir>,
+    id: i64,
+) -> Result<Detail, String> {
     let conn = db.0.lock().unwrap();
     let (shots, shots_taken) = shots::list(&conn, id, &frames.0.join(id.to_string())).map_err(|e| e.to_string())?;
     let tracks = ["mic.wav", "system.wav"].map(|f| audio.0.join(id.to_string()).join(f));
+    let clip = video.0.join(id.to_string()).join("window.mp4");
     Ok(Detail {
         meeting: store::get(&conn, id).map_err(|e| e.to_string())?,
         segments: store::segments(&conn, id).map_err(|e| e.to_string())?,
         shots,
         shots_taken,
         audio: tracks.into_iter().filter(|p| p.exists()).map(|p| p.display().to_string()).collect(),
+        video: clip.exists().then(|| clip.display().to_string()),
+        media_bytes: media::size([&audio.0, &video.0, &frames.0], id),
     })
+}
+
+/// Deletes one meeting's audio, video and screenshots. The transcript, summary and chat stay.
+#[tauri::command]
+pub fn delete_media(
+    db: tauri::State<Db>,
+    audio: tauri::State<AudioDir>,
+    frames: tauri::State<ScreenshotsDir>,
+    video: tauri::State<VideoDir>,
+    id: i64,
+) -> Result<(), String> {
+    media::delete_one(&db.0.lock().unwrap(), [&audio.0, &video.0, &frames.0], id)
+}
+
+/// What an hour of window video costs on disk, for Settings to show before it is picked.
+#[tauri::command]
+pub fn video_estimate() -> String {
+    video::hour_estimate()
 }
 
 /// Windows to offer as the screenshot target. Async: ScreenCaptureKit answers on its own queue.

@@ -289,7 +289,9 @@ mod tests {
         // 1000 in at $0.25 and 200 out at $2.00 per million; the stub is on loopback, so nothing left the Mac.
         assert_eq!((s.tokens_in, s.tokens_out, s.cost, s.off_device), (1000, 200, Some(0.00065), false));
 
-        let req: serde_json::Value = serde_json::from_str(&seen.recv().unwrap().body).unwrap();
+        let body = seen.recv().unwrap().body;
+        stub::assert_text_only(&body);
+        let req: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!((req["messages"][0]["role"].as_str(), req["messages"][0]["content"].as_str()), (Some("system"), Some("Bullets only")));
         let sent = req["messages"][1]["content"].as_str().unwrap();
         assert!(sent.contains("[00:00] Me: Ship it Friday.") && sent.contains("Them: Agreed, Priya owns the notes."), "{sent}");

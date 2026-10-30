@@ -139,6 +139,9 @@ impl Config {
         is_off_device(&self.base_url)
     }
 
+    /// The one request that leaves for a provider: a model and text messages, nothing else. Window video is never
+    /// sent, so no path from a recording reaches this body (`Message::content` is a String, and the tests in
+    /// this module, summary.rs and suggest.rs check the wire).
     pub fn complete(&self, messages: &[Message]) -> Result<Reply, String> {
         self.complete_within(messages, Duration::from_secs(180)) // long transcripts take a while to answer
     }
@@ -326,6 +329,20 @@ pub mod stub {
         c
     }
 
+    /// Asserts a request body is only a model and text messages: no video, image or file parts, whatever the meeting
+    /// had on disk. Every request builder's test runs its stub request through this.
+    pub fn assert_text_only(body: &str) {
+        let body: serde_json::Value = serde_json::from_str(body).unwrap();
+        let keys: Vec<_> = body.as_object().unwrap().keys().map(String::as_str).collect();
+        assert_eq!(keys, ["messages", "model"], "unexpected parts in the request: {body}");
+        for m in body["messages"].as_array().unwrap() {
+            assert_eq!(m.as_object().unwrap().len(), 2, "a message with more than a role and text: {m}");
+            assert!(m["role"].is_string() && m["content"].is_string(), "not plain text: {m}");
+        }
+        let text = body.to_string();
+        assert!(!text.contains(".mp4") && !text.contains("window.mp4") && !text.contains("\"video"), "{text}");
+    }
+
     /// A chat-completions reply carrying `text`, with token counts.
     pub fn ok(text: &str) -> (u16, String) {
         (200, format!(r#"{{"choices":[{{"message":{{"content":{text:?}}}}}],"usage":{{"prompt_tokens":1000,"completion_tokens":200}}}}"#))
@@ -364,13 +381,28 @@ mod tests {
         assert_eq!(body["model"], "m");
         assert_eq!(body["messages"][0]["role"], "system");
         assert_eq!(body["messages"][1]["content"], "hi");
+        stub::assert_text_only(&req.body);
+    }
+
+    #[test]
+    fn a_request_never_carries_video_even_when_the_transcript_mentions_one() {
+        // Text that talks about a recording is still just text; the body has no other part for a video to ride in.
+        let (base, seen) = stub::serve(vec![stub::ok("ok")]);
+        config(&base, None).complete(&user("We watched the recording of the call.")).unwrap();
+        stub::assert_text_only(&seen.recv().unwrap().body);
+        let result = std::panic::catch_unwind(|| stub::assert_text_only(r#"{"model":"m","messages":[{"role":"user","content":[{"type":"video","url":"/x/window.mp4"}]}]}"#));
+        assert!(result.is_err(), "the check must reject a message with a video part");
+        let result = std::panic::catch_unwind(|| stub::assert_text_only(r#"{"model":"m","messages":[],"video":"/x/window.mp4"}"#));
+        assert!(result.is_err(), "the check must reject a video beside the messages");
     }
 
     #[test]
     fn polish_returns_the_tidied_text() {
         let (base, seen) = stub::serve(vec![stub::ok("Ship it.")]);
         assert_eq!(config(&base, None).polish("um ship it", POLISH_TIMEOUT).as_deref(), Some("Ship it."));
-        let body: Value = serde_json::from_str(&seen.recv().unwrap().body).unwrap();
+        let sent = seen.recv().unwrap().body;
+        stub::assert_text_only(&sent); // the cleanup path is a provider request too: text only, never video
+        let body: Value = serde_json::from_str(&sent).unwrap();
         assert_eq!(body["messages"][1]["content"], "um ship it");
     }
 
