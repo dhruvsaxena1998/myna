@@ -2,7 +2,7 @@
 // answered from memory. Nothing here talks to the network or the disk. State resets on reload.
 // Query switches: ?window=N sets the model's context window, ?noprice blanks the prices, ?local is a local
 // provider (no off-device pill), ?off turns chat off, ?unready has no API key, ?slow makes answers take 3 s,
-// ?tab=chat opens that inspector tab, ?empty starts with no chat turns. A question containing "fail" gets an error.
+// ?ext shows the browser extension as connected, ?tab=chat opens that inspector tab, ?empty starts with no chat turns. A question containing "fail" gets an error.
 (() => {
   const q = new URLSearchParams(location.search);
   const ai = {
@@ -38,6 +38,8 @@
   };
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const commands = {
+    mute_hotkey_status: () => ({ key: "Alt+Shift+M", error: null }),
+    extension_state: () => ({ token: "9f3a1c0de47b58a2c61e0b7d4f93a8e5", port: 47615, connected: q.has("ext"), site: q.has("ext") ? "Google Meet" : null }),
     list_meetings: () => [meeting],
     list_folders: () => [{ id: 1, name: "Acme" }],
     get_meeting: () => ({ meeting, segments, shots: [], shots_taken: 0, audio: [] }),
