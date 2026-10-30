@@ -173,7 +173,8 @@ pub fn tray_icon(recording: bool) -> tauri::image::Image<'static> {
     tauri::image::Image::from_bytes(png).expect("bundled tray icon")
 }
 
-/// The tray glyph, and the right-click fallback menu for when the popover page won't load. Stop shows only while recording.
+/// The tray glyph, and the right-click fallback menu for when the popover page won't load. Stop shows while recording,
+/// Start otherwise if Meetings is on.
 pub fn set_tray(app: &AppHandle, recording: bool) {
     use tauri::menu::{Menu, MenuItem};
     let build = || -> tauri::Result<Menu<tauri::Wry>> {
@@ -197,7 +198,7 @@ pub fn set_tray(app: &AppHandle, recording: bool) {
 /// Rebuilds the fallback menu, after Meetings is switched on or off.
 pub fn sync_tray_menu(app: &AppHandle) {
     let recording = app.state::<Recorder>().0.lock().unwrap().is_some();
-    set_tray_menu(app, recording);
+    set_tray(app, recording);
 }
 
 /// A fallback-menu pick: "stop" only acts on a live recording and "start" only without one; the rest go
