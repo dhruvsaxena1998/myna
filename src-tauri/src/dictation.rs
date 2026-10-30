@@ -30,6 +30,12 @@ pub trait Transcriber: Send {
     fn polish(&self, _text: &str) -> Option<String> {
         None
     }
+
+    /// The experimental triage provider, asked about collapsed segments; None when triage is off or not ready.
+    /// Only the shared engine has one, and it starts it (Laya can take a while) on the first call.
+    fn decision_provider(&self) -> Option<&dyn crate::decision::DecisionProvider> {
+        None
+    }
 }
 
 /// Finds filler words in mono 16 kHz samples, as millisecond spans.

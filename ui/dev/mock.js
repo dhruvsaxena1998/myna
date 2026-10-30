@@ -2,6 +2,7 @@
 // answered from memory. Nothing here talks to the network or the disk. State resets on reload.
 // Query switches: ?window=N sets the model's context window, ?noprice blanks the prices, ?local is a local
 // provider (no off-device pill), ?off turns chat off, ?unready has no API key, ?slow makes answers take 3 s,
+// ?auto shows the muted line as included by triage, ?preset=jev|openai|custom|laya picks the decision preset, ?laya=none|installed|running|error is Laya's state,
 // ?ext shows the browser extension as connected, ?tab=chat opens that inspector tab, ?empty starts with no chat turns, ?nomedia has no audio, video or screenshots on disk. A question containing "fail" gets an error.
 (() => {
   const q = new URLSearchParams(location.search);
@@ -11,6 +12,14 @@
     input_price: q.has("noprice") ? null : 0.25, output_price: q.has("noprice") ? null : 2, context: q.has("window") ? Number(q.get("window")) : 400000,
     summaries: true, folders: false, chat: !q.has("off"), problem: q.has("unready") ? "Add an API key under AI provider in Settings." : null, off_device: !q.has("local"),
   };
+  const dpresets = [{ id: "laya", name: "Laya", base_url: "", wire: "jev", model: "" }, { id: "jev", name: "Jev", base_url: "https://api.jev.ai/v1", wire: "jev", model: "" }, { id: "openai", name: "OpenAI Decisions", base_url: "https://api.openai.com/v1", wire: "openai", model: "gpt-5-mini" }, { id: "custom", name: "Custom", base_url: "http://localhost:8000/v1", wire: "jev", model: "" }];
+  const laya = q.get("laya") || "none";
+  const dec = { preset: q.get("preset") || "laya", wire: "jev", base_url: "", model: "", has_key: false, triage: false, laya: { installed: laya === "installed" || laya === "running", step: null, error: laya === "error" ? "Laya's setup needs uv. Install it (brew install uv), then try again." : null, running: laya === "running", dir: "~/Library/Application Support/Myna/laya" } };
+  const decState = () => {
+    const p = dpresets.find((p) => p.id === dec.preset);
+    const problem = dec.preset === "laya" ? (dec.laya.installed ? null : "Set up Laya under Decision provider in Settings.") : dec.has_key || dec.preset === "custom" ? null : "Add an API key under Decision provider in Settings.";
+    return { presets: dpresets, ...dec, base_url: dec.base_url || p.base_url, problem, off_device: dec.preset === "laya" ? false : dec.preset !== "custom" || !/localhost|127\.0\.0\.1/.test(dec.base_url || p.base_url) };
+  };
   const meeting = { id: 1, title: "Design review · Meetings module", started_at: Math.floor(Date.now() / 1000) - 7200, duration_ms: 42 * 60000, app: "Google Meet · Chrome", note: null, status: "done", progress: 1, error: null, segments: 6, has_them: true, folder_id: null };
   const line = (speaker, start_ms, text, extra = {}) => ({ id: start_ms + 1, speaker, start_ms, end_ms: start_ms + 8000, text, mute: "unmuted", included: false, ...extra });
   const segments = [
@@ -19,7 +28,7 @@
     line("them", 772000, "Collapsed in the transcript and never sent to a provider unless you include it."),
     line("me", 790000, "Fine. Tom, can you measure the screenshot hash threshold on three recorded calls?"),
     line("them", 802000, "Yes, I'll take that."),
-    line("me", 900000, "Sorry, I was on mute. The budget number was forty thousand.", { mute: "muted" }),
+    line("me", 900000, "Sorry, I was on mute. The budget number was forty thousand.", { mute: "muted", included: q.has("auto"), auto: q.has("auto") }),
   ];
   const summary = { text: "## Summary\nThree-person review of the Meetings module.\n## Decisions\n- Muted and unknown segments are collapsed, never sent to a provider unless included.\n## Action items\n- Tom: measure the screenshot hash threshold on 3 recorded calls.", prompt: "Summarize this meeting.", model: "gpt-5-mini", provider: "OpenRouter", tokens_in: 9000, tokens_out: 120, cost: 0.002, off_device: true, generated_at: Math.floor(Date.now() / 1000) };
   const templates = [{ id: 1, name: "Summary", prompt: "Summarize this meeting.", builtin: true }];
@@ -42,6 +51,8 @@
     mute_hotkey_status: () => ({ key: "Alt+Shift+M", error: null }),
     extension_state: () => ({ token: "9f3a1c0de47b58a2c61e0b7d4f93a8e5", port: 47615, connected: q.has("ext"), site: q.has("ext") ? "Google Meet" : null }),
     list_meetings: () => [meeting],
+    list_models: () => ({ models: [{ id: "uhm", size: 47e6, status: "missing", downloading: null, error: null, unavailable: null }] }),
+    get_setting: ({ key }) => (key === "ai_triage" ? String(dec.triage) : null),
     list_folders: () => [{ id: 1, name: "Acme" }],
     get_meeting: () => ({ meeting, segments, shots: [], shots_taken: 0, audio: [], video: null, media_bytes }),
     delete_media: () => { media_bytes = 0; },
@@ -56,7 +67,16 @@
       turns.push({ question, answer: `You asked: “${question}”. In this mock the answer is canned.`, model: ai.model, tokens_in: 3400, tokens_out: 30 });
       return usage();
     },
-    set_setting: ({ key, value }) => { if (key === "ai_chat") ai.chat = value === "true"; if (key === "ai_summaries") ai.summaries = value === "true"; },
+    decision_state: () => decState(),
+    decision_set_key: ({ key }) => { dec.has_key = !!key.trim(); },
+    laya_setup: () => { dec.laya.error = null; dec.laya.step = "Creating the environment"; setTimeout(() => { dec.laya.step = "Installing Laya"; }, 1200); setTimeout(() => { dec.laya.step = null; dec.laya.installed = true; }, 2400); },
+    laya_stop: () => { dec.laya.running = false; },
+    set_setting: ({ key, value }) => {
+      if (key === "decision_preset") dec.preset = value;
+      if (key === "decision_wire") dec.wire = value;
+      if (key === "decision_base_url") dec.base_url = value;
+      if (key === "decision_model") dec.model = value;
+      if (key === "ai_triage") dec.triage = value === "true"; if (key === "ai_chat") ai.chat = value === "true"; if (key === "ai_summaries") ai.summaries = value === "true"; },
   };
   // The page is written in after this script runs, so wait for the tab to exist.
   const tab = q.get("tab");

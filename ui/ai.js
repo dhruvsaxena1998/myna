@@ -71,6 +71,73 @@ ${row("ai-ctx", "Context window (tokens)", text("ai-ctx", "num"))}
   fill();
 }
 
+// Decision provider: yes/no questions for the muted-segment triage, from Laya on this Mac or a hosted service.
+async function decision(page) {
+  let st = await invoke("decision_state");
+  const $ = (id) => page.querySelector("#" + id);
+  const row = (id, label, control, cls = "") => `<div class="prow single ${cls}" id="${id}-row"><label class="l" for="${id}">${label}</label><div class="r">${control}</div></div>`;
+  const text = (id, cls = "wide") => `<input class="field mono ${cls}" id="${id}" spellcheck="false" autocomplete="off">`;
+  page.innerHTML = `<section class="group"><h2>Decision model</h2><div class="box">
+${row("dec-preset", `Preset ${offMac}`, `<select class="field" id="dec-preset">${st.presets.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select>`)}
+${row("dec-wire", "Wire format", '<select class="field" id="dec-wire"><option value="jev">Jev</option><option value="openai">OpenAI Decisions</option></select>')}
+${row("dec-url", "Base URL", text("dec-url"))}
+<div class="prow single" id="dec-key-row"><label class="l" for="dec-key">API key</label><div class="r"><input class="field mono wide" id="dec-key" type="password" spellcheck="false" autocomplete="off"><span class="xs row">${icon("lock", "sm")} Keychain</span><button class="btn quiet" id="dec-key-rm">Remove</button></div><div class="d err" id="dec-err" role="alert" hidden></div></div>
+${row("dec-model", "Model", text("dec-model"))}
+</div><p class="note" id="dec-note"></p></section>
+<section class="group" id="laya"><h2>Laya on this Mac</h2><div class="box">
+<div class="prow"><div class="l">Local decision model</div><div class="d" id="laya-d"></div><div class="r" id="laya-r"></div></div>
+</div><p class="note">Myna installs Laya into its own Python environment with uv, starts it when triage needs it, and stops it when you quit. It listens on this Mac only, behind a key Myna generated.</p></section>`;
+
+  const put = (el, v) => { if (el !== document.activeElement) el.value = v ?? ""; };
+  function fill() {
+    const laya = st.preset === "laya", custom = st.preset === "custom";
+    put($("dec-preset"), st.preset);
+    $("dec-wire").value = st.wire;
+    put($("dec-url"), st.base_url);
+    put($("dec-model"), st.model);
+    $("dec-model").placeholder = st.presets.find((p) => p.id === st.preset).model;
+    $("dec-key").placeholder = st.has_key ? "Saved in Keychain" : custom ? "Optional for a local server" : "Paste your key";
+    $("dec-key-rm").hidden = !st.has_key;
+    $("dec-wire-row").hidden = !custom;
+    $("dec-url-row").hidden = laya;
+    $("dec-key-row").hidden = laya;
+    $("dec-model-row").hidden = laya || st.wire !== "openai";
+    page.querySelector(".offdev").hidden = !st.off_device;
+    $("dec-note").textContent = "Used for one thing right now: deciding whether a possibly-muted segment belongs in the conversation, when that experimental option is on.";
+    $("laya").hidden = !laya;
+    const l = st.laya;
+    $("laya-d").className = "d" + (l.error ? " err" : "");
+    $("laya-d").textContent = l.error || (l.step ? l.step + "…" : l.installed ? "Installed in " + l.dir : "Needs uv. Installs about 2 GB the first time.");
+    $("laya-r").innerHTML = l.step ? '<button class="btn" disabled>Setting up…</button>'
+      : l.installed ? `<span class="pill ok">${icon("check", "sm")} ${l.running ? "Running" : "Installed"}</span>${l.running ? '<button class="btn quiet" id="laya-stop">Stop</button>' : ""}`
+      : `<button class="btn" id="laya-setup">${l.error ? "Try again" : "Set up Laya"}</button>`;
+    if ($("laya-setup")) $("laya-setup").onclick = async () => { await invoke("laya_setup"); await sync(); };
+    if ($("laya-stop")) $("laya-stop").onclick = async () => { await invoke("laya_stop"); await sync(); };
+    clearTimeout(pollTimer);
+    if (l.step) pollTimer = setTimeout(() => page.isConnected && sync(), 1000);
+  }
+  const sync = async () => { st = await invoke("decision_state"); fill(); };
+  const save = async (key, value) => { await set(key, value); await sync(); };
+  const setKey = async (key) => {
+    const err = $("dec-err");
+    err.hidden = true;
+    try { await invoke("decision_set_key", { preset: st.preset, key }); } catch (e) { err.textContent = String(e); err.hidden = false; }
+    await sync();
+  };
+  $("dec-preset").onchange = async (e) => {
+    const p = st.presets.find((p) => p.id === e.target.value);
+    await set("decision_preset", p.id);
+    await set("decision_base_url", p.base_url);
+    await save("decision_model", "");
+  };
+  $("dec-wire").onchange = (e) => save("decision_wire", e.target.value);
+  $("dec-url").onchange = (e) => save("decision_base_url", e.target.value.trim());
+  $("dec-model").onchange = (e) => save("decision_model", e.target.value.trim());
+  $("dec-key").onchange = (e) => { const key = e.target.value; e.target.value = ""; setKey(key); };
+  $("dec-key-rm").onclick = () => setKey("");
+  fill();
+}
+
 const fmtTokens = (n) => (n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(n));
 const fmtCost = (c) => (c < 0.001 ? "<$0.001" : "$" + c.toFixed(c < 0.1 ? 3 : 2));
 const inline = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/`(.+?)`/g, "<code>$1</code>");
@@ -261,5 +328,5 @@ async function suggestion(box, m, accept) {
   } catch (e) { /* a failed or unreachable provider just means no chip */ }
 }
 
-return { settings, inspector, suggestion };
+return { settings, decision, inspector, suggestion };
 })();

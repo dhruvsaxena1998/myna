@@ -13,16 +13,17 @@ pub mod suggest;
 pub mod summary;
 mod track;
 mod transcript;
+mod triage;
 mod video;
 mod voiceprint;
 
-use crate::{dictation::{Transcriber, Utterance}, diarize, permissions, settings, with_hushed, Db, ModelsDir};
+use crate::{decision::DecisionProvider, dictation::{Transcriber, Utterance}, diarize, permissions, settings, with_hushed, Db, ModelsDir};
 use rusqlite::Connection;
 use serde::Serialize;
 use std::{
     fs,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Mutex, OnceLock},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Manager};
@@ -221,8 +222,9 @@ fn clear_tray_title(app: &AppHandle) {
 // One model in memory at a time: queued meetings wait their turn.
 static TRANSCRIBING: Mutex<()> = Mutex::new(());
 
-/// The shared speech engine, borrowed one call at a time so a long meeting never holds up dictation.
-struct Shared(AppHandle);
+/// The shared speech engine, borrowed one call at a time so a long meeting never holds up dictation. The slot holds
+/// the triage provider, set up the first time a meeting has a collapsed segment to ask about.
+struct Shared(AppHandle, OnceLock<Option<Box<dyn DecisionProvider>>>);
 
 impl Transcriber for Shared {
     fn transcribe(&mut self, audio: &[f32]) -> Result<String, String> {
@@ -233,6 +235,9 @@ impl Transcriber for Shared {
     }
     fn polish(&self, text: &str) -> Option<String> {
         crate::polish(&self.0, "meetings", text)
+    }
+    fn decision_provider(&self) -> Option<&dyn DecisionProvider> {
+        self.1.get_or_init(|| crate::decision::for_triage(&self.0)).as_deref()
     }
 }
 
@@ -245,7 +250,7 @@ fn spawn_transcription(app: &AppHandle, id: i64) {
             let picked = diarize::pick(settings::get(&db.0.lock().unwrap(), "model_diarization").as_deref(), |m| diarize::unavailable(m).is_some());
             diarize::load(picked, &app.state::<ModelsDir>().0)
         };
-        let result = transcript::run(&db.0, &audio.0, id, &mut Shared(app.clone()), diarizer);
+        let result = transcript::run(&db.0, &audio.0, id, &mut Shared(app.clone(), OnceLock::new()), diarizer);
         if let Err(e) = result {
             store::fail(&db.0.lock().unwrap(), id, &e);
         }
