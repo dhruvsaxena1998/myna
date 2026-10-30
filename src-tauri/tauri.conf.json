@@ -13,6 +13,12 @@
       "assetProtocol": { "enable": true, "scope": ["$DATA/Myna/screenshots/**", "$DATA/Myna/audio/**", "$DATA/Myna/video/**"] }
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "REPLACE_WITH_UPDATER_PUBKEY",
+      "endpoints": ["https://github.com/dhruvsaxena1998/myna/releases/latest/download/latest.json"]
+    }
+  },
   "bundle": {
     "active": true,
     "targets": ["app"],

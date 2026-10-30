@@ -3,7 +3,7 @@
 // Query switches: ?window=N sets the model's context window, ?noprice blanks the prices, ?local is a local
 // provider (no off-device pill), ?off turns chat off, ?unready has no API key, ?slow makes answers take 3 s,
 // ?auto shows the muted line as included by triage, ?preset=jev|openai|custom|laya picks the decision preset, ?laya=none|installed|running|error is Laya's state,
-// ?ext shows the browser extension as connected, ?tab=chat opens that inspector tab, ?empty starts with no chat turns, ?nomedia has no audio, video or screenshots on disk. A question containing "fail" gets an error.
+// ?upd offers an update and ?updfail fails the check, ?ext shows the browser extension as connected, ?tab=chat opens that inspector tab, ?empty starts with no chat turns, ?nomedia has no audio, video or screenshots on disk. A question containing "fail" gets an error.
 (() => {
   const q = new URLSearchParams(location.search);
   const ai = {
@@ -68,6 +68,8 @@
       return usage();
     },
     list_models: () => ({ models: [{ id: "uhm", name: "Uhm", size: 120e6, status: "installed", downloading: null, error: null, unavailable: null }] }),
+    update_check: async () => { await wait(500); if (q.has("updfail")) throw "Could not reach the update server."; return q.has("upd") ? "0.2.0" : null; },
+    update_install: () => {},
     decision_state: () => decState(),
     decision_set_key: ({ key }) => { dec.has_key = !!key.trim(); },
     laya_setup: () => { dec.laya.error = null; dec.laya.step = "Creating the environment"; setTimeout(() => { dec.laya.step = "Installing Laya"; }, 1200); setTimeout(() => { dec.laya.step = null; dec.laya.installed = true; }, 2400); },
@@ -90,6 +92,7 @@
   const tab = q.get("tab");
   if (tab) { const t = setInterval(() => { const b = document.getElementById("tab-" + tab); if (b) { b.click(); clearInterval(t); } }, 50); }
   window.__TAURI__ = {
+    app: { getVersion: async () => "0.1.0" },
     core: { invoke: async (cmd, args) => (commands[cmd] ? commands[cmd](args) : null) },
     event: { listen: async () => () => {} },
   };
