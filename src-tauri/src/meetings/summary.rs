@@ -4,6 +4,7 @@ use super::{
     mute::State,
     store,
     transcript::{self, Format},
+    vision,
 };
 use crate::{
     ai::{self, Config, Message},
@@ -11,7 +12,7 @@ use crate::{
 };
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
-use std::sync::Mutex;
+use std::{path::Path, sync::Mutex, time::Duration};
 use tauri::{AppHandle, Manager};
 
 const BUILT_IN: [(&str, &str); 3] = [
@@ -138,17 +139,18 @@ pub fn get(db: &Connection, meeting: i64) -> rusqlite::Result<Option<Summary>> {
 }
 
 /// Sends the transcript with `prompt` to the provider and stores the answer in place of any earlier one.
-/// The database lock is not held while the request runs.
-fn generate(db: &Mutex<Connection>, id: i64, prompt: &str, cfg: &Config, now: i64) -> Result<Summary, String> {
-    let (enabled, meeting, segments) = {
+/// The database lock is not held while the request runs. `frames` is the folder of every meeting's screenshots.
+fn generate(db: &Mutex<Connection>, id: i64, prompt: &str, cfg: &Config, now: i64, frames: &Path) -> Result<Summary, String> {
+    let (enabled, meeting, all) = {
         let conn = db.lock().unwrap();
         (
             ai::enabled(&conn, "summaries"),
             store::get(&conn, id).map_err(|e| e.to_string())?,
-            // Muted or excluded speech never leaves the Mac unless the user included it.
-            store::segments(&conn, id).map_err(|e| e.to_string())?.into_iter().filter(|s| s.shown()).collect::<Vec<_>>(),
+            store::segments(&conn, id).map_err(|e| e.to_string())?,
         )
     };
+    // Muted or excluded speech never leaves the Mac unless the user included it.
+    let segments: Vec<_> = all.iter().filter(|s| s.shown()).cloned().collect();
     if !enabled {
         return Err("Meeting summaries are off. Turn them on under AI provider in Settings.".into());
     }
@@ -162,12 +164,19 @@ fn generate(db: &Mutex<Connection>, id: i64, prompt: &str, cfg: &Config, now: i6
     if prompt.is_empty() {
         return Err("The prompt is empty.".into());
     }
+    // Frames only with the experimental toggle and the model's images box on, and only from shown stretches.
+    let shots = vision::chosen(&db.lock().unwrap(), id, &frames.join(id.to_string()), &all, &cfg.model);
+    let images = vision::load(&shots);
     // Lines from a muted or unknown mic that made it in (by the user or by triage) may not be part of the conversation.
     let note = if segments.iter().any(|s| s.mute != State::Unmuted) { COLLAPSED_NOTE } else { "" };
-    let reply = cfg.complete(&[
-        Message { role: "system", content: format!("{prompt}{note}") },
-        Message { role: "user", content: transcript::export(&meeting, &segments, Format::Text) },
-    ])?;
+    let reply = cfg.complete_images(
+        &[
+            Message { role: "system", content: format!("{prompt}{note}") },
+            Message { role: "user", content: transcript::export(&meeting, &segments, Format::Text) },
+        ],
+        &images,
+        Duration::from_secs(180), // long transcripts take a while to answer
+    )?;
     let summary = Summary {
         cost: cfg.cost(reply.tokens_in, reply.tokens_out),
         text: reply.text,
@@ -214,7 +223,7 @@ pub fn summary_get(db: tauri::State<Db>, id: i64) -> Result<Option<Summary>, Str
 #[tauri::command(async)]
 pub fn summary_generate(app: AppHandle, id: i64, prompt: String) -> Result<Summary, String> {
     let db = &app.state::<Db>().0;
-    generate(db, id, &prompt, &Config::load(db), super::now())
+    generate(db, id, &prompt, &Config::load(db), super::now(), &app.state::<super::ScreenshotsDir>().0)
 }
 
 #[cfg(test)]
@@ -284,7 +293,7 @@ mod tests {
         let cfg = config(&base);
 
         assert_eq!(get(&db.lock().unwrap(), id).unwrap().map(|s| s.text), None);
-        let s = generate(&db, id, " Bullets only ", &cfg, 500).unwrap();
+        let s = generate(&db, id, " Bullets only ", &cfg, 500, Path::new("")).unwrap();
         assert_eq!((s.text.as_str(), s.prompt.as_str(), s.model.as_str(), s.generated_at), ("## Summary\nShip Friday.", "Bullets only", "llama", 500));
         // 1000 in at $0.25 and 200 out at $2.00 per million; the stub is on loopback, so nothing left the Mac.
         assert_eq!((s.tokens_in, s.tokens_out, s.cost, s.off_device), (1000, 200, Some(0.00065), false));
@@ -301,7 +310,7 @@ mod tests {
         assert_eq!((stored.text, stored.cost), (s.text, s.cost));
         assert!(seen.try_recv().is_err());
 
-        generate(&db, id, "Other prompt", &cfg, 600).unwrap();
+        generate(&db, id, "Other prompt", &cfg, 600, Path::new("")).unwrap();
         let stored = get(&db.lock().unwrap(), id).unwrap().unwrap();
         assert_eq!((stored.text.as_str(), stored.prompt.as_str(), stored.generated_at), ("- Ship Friday", "Other prompt", 600));
     }
@@ -330,16 +339,16 @@ mod tests {
         let (base, seen) = stub::serve(vec![stub::ok("never asked")]);
         let cfg = config(&base);
 
-        let off = generate(&db, id, "p", &cfg, 1).unwrap_err();
+        let off = generate(&db, id, "p", &cfg, 1, Path::new("")).unwrap_err();
         assert!(off.contains("Meeting summaries are off"), "{off}");
 
         settings::set(&db.lock().unwrap(), "ai_summaries", "true").unwrap();
         let recording = store::create(&db.lock().unwrap(), 200).unwrap();
-        assert!(generate(&db, recording, "p", &cfg, 1).unwrap_err().contains("no transcript"));
-        assert!(generate(&db, id, "  ", &cfg, 1).is_err());
+        assert!(generate(&db, recording, "p", &cfg, 1, Path::new("")).unwrap_err().contains("no transcript"));
+        assert!(generate(&db, id, "  ", &cfg, 1, Path::new("")).is_err());
         let mut unready = config(&base);
         unready.model.clear();
-        assert!(generate(&db, id, "p", &unready, 1).unwrap_err().contains("model"));
+        assert!(generate(&db, id, "p", &unready, 1, Path::new("")).unwrap_err().contains("model"));
 
         assert!(seen.try_recv().is_err());
         assert!(get(&db.lock().unwrap(), id).unwrap().is_none());
@@ -359,7 +368,7 @@ mod tests {
         };
         settings::set(&db.lock().unwrap(), "ai_summaries", "true").unwrap();
         let (base, seen) = stub::serve(vec![stub::ok("ok")]);
-        generate(&db, id, "p", &config(&base), 1).unwrap();
+        generate(&db, id, "p", &config(&base), 1, Path::new("")).unwrap();
         let req: serde_json::Value = serde_json::from_str(&seen.recv().unwrap().body).unwrap();
         let sent = req["messages"][1]["content"].as_str().unwrap();
         assert!(sent.contains("Live line.") && sent.contains("Kept aside."), "{sent}");
@@ -372,7 +381,7 @@ mod tests {
             store::finish(&c, id, 1000, &[store::Segment { text: "Muted secret.".into(), mute: State::Muted, ..Default::default() }]).unwrap();
             id
         };
-        assert!(generate(&db, only, "p", &config(&base), 2).unwrap_err().contains("no transcript"));
+        assert!(generate(&db, only, "p", &config(&base), 2, Path::new("")).unwrap_err().contains("no transcript"));
         assert!(seen.try_recv().is_err());
     }
 
@@ -382,7 +391,7 @@ mod tests {
         settings::set(&db.lock().unwrap(), "ai_summaries", "true").unwrap();
         let (base, seen) = stub::serve(vec![stub::ok("a"), stub::ok("b")]);
         let live = done_meeting(&db);
-        generate(&db, live, "Bullets", &config(&base), 1).unwrap();
+        generate(&db, live, "Bullets", &config(&base), 1, Path::new("")).unwrap();
         let req: serde_json::Value = serde_json::from_str(&seen.recv().unwrap().body).unwrap();
         assert_eq!(req["messages"][0]["content"], "Bullets");
 
@@ -393,7 +402,7 @@ mod tests {
             store::finish(&c, id, 1000, &[store::Segment { text: "Live.".into(), ..Default::default() }, aside]).unwrap();
             id
         };
-        generate(&db, with_aside, "Bullets", &config(&base), 2).unwrap();
+        generate(&db, with_aside, "Bullets", &config(&base), 2, Path::new("")).unwrap();
         let req: serde_json::Value = serde_json::from_str(&seen.recv().unwrap().body).unwrap();
         let system = req["messages"][0]["content"].as_str().unwrap();
         assert!(system.starts_with("Bullets") && system.contains("self-talk"), "{system}");
@@ -408,8 +417,48 @@ mod tests {
         settings::set(&db.lock().unwrap(), "ai_summaries", "true").unwrap();
         let (base, _seen) = stub::serve(vec![stub::ok("first"), (500, r#"{"error":{"message":"overloaded"}}"#.into())]);
         let cfg = config(&base);
-        generate(&db, id, "p", &cfg, 1).unwrap();
-        assert!(generate(&db, id, "p", &cfg, 2).unwrap_err().contains("overloaded"));
+        generate(&db, id, "p", &cfg, 1, Path::new("")).unwrap();
+        assert!(generate(&db, id, "p", &cfg, 2, Path::new("")).unwrap_err().contains("overloaded"));
         assert_eq!(get(&db.lock().unwrap(), id).unwrap().unwrap().text, "first");
+    }
+
+    #[test]
+    fn screenshots_attach_only_with_the_toggle_and_the_box_and_never_from_hidden_lines() {
+        use super::super::{mute::State, shots};
+        let db = db();
+        let id = {
+            let c = db.lock().unwrap();
+            shots::init(&c).unwrap();
+            let id = store::create(&c, 100).unwrap();
+            let seg = |start_ms, mute, included| store::Segment { start_ms, end_ms: start_ms + 10_000, text: "Line.".into(), mute, included, speaker: store::ME.into(), ..Default::default() };
+            store::finish(&c, id, 60_000, &[seg(0, State::Unmuted, false), seg(10_000, State::Muted, false), seg(20_000, State::Unknown, true)]).unwrap();
+            id
+        };
+        let frames = std::env::temp_dir().join(format!("myna-summary-frames-{}", std::process::id()));
+        std::fs::create_dir_all(frames.join(id.to_string())).unwrap();
+        for (at, bytes) in [(5_000, "LIVE"), (15_000, "MUTED"), (25_000, "INCLUDED")] {
+            std::fs::write(frames.join(id.to_string()).join(format!("{at}.jpg")), bytes).unwrap();
+            db.lock().unwrap().execute("INSERT INTO screenshots (meeting_id, at_ms, file) VALUES (?1, ?2, ?3)", params![id, at, format!("{at}.jpg")]).unwrap();
+        }
+        settings::set(&db.lock().unwrap(), "ai_summaries", "true").unwrap();
+        let (base, seen) = stub::serve(vec![stub::ok("a"), stub::ok("b"), stub::ok("c"), stub::ok("d")]);
+        let cfg = config(&base);
+
+        // Default: frames on disk, nothing attached, and the request is plain text.
+        generate(&db, id, "p", &cfg, 1, &frames).unwrap();
+        stub::assert_text_only(&seen.recv().unwrap().body);
+        // The toggle alone is not enough: the model must be marked as accepting images.
+        settings::set(&db.lock().unwrap(), "ai_shots", "true").unwrap();
+        generate(&db, id, "p", &cfg, 2, &frames).unwrap();
+        stub::assert_text_only(&seen.recv().unwrap().body);
+        // Both on: only the frames from live and included lines go, as inline JPEGs.
+        settings::set(&db.lock().unwrap(), "ai_img:llama", "true").unwrap();
+        generate(&db, id, "p", &cfg, 3, &frames).unwrap();
+        assert_eq!(stub::assert_images_only(&seen.recv().unwrap().body), [b"LIVE".to_vec(), b"INCLUDED".to_vec()]);
+        // Toggle off again: back to text.
+        settings::set(&db.lock().unwrap(), "ai_shots", "false").unwrap();
+        generate(&db, id, "p", &cfg, 4, &frames).unwrap();
+        stub::assert_text_only(&seen.recv().unwrap().body);
+        let _ = std::fs::remove_dir_all(&frames);
     }
 }

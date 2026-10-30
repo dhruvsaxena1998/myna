@@ -141,11 +141,15 @@ mod tests {
         let (base, seen) = stub::serve(vec![(200, r#"{"choice":"yes"}"#.into()), (200, r#"{"choice":"no"}"#.into())]);
         pass(&mut segments, adapter(Wire::Jev, &base, Some("k".into()), "").as_ref());
         assert_eq!((segments[1].included, segments[2].included), (true, false));
-        let first: serde_json::Value = serde_json::from_str(&seen.recv().unwrap().body).unwrap();
+        let first_body = seen.recv().unwrap().body;
+        stub::assert_text_only(&first_body); // a triage request is text only, never audio, video or a frame
+        let first: serde_json::Value = serde_json::from_str(&first_body).unwrap();
         let sent = first["context"].as_str().unwrap();
         assert!(sent.contains("Yes, the launch is Friday.") && sent.contains("Shall we start?"), "{sent}");
         assert!(!sent.contains("salary"), "{sent}");
-        let second: serde_json::Value = serde_json::from_str(&seen.recv().unwrap().body).unwrap();
+        let second_body = seen.recv().unwrap().body;
+        stub::assert_text_only(&second_body);
+        let second: serde_json::Value = serde_json::from_str(&second_body).unwrap();
         assert!(!second["context"].as_str().unwrap().contains("launch"), "{second}");
     }
 
@@ -170,6 +174,7 @@ mod tests {
         pass(&mut segments, adapter(Wire::Jev, &base, Some("k".into()), "").as_ref());
         assert!(segments[1].auto, "the pass ran");
         let body = seen.recv().unwrap().body;
+        stub::assert_text_only(&body);
         assert!(body.contains("Them: Shall we start?"), "{body}");
         assert!(!body.contains("Priya") && !body.contains("Quentin") && !body.contains("Speaker 1"), "{body}");
     }

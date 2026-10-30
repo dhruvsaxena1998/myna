@@ -1,8 +1,8 @@
 //! Screenshots of the meeting window while recording: pick the window, grab it on a timer, drop the frames that
 //! look like the last one kept. In window-video mode the same pick feeds video.rs instead. The hash, the dedupe
 //! and the choice of window are pure and tested here; screen.rs does the capture.
-use super::{capture, screen, video};
-use crate::{permissions, Db};
+use super::{capture, screen, video, vision};
+use crate::{ai, permissions, Db};
 use rusqlite::{params, Connection};
 use serde::Serialize;
 use std::{
@@ -116,7 +116,7 @@ fn record(db: &Connection, meeting: i64, at_ms: u64, file: Option<&str>) -> rusq
     Ok(())
 }
 
-#[derive(Serialize, PartialEq, Debug)]
+#[derive(Serialize, Clone, PartialEq, Debug)]
 pub struct Shot {
     pub at_ms: u64,
     pub path: String,
@@ -211,7 +211,7 @@ impl Drop for Screenshots {
 }
 
 fn run(app: &AppHandle, live: &Live, rx: Receiver<()>, meeting: i64, dir: &Path, video: &Path, started: Instant) {
-    let (mut dedupe, mut asked) = (Dedupe::default(), false);
+    let (mut dedupe, mut asked, mut last_kept) = (Dedupe::default(), false, None);
     while !live.stopped.load(Ordering::SeqCst) {
         // Read each round, so a change in Settings applies mid-call.
         let mode = crate::setting(app, "meetings_capture");
@@ -223,7 +223,7 @@ fn run(app: &AppHandle, live: &Live, rx: Receiver<()>, meeting: i64, dir: &Path,
         } else {
             // Leaving video mode closes the file; what was recorded stays.
             drop(live.video.lock().unwrap().take());
-            every.map(|_| tick(app, live, meeting, dir, started, &mut dedupe, &mut asked))
+            every.map(|_| tick(app, live, meeting, dir, started, &mut dedupe, &mut asked, &mut last_kept))
         };
         *live.text.lock().unwrap() = text;
         let _ = rx.recv_timeout(every.unwrap_or(IDLE));
@@ -271,8 +271,26 @@ fn tick_video(live: &Live, file: &Path, started: Instant, asked: &mut bool) -> S
     }
 }
 
+/// Experimental: whether a frame that passed the hash is worth keeping, by asking the provider with the last kept
+/// frame beside it. Off unless the relevance toggle and the model's images box are on; and a frame is only sent while
+/// the mic is known to be live, so a muted or unknown moment is kept on the hash alone. Anything else keeps the frame.
+fn relevant(app: &AppHandle, meeting: i64, at_ms: u64, last_kept: Option<&[u8]>, new: &[u8]) -> bool {
+    let Some(last_kept) = last_kept else { return true };
+    let db = &app.state::<Db>().0;
+    let sendable = {
+        let conn = db.lock().unwrap();
+        ai::images_on(&conn, "relevance", &ai::Config::from_settings(&conn).model) && vision::live(&conn, meeting, at_ms)
+    };
+    if !sendable {
+        return true;
+    }
+    let cfg = ai::Config::load(db);
+    cfg.problem().is_some() || vision::relevant(&cfg, last_kept, new)
+}
+
 /// One capture attempt. Returns the status line: the window it grabbed, or what stopped it.
-fn tick(app: &AppHandle, live: &Live, meeting: i64, dir: &Path, started: Instant, dedupe: &mut Dedupe, asked: &mut bool) -> String {
+/// `last_kept` is the JPEG of the last frame saved, for the experimental relevance check.
+fn tick(app: &AppHandle, live: &Live, meeting: i64, dir: &Path, started: Instant, dedupe: &mut Dedupe, asked: &mut bool, last_kept: &mut Option<Vec<u8>>) -> String {
     let window = match pick(live, asked) {
         Ok(w) => w,
         Err(e) => return e,
@@ -283,11 +301,12 @@ fn tick(app: &AppHandle, live: &Live, meeting: i64, dir: &Path, started: Instant
         Err(e) => return format!("{label}: {e}"),
     };
     let at_ms = started.elapsed().as_millis() as u64;
-    let file = dedupe.keep(frame.hash).then(|| format!("{at_ms}.jpg"));
+    let file = (dedupe.keep(frame.hash) && relevant(app, meeting, at_ms, last_kept.as_deref(), &frame.jpeg)).then(|| format!("{at_ms}.jpg"));
     if let Some(name) = &file {
         if let Err(e) = fs::create_dir_all(dir).and_then(|_| fs::write(dir.join(name), &frame.jpeg)) {
             return format!("could not save a screenshot: {e}");
         }
+        *last_kept = Some(frame.jpeg);
     }
     let _ = record(&app.state::<Db>().0.lock().unwrap(), meeting, at_ms, file.as_deref());
     label

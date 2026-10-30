@@ -4,6 +4,7 @@ use super::{
     store::{self, Meeting, Segment},
     summary,
     transcript::{self, Format},
+    vision,
 };
 use crate::{
     ai::{self, Config, Message},
@@ -11,7 +12,7 @@ use crate::{
 };
 use rusqlite::{params, Connection};
 use serde::Serialize;
-use std::sync::Mutex;
+use std::{path::Path, sync::Mutex, time::Duration};
 use tauri::{AppHandle, Manager};
 
 const SYSTEM: &str = "You answer questions about one meeting. Its transcript, and a summary when there is one, follow. Answer from them, say so when they do not cover the question, and keep answers short.";
@@ -130,8 +131,8 @@ impl Thread {
 }
 
 /// Sends `question` with the whole context and stores the answer. The database lock is not held while the request runs;
-/// a failed request stores nothing, so the thread is as it was.
-fn send(db: &Mutex<Connection>, id: i64, question: &str, cfg: &Config) -> Result<Chat, String> {
+/// a failed request stores nothing, so the thread is as it was. `frames` is the folder of every meeting's screenshots.
+fn send(db: &Mutex<Connection>, id: i64, question: &str, cfg: &Config, frames: &Path) -> Result<Chat, String> {
     let (enabled, mut thread) = {
         let conn = db.lock().unwrap();
         (ai::enabled(&conn, "chat"), Thread::load(&conn, id)?)
@@ -151,7 +152,10 @@ fn send(db: &Mutex<Connection>, id: i64, question: &str, cfg: &Config) -> Result
     }
     let mut messages = thread.messages();
     messages.push(Message { role: "user", content: question.into() });
-    let reply = cfg.complete(&messages)?;
+    // Frames only with the experimental toggle and the model's images box on, and only from shown stretches.
+    let shots = vision::chosen(&db.lock().unwrap(), id, &frames.join(id.to_string()), &thread.segments, &cfg.model);
+    let images = vision::load(&shots);
+    let reply = cfg.complete_images(&messages, &images, Duration::from_secs(180))?;
     let turn = Turn { question: question.into(), answer: reply.text, model: cfg.model.clone(), tokens_in: reply.tokens_in, tokens_out: reply.tokens_out };
     db.lock()
         .unwrap()
@@ -175,7 +179,7 @@ pub fn chat_get(db: tauri::State<Db>, id: i64) -> Result<Chat, String> {
 #[tauri::command(async)]
 pub fn chat_send(app: AppHandle, id: i64, question: String) -> Result<Chat, String> {
     let db = &app.state::<Db>().0;
-    send(db, id, &question, &Config::load(db))
+    send(db, id, &question, &Config::load(db), &app.state::<super::ScreenshotsDir>().0)
 }
 
 #[cfg(test)]
@@ -304,7 +308,7 @@ mod tests {
         let (base, seen) = stub::serve(vec![stub::ok("Priya."), stub::ok("Friday.")]);
         let cfg = config(&base);
 
-        let c = send(&db, id, "  Who owns the notes? ", &cfg).unwrap();
+        let c = send(&db, id, "  Who owns the notes? ", &cfg, Path::new("")).unwrap();
         assert_eq!(c.turns, [turn("Who owns the notes?", "Priya.", 1000, 200)]);
         assert!((c.usage.cost.unwrap() - 0.00065).abs() < 1e-9);
         let req = body(&seen);
@@ -312,7 +316,7 @@ mod tests {
         assert!(req["messages"][0]["content"].as_str().unwrap().contains("Summary:\nA short sync."));
         assert_eq!(req["messages"][1]["content"], "Who owns the notes?");
 
-        let c = send(&db, id, "When do we ship?", &cfg).unwrap();
+        let c = send(&db, id, "When do we ship?", &cfg, Path::new("")).unwrap();
         let sent: Vec<_> = body(&seen)["messages"].as_array().unwrap().iter().map(|m| (m["role"].as_str().unwrap().to_string(), m["content"].as_str().unwrap().to_string())).collect();
         let roles: Vec<_> = sent.iter().map(|(r, _)| r.as_str()).collect();
         assert_eq!(roles, ["system", "user", "assistant", "user"]);
@@ -345,8 +349,8 @@ mod tests {
 
         // ...and on the wire, on the first turn and the later ones.
         let (base, seen) = stub::serve(vec![stub::ok("ok"), stub::ok("ok")]);
-        send(&db, id, "What was said?", &config(&base)).unwrap();
-        send(&db, id, "Anything else?", &config(&base)).unwrap();
+        send(&db, id, "What was said?", &config(&base), Path::new("")).unwrap();
+        send(&db, id, "Anything else?", &config(&base), Path::new("")).unwrap();
         for _ in 0..2 {
             let req = seen.recv().unwrap().body;
             assert!(req.contains("Live line.") && req.contains("Kept aside."), "{req}");
@@ -360,7 +364,7 @@ mod tests {
             store::finish(&c, id, 1000, &[Segment { text: "Muted secret.".into(), mute: State::Muted, ..Default::default() }]).unwrap();
             id
         };
-        assert!(send(&db, only, "q", &config(&base)).unwrap_err().contains("no transcript"));
+        assert!(send(&db, only, "q", &config(&base), Path::new("")).unwrap_err().contains("no transcript"));
         assert!(seen.try_recv().is_err());
     }
 
@@ -372,17 +376,45 @@ mod tests {
         let cfg = config(&base);
 
         settings::set(&db.lock().unwrap(), "ai_chat", "false").unwrap();
-        assert!(send(&db, id, "q", &cfg).unwrap_err().contains("Chat is off"));
+        assert!(send(&db, id, "q", &cfg, Path::new("")).unwrap_err().contains("Chat is off"));
         settings::set(&db.lock().unwrap(), "ai_chat", "true").unwrap();
         let recording = store::create(&db.lock().unwrap(), 200).unwrap();
-        assert!(send(&db, recording, "q", &cfg).unwrap_err().contains("no transcript"));
-        assert!(send(&db, id, "  ", &cfg).is_err());
+        assert!(send(&db, recording, "q", &cfg, Path::new("")).unwrap_err().contains("no transcript"));
+        assert!(send(&db, id, "  ", &cfg, Path::new("")).is_err());
         let mut unready = config(&base);
         unready.model.clear();
-        assert!(send(&db, id, "q", &unready).unwrap_err().contains("model"));
+        assert!(send(&db, id, "q", &unready, Path::new("")).unwrap_err().contains("model"));
         assert!(seen.try_recv().is_err());
 
-        assert!(send(&db, id, "q", &cfg).unwrap_err().contains("overloaded"));
+        assert!(send(&db, id, "q", &cfg, Path::new("")).unwrap_err().contains("overloaded"));
         assert!(turns(&db.lock().unwrap(), id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn chat_screenshots_follow_the_same_gates_and_leave_out_muted_lines() {
+        use super::super::{mute::State, shots};
+        let db = db();
+        let id = {
+            let c = db.lock().unwrap();
+            shots::init(&c).unwrap();
+            let id = store::create(&c, 100).unwrap();
+            let seg = |start_ms, mute| Segment { start_ms, end_ms: start_ms + 10_000, text: "Line.".into(), mute, speaker: store::ME.into(), ..Default::default() };
+            store::finish(&c, id, 60_000, &[seg(0, State::Unmuted), seg(10_000, State::Muted)]).unwrap();
+            id
+        };
+        let frames = std::env::temp_dir().join(format!("myna-chat-frames-{}", std::process::id()));
+        std::fs::create_dir_all(frames.join(id.to_string())).unwrap();
+        for (at, bytes) in [(5_000, "PRICING"), (15_000, "MUTED")] {
+            std::fs::write(frames.join(id.to_string()).join(format!("{at}.jpg")), bytes).unwrap();
+            db.lock().unwrap().execute("INSERT INTO screenshots (meeting_id, at_ms, file) VALUES (?1, ?2, ?3)", params![id, at, format!("{at}.jpg")]).unwrap();
+        }
+        let (base, seen) = stub::serve(vec![stub::ok("a"), stub::ok("b")]);
+        send(&db, id, "q", &config(&base), &frames).unwrap();
+        stub::assert_text_only(&seen.recv().unwrap().body);
+        settings::set(&db.lock().unwrap(), "ai_shots", "true").unwrap();
+        settings::set(&db.lock().unwrap(), "ai_img:llama", "true").unwrap();
+        send(&db, id, "What was on the pricing slide?", &config(&base), &frames).unwrap();
+        assert_eq!(stub::assert_images_only(&seen.recv().unwrap().body), [b"PRICING".to_vec()]);
+        let _ = std::fs::remove_dir_all(&frames);
     }
 }
