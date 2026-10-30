@@ -18,6 +18,8 @@ pub struct Segment {
     pub mute: State,
     /// The user pulled a collapsed segment into the transcript.
     pub included: bool,
+    /// Included by the experimental triage pass rather than by the user.
+    pub auto: bool,
 }
 
 impl Segment {
@@ -91,7 +93,8 @@ pub fn init(db: &Connection) -> rusqlite::Result<()> {
     add_column(db, "meetings", "folder_id", "INTEGER")?;
     // Segments from before mute state were all live, so they stay in the transcript.
     add_column(db, "segments", "mute", "TEXT NOT NULL DEFAULT 'unmuted'")?;
-    add_column(db, "segments", "included", "INTEGER NOT NULL DEFAULT 0")
+    add_column(db, "segments", "included", "INTEGER NOT NULL DEFAULT 0")?;
+    add_column(db, "segments", "auto", "INTEGER NOT NULL DEFAULT 0")
 }
 
 fn add_column(db: &Connection, table: &str, column: &str, ddl: &str) -> rusqlite::Result<()> {
@@ -183,8 +186,8 @@ pub fn finish(db: &Connection, id: i64, duration_ms: u64, segments: &[Segment]) 
     tx.execute("DELETE FROM segments WHERE meeting_id = ?1", [id])?;
     for s in segments {
         tx.execute(
-            "INSERT INTO segments (meeting_id, speaker, start_ms, end_ms, text, mute, included) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![id, s.speaker, s.start_ms, s.end_ms, s.text, s.mute.as_str(), s.included],
+            "INSERT INTO segments (meeting_id, speaker, start_ms, end_ms, text, mute, included, auto) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![id, s.speaker, s.start_ms, s.end_ms, s.text, s.mute.as_str(), s.included, s.auto],
         )?;
     }
     tx.execute(
@@ -227,7 +230,7 @@ pub fn get(db: &Connection, id: i64) -> rusqlite::Result<Meeting> {
     db.query_row(&format!("{SELECT} WHERE id = ?1"), [id], row)
 }
 
-const SEGMENT: &str = "SELECT rowid, speaker, start_ms, end_ms, text, mute, included, meeting_id FROM segments";
+const SEGMENT: &str = "SELECT rowid, speaker, start_ms, end_ms, text, mute, included, meeting_id, auto FROM segments";
 
 fn segment_row(r: &rusqlite::Row) -> rusqlite::Result<Segment> {
     Ok(Segment {
@@ -238,6 +241,7 @@ fn segment_row(r: &rusqlite::Row) -> rusqlite::Result<Segment> {
         text: r.get(4)?,
         mute: State::parse(&r.get::<_, String>(5)?),
         included: r.get(6)?,
+        auto: r.get(8)?,
     })
 }
 
@@ -250,9 +254,9 @@ pub fn segment(db: &Connection, id: i64) -> rusqlite::Result<(i64, Segment)> {
     db.query_row(&format!("{SEGMENT} WHERE rowid = ?1"), [id], |r| Ok((r.get(7)?, segment_row(r)?)))
 }
 
-/// Pulls a collapsed segment into the transcript, or puts it back.
+/// Pulls a collapsed segment into the transcript, or puts it back. Either way it is now the user's call, not triage's.
 pub fn include_segment(db: &Connection, id: i64, included: bool) -> rusqlite::Result<()> {
-    db.execute("UPDATE segments SET included = ?2 WHERE rowid = ?1", params![id, included])?;
+    db.execute("UPDATE segments SET included = ?2, auto = 0 WHERE rowid = ?1", params![id, included])?;
     Ok(())
 }
 
@@ -417,6 +421,17 @@ mod tests {
         assert_eq!((after[1].mute, after[1].included), (State::Muted, true));
         include_segment(&c, got[1].id, false).unwrap();
         assert!(!segments(&c, id).unwrap()[1].shown());
+    }
+
+    #[test]
+    fn a_triage_inclusion_is_marked_until_the_user_decides() {
+        let c = db();
+        let id = create(&c, 1).unwrap();
+        finish(&c, id, 9000, &[Segment { included: true, auto: true, ..muted(0, "on topic", State::Muted) }]).unwrap();
+        let s = segments(&c, id).unwrap().remove(0);
+        assert_eq!((s.shown(), s.auto), (true, true));
+        include_segment(&c, s.id, true).unwrap(); // the user confirms it: no longer automatic
+        assert!(!segments(&c, id).unwrap()[0].auto);
     }
 
     #[test]

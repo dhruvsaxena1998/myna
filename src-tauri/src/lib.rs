@@ -1,8 +1,10 @@
 mod ai;
 mod audio;
 mod cleanup;
+mod decision;
 mod dictation;
 mod hotkey;
+mod laya;
 mod meetings;
 mod models;
 mod paste;
@@ -594,6 +596,7 @@ pub fn run() {
             app.manage(Arc::new(models::Jobs::default()));
             app.manage(dictation::Engine::default());
             app.manage(UhmSlot::default());
+            app.manage(laya::Laya::new(dir.join("laya")));
             app.manage(Dictating::default());
             app.manage(HotkeyError(Mutex::new(None)));
             app.manage(MuteHotkeyError(Mutex::new(None)));
@@ -655,6 +658,10 @@ pub fn run() {
             meetings::screenshot_pick,
             ai::ai_state,
             ai::ai_set_key,
+            decision::decision_state,
+            decision::decision_set_key,
+            laya::laya_setup,
+            laya::laya_stop,
             meetings::suggest::folder_suggest,
             meetings::suggest::folder_suggest_dismiss,
             meetings::summary::template_list,
@@ -670,7 +677,10 @@ pub fn run() {
         .run(|app, event| match event {
             // Tray app: closing every window must not quit.
             RunEvent::ExitRequested { api, code: None, .. } => api.prevent_exit(),
-            RunEvent::Exit => meetings::shutdown(app),
+            RunEvent::Exit => {
+                meetings::shutdown(app);
+                laya::shutdown(app);
+            }
             _ => {}
         });
 }
