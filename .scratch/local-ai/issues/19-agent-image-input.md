@@ -10,6 +10,8 @@ Can each Agent CLI (Claude Code, Codex, OpenCode, Pi) take image input in its he
 
 ## Answer
 
+> Claude's image path verified live in [Screenshots in AI](32-screenshots-in-ai.md): base64 image block over stream-json, tools off, under Seatbelt. Codex needs the prompt before `--image`.
+
 - All four agents take images inline with tools off. No path needs a model-called read tool, except Claude's "give an image path" workflow, which Myna should not use.
 - Formats: Claude takes base64 image blocks over `--input-format stream-json`. Codex takes `codex exec --image <file>`, which the CLI reads and inlines. OpenCode takes a `files` entry or `--file`. Pi takes `images` base64 in the RPC `prompt`.
 - Claude is the only agent with a count threshold. Past 20 images per request, each side must stay under 3,000 px. The other three have no count cap in the CLI.

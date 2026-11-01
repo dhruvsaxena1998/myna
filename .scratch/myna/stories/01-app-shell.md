@@ -17,7 +17,7 @@ The bare app: lives in the menubar with no Dock icon, opens a native-looking pop
 - [ ] Popover uses system material, menu metrics, accent highlight; closes on click-away and Esc; keyboard navigable
 - [ ] Settings window lists all pages; every page shows its error if its data fails to load, never blank
 - [ ] Data folder `~/Library/Application Support/Myna/` with SQLite created on first launch
-- [ ] Checked on the real app from a fresh install, light and dark
+- [ ] Checked on the real app from a fresh install, light and dark, on macOS 26 and on 14.x or 15.x: window corners, shadow, sidebar vibrancy and traffic lights look right on both
 
 ## Open questions for you
 - Exactly which rows the popover shows before any module is built?

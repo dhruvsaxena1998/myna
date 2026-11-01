@@ -13,6 +13,8 @@ How does Myna show tokens, cost and context use for Chat and Summary when cost c
 
 ## Answer
 
+> Amended by [Summary templates and chat persistence](33-summary-templates-chat-persistence.md): Compact runs the Chat digest step early instead of writing a separate summary; switching the Chat model shows the uncached resend cost first.
+
 - **Where**: Chat footer running total ("≈ 18K tokens · $0.02"); a line under each Summary ("Claude Sonnet via OpenRouter · 14K tokens · $0.02"); the meeting inspector total ("AI for this meeting: $0.03"), which includes background work (cleanup, Decision tasks). No global dashboard in Phase 1.
 - **Cost, first match wins**: the response's own cost (OpenRouter `usage.cost`); curated price × reported tokens; curated price × estimated tokens (characters ÷ 4, shown with ≈); otherwise "cost unknown" (off-device Endpoint with no curated price). Local Endpoints show "Free · runs on your server".
 - **Agents show what the request is worth at API prices**, as T3 Code and OpenCode do: the CLI's reported cost if it gives one, else curated price × tokens, labelled so it reads as value, not a charge (e.g. "≈ $0.04 at API prices · on your Claude plan").

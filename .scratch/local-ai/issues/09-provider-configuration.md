@@ -10,6 +10,8 @@ Does one AI provider serve every feature, or can features pick their own? Settle
 
 ## Answer
 
+> Amended by [Summary templates and chat persistence](33-summary-templates-chat-persistence.md): a Chat digest row joins Customize, inheriting the Fast model.
+
 > Amended by [Fitting long meetings into the context window](11-long-meetings-context.md): cloud Endpoints and Agents offer only curated models (no "All models"); local Endpoints accept any model.
 
 

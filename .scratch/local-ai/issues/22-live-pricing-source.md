@@ -17,3 +17,7 @@ Where can a desktop app fetch current per-token prices and context windows for i
 - Recommendation: Myna's own `models/curated.json`, built by a scheduled job from models.dev plus LiteLLM, fetched at launch. Decision entries need a host chosen per entry because context and price differ by host.
 
 Details: [research/22-live-pricing-source.md](../research/22-live-pricing-source.md)
+
+## Superseded
+
+Model lists and pricing are replaced by [Live model lists for Agents and OpenRouter](29-live-model-lists.md): Agents and Endpoints list models live, prices come from OpenRouter, Pi, OpenCode and models.dev at runtime, and `models/curated.json` holds only the Claude model list.

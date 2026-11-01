@@ -1,0 +1,8 @@
+(version 1)
+(allow default)
+; writes: only the per-run directory (plus terminal devices)
+(deny file-write*)
+(allow file-write* (subpath (param "RUN")) (literal "/dev/null") (literal "/dev/tty") (regex #"^/dev/ttys[0-9]+$") (literal "/dev/dtracehelper"))
+; reads: nothing under $HOME except the CLI's own install and sign-in paths
+(deny file-read-data (subpath (param "HOME")))
+(allow file-read-data (subpath (param "RUN")))

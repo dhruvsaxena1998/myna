@@ -16,3 +16,7 @@ What does the curated model list cover (cloud Endpoint presets, Decision APIs, c
 - **Upkeep**: bundled in every release; prices refreshed **on every app launch** (user requirement), carrying no user data, with the bundled copy kept on failure and a setting to turn the refresh off. The source is researched in [Live pricing source for the curated list](22-live-pricing-source.md). A weekly drift check that opens a PR stays as the safety net for anything the live source doesn't cover.
 - **Model leaves the list**: it keeps working from the user's settings, marked "No longer in Myna's list", "cost unknown" if its price is gone; never switched silently.
 - **Which models**: chosen by the user, not by criteria research: [Curated model list from the user](21-user-model-list.md). Prices then filled in [Fill current prices for the curated list](23-fill-curated-prices.md). Revisit this ticket if the list raises shape questions.
+
+## Superseded
+
+Model lists and pricing are replaced by [Live model lists for Agents and OpenRouter](29-live-model-lists.md): Agents and Endpoints list models live, prices come from OpenRouter, Pi, OpenCode and models.dev at runtime, and `models/curated.json` holds only the Claude model list.

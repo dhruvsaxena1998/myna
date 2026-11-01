@@ -17,7 +17,7 @@ A coding-agent CLI the user has installed and signed in to (Claude Code, Codex, 
 _Avoid_: ACP, subscription, harness, CLI provider
 
 **Decision API**:
-A typed classification service with its own wire format (Jev, OpenAI Decisions), used only for Decision tasks.
+A typed classification service with its own wire format (Jev, OpenAI Decisions, or OpenRouter's decision models), used only for Decision tasks.
 
 **Decision task**:
 A short classification Myna asks while processing: folder suggestion, muted-segment triage, screenshot relevance.
@@ -39,6 +39,18 @@ _Avoid_: classifier, router
 **Transcript tools**:
 The read-only lookups Chat's model uses to see a meeting (search the transcript, read a time range, get screenshots near a time), bound to one meeting. Chat never receives the whole transcript.
 _Avoid_: RAG, retrieval, MCP tools
+
+**Summary template**:
+The named instructions that shape a meeting's Summary (Recap, Action items, Decisions, or the user's own). A folder can set its own.
+_Avoid_: prompt, format, preset
+
+**Chunk notes**:
+The template-free notes Myna takes from each part of a transcript (points, decisions, action items, with times), which a Summary template turns into the Summary and Chat reads too.
+_Avoid_: partial summary
+
+**Chat digest**:
+A short summary of earlier Chat exchanges, sent to the model in their place so the conversation stays small. The exchanges themselves stay visible.
+_Avoid_: summary, compaction, memory
 
 **Rules cleanup**:
 The deterministic pass that removes filler words, collapses repeated words and applies the personal dictionary. It always runs and needs no AI provider.

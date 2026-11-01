@@ -16,6 +16,11 @@ What LLM cleanup does to dictation and to a meeting transcript, which providers 
 
 ## Answer
 
+> Amended by [Summary templates and chat persistence](33-summary-templates-chat-persistence.md): folders can set their own transcript cleanup prompt, falling back to the global one.
+
+> Amended by [Speech-to-text through an Endpoint](13-cloud-stt-endpoint.md): no dictation cleanup toggle; a separate "Dictate with cleanup" hotkey runs it (unassigned until it has an Endpoint), the plain hotkey never does. Styles apply only to that hotkey.
+
+
 - Dictation: Uhm (if on) → STT → rules → LLM cleanup → paste. Cleanup fixes punctuation, capitals, grammar slips, missed fillers and self-corrections ("Tuesday, no wait, Wednesday" → "Wednesday"); never rephrases, shortens or replies.
 - Dictation cleanup runs only on an Endpoint (Fast model, or a dictation override when the Fast model is an Agent; otherwise the toggle shows "Needs an Endpoint"). Its own 3 s budget starts when the hotkey is released; on timeout or error Myna pastes the rules output and the menubar briefly marks "pasted without cleanup".
 - Dictation guard: the cleaned text is replaced by the rules output if it reads as a reply ("Sure, here's…", an answer to a dictated question). With the default prompt, also if length changes by more than about 40% or most words are new. Dictated text goes in data tags, never as instructions.

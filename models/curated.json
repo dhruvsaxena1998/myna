@@ -1,0 +1,44 @@
+{
+  "checked": "2026-11-01",
+  "claude": [
+    {
+      "id": "claude-fable-5-1",
+      "alias": "fable",
+      "name": "Claude Fable 5.1",
+      "context_window": 1000000,
+      "min_claude_version": "2.1.257",
+      "source": "https://code.claude.com/docs/en/model-config"
+    },
+    {
+      "id": "claude-opus-5-5",
+      "alias": "opus",
+      "name": "Claude Opus 5.5",
+      "context_window": 1000000,
+      "min_claude_version": "2.1.280",
+      "source": "https://code.claude.com/docs/en/model-config"
+    },
+    {
+      "id": "claude-sonnet-5-5",
+      "alias": "sonnet",
+      "name": "Claude Sonnet 5.5",
+      "context_window": 1000000,
+      "min_claude_version": "2.1.284",
+      "source": "https://code.claude.com/docs/en/model-config"
+    },
+    {
+      "id": "claude-haiku-5-5",
+      "alias": "haiku",
+      "name": "Claude Haiku 5.5",
+      "context_window": 1000000,
+      "min_claude_version": "2.1.293",
+      "source": "https://code.claude.com/docs/en/model-config"
+    }
+  ],
+  "decisions": [
+    {
+      "provider": "openai-decisions",
+      "id": "gpt-6-luna",
+      "source": "https://developers.openai.com/api/docs/guides/decisions"
+    }
+  ]
+}
