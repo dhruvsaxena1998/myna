@@ -33,7 +33,7 @@ The AI provider and model for quick text jobs (cleanup), and for Decision tasks 
 _Avoid_: cheap model, small model
 
 **Decision provider**:
-Where Myna sends short classification questions (keep this screenshot? include this segment? which folder?). It is a Decision API, an Endpoint, or an Agent, and falls back to the Fast model when unset.
+Where Myna sends short classification questions (keep this screenshot? include this segment? which folder?). It is a Decision API, an Endpoint, or an Agent, and falls back to the Fast model when unset. Shown in the app as "Quick decisions" on the AI & privacy page.
 _Avoid_: classifier, router
 
 **Transcript tools**:

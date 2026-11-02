@@ -197,10 +197,9 @@ svg.wires { position: absolute; inset: 0 auto auto 0; overflow: visible; pointer
     { "id": "s-look",     "group": "settings", "name": "Look", "small": true, "x": 1352, "y": 380,  "link": "settings/appearance", "desc": "Light, dark, highlight colour." },
     { "id": "s-voice",    "group": "settings", "name": "Voice typing", "small": true, "x": 1352, "y": 550,  "link": "settings/dictation", "desc": "Shortcut, words to remember." },
     { "id": "s-notes",    "group": "settings", "name": "Meeting notes", "small": true, "x": 1352, "y": 720,  "link": "settings/meetings", "desc": "Notice calls, muted voice, add-on." },
-    { "id": "s-ai",       "group": "settings", "name": "AI & privacy", "small": true, "x": 1352, "y": 890,  "link": "settings/models", "desc": "Models, ratings, account keys." },
-    { "id": "s-helper",   "group": "settings", "name": "Muted speech helper", "small": true, "x": 1352, "y": 1060, "link": "settings/decision", "desc": "Only for the early feature." },
-    { "id": "s-early",    "group": "settings", "name": "Early features", "small": true, "x": 1352, "y": 1230, "link": "settings/experimental", "desc": "Tell voices apart, tidy up, um/uh." },
-    { "id": "s-about",    "group": "settings", "name": "About", "small": true, "x": 1352, "y": 1400, "link": "settings/about", "desc": "Data folder, credits, start setup again." }
+    { "id": "s-ai",       "group": "settings", "name": "AI & privacy", "small": true, "x": 1352, "y": 890,  "link": "settings/models", "desc": "Models, ratings, account keys, quick decisions." },
+    { "id": "s-early",    "group": "settings", "name": "Early features", "small": true, "x": 1352, "y": 1060, "link": "settings/experimental", "desc": "Tell voices apart, tidy up, um/uh." },
+    { "id": "s-about",    "group": "settings", "name": "About", "small": true, "x": 1352, "y": 1230, "link": "settings/about", "desc": "Data folder, credits, start setup again." }
   ],
   "flows": [
     { "from": "ob-modules", "to": "ob-perms",  "label": "Continue", "kind": "main" },
@@ -231,8 +230,7 @@ svg.wires { position: absolute; inset: 0 auto auto 0; overflow: visible; pointer
     { "from": "vpill",      "to": "vdone",     "label": "Let go", "kind": "main" },
     { "from": "vdone",      "to": "history",   "label": "Saved to history", "kind": "main", "hide": true },
 
-    { "from": "s-early",    "to": "s-ai",      "label": "Tell voices apart on → model choice", "kind": "back", "via": "right" },
-    { "from": "s-early",    "to": "s-helper",  "label": "Uses helper", "kind": "back", "via": "right" }
+    { "from": "s-early",    "to": "s-ai",      "label": "Model choice, quick decisions", "kind": "back", "via": "right" }
   ]
 }
 </script>

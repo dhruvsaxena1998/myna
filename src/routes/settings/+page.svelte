@@ -4,16 +4,16 @@
   import ErrorState from "$lib/ErrorState.svelte";
 
   // Every page is listed from day one; unbuilt ones say what will live there.
+  // Same pages and names as the prototype (docs/index.html, SET_PAGES).
   const pages = [
-    { id: "modules", title: "Modules", soon: "Turn Dictation and Meetings on or off." },
-    { id: "dictation", title: "Dictation", soon: "Hotkeys, hold or toggle, dictionary, paste method, cleanup and Styles." },
-    { id: "meetings", title: "Meetings", soon: "Capture, mic policy per app, retention, transcript cleanup, summary templates." },
-    { id: "models", title: "Models", soon: "Pick speech-to-text and diarization models and download them." },
-    { id: "ai", title: "AI providers", soon: "Add a local server, a cloud service or your coding agent; pick Main and Fast models." },
-    { id: "experimental", title: "Experimental", soon: "Early features, off by default, per module." },
+    { id: "look", title: "Look", soon: "Light or dark, highlight colour, see-through panels." },
+    { id: "dictation", title: "Voice typing", soon: "Turn voice typing on, pick its shortcut, and words to remember." },
+    { id: "meetings", title: "Meeting notes", soon: "Turn meeting notes on, notice calls, pictures of the call, keep your voice when muted." },
+    { id: "ai", title: "AI & privacy", soon: "Speech-to-text and voice models, AI providers for summaries and chat, and quick decisions." },
+    { id: "experimental", title: "Early features", soon: "New things we're still working on. Off until you turn them on." },
     { id: "about", title: "About", soon: "" },
   ];
-  let current = $state("modules");
+  let current = $state("look");
   const page = $derived(pages.find((p) => p.id === current)!);
 
   // Every setting lives in the database, so if it failed to open, every page shows why.
