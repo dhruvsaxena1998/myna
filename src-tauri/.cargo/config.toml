@@ -1,0 +1,3 @@
+[env]
+# Match tauri.conf.json's minimumSystemVersion, so C/C++ deps (whisper.cpp) aren't built for the host's macOS.
+MACOSX_DEPLOYMENT_TARGET = "14.2"

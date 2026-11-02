@@ -48,7 +48,10 @@ fn files(base: &str, m: &Model, tmp: &Path, cancel: &AtomicBool, progress: &mut 
         let url = format!("{base}/{}/resolve/{}/{}", m.repo, m.revision, f.path);
         let resp = ureq::get(&url).call().map_err(|e| format!("Couldn't download {}: {e}", m.name))?;
         let mut body = resp.into_body().into_reader();
-        let mut out = std::fs::File::create(tmp.join(&f.path)).map_err(|e| format!("Couldn't save {}: {e}", m.name))?;
+        let dest = tmp.join(&f.path); // catalog paths may sit in a repo subfolder
+        let mut out = std::fs::create_dir_all(dest.parent().unwrap_or(tmp))
+            .and_then(|_| std::fs::File::create(&dest))
+            .map_err(|e| format!("Couldn't save {}: {e}", m.name))?;
         let (mut hash, mut size) = (Sha256::new(), 0u64);
         loop {
             if cancel.load(Ordering::Relaxed) {
@@ -114,10 +117,11 @@ mod tests {
     fn verified_download_lands_in_the_models_folder() {
         let tmp = tempfile::tempdir().unwrap();
         let (base, mut last) = (serve(b"hello".to_vec()), 0);
-        let m = model(b"hello", HELLO);
+        let mut m = model(b"hello", HELLO);
+        m.files[0].path = "sub/w.bin".into(); // repo subfolder, like Sortformer's
         assert_eq!(fetch(&base, &m, tmp.path(), &AtomicBool::new(false), |n| last = n), Ok(true));
         assert_eq!(last, 5);
-        assert_eq!(std::fs::read(tmp.path().join("m/w.bin")).unwrap(), b"hello");
+        assert_eq!(std::fs::read(tmp.path().join("m/sub/w.bin")).unwrap(), b"hello");
         assert_eq!(entries(tmp.path()), ["m"]);
     }
 

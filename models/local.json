@@ -68,11 +68,11 @@
       "desc": "A backup to switch to if the recommended one gets voices mixed up.",
       "acc": 4,
       "spd": 3,
-      "size": 492243003,
+      "size": 402167515,
       "repo": "altunenes/parakeet-rs",
       "revision": "664cc742197053fa11afd12f5100749fb8000181",
       "files": [
-        { "path": "diar_streaming_sortformer_4spk-v2.1.onnx", "size": 492243003, "sha256": "f010a62654fd6d2adb70166265df2e53f5a766e354d2cce152b4c7966a04d02d" }
+        { "path": "nemotron-3-diarization/nemotron3_diar_v3.onnx", "size": 402167515, "sha256": "c32d6056f1ca52bdd50a74e1e7c66d91e5147bc29f19ffa4c39cbe5452397d15" }
       ]
     }
   ]
