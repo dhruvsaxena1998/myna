@@ -96,6 +96,7 @@ One family: the system font (`--font`). WebKit picks SF Pro Text or Display by s
 
 - `--dur` 180ms with `--ease-out` for things appearing and toggling; `--dur-fast` 120ms with `--ease-in` for things leaving and for hovers. Popovers and toasts enter with an 8px rise plus fade.
 - Only live indicators loop: the recording dot (`--pulse`) and level bars. Skeletons pulse while loading.
+- **No jitter.** A screen never shifts or pops in after it appears. Load a screen's data before showing it (route `load`, or before the window shows); reserve space for anything that arrives later (fixed row heights, skeletons the size of the real content, `tabular-nums` for changing numbers); never let text wrap or controls resize when state changes. Polish is judged on the real app.
 - `prefers-reduced-motion` sets every duration to 0 and stops loops. `prefers-contrast: more` makes hairlines strong and lifts `--text-3` to `--text-2`.
 
 ## Accessibility

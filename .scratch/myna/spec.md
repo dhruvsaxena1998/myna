@@ -169,7 +169,7 @@ Speech-to-text, diarization and filler detection run on the Mac by default; meet
 - A screen whose data fails to load shows the error. No screen ever renders blank.
 
 ### Settings layout
-- Modules (enable Dictation / Meetings), Dictation (hotkeys, mode, dictionary, paste method, dictation cleanup and Styles), Meetings (capture mode, per-app mic policy, retention, transcript cleanup and its prompt, Summary auto-run and templates, screenshots in Summary and Chat), Models (STT and diarization with download state, meeting speech-to-text Local / Endpoint), AI providers (providers, Main and Fast, Customize, Decision provider), Experimental (Uhm × module, muted-segment triage, screenshot relevance), About (attribution, version).
+- Sidebar pages and names follow the prototype (`docs/index.html`): Look & appearance (light/dark, highlight colour, see-through panels), Voice typing (on/off, hotkeys, mode, dictionary, paste method, dictation cleanup and Styles), Meeting notes (on/off, capture mode, per-app mic policy, retention, transcript cleanup and its prompt, Summary auto-run and templates, screenshots in Summary and Chat), AI & privacy (STT and diarization with download state, meeting speech-to-text Local / Endpoint, AI providers, Main and Fast, Customize, and "Quick decisions": the Decision provider), Experimental features (Uhm × module, muted-segment triage, screenshot relevance), About (attribution, version). No separate Modules page: each module's switch tops its own page.
 
 ## Testing Decisions
 

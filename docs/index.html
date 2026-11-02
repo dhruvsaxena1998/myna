@@ -821,7 +821,7 @@ const S = {
 S.set = { modules:S.modules, hotkey:'fn', mode:'hold', paste:'clipboard', dict:['Myna','Parakeet','Desert Ant'],
   capture:'shots', interval:'15', apps:{ meet:false, teams:false, zoom:false, slack:false }, ext:false, retention:'30', folder:true, dataPath:'~/Library/Application Support/Myna', dataMoved:false,
   meetKey:'ctrl-opt-m', appearance:'auto', accent:'blue', glass:'clear', detect:true,
-  diar:'who', decision:'laya', laya:'none', decUrl:'', decKey:'', upd:'',
+  diar:'who', decision:'fast', decKey:'', upd:'',
   exp:{ diarOn:false, uhmD:false, uhmM:false, llmD:false, llmM:false, triage:false, relevance:false, shotsAI:false } };
 S.mb = { open:false };
 S.dictS = { state:null };
@@ -1264,7 +1264,7 @@ function send(key, text) {
 const scrollMsgs = () => { const el = $('#msgs'); if (el) el.scrollTop = el.scrollHeight; };
 
 /* ---------- settings ---------- */
-const SET_PAGES = [['appearance','Look'],['dictation','Voice typing'],['meetings','Meeting notes'],['models','AI & privacy'],['decision','Muted speech helper'],['experimental','Early features'],['about','About']];
+const SET_PAGES = [['appearance','Look & appearance'],['dictation','Voice typing'],['meetings','Meeting notes'],['models','AI & privacy'],['experimental','Experimental features'],['about','About']];
 const getPath = p => p.split('.').reduce((o, k) => o[k], S.set);
 const setPath = (p, v) => { const ks = p.split('.'), last = ks.pop(); ks.reduce((o, k) => o[k], S.set)[last] = v; };
 const sid = p => 's-' + p.replace(/\./g, '-');
@@ -1297,6 +1297,17 @@ function settings() {
       <nav class="snav" aria-label="Settings pages">${SET_PAGES.map(([id, l]) => `<button class="nav" data-act="spage" data-p="${id}" ${S.setPage === id ? 'aria-current="true"' : ''}>${l}</button>`).join('')}</nav>
       <div class="spage od-scroll" id="spage">${settingsPage()}</div>
     </div>`;
+}
+// Quick decisions: one small, fast model for yes/no and pick-one choices (Decision provider in GLOSSARY.md).
+function quickDecisions(x) {
+  const head = sgroup('Quick decisions', [
+    srow('Decide with', x.decision === 'fast' ? 'Uses your fast model. Pick a decision service for quicker, cheaper answers.' : '',
+      segc('decision', [['fast','Fast model'],['jev','Jev'],['openai','OpenAI Decisions']], 'Decide with'))
+  ], `<p class="help">Small choices Myna makes for you: whether muted speech belongs in the notes, which folder a meeting goes in, which pictures matter. It reads text and never hears your voice.</p>`);
+  if (x.decision === 'fast') return head;
+  return head + `<section class="sgroup"><h2>Connect your account</h2><div class="list cloud">
+      <div class="od-field" style="--od-gap:4px"><label class="label" for="${sid('decKey')}">Account key</label><input class="input" type="password" id="${sid('decKey')}" data-bind="set" data-path="decKey" value="${esc(x.decKey)}" autocomplete="off"><span class="help">Myna keeps it safe in your Mac’s Keychain.</span></div>
+      <div>${offBadge()}</div></div></section>`;
 }
 function settingsPage() {
   const x = S.set, e = x.exp;
@@ -1354,19 +1365,8 @@ function settingsPage() {
           <ul class="list" role="radiogroup" aria-label="Telling voices apart">${DIAR.map(m => `<li class="model-row">
             <input type="radio" class="radio" style="margin-top:3px" name="${sid('diar')}" id="${sid('diar')}-${m.id}" data-bind="set" data-path="diar" value="${m.id}" ${x.diar === m.id ? 'checked' : ''}>
             <label for="${sid('diar')}-${m.id}" style="cursor:pointer"><span class="name">${m.name} <span class="vendor">${m.vendor}</span></span><span class="li-desc" style="display:block">${m.desc}</span></label>${ratings(m)}
-            <div class="dl" data-dl="${m.id}">${dlHtml(m)}</div></li>`).join('')}</ul></section>`) : '');
-    case 'decision': {
-      const head = sgroup('Muted speech helper', [
-        srow('Helper', '', segc('decision', [['laya','Laya'],['jev','Jev'],['openai','OpenAI Decisions'],['custom','Other']], 'Muted speech helper'))
-      ], `<p class="help">Only used by the early feature “Decide on muted speech”. It reads text, and never hears your voice.</p>`);
-      if (x.decision === 'laya') return head + sgroup('Laya on this Mac', [srow('Status',
-        { none:'Not set up yet. Myna installs it for you.', installing:'Installing. This can take a few minutes.', ready:'Ready. It starts when needed and stops when you quit Myna.' }[x.laya],
-        { none:`<button class="btn" data-act="laya">Set up Laya</button>`, installing:`<span class="pill status" role="status">Setting up…</span>`, ready:`<span class="pill ok">${icon('check','ic-s')}Ready</span>` }[x.laya])]);
-      return head + `<section class="sgroup"><h2>Connect your account</h2><div class="list cloud">
-          ${x.decision === 'custom' ? `<div class="od-field" style="--od-gap:4px"><label class="label" for="${sid('decUrl')}">Web address</label><input class="input" type="url" id="${sid('decUrl')}" data-bind="set" data-path="decUrl" value="${esc(x.decUrl)}" placeholder="https://"></div>` : ''}
-          <div class="od-field" style="--od-gap:4px"><label class="label" for="${sid('decKey')}">Account key</label><input class="input" type="password" id="${sid('decKey')}" data-bind="set" data-path="decKey" value="${esc(x.decKey)}" autocomplete="off"><span class="help">Myna keeps it safe in your Mac’s Keychain.</span></div>
-          <div>${offBadge()}</div></div></section>`;
-    }
+            <div class="dl" data-dl="${m.id}">${dlHtml(m)}</div></li>`).join('')}</ul></section>`) : '')
+      + quickDecisions(x);
     case 'experimental': {
       const row = (t, h, p, badge) => srow(t, h + (getPath(p) && badge ? '<br>' + badge : ''), sw(p, t + (p.endsWith('D') ? ' in voice typing' : ' in meeting notes')));
       return `<p class="help">New things we’re still working on. They stay off until you turn them on, and they may change.</p>`
@@ -1377,7 +1377,7 @@ function settingsPage() {
           row('Tell voices apart', 'Works out who said what, so notes show names instead of one long block. Stays on this Mac.', 'exp.diarOn'),
           row('Remove “um” and “uh”', 'Takes out filler words from the notes. Stays on this Mac.', 'exp.uhmM'),
           row('Tidy up with AI', 'Cleans up the notes after the call.', 'exp.llmM', llmCloud() && offBadge()),
-          row('Decide on muted speech', 'Lets the muted speech helper decide if what you said while muted belongs in the notes.', 'exp.triage', x.decision !== 'laya' && offBadge()),
+          row('Decide on muted speech', 'Lets quick decisions (in AI & privacy) choose if what you said while muted belongs in the notes.', 'exp.triage', (x.decision !== 'fast' || llmCloud()) && offBadge()),
           row('Keep only useful pictures', 'Skips pictures where nothing changed on screen.', 'exp.relevance', llmCloud() && offBadge('images')),
           row('Use pictures in summaries', 'Lets the AI look at up to 20 pictures from the call, if it can.', 'exp.shotsAI', llmCloud() && offBadge('images'))
         ]);
@@ -1638,7 +1638,6 @@ document.addEventListener('click', e => {
     case 'spage': S.setPage = el.dataset.p; render(); $('#spage').scrollTop = 0; $(`[data-act=spage][data-p=${S.setPage}]`).focus(); break;
     case 'dict-rm': S.set.dict = S.set.dict.filter(w => w !== el.dataset.w); render(); $('#dict-in').focus(); break;
     case 'ext': S.set.ext = !S.set.ext; render(); $('[data-act=ext]').focus(); break;
-    case 'laya': S.set.laya = 'installing'; render(); setTimeout(() => { S.set.laya = 'ready'; if (S.view === 'settings') render(); }, 2500); break;
     case 'upd': S.set.upd = 'checking'; render(); setTimeout(() => { S.set.upd = 'ok'; if (S.view === 'settings') render(); }, 1200); break;
     case 'new-chat': S.global.msgs = []; S.tokensSent.global = 0; render(); break;
     case 'untag': { const m = byId(id); m.tags = m.tags.filter(t => t !== el.dataset.tag); render(); $('#newtag').focus(); break; }
