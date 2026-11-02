@@ -1,6 +1,7 @@
 <script lang="ts">
   let { data } = $props();
   import ErrorState from "$lib/ErrorState.svelte";
+  import ModelTask from "$lib/ModelTask.svelte";
 
   // Every page is listed from day one; unbuilt ones say what will live there.
   // Same pages and names as the prototype (docs/index.html, SET_PAGES).
@@ -43,6 +44,15 @@
       <!-- Every setting lives in the database, so if it failed to open, every page shows why. -->
       {#if !data.storage.ok}
         <ErrorState title="Myna couldn't open its data folder" message={data.storage.error} />
+      {:else if page.id === "ai"}
+        {#if !data.models?.ok}
+          <ErrorState title="Myna couldn't list its models" message={data.models?.error ?? ""} />
+        {:else}
+          {@const [stt, diar] = data.models.tasks}
+          <ModelTask task={stt} title="Turning speech into text" help="Used for voice typing and meeting notes." />
+          <ModelTask task={diar} title="Telling voices apart" help="Works out who said what. Always runs on this Mac. Your own voice is always “Me”." />
+          <p class="soon later">AI providers for summaries and chat, and quick decisions, will live here too.</p>
+        {/if}
       {:else if page.id === "about"}
         <dl>
           <dt>Version</dt><dd>{data.version}</dd>
@@ -66,12 +76,15 @@
   ul:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; border-radius: var(--r-md); }
   li { height: var(--h-row); display: flex; align-items: center; padding: 0 var(--sp-2); border-radius: var(--r-md); }
   li.selected { background: var(--accent-soft-strong); }
-  main { border-radius: var(--r-xl); background: var(--bg-content); box-shadow: var(--shadow-panel); overflow: auto; }
+  main { border-radius: var(--r-xl); background: var(--bg-content); box-shadow: var(--shadow-panel); overflow: auto; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+  main::-webkit-scrollbar { width: 8px; }
+  main::-webkit-scrollbar-thumb { border-radius: 4px; background: var(--line-strong); border: 2px solid transparent; background-clip: content-box; }
   header { height: var(--h-toolbar); display: flex; align-items: center; padding: 0 var(--sp-5); }
   /* Let drags on the title fall through to the header's drag region. */
   h1 { pointer-events: none; margin: 0; font-size: var(--fs-title2); line-height: var(--lh-title2); font-weight: var(--fw-semibold); }
   .content { padding: 0 var(--sp-5) var(--sp-5); }
   .soon { margin: 0; color: var(--text-2); }
+  .later { margin-top: var(--sp-5); }
   dl { display: grid; grid-template-columns: max-content 1fr; gap: var(--sp-2) var(--sp-4); margin: 0; }
   dt { color: var(--text-3); }
   dd { margin: 0; user-select: text; }

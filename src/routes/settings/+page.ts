@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
+import type { Task } from "$lib/models";
 
 // Load before the first paint so nothing pops in after the window shows.
 export async function load() {
@@ -10,5 +11,8 @@ export async function load() {
     ),
     getVersion(),
   ]);
-  return { storage, version };
+  const models = storage.ok
+    ? await invoke<Task[]>("models_list").then((tasks) => ({ ok: true as const, tasks }), (err) => ({ ok: false as const, error: String(err) }))
+    : null;
+  return { storage, version, models };
 }

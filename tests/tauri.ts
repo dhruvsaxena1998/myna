@@ -1,0 +1,25 @@
+import type { Page } from "@playwright/test";
+
+/** Fake the Tauri backend: `handlers[cmd](args)` answers `invoke(cmd, args)`; a thrown string becomes the rejection. */
+export async function fakeTauri(page: Page, handlers: string) {
+  await page.addInitScript((src) => {
+    const h = new Function(`return (${src})`)();
+    const cbs: Record<number, Function> = {};
+    const listeners: Record<string, number[]> = {}; // one per component listening
+    // Lets a test play the backend's events: `window.__emit("model-state", {...})`.
+    (window as any).__emit = (event: string, payload: unknown) => (listeners[event] ?? []).forEach((id) => cbs[id]({ event, id: 0, payload }));
+    const calls: [string, unknown][] = ((window as any).__calls = []);
+    (window as any).__TAURI_INTERNALS__ = {
+      metadata: { currentWindow: { label: "settings" }, currentWebview: { label: "settings" } },
+      transformCallback: (cb: Function) => { const id = Object.keys(cbs).length + 1; cbs[id] = cb; return id; },
+      invoke: async (cmd: string, args: unknown) => {
+        calls.push([cmd, args]);
+        if (cmd === "plugin:app|version") return "0.1.0";
+        if (cmd === "plugin:event|listen") return void (listeners[(args as any).event] ??= []).push((args as any).handler);
+        if (cmd === "plugin:event|unlisten") return;
+        if (!(cmd in h)) throw `no fake for ${cmd}`;
+        return h[cmd](args);
+      },
+    };
+  }, handlers);
+}

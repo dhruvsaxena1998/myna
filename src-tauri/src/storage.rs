@@ -1,8 +1,13 @@
 use rusqlite::Connection;
 use std::path::Path;
 
-/// Bump when a migration is added; `open` runs every step above the file's `user_version`.
-const SCHEMA_VERSION: i64 = 1;
+/// One step per schema version; `open` runs every step above the file's `user_version`.
+/// Version 1 is the empty base schema. Append, never edit, a step.
+const MIGRATIONS: &[&str] = &[
+    "",
+    "CREATE TABLE active_model(task TEXT PRIMARY KEY, model_id TEXT NOT NULL);",
+];
+const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
 
 /// Create the data folder and the SQLite database in it if missing. Safe to call on every launch.
 pub fn open(dir: &Path) -> Result<Connection, String> {
@@ -15,10 +20,9 @@ pub fn open(dir: &Path) -> Result<Connection, String> {
     if version > SCHEMA_VERSION {
         return Err(format!("{} was written by a newer Myna (schema {version}).", db.display()));
     }
-    if version < SCHEMA_VERSION {
-        // Version 1 is the empty base schema; later stories add their tables as further steps.
-        conn.pragma_update(None, "user_version", SCHEMA_VERSION)
-            .map_err(|e| format!("Couldn't set up {}: {e}", db.display()))?;
+    for v in version..SCHEMA_VERSION {
+        let step = format!("BEGIN; {} PRAGMA user_version = {}; COMMIT;", MIGRATIONS[v as usize], v + 1);
+        conn.execute_batch(&step).map_err(|e| format!("Couldn't set up {}: {e}", db.display()))?;
     }
     Ok(conn)
 }
