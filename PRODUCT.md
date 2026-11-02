@@ -20,7 +20,7 @@ A single Mac user, typically a developer or knowledge worker, who (a) dictates t
 
 ## Product Purpose
 
-Myna is a fully local macOS app with two opt-in modules, Dictation and Meetings. Everything (speech-to-text, diarization, filler removal) runs on-device by default. Cloud providers exist only as bring-your-own-key, off-by-default options. Success: dictated text appears in the focused app within a second of releasing the hotkey; a recorded meeting yields a transcript where "you" and each other speaker are separated, nothing said while muted leaks, and a summary or chat is one click away.
+Myna is a macOS app with two opt-in modules, Dictation and Meetings, that works on the Mac by default. Speech-to-text, diarization and filler removal run on-device. Myna runs no LLM: Summary, Chat and cleanup stay off until the user adds an AI provider, with local servers listed first; cloud services (their key) and their own signed-in coding agent (their plan) are opt-in and labelled off-device. Success: dictated text appears in the focused app within a second of releasing the hotkey; a recorded meeting yields a transcript where "you" and each other speaker are separated, nothing said while muted leaks, and a summary or chat is one click away.
 
 ## Positioning
 
@@ -36,11 +36,11 @@ Mute-aware capture: the mic track is always recorded locally, but segments are t
 
 ## Capabilities and Constraints
 
-- Dictation: hold-to-talk (toggle mode optional), finalize on release, clipboard paste with restore, rules-based filler removal and personal dictionary. Experimental: Uhm audio filler detection, LLM cleanup (per-module toggles).
-- Meetings: manual start/stop; post-process transcription; diarization with rename-once propagation, remembered voice profiles ("suggested" matches), merge speakers, replayable clips while renaming; collapsed "possibly muted" segment groups with per-segment include; screenshot filmstrip timeline; Summary tab with built-in and saved prompt templates; Chat tab with approximate token and cost counter.
-- Settings: Models (curated STT list: Parakeet TDT v3 default, Whisper large-v3-turbo, Desert Ant Voz; diarization: Desert Ant Who default, Sortformer fallback; advanced custom path), AI provider (OpenAI / Anthropic / OpenRouter / Custom OpenAI-compatible, Keychain key, per-model price table, context window), Decision provider (Laya local via managed sidecar, Jev, OpenAI Decisions, Custom), Experimental section.
+- Dictation: hold-to-talk (toggle mode optional), finalize on release, clipboard paste with restore, rules-based filler removal and personal dictionary; a second hotkey adds LLM cleanup with app-bound Styles. Experimental: Uhm audio filler detection.
+- Meetings: manual start/stop; post-process transcription (local, or an Endpoint after the meeting if chosen); diarization with rename-once propagation, remembered voice profiles ("suggested" matches), merge speakers, replayable clips while renaming; collapsed "possibly muted" segment groups with per-segment include; screenshots while someone shares plus manual Capture, on a filmstrip timeline; optional transcript cleanup; Summary tab with templates, versions and edits; Chat tab that looks things up in the transcript, with token, cost and context shown.
+- Settings: Models (curated STT list: Parakeet TDT v3 default, Whisper large-v3-turbo, Desert Ant Voz; diarization: Desert Ant Who default, Sortformer fallback; advanced custom path; meeting speech-to-text Local / Endpoint), AI providers (Endpoints such as Ollama, LM Studio, oMLX and OpenRouter with Keychain keys; Agents: Claude Code, Codex, OpenCode, Pi; Decision APIs: Jev, OpenAI Decisions; Main and Fast model with per-feature overrides; live model lists with price and context window), Experimental section (Uhm, muted-segment triage, screenshot relevance).
 - Terminology: "Dictation" and "Meetings" are the module names. "Possibly muted" is the user-facing label for muted/unknown segments. "Suggested" marks an auto-applied speaker name awaiting confirmation.
-- Any feature that sends text off the Mac shows a visible "sends text off this Mac" badge.
+- Any feature that sends text off the Mac shows a visible "sends text off this Mac" pill; off-device means any host other than this Mac's loopback, LAN included.
 - Attribution "Powered by Desert Ant Labs" is required and lives on the Models/About page.
 - Undecided: app icon, exact hotkey default (assumed Fn or Right Option).
 
@@ -54,7 +54,7 @@ No logo, screenshots, testimonials, or benchmarks of our own. Model benchmark nu
 
 ## Product Principles
 
-- Local by default; off-device is opt-in and visibly labeled.
+- Local by default; off-device is opt-in and visibly labeled. Myna never holds agent credentials and never silently switches provider.
 - Never lose audio, never leak audio: capture everything locally, gate inclusion by mute state.
 - The tool disappears into the task; familiar macOS patterns over invention.
 - Every model slot is swappable; no single vendor is load-bearing.

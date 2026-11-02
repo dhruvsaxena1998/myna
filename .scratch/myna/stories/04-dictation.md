@@ -6,6 +6,8 @@
 
 Hold a hotkey, speak, release; text appears in the focused app.
 
+> Amended by [Speech-to-text through an Endpoint](../../local-ai/issues/13-cloud-stt-endpoint.md) and [LLM cleanup for dictation and transcripts](../../local-ai/issues/28-llm-cleanup.md): Dictation is always local; two hotkeys, Dictate and Dictate with cleanup (LLM cleanup on an Endpoint, 3 s budget, guards, app-bound Styles), replacing a cleanup toggle. Dictation cleanup and Styles leave Experimental.
+
 ## Stories
 - As a user, I want hold-to-talk on a global hotkey, and a toggle mode, so that short and long dictation both work.
 - As a user, I want to change the hotkey in Settings and have it work immediately.

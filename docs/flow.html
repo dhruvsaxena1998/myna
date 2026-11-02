@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Myna · Screen flow</title>
+<style>
+/* OD-LAYOUT-PRIMITIVES v1 — structure only: display, flex/grid, overflow, wrapping, ratio.
+   Put this @layer first; product CSS outside the layer always wins. */
+@layer od-layout {
+  :where(.od-stack,.od-row,.od-row-top,.od-cluster,.od-grid,.od-field,.od-stat,.od-cell,.od-tile) > :where(*) { min-width: 0; }
+  .od-stack   { display: flex; flex-direction: column; gap: var(--od-gap, 8px); }
+  .od-row     { display: flex; align-items: center; gap: var(--od-gap, 8px); }
+  .od-cluster { display: flex; flex-wrap: wrap; align-items: center; gap: var(--od-gap, 8px); }
+  .od-fill    { flex: 1 1 0; min-width: 0; }
+  .od-fixed   { flex: none; }
+  .od-field   { display: grid; gap: var(--od-gap, 2px); }
+  :where(.od-field) > :where(*) { display: block; }
+  .od-truncate { display: block; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .od-clamp-2 { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; -webkit-line-clamp: 2; }
+  .od-nowrap  { white-space: nowrap; }
+  .od-scroll  { overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+}
+/* /OD-LAYOUT-PRIMITIVES v1 */
+
+/* Same tokens as the Myna prototype, so the map reads as part of the product */
+:root {
+  --desk: #E4E6EC; --win: #FFFFFF; --inset: #F6F6F8; --line: rgba(0,0,0,.08); --line-strong: rgba(0,0,0,.16);
+  --text: #1D1D1F; --text-2: #4A4A50; --text-3: #6A6A70;
+  --accent: #0A64D8; --accent-text: #0A5BC4; --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);
+  --rec: #D93A30; --mock: rgba(0,0,0,.10); --mock-2: rgba(0,0,0,.05);
+  --g-setup: #0A64D8; --g-daily: #1E7B34; --g-record: #C42B1C; --g-voice: #8E44AD; --g-settings: #5E5E63;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", sans-serif;
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px;
+  --r-card: 14px; --r-pill: 980px; --dur: 180ms; --ease: cubic-bezier(.28,0,.22,1);
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --desk: #0E0E10; --win: #1D1D1F; --inset: #262628; --line: rgba(255,255,255,.10); --line-strong: rgba(255,255,255,.2);
+    --text: #ECECEF; --text-2: #B3B3B9; --text-3: #929298; --accent: #4D9BFF; --accent-text: #6AAEFF;
+    --rec: #FF6961; --mock: rgba(255,255,255,.16); --mock-2: rgba(255,255,255,.07);
+    --g-setup: #6AAEFF; --g-daily: #4CD964; --g-record: #FF6961; --g-voice: #DA8FFF; --g-settings: #C7C7CC;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--desk); color: var(--text); font: 13px/1.5 var(--font); -webkit-font-smoothing: antialiased; }
+h1, h2, h3, p { margin: 0; }
+a { color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.top { position: sticky; top: 0; z-index: 10; display: flex; flex-wrap: wrap; align-items: center; gap: var(--s3) var(--s4); padding: var(--s3) var(--s5);
+  background: color-mix(in srgb, var(--win) 82%, transparent); -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%); border-bottom: .5px solid var(--line); }
+.top h1 { font: 600 18px/1.2 var(--font-display); letter-spacing: -.015em; }
+.top .sub { color: var(--text-3); }
+.legend { --od-gap: 6px 16px; color: var(--text-2); font-size: 12px; }
+.legend svg { display: block; }
+.zoom { --od-gap: 4px; }
+.btn { height: 28px; padding: 0 12px; border: 0; border-radius: var(--r-pill); background: var(--inset); color: var(--text); font: inherit; cursor: pointer; box-shadow: inset 0 0 0 .5px var(--line-strong); text-decoration: none; display: inline-flex; align-items: center; }
+.btn.icon { width: 28px; padding: 0; justify-content: center; font-size: 15px; }
+@media (hover: hover) { .btn:hover { background: color-mix(in srgb, var(--inset) 80%, var(--text)); } }
+.zoom output { min-width: 44px; text-align: center; font-variant-numeric: tabular-nums; color: var(--text-2); }
+
+.viewport { overflow: auto; height: calc(100vh - 64px); }
+.stage { position: relative; }
+.canvas { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+/* the map is a diagram: cards and arrows are placed by coordinates, so absolute positioning is intentional here */
+.lane { position: absolute; border-radius: 22px; background: color-mix(in srgb, var(--c) 6%, transparent); box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--c) 30%, transparent); }
+.lane h2 { position: absolute; top: 14px; left: 20px; font: 600 15px/1.2 var(--font-display); color: var(--c); letter-spacing: -.01em; }
+.lane p { position: absolute; top: 36px; left: 20px; color: var(--text-3); font-size: 12px; }
+svg.wires { position: absolute; inset: 0 auto auto 0; overflow: visible; pointer-events: none; }
+.wire { fill: none; stroke: var(--text-3); stroke-width: 1.5; }
+.wire.main { stroke: var(--accent); stroke-width: 2; }
+.wire.back { stroke-dasharray: 2 5; stroke-linecap: round; }
+.wire.pop { stroke-dasharray: 7 5; }
+.tag { position: absolute; transform: translate(-50%, -50%); padding: 2px 8px; border-radius: var(--r-pill); background: var(--win); box-shadow: inset 0 0 0 .5px var(--line-strong), 0 1px 3px rgba(0,0,0,.08);
+  font-size: 11px; color: var(--text-2); white-space: nowrap; pointer-events: none; }
+.tag.main { color: var(--accent-text); }
+
+.card { position: absolute; width: 220px; display: grid; grid-template-rows: auto auto 1fr; border-radius: var(--r-card); background: var(--win); color: var(--text); text-decoration: none;
+  box-shadow: 0 0 0 .5px var(--line-strong), 0 6px 18px rgba(0,0,0,.08); transition: box-shadow var(--dur) var(--ease), transform var(--dur) var(--ease); }
+@media (hover: hover) { .card:hover { box-shadow: 0 0 0 2px var(--accent), 0 10px 26px rgba(0,0,0,.12); transform: translateY(-1px); } }
+.card .hd { display: flex; align-items: center; gap: 6px; padding: 8px 10px 6px; }
+.card .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c); flex: none; }
+.card .nm { font-weight: 600; font-size: 12.5px; }
+.card .ext { margin-left: auto; color: var(--text-3); font-size: 11px; }
+.card .desc { padding: 6px 10px 10px; color: var(--text-2); font-size: 11.5px; line-height: 1.4; }
+.card.small { width: 168px; }
+.card.small .mock { display: none; }
+
+/* mini screen drawings */
+.mock { margin: 0 10px; height: 82px; border-radius: 8px; background: var(--inset); box-shadow: inset 0 0 0 .5px var(--line); display: grid; padding: 6px; gap: 4px; overflow: hidden; }
+.mock i { display: block; border-radius: 3px; background: var(--mock); }
+.mock .acc { background: var(--accent); }
+.mock .red { background: var(--rec); }
+.mock .soft { background: var(--mock-2); }
+.m-ob { place-content: center; justify-items: center; gap: 5px; }
+.m-ob i:nth-child(1) { width: 90px; height: 7px; } .m-ob i:nth-child(2), .m-ob i:nth-child(3) { width: 130px; height: 14px; background: var(--win); box-shadow: inset 0 0 0 .5px var(--line-strong); } .m-ob i:nth-child(4) { width: 46px; height: 10px; justify-self: end; }
+.m-app { grid-template-columns: 34px 1fr; grid-template-rows: repeat(5, 1fr); }
+.m-app > .side { grid-row: 1 / -1; background: var(--mock-2); }
+.m-doc { grid-template-columns: 1fr; align-content: start; padding: 8px 18px; }
+.m-split { grid-template-columns: 1fr 64px; }
+.m-split > div { display: grid; gap: 4px; align-content: start; }
+.m-menu { justify-items: end; align-content: start; }
+.m-menu > div { width: 120px; display: grid; gap: 4px; padding: 6px; border-radius: 6px; background: var(--win); box-shadow: 0 2px 8px rgba(0,0,0,.15); }
+.m-pill { place-content: center; }
+.m-pill > div { display: flex; align-items: center; gap: 5px; padding: 6px 10px; border-radius: var(--r-pill); background: #2b2b2e; }
+.m-pill > div i { background: rgba(255,255,255,.7); }
+.m-set { grid-template-columns: 44px 1fr; align-content: start; }
+.m-set > div { display: grid; gap: 4px; align-content: start; }
+.m-set .row { display: flex; justify-content: space-between; align-items: center; height: 12px; padding: 0 4px; border-radius: 3px; background: var(--win); }
+.m-set .row i { width: 40%; height: 4px; } .m-set .row b { width: 12px; height: 7px; border-radius: 4px; background: var(--accent); }
+
+.list { max-width: 980px; margin: var(--s6) auto; padding: 0 var(--s5) var(--s6); }
+.list h2 { font: 600 18px/1.2 var(--font-display); letter-spacing: -.015em; margin-bottom: var(--s2); }
+.list > p { color: var(--text-2); margin-bottom: var(--s4); max-width: 70ch; }
+.list section { margin-top: var(--s5); }
+.list h3 { font-size: 13px; font-weight: 600; color: var(--c); margin-bottom: var(--s2); }
+.list ol { margin: 0; padding: 0; list-style: none; border-radius: var(--r-card); background: var(--win); box-shadow: inset 0 0 0 .5px var(--line); }
+.list li { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) minmax(0, 1.3fr); gap: var(--s3); align-items: center; padding: 10px 14px; font-size: 13px; }
+.list li + li { border-top: .5px solid var(--line); }
+.list li .arrow { color: var(--text-3); }
+.list li .how { color: var(--text-2); }
+.list li .kind { font-size: 11px; color: var(--text-3); }
+@media (max-width: 700px) { .list li { grid-template-columns: 1fr; gap: 2px; } .list li .arrow { display: none; } .viewport { height: 70vh; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="od-field od-fill" style="--od-gap:2px">
+    <h1>Myna · Screen flow</h1>
+    <span class="sub">Every screen of the prototype and how you move between them. Click a screen to open it in the prototype.</span>
+  </div>
+  <div class="legend od-cluster" aria-label="Arrow legend">
+    <span class="od-row" style="--od-gap:6px"><svg width="30" height="8" aria-hidden="true"><path d="M0 4h30" class="wire main"/></svg>Main path</span>
+    <span class="od-row" style="--od-gap:6px"><svg width="30" height="8" aria-hidden="true"><path d="M0 4h30" class="wire pop"/></svg>Opens on top</span>
+    <span class="od-row" style="--od-gap:6px"><svg width="30" height="8" aria-hidden="true"><path d="M0 4h30" class="wire back"/></svg>Goes back</span>
+  </div>
+  <div class="zoom od-row" role="group" aria-label="Zoom">
+    <button class="btn icon" id="zout" aria-label="Zoom out">−</button>
+    <output id="zval" aria-live="polite">100%</output>
+    <button class="btn icon" id="zin" aria-label="Zoom in">+</button>
+    <button class="btn" id="zfit">Fit</button>
+    <a class="btn" href="index.html">Open prototype</a>
+  </div>
+</header>
+
+<main>
+  <div class="viewport" id="vp" aria-label="Screen flow map">
+    <div class="stage" id="stage"><div class="canvas" id="canvas"></div></div>
+  </div>
+
+  <div class="list" id="list">
+    <h2>All flows, in words</h2>
+    <p>The same map as a list: where you start, what you do, and where you end up. It is generated from the same data as the map above, so the two always match. A few long jumps (like Stop → back to the meeting page) appear only here to keep the map uncluttered.</p>
+  </div>
+</main>
+
+<!-- Single source of truth for the map and the list. Screens, groups and transitions are plain data so people and AI tools can read them. -->
+<script type="application/json" id="flow-data">
+{
+  "groups": [
+    { "id": "setup",    "name": "First-time setup",  "note": "Runs once, or from Settings → About → Start setup again", "x": 20,   "y": 20,   "w": 1260, "h": 270, "color": "--g-setup" },
+    { "id": "daily",    "name": "Everyday use",      "note": "Main window: sidebar on the left, content on the right", "x": 20,   "y": 320,  "w": 1260, "h": 690, "color": "--g-daily" },
+    { "id": "record",   "name": "Taking meeting notes", "note": "Works from any app; lives in the menu bar and floating pills", "x": 20,   "y": 1040, "w": 1260, "h": 270, "color": "--g-record" },
+    { "id": "voice",    "name": "Voice typing",      "note": "Works in any app with the shortcut key", "x": 20,   "y": 1340, "w": 1260, "h": 270, "color": "--g-voice" },
+    { "id": "settings", "name": "Settings",          "note": "Sidebar → Settings, or ⌘ ,", "x": 1310, "y": 320,  "w": 250,  "h": 1290, "color": "--g-settings" }
+  ],
+  "screens": [
+    { "id": "ob-modules", "group": "setup", "name": "1 · What to help with", "mock": "ob", "x": 50,  "y": 80, "link": "onboarding/modules", "desc": "Pick voice typing, meeting notes or both." },
+    { "id": "ob-perms",   "group": "setup", "name": "2 · Permissions", "mock": "ob", "x": 360, "y": 80, "link": "onboarding/permissions", "desc": "Microphone, Accessibility, Screen & audio — only what the picks need." },
+    { "id": "ob-models",  "group": "setup", "name": "3 · Where the AI runs", "mock": "ob", "x": 670, "y": 80, "link": "onboarding/models", "desc": "On this Mac (download) or Online (account key), per task." },
+    { "id": "ob-done",    "group": "setup", "name": "4 · You’re all set", "mock": "ob", "x": 980, "y": 80, "link": "onboarding/done", "desc": "Summary of choices and what to try first." },
+
+    { "id": "meetings",   "group": "daily", "name": "All meetings", "mock": "list", "x": 50,  "y": 380, "link": "meetings", "desc": "Grouped by day. Search with /, Start notes, folder suggestions." },
+    { "id": "detail",     "group": "daily", "name": "Meeting page", "mock": "doc", "x": 360, "y": 380, "link": "detail/m1", "desc": "Summary as a clean note, tags, folder button." },
+    { "id": "rewrite",    "group": "daily", "name": "Rewrite summary", "mock": "pop", "x": 670, "y": 380, "link": "detail/m1", "desc": "Pop-up: use a template or say what you want." },
+    { "id": "transcript", "group": "daily", "name": "Transcript panel", "mock": "split", "x": 980, "y": 380, "link": "detail/transcript", "desc": "Opens on the right. Copy the whole transcript." },
+    { "id": "mchat",      "group": "daily", "name": "Chat panel", "mock": "split", "x": 980, "y": 610, "link": "detail/chat", "desc": "Ask about this one meeting." },
+    { "id": "move",       "group": "daily", "name": "Move to folder", "mock": "pop", "x": 670, "y": 610, "link": "detail/m1", "desc": "Menu of folders with a check on the current one." },
+    { "id": "appchat",    "group": "daily", "name": "Chat", "mock": "chat", "x": 50,  "y": 610, "link": "chat", "desc": "Ask across every meeting; Myna finds the right ones." },
+    { "id": "history",    "group": "daily", "name": "Voice typing history", "mock": "list", "x": 360, "y": 610, "link": "clips", "desc": "Everything you said. Copy again, delete, clear all, search." },
+    { "id": "sidemenu",   "group": "daily", "name": "Folder & tag menu", "mock": "pop", "x": 50,  "y": 840, "link": "meetings", "desc": "⋯ or right-click: change a folder icon or tag colour." },
+
+    { "id": "menubar",    "group": "record", "name": "Menu bar menu", "mock": "menu", "x": 50,  "y": 1100, "link": "menu", "desc": "Start meeting notes, voice typing, recent meetings." },
+    { "id": "detected",   "group": "record", "name": "Meeting detected", "mock": "toast", "x": 360, "y": 1100, "link": "detected", "desc": "Appears when a call starts. Start notes or dismiss." },
+    { "id": "recpill",    "group": "record", "name": "Recording pill", "mock": "pill", "x": 670, "y": 1100, "link": "record", "desc": "Timer and mic state. Click to see live notes." },
+    { "id": "live",       "group": "record", "name": "Live notes", "mock": "split", "x": 980, "y": 1100, "link": "record/live", "desc": "First-draft notes as people talk. Minimize, mute, stop." },
+
+    { "id": "vkey",       "group": "voice", "name": "Hold the shortcut key", "mock": "toast", "x": 50,  "y": 1400, "link": "meetings", "desc": "In any app, with the cursor in a text box." },
+    { "id": "vpill",      "group": "voice", "name": "Listening pill", "mock": "pill", "x": 360, "y": 1400, "link": "voice", "desc": "Level bars while you talk." },
+    { "id": "vdone",      "group": "voice", "name": "Words added", "mock": "pill", "x": 670, "y": 1400, "link": "voice", "desc": "“Writing…”, then “Added where you were typing”." },
+
+    { "id": "s-look",     "group": "settings", "name": "Look", "small": true, "x": 1352, "y": 380,  "link": "settings/appearance", "desc": "Light, dark, highlight colour." },
+    { "id": "s-voice",    "group": "settings", "name": "Voice typing", "small": true, "x": 1352, "y": 550,  "link": "settings/dictation", "desc": "Shortcut, words to remember." },
+    { "id": "s-notes",    "group": "settings", "name": "Meeting notes", "small": true, "x": 1352, "y": 720,  "link": "settings/meetings", "desc": "Notice calls, muted voice, add-on." },
+    { "id": "s-ai",       "group": "settings", "name": "AI & privacy", "small": true, "x": 1352, "y": 890,  "link": "settings/models", "desc": "Models, ratings, account keys." },
+    { "id": "s-helper",   "group": "settings", "name": "Muted speech helper", "small": true, "x": 1352, "y": 1060, "link": "settings/decision", "desc": "Only for the early feature." },
+    { "id": "s-early",    "group": "settings", "name": "Early features", "small": true, "x": 1352, "y": 1230, "link": "settings/experimental", "desc": "Tell voices apart, tidy up, um/uh." },
+    { "id": "s-about",    "group": "settings", "name": "About", "small": true, "x": 1352, "y": 1400, "link": "settings/about", "desc": "Data folder, credits, start setup again." }
+  ],
+  "flows": [
+    { "from": "ob-modules", "to": "ob-perms",  "label": "Continue", "kind": "main" },
+    { "from": "ob-perms",   "to": "ob-models", "label": "Continue", "kind": "main" },
+    { "from": "ob-models",  "to": "ob-done",   "label": "Continue", "kind": "main" },
+    { "from": "ob-done",    "to": "meetings",  "label": "Open Myna", "kind": "main", "via": "v" },
+
+    { "from": "meetings",   "to": "detail",    "label": "Click a meeting", "kind": "main" },
+    { "from": "detail",     "to": "rewrite",   "label": "Rewrite", "kind": "pop" },
+    { "from": "detail",     "to": "transcript","label": "Transcript", "kind": "pop", "via": "below" },
+    { "from": "transcript", "to": "mchat",     "label": "Chat button swaps the panel", "kind": "pop" },
+    { "from": "detail",     "to": "mchat",     "label": "Chat", "kind": "pop", "hide": true },
+    { "from": "detail",     "to": "move",      "label": "Folder button", "kind": "pop" },
+    { "from": "meetings",   "to": "appchat",   "label": "Sidebar → Chat", "kind": "main" },
+    { "from": "meetings",   "to": "history",   "label": "Sidebar → Voice typing history", "kind": "main" },
+    { "from": "appchat",    "to": "detail",    "label": "Click a source meeting", "kind": "main" },
+    { "from": "appchat",    "to": "sidemenu",  "label": "Sidebar ⋯ on folder or tag", "kind": "pop" },
+    { "from": "meetings",   "to": "s-look",    "label": "Sidebar → Settings", "kind": "main", "hide": true },
+
+    { "from": "menubar",    "to": "recpill",   "label": "Start meeting notes", "kind": "main", "via": "below" },
+    { "from": "detected",   "to": "recpill",   "label": "Start notes", "kind": "main" },
+    { "from": "meetings",   "to": "recpill",   "label": "Start notes button", "kind": "main", "hide": true },
+    { "from": "recpill",    "to": "live",      "label": "Click pill", "kind": "pop" },
+    { "from": "live",       "to": "recpill",   "label": "Minimize", "kind": "back", "via": "below" },
+    { "from": "live",       "to": "detail",    "label": "Stop → Open notes", "kind": "main", "hide": true },
+
+    { "from": "vkey",       "to": "vpill",     "label": "Hold key, talk", "kind": "main" },
+    { "from": "vpill",      "to": "vdone",     "label": "Let go", "kind": "main" },
+    { "from": "vdone",      "to": "history",   "label": "Saved to history", "kind": "main", "hide": true },
+
+    { "from": "s-early",    "to": "s-ai",      "label": "Tell voices apart on → model choice", "kind": "back", "via": "right" },
+    { "from": "s-early",    "to": "s-helper",  "label": "Uses helper", "kind": "back", "via": "right" }
+  ]
+}
+</script>
+
+<script>
+(function () {
+  const data = JSON.parse(document.getElementById('flow-data').textContent);
+  const canvas = document.getElementById('canvas'), stage = document.getElementById('stage'), vp = document.getElementById('vp');
+  const byId = Object.fromEntries(data.screens.map(s => [s.id, s]));
+  const grp = Object.fromEntries(data.groups.map(g => [g.id, g]));
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
+  const W = Math.max(...data.groups.map(g => g.x + g.w)) + 20, H = Math.max(...data.groups.map(g => g.y + g.h)) + 20;
+  const CARD = { w: 220, h: 170 }, SMALL = { w: 168, h: 92 };
+  const size = s => s.small ? SMALL : CARD;
+
+  const MOCK = {
+    ob:    '<div class="mock m-ob"><i></i><i></i><i></i><i class="acc"></i></div>',
+    list:  '<div class="mock m-app"><i class="side"></i><i class="soft" style="width:40%"></i><i></i><i></i><i class="acc" style="width:60%;opacity:.35"></i><i></i></div>',
+    doc:   '<div class="mock m-doc"><i style="width:60%;height:9px"></i><i class="soft" style="width:35%"></i><i></i><i></i><i style="width:80%"></i></div>',
+    pop:   '<div class="mock m-doc"><i style="width:60%;height:9px"></i><i></i><i style="width:70%;height:34px;justify-self:end;background:var(--win);box-shadow:0 2px 8px rgba(0,0,0,.18)"></i></div>',
+    split: '<div class="mock m-split"><div><i style="width:70%;height:8px"></i><i></i><i></i><i style="width:60%"></i></div><div style="background:var(--win);border-radius:5px;padding:4px"><i></i><i></i><i style="width:70%"></i></div></div>',
+    chat:  '<div class="mock m-doc"><i style="width:55%;justify-self:end;height:12px" class="acc"></i><i style="width:75%;height:20px"></i><i style="width:45%;justify-self:end;height:12px" class="acc"></i></div>',
+    menu:  '<div class="mock m-menu"><div><i></i><i class="acc"></i><i></i><i></i></div></div>',
+    toast: '<div class="mock m-menu"><div style="grid-template-columns:1fr 34px;align-items:center"><i></i><i class="acc" style="height:12px"></i><i class="soft"></i></div></div>',
+    pill:  '<div class="mock m-pill"><div><i class="red" style="width:7px;height:7px;border-radius:50%"></i><i style="width:46px;height:5px"></i><i style="width:20px;height:5px"></i></div></div>'
+  };
+
+  let html = data.groups.map(g => `<div class="lane" style="--c:var(${g.color});left:${g.x}px;top:${g.y}px;width:${g.w}px;height:${g.h}px"><h2>${esc(g.name)}</h2><p>${esc(g.note)}</p></div>`).join('');
+  html += `<svg class="wires" width="${W}" height="${H}" aria-hidden="true"><defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--text-3)"/></marker>
+    <marker id="ahm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--accent)"/></marker></defs>`;
+
+  // pick the facing sides of two cards and draw a smooth curve between them
+  const tags = [];
+  data.flows.filter(f => f.kind !== 'none' && !f.hide).forEach(f => {
+    const a = byId[f.from], b = byId[f.to], sa = size(a), sb = size(b);
+    const ac = { x: a.x + sa.w / 2, y: a.y + sa.h / 2 }, bc = { x: b.x + sb.w / 2, y: b.y + sb.h / 2 };
+    const dx = bc.x - ac.x, dy = bc.y - ac.y, horiz = Math.abs(dx) > Math.abs(dy) && !f.via;
+    let p1, p2, c1, c2;
+    if (horiz) {
+      const s = Math.sign(dx);
+      p1 = { x: ac.x + s * sa.w / 2, y: ac.y }; p2 = { x: bc.x - s * sb.w / 2, y: bc.y };
+      const k = Math.max(40, Math.abs(p2.x - p1.x) / 2); c1 = { x: p1.x + s * k, y: p1.y }; c2 = { x: p2.x - s * k, y: p2.y };
+    } else if (f.via === 'right') {
+      p1 = { x: a.x + sa.w, y: ac.y }; p2 = { x: b.x + sb.w, y: bc.y };
+      c1 = { x: p1.x + 70, y: p1.y }; c2 = { x: p2.x + 70, y: p2.y };
+    } else if (f.via === 'below') {
+      p1 = { x: ac.x + 40, y: a.y + sa.h }; p2 = { x: bc.x - 40, y: b.y + sb.h };
+      c1 = { x: p1.x, y: p1.y + 60 }; c2 = { x: p2.x, y: p2.y + 60 };
+    } else {
+      const s = Math.sign(dy) || 1;
+      p1 = { x: ac.x, y: ac.y + s * sa.h / 2 }; p2 = { x: bc.x, y: bc.y - s * sb.h / 2 };
+      const k = Math.max(30, Math.abs(p2.y - p1.y) / 2); c1 = { x: p1.x, y: p1.y + s * k }; c2 = { x: p2.x, y: p2.y - s * k };
+    }
+    const cls = f.kind === 'main' ? 'wire main' : f.kind === 'pop' ? 'wire pop' : 'wire back';
+    html += `<path class="${cls}" d="M${p1.x} ${p1.y} C${c1.x} ${c1.y} ${c2.x} ${c2.y} ${p2.x} ${p2.y}" marker-end="url(#${f.kind === 'main' ? 'ahm' : 'ah'})"/>`;
+    // label sits at the curve's midpoint (t = .5 of the cubic)
+    const mx = (p1.x + 3 * c1.x + 3 * c2.x + p2.x) / 8, my = (p1.y + 3 * c1.y + 3 * c2.y + p2.y) / 8;
+    if (f.label) tags.push(`<span class="tag ${f.kind === 'main' ? 'main' : ''}" style="left:${mx}px;top:${my}px">${esc(f.label)}</span>`);
+  });
+  html += '</svg>' + tags.join('');
+
+  html += data.screens.map(s => `<a class="card${s.small ? ' small' : ''}" style="--c:var(${grp[s.group].color});left:${s.x}px;top:${s.y}px" href="index.html#${s.link}" aria-label="${esc(s.name)}: ${esc(s.desc)} Open in prototype">
+      <span class="hd"><span class="dot" aria-hidden="true"></span><span class="nm od-truncate">${esc(s.name)}</span><span class="ext" aria-hidden="true">↗</span></span>
+      ${s.small ? '' : MOCK[s.mock] || ''}
+      <span class="desc od-clamp-2">${esc(s.desc)}</span></a>`).join('');
+  canvas.innerHTML = html;
+  canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+
+  // zoom: scale the canvas and size the stage to match so scrolling stays correct
+  let z = 1; const out = document.getElementById('zval');
+  const setZ = v => { z = Math.min(1.5, Math.max(.35, v)); canvas.style.transform = `scale(${z})`; stage.style.width = W * z + 'px'; stage.style.height = H * z + 'px'; out.textContent = Math.round(z * 100) + '%'; };
+  document.getElementById('zin').onclick = () => setZ(z + .1);
+  document.getElementById('zout').onclick = () => setZ(z - .1);
+  document.getElementById('zfit').onclick = () => setZ(Math.min(vp.clientWidth / W, vp.clientHeight / H));
+  setZ(Math.min(1, vp.clientWidth / W));
+
+  // the same flows as a readable list, grouped by where they start
+  const list = document.getElementById('list');
+  list.insertAdjacentHTML('beforeend', data.groups.map(g => {
+    const rows = data.flows.filter(f => f.kind !== 'none' && byId[f.from].group === g.id);
+    if (!rows.length) return '';
+    return `<section style="--c:var(${g.color})"><h3>${esc(g.name)}</h3><ol>${rows.map(f => `<li><a href="index.html#${byId[f.from].link}">${esc(byId[f.from].name)}</a><span class="arrow" aria-hidden="true">→</span><a href="index.html#${byId[f.to].link}">${esc(byId[f.to].name)}</a><span class="how">${esc(f.label)} <span class="kind">· ${f.kind === 'main' ? 'main path' : f.kind === 'pop' ? 'opens on top' : 'goes back'}</span></span></li>`).join('')}</ol></section>`;
+  }).join(''));
+})();
+</script>
+</body>
+</html>

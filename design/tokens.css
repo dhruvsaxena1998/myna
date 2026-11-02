@@ -1,0 +1,215 @@
+/* Myna design tokens. The single source for every colour, size and timing in the app.
+   Rules live in DESIGN.md. Components use only the semantic layer (no raw hex outside this file).
+   Theme: <html data-theme="light|dark|auto"> (auto follows macOS). Accent: <html data-accent="blue|…">. */
+
+/* ---------- 1. Scale: type, space, radius, size, motion, layers (theme-independent) ---------- */
+:root {
+  /* Type. One family; WebKit switches SF Pro Text/Display optical sizes and applies SF tracking itself,
+     so no letter-spacing tokens: adding our own double-tracks in WKWebView. */
+  --font: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+
+  /* role: size / line-height / weight. Mirrors macOS text styles. */
+  --fs-caption: 11px;  --lh-caption: 14px;  /* section labels in sidebar and menus, pill text */
+  --fs-footnote: 12px; --lh-footnote: 16px; /* help text, meta, timestamps */
+  --fs-body: 13px;     --lh-body: 18px;     /* every control and list row */
+  --fs-reading: 15px;  --lh-reading: 24px;  /* transcript, summary, chat: the document register */
+  --fs-title3: 15px;   --lh-title3: 20px;   /* section headings (h2) */
+  --fs-title2: 18px;   --lh-title2: 24px;   /* toolbar titles */
+  --fs-title1: 26px;   --lh-title1: 32px;   /* document and onboarding titles (one per screen) */
+  --fw-regular: 400; --fw-medium: 500; --fw-semibold: 600; --fw-bold: 700;
+
+  /* Space. 4px grid; 2 and 6 only for optical nudges inside controls. */
+  --sp-0: 2px; --sp-1: 4px; --sp-1h: 6px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px;
+  --sp-5: 24px; --sp-6: 32px; --sp-7: 48px;
+
+  /* Radius. Concentric: inner radius = outer radius − the padding between them. */
+  --r-xs: 4px;     /* kbd, tiny marks */
+  --r-sm: 8px;     /* menu items, icon tiles */
+  --r-md: 10px;    /* fields, nav rows, glyph boxes */
+  --r-lg: 14px;    /* popovers, menus, list rows, inline cards */
+  --r-xl: 18px;    /* panels inside the window (window 26 − inset 8) */
+  --r-2xl: 26px;   /* window, live-notes panel */
+  --r-full: 999px; /* buttons, pills, tags, segmented controls, search */
+
+  /* Control and layout sizes */
+  --h-ctl-sm: 24px; --h-ctl: 30px; --h-ctl-lg: 36px; --h-hud: 40px;
+  --h-titlebar: 44px; --h-toolbar: 56px; --h-menubar: 28px; --h-row: 30px; --h-menu-item: 26px;
+  --w-sidebar: 228px; --w-settings-nav: 200px; --w-inspector: 400px; --w-menu: 300px; --w-popover: 440px;
+  --w-doc: 720px;      /* reading column */
+  --measure: 68ch;     /* max line length for reading text */
+  --win-inset: 8px;    /* gap between window edge and inner panels */
+  --ic: 16px; --ic-sm: 14px; --ic-lg: 20px; --ic-stroke: 1.5;
+
+  /* Motion. Short and functional; nothing loops except live indicators. */
+  --dur-fast: 120ms;   /* exits, hovers */
+  --dur: 180ms;        /* enters, toggles */
+  --dur-slow: 260ms;   /* panels sliding in */
+  --ease-out: cubic-bezier(.28, 0, .22, 1);
+  --ease-in: cubic-bezier(.5, 0, .8, .3);
+  --pulse: 1.6s;       /* recording dot */
+
+  /* Layers */
+  --z-sticky: 1; --z-panel: 20; --z-drawer: 30; --z-popover: 40; --z-menubar: 50;
+  --z-menu: 60; --z-hud: 70; --z-toast: 80;
+}
+
+/* ---------- 2. Colour: light (default) ---------- */
+:root {
+  color-scheme: light;
+
+  /* Surfaces, back to front. Materials are translucent and sit over native window vibrancy;
+     opaque surfaces hold content. */
+  --bg-desk: #E4E6EC;                     /* prototype only: stands in for the wallpaper */
+  --mat-window-base: rgba(244,244,247,.70);    /* window chrome behind the panels */
+  --mat-sidebar-base: rgba(255,255,255,.56);
+  --mat-menu-base: rgba(250,250,252,.84);      /* menus, popovers, toasts, live-notes panel */
+  --bg-content: #FFFFFF;                  /* main panel: the page */
+  --bg-sidebar: #F3F3F6;                  /* opaque fallback for --mat-sidebar */
+  --bg-inset: #F6F6F8;                    /* grouped lists, inspector, cards on the page */
+  --bg-raised: #FFFFFF;                   /* opaque fallback for --mat-menu */
+  --blur: blur(30px) saturate(180%);
+
+  /* Fills (translucent, so they work on any surface) */
+  --fill-field: rgba(0,0,0,.045);
+  --fill-control: rgba(255,255,255,.92);  /* default button */
+  --fill-control-on: #FFFFFF;             /* selected segment */
+  --fill-hover: rgba(0,0,0,.05);
+  --fill-pressed: rgba(0,0,0,.09);
+  --fill-track: rgba(0,0,0,.16);          /* switch off, progress track, empty pips */
+
+  /* Lines */
+  --line: rgba(0,0,0,.07);                /* hairline separators */
+  --line-strong: rgba(0,0,0,.16);         /* control outlines */
+  --edge: rgba(255,255,255,.75);          /* top-light edge on materials */
+
+  /* Text. Every pair with --bg-content, --bg-inset and --bg-sidebar clears 4.5:1 (check-contrast.mjs). */
+  --text: #1D1D1F;
+  --text-2: #4A4A50;                      /* secondary copy, meta */
+  --text-3: #66666C;                      /* help, timestamps, section labels */
+  --text-disabled: rgba(29,29,31,.38);    /* exempt from contrast, always paired with disabled state */
+
+  /* Status. -text is for words; the bare token is for dots, bars and fills. */
+  --rec: #FF3B30;                         /* recording dot, mic-live level bars: never alone, always with text */
+  --danger: #C4281C; --danger-text: #B3261E; --danger-soft: rgba(196,40,28,.08);
+  --caution: #C77700; --caution-text: #8A5300; --caution-soft: rgba(199,119,0,.10); /* possibly muted, sends off this Mac */
+  --ok: #28A745; --ok-text: #1E7B34;
+  --on-solid: #FFFFFF;                    /* text on --danger fills */
+
+  /* HUD: the dictation pill and recording pill are dark in both themes, like system HUDs */
+  --hud-bg: rgba(28,28,30,.74); --hud-bg-solid: #1C1C1E; --hud-fg: #F5F5F7; --hud-2: rgba(245,245,247,.72);
+  --hud-fill: rgba(255,255,255,.14); --hud-edge: rgba(255,255,255,.20);
+
+  /* Shadows: only floating things get blur and offset */
+  --shadow-control: 0 1px 2px rgba(0,0,0,.06);
+  --shadow-solid: 0 1px 2px rgba(0,0,0,.14);
+  --shadow-panel: 0 1px 3px rgba(0,0,0,.06);
+  --shadow-menu: 0 0 0 .5px rgba(0,0,0,.12), 0 12px 40px rgba(0,0,0,.18);
+  --shadow-window: 0 0 0 .5px rgba(0,0,0,.14), 0 24px 64px rgba(0,0,0,.20);
+  --shadow-hud: 0 10px 30px rgba(0,0,0,.30);
+
+  /* Label colours for tags and folders: dots only, the label text stays --text */
+  --label-blue: #2F6FD0; --label-purple: #7A5AC8; --label-pink: #B0428A; --label-red: #C42B1C;
+  --label-orange: #C0731A; --label-yellow: #B38F00; --label-green: #1F8A4C; --label-teal: #0F8A8A;
+  --label-brown: #A35A2A; --label-graphite: #5A6B7B;
+}
+
+/* ---------- 3. Colour: dark. An elevation ladder: each step up is lighter. ---------- */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg-desk: #0E0E10;
+  --mat-window-base: rgba(24,24,26,.62); --mat-sidebar-base: rgba(44,44,48,.55); --mat-menu-base: rgba(40,40,44,.82);
+  --bg-content: #1D1D1F; --bg-sidebar: #232326; --bg-inset: #252527; --bg-raised: #2C2C2E;
+  --fill-field: rgba(255,255,255,.07); --fill-control: rgba(255,255,255,.10); --fill-control-on: rgba(255,255,255,.18);
+  --fill-hover: rgba(255,255,255,.07); --fill-pressed: rgba(255,255,255,.12); --fill-track: rgba(255,255,255,.20);
+  --line: rgba(255,255,255,.10); --line-strong: rgba(255,255,255,.18); --edge: rgba(255,255,255,.12);
+  --text: #ECECEF; --text-2: #B3B3B9; --text-3: #949499; --text-disabled: rgba(236,236,239,.35);
+  --rec: #FF453A;
+  --danger: #D9342B; --danger-text: #FF6961; --danger-soft: rgba(255,105,97,.12);
+  --caution: #FFB340; --caution-text: #FFC266; --caution-soft: rgba(255,179,64,.12);
+  --ok: #30D158; --ok-text: #4CD964;
+  --on-solid: #FFFFFF;
+  --shadow-control: 0 1px 2px rgba(0,0,0,.30);
+  --shadow-solid: 0 1px 2px rgba(0,0,0,.40);
+  --shadow-panel: 0 1px 3px rgba(0,0,0,.30);
+  --shadow-menu: 0 0 0 .5px rgba(255,255,255,.14), 0 12px 40px rgba(0,0,0,.55);
+  --shadow-window: 0 0 0 .5px rgba(255,255,255,.14), 0 18px 50px rgba(0,0,0,.60);
+  --shadow-hud: 0 10px 30px rgba(0,0,0,.50);
+  --label-blue: #5B9BFF; --label-purple: #A98BF0; --label-pink: #E57BC0; --label-red: #FF6961;
+  --label-orange: #FF9F45; --label-yellow: #FFD60A; --label-green: #4CD964; --label-teal: #40C8C8;
+  --label-brown: #C9895A; --label-graphite: #98A6B4;
+}
+/* auto: same values as dark. Keep in sync with the block above (check-contrast.mjs fails if they drift). */
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="auto"] {
+    color-scheme: dark;
+    --bg-desk: #0E0E10;
+    --mat-window-base: rgba(24,24,26,.62); --mat-sidebar-base: rgba(44,44,48,.55); --mat-menu-base: rgba(40,40,44,.82);
+    --bg-content: #1D1D1F; --bg-sidebar: #232326; --bg-inset: #252527; --bg-raised: #2C2C2E;
+    --fill-field: rgba(255,255,255,.07); --fill-control: rgba(255,255,255,.10); --fill-control-on: rgba(255,255,255,.18);
+    --fill-hover: rgba(255,255,255,.07); --fill-pressed: rgba(255,255,255,.12); --fill-track: rgba(255,255,255,.20);
+    --line: rgba(255,255,255,.10); --line-strong: rgba(255,255,255,.18); --edge: rgba(255,255,255,.12);
+    --text: #ECECEF; --text-2: #B3B3B9; --text-3: #949499; --text-disabled: rgba(236,236,239,.35);
+    --rec: #FF453A;
+    --danger: #D9342B; --danger-text: #FF6961; --danger-soft: rgba(255,105,97,.12);
+    --caution: #FFB340; --caution-text: #FFC266; --caution-soft: rgba(255,179,64,.12);
+    --ok: #30D158; --ok-text: #4CD964;
+    --on-solid: #FFFFFF;
+    --shadow-control: 0 1px 2px rgba(0,0,0,.30);
+    --shadow-solid: 0 1px 2px rgba(0,0,0,.40);
+    --shadow-panel: 0 1px 3px rgba(0,0,0,.30);
+    --shadow-menu: 0 0 0 .5px rgba(255,255,255,.14), 0 12px 40px rgba(0,0,0,.55);
+    --shadow-window: 0 0 0 .5px rgba(255,255,255,.14), 0 18px 50px rgba(0,0,0,.60);
+    --shadow-hud: 0 10px 30px rgba(0,0,0,.50);
+    --label-blue: #5B9BFF; --label-purple: #A98BF0; --label-pink: #E57BC0; --label-red: #FF6961;
+    --label-orange: #FF9F45; --label-yellow: #FFD60A; --label-green: #4CD964; --label-teal: #40C8C8;
+    --label-brown: #C9895A; --label-graphite: #98A6B4;
+  }
+}
+
+/* ---------- 4. Accent. Fill and text are separate tokens so both meet contrast in both themes. ---------- */
+:root, :root[data-accent="blue"] { --accent: #0A64D8; --on-accent: #FFFFFF; --accent-text-l: #0A5BC4; --accent-text-d: #6AAEFF; }
+:root[data-accent="purple"]   { --accent: #8E44AD; --on-accent: #FFFFFF; --accent-text-l: #8E44AD; --accent-text-d: #DA8FFF; }
+:root[data-accent="pink"]     { --accent: #C2185B; --on-accent: #FFFFFF; --accent-text-l: #C2185B; --accent-text-d: #FF7A9A; }
+:root[data-accent="red"]      { --accent: #C42B1C; --on-accent: #FFFFFF; --accent-text-l: #C42B1C; --accent-text-d: #FF6961; }
+:root[data-accent="orange"]   { --accent: #B35000; --on-accent: #FFFFFF; --accent-text-l: #B35000; --accent-text-d: #FF9F0A; }
+:root[data-accent="yellow"]   { --accent: #FFCC00; --on-accent: #1D1D1F; --accent-text-l: #806600; --accent-text-d: #FFD60A; }
+:root[data-accent="green"]    { --accent: #1E7B34; --on-accent: #FFFFFF; --accent-text-l: #1E7B34; --accent-text-d: #4CD964; }
+:root[data-accent="graphite"] { --accent: #5E5E63; --on-accent: #FFFFFF; --accent-text-l: #5E5E63; --accent-text-d: #C7C7CC; }
+
+/* Derived accent tokens. Defined once so every accent and theme gets them. */
+:root {
+  --accent-text: var(--accent-text-l);
+  --accent-hover: color-mix(in srgb, var(--accent) 88%, #FFFFFF);
+  --accent-pressed: color-mix(in srgb, var(--accent) 86%, #000000);
+  --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);         /* suggestion chips, user-message tint */
+  --accent-soft-strong: color-mix(in srgb, var(--accent) 16%, transparent);  /* selected nav row, active toolbar toggle */
+  --focus-ring: color-mix(in srgb, var(--accent) 80%, transparent);
+  --selection: color-mix(in srgb, var(--accent) 24%, transparent);
+  --mat-window: var(--mat-window-base); --mat-sidebar: var(--mat-sidebar-base); --mat-menu: var(--mat-menu-base);
+}
+:root[data-theme="dark"] { --accent-text: var(--accent-text-d); }
+@media (prefers-color-scheme: dark) { :root[data-theme="auto"] { --accent-text: var(--accent-text-d); } }
+
+/* Tinted glass: optional "Look" setting that washes materials with the accent */
+:root[data-glass="tinted"] {
+  --mat-sidebar: color-mix(in srgb, var(--mat-sidebar-base) 82%, var(--accent));
+  --mat-menu: color-mix(in srgb, var(--mat-menu-base) 90%, var(--accent));
+  --mat-window: color-mix(in srgb, var(--mat-window-base) 86%, var(--accent));
+}
+
+/* ---------- 5. Base ---------- */
+html { background: var(--bg-desk); color: var(--text); font: var(--fs-body)/var(--lh-body) var(--font);
+  -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+::selection { background: var(--selection); }
+:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root[data-theme] { --mat-window: var(--bg-inset); --mat-sidebar: var(--bg-sidebar); --mat-menu: var(--bg-raised); --hud-bg: var(--hud-bg-solid); }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root { --dur-fast: 0ms; --dur: 0ms; --dur-slow: 0ms; }
+  *, *::before, *::after { animation-duration: 0s !important; animation-iteration-count: 1 !important; }
+}
+@media (prefers-contrast: more) {
+  :root[data-theme] { --line: var(--line-strong); --text-3: var(--text-2); }
+}

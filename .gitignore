@@ -1,2 +1,6 @@
 .scratch/*
 !.scratch/myna/
+!.scratch/local-ai/
+.scratch/local-ai/research/
+
+.env*.local

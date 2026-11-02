@@ -1,7 +1,7 @@
 # Myna — phase 1 spec
 
 Status: draft (user review pending)
-Date: 2026-10-29, revised 2026-10-30
+Date: 2026-10-29, revised 2026-10-30 and 2026-11-01 (local AI decisions: `.scratch/local-ai/map.md`)
 
 Stories by feature live in `stories/`. Nothing is built until the user has reviewed a story and asked for it.
 
@@ -13,11 +13,11 @@ Typing is the slowest part of talking to a computer, and meetings vanish the mom
 
 Myna is a macOS app with two modules you enable separately at onboarding.
 
-**Dictation.** Hold a hotkey, speak, release. Myna transcribes on-device and pastes the text into whatever app has focus. Filler words are stripped by rules; optional experimental passes use Desert Ant's Uhm model or a cloud LLM the user brings their own key for.
+**Dictation.** Hold a hotkey, speak, release. Myna transcribes on-device and pastes the text into whatever app has focus. Filler words are stripped by rules; a second hotkey adds LLM cleanup through an AI provider the user chooses. Desert Ant's Uhm model is an experimental extra.
 
-**Meetings.** Start a recording from the menubar. Myna captures microphone and system audio as separate tracks, plus periodic screenshots of the meeting window. After stop, it transcribes, diarizes speakers, and lets you rename a speaker once to label the whole meeting. It mirrors the meeting app's mute state where it can read it (Google Meet and Teams in Chromium browsers via a companion extension), and everywhere else it still records locally but keeps possibly-muted speech out of the transcript until you include it. Summaries and chat run through a user-supplied OpenAI-compatible provider.
+**Meetings.** Start a recording from the menubar. Myna captures microphone and system audio as separate tracks, plus periodic screenshots of the meeting window. After stop, it transcribes, diarizes speakers, and lets you rename a speaker once to label the whole meeting. It mirrors the meeting app's mute state where it can read it (Google Meet and Teams in Chromium browsers via a companion extension), and everywhere else it still records locally but keeps possibly-muted speech out of the transcript until you include it. Summaries and chat run through an AI provider the user adds: a local server they run, a cloud service with their key, or their own signed-in coding agent (Claude Code, Codex, OpenCode, Pi).
 
-All speech-to-text, diarization, and filler detection runs on the Mac. Every model slot is swappable from a curated list. Nothing leaves the machine unless the user turns on a feature that says it does.
+Speech-to-text, diarization and filler detection run on the Mac by default; meeting speech-to-text can go to an Endpoint after the meeting if the user chooses. Myna runs no LLM itself. Every model slot is swappable. Nothing leaves the machine unless the user turns on a feature that says it does.
 
 ## User Stories
 
@@ -42,7 +42,7 @@ All speech-to-text, diarization, and filler detection runs on the Mac. Every mod
 12. As a user, I want a personal dictionary for names and jargon, so that the transcriber spells them right.
 13. As a user, I want to pick the speech-to-text model from a curated list with size, speed, and quality labels, so that I can trade accuracy for latency.
 14. As a user, I want to point the app at a custom model path or Hugging Face repo for the same runtime, so that I am not limited to the curated list.
-15. As a user, I want the dictation pipeline to never hang on a cloud call, so that a slow network falls back to local text within a timeout.
+15. As a user, I want a second hotkey that adds LLM cleanup, falling back to the rules output within 3 s, so that a slow network never holds up a paste and I choose per dictation whether cleanup runs.
 
 ### Meetings: capture
 16. As a user, I want to start and stop a meeting recording from the menubar, so that I do not need to open a window.
@@ -54,7 +54,7 @@ All speech-to-text, diarization, and filler detection runs on the Mac. Every mod
 22. As a user, I want those excluded segments shown collapsed with per-segment "include" and audio replay, so that nothing is lost if the mute detection was wrong.
 23. As a user, I want a manual mute toggle and hotkey in Myna, so that I can control the mic track when no mirroring exists.
 24. As a user, I want a per-app "always record mic" switch, so that I can opt out of the fail-safe for apps I trust.
-25. As a user, I want screenshots of the meeting window every 15 seconds by default, with near-duplicates dropped, so that I can see what was on screen without filling my disk.
+25. As a user, I want screenshots of the meeting window while someone shares (every 15 seconds where Myna can't tell), with near-duplicates dropped and a Capture button on the recording pill, so that I keep what was shown without filling my disk.
 26. As a user, I want to switch capture to off or full window video, so that I choose the storage trade-off.
 27. As a user, I want the meeting window auto-picked from whichever app holds the mic, with a manual override, so that I rarely have to choose.
 28. As a user, I want a size estimate before window video starts, so that I know what a one-hour meeting costs on disk.
@@ -73,26 +73,26 @@ All speech-to-text, diarization, and filler detection runs on the Mac. Every mod
 39. As a user, I want to pick the diarization model from a curated list, so that I can swap if one misbehaves.
 
 ### Meetings: AI
-40. As a user, I want to configure one AI provider (OpenAI, Anthropic, OpenRouter, or any OpenAI-compatible local server) with my own key, so that I decide where text goes.
-41. As a user, I want API keys stored in the macOS Keychain, so that they are not sitting in a config file.
-42. As a user, I want a clear "sends text off this Mac" badge next to any feature that does, so that I am never surprised.
-43. As a user, I want a Summary tab with summary, decisions, and action items, so that the meeting has a one-screen recap.
-44. As a user, I want to regenerate with a custom prompt and save it as a template, so that my recap format is mine.
+40. As a user, I want to add AI providers once (a local or cloud Endpoint, my own signed-in coding agent, or a Decision API), with nothing set on a fresh install and local Endpoints listed first, so that I decide where text goes.
+41. As a user, I want API keys stored in the macOS Keychain and agent sign-ins left to the agent's own CLI, so that Myna never holds my credentials in a file.
+42. As a user, I want a clear "sends text off this Mac" pill next to any feature that does, so that I am never surprised.
+43. As a user, I want a Summary written after each meeting in a template I choose, with timestamps that jump to the transcript, so that the meeting has a one-screen recap.
+44. As a user, I want to regenerate with another template, model or edited prompt, keep every version and edit the text, so that my recap format is mine.
 45. As a user, I want summaries stored, so that regenerating is a choice, not a cost on every open.
-46. As a user, I want a chat per meeting with the transcript and summary as context, so that I can ask follow-up questions.
-47. As a user, I want to see approximate tokens and cost for the chat so far, so that I know what I am spending.
-48. As a user, I want a warning when the context exceeds my model's window, so that I understand why answers degrade.
-49. As a user, I want price and context window taken from the provider or a maintained price list, never typed by me, and "cost unknown" when no price is known, so that the cost shown is never wrong.
+46. As a user, I want a chat per meeting that looks things up in the transcript, so that I can ask follow-up questions on a meeting of any length.
+47. As a user, I want tokens, cost and context use shown for each Summary and chat, so that I know what I am spending.
+48. As a user, I want a Compact button when the chat nears my model's window, and a warning before a model switch resends the chat uncached, so that I understand the cost.
+49. As a user, I want price and context window taken from live model lists, never typed by me, and "cost unknown" when no price is known, so that the cost shown is never wrong.
+52. As a user, I want optional LLM cleanup of the meeting transcript that never changes what was said, with the original one click away.
+54. As a user, I want a Main model and a Fast model that features inherit, with per-feature overrides and a Decision provider for short classification questions, so that each job uses a model that fits it.
+57. As a user, I want kept screenshots used in Summary and chat when my model reads images, so that visual content informs the recap.
+65. As a user, I want meeting speech-to-text to run on an Endpoint after the meeting if I choose, never live and never for Dictation, so that I can trade privacy for speed.
 
 ### Experimental
 50. As a user, I want an Experimental section that is off by default, so that stable features stay stable.
 51. As a user, I want Uhm filler detection toggled separately for Dictation and Meetings, so that I can try it on one.
-52. As a user, I want LLM cleanup toggled separately for Dictation and Meetings, so that meetings stay verbatim while dictation gets polished.
-53. As a user, I want auto-triage of possibly-muted segments through a decision model, text only, so that relevant speech is included without my clicking.
-54. As a user, I want a decision provider with presets (Laya local, Jev, OpenAI Decisions, custom), so that triage uses the model I trust.
-55. As a user, I want an in-app "Set up Laya" wizard that installs it into an app-owned environment, so that local triage needs no terminal.
-56. As a user, I want screenshot relevance filtering by a vision model, so that only informative frames are kept.
-57. As a user, I want kept screenshots included in summarization and chat when my model supports images, so that visual content informs the recap.
+53. As a user, I want auto-triage of possibly-muted segments through my Decision provider, text only, each inclusion marked and undoable, so that relevant speech is included without my clicking.
+56. As a user, I want screenshot relevance filtering by a model that reads images, so that only informative frames are kept.
 
 ### Folders
 62. As a user, I want to create folders in the Meetings sidebar and drag meetings into them, so that recurring contexts (a client, a team, 1:1s) stay together.
@@ -120,15 +120,16 @@ All speech-to-text, diarization, and filler detection runs on the Mac. Every mod
 - Diarization default: Desert Ant Who via the Swift bridge. Open fallback: NVIDIA Sortformer via parakeet-rs. The mic track is always the known "me" speaker; diarization only runs on the system track.
 - Filler detection: Desert Ant Uhm via the Swift bridge, experimental only. Rules always run regardless.
 - Desert Ant policy: their models are used only through their Swift SDK, never by loading their ONNX from Rust. Every Desert Ant slot has an open fallback. Open backends are built first. The "Powered by Desert Ant Labs" attribution appears in Settings only while at least one Desert Ant model is enabled. Model weights are downloaded at runtime and never committed to the repo.
-- No local LLM ships in phase 1. Text provider is one OpenAI chat-completions client; presets fill base URL (Anthropic via its OpenAI-compatible endpoint).
-- Decision provider has two wire adapters: Jev-format (Jev hosted, Laya local, custom) and OpenAI Decisions format. Laya runs as a managed Python sidecar: app-owned uv environment, multilingual checkpoint (1,024-token context), `laya-serve` as a child process bound to localhost with a generated key, started on demand, stopped on quit.
+- Myna runs no LLM ([ADR 0001](../../docs/adr/0001-no-bundled-llm-phase-1.md)). AI providers are Endpoints (any OpenAI-compatible URL: local servers such as Ollama, LM Studio, oMLX listed first; OpenRouter is the one cloud preset), Agents (the user's signed-in Claude Code, Codex, OpenCode or Pi, run headless under Seatbelt with Myna's MCP relay as the only tool source; [ADR 0002](../../docs/adr/0002-agents-as-ai-provider.md), [ADR 0003](../../docs/adr/0003-agents-under-seatbelt.md)) and Decision APIs (Jev, OpenAI Decisions). Story 10.
+- Decision provider has two wire adapters: Jev shape (direct Jev, and every OpenRouter decision model through `/api/alpha/decisions`) and OpenAI Decisions shape. Laya is not in Phase 1.
+- Meeting speech-to-text can run on an Endpoint after the meeting (Groq, Together, or any that passes a word-timestamp test); Dictation never does. Story 03.
 
 ### Pipelines
-- Dictation: hotkey down → capture mic → hotkey up → [Uhm on audio, experimental] → STT → rules (filler list, repeated-word collapse, dictionary) → [LLM cleanup, experimental, timeout ~3 s falls back to rules output] → paste.
-- Meeting post-process: [Uhm] → STT on both tracks → diarize system track → assign mute state per mic segment → caption-name suggestion (if extension events exist) → voice-profile suggestion → [LLM cleanup, experimental] → store.
+- Dictation: hotkey down → capture mic → hotkey up → [Uhm on audio, experimental] → local STT → rules (filler list, repeated-word collapse, dictionary) → [LLM cleanup, only on the Dictate with cleanup hotkey, Endpoint only, own 3 s budget, falls back to rules output] → paste.
+- Meeting post-process: [Uhm] → STT on both tracks (local, or an Endpoint by chunk with possibly-muted mic spans kept local) → diarize system track → assign mute state per mic segment → caption-name suggestion (if extension events exist) → voice-profile suggestion → [transcript LLM cleanup, if on] → [folder suggestion, if on] → Summary (if a Main model is set) → store.
 - Mute state per mic segment: `unmuted`, `muted`, `unknown`. Only `unmuted` appears by default. Myna's own mute toggle sets `muted`. Mirrored state from the extension sets `unmuted`/`muted`. No source means `unknown`. Mic audio is always recorded to disk; the state gates inclusion, not capture. Nothing collapsed is sent to any provider unless the user includes it or experimental triage is on.
-- Experimental triage: for each collapsed segment, send segment text plus the two neighboring included lines to the decision provider with a yes/no question; include on yes. Text only, never audio. Summarization system prompt tells the model that collapsed segments may be self-talk.
-- Screenshots: ScreenCaptureKit capture of the chosen window every 15 s, JPEG at 1280 px width, perceptual-hash compared with the last kept frame, near-duplicates dropped. Experimental: vision-model relevance filter on previous-kept plus current. Experimental: up to 20 downscaled kept screenshots attached to summarization and chat when the model's "supports images" box is checked.
+- Experimental triage: for each collapsed segment, send segment text plus the two neighboring included lines to the Decision provider with a yes/no question; include at p ≥ 0.8 (Decision API) or on yes (chat model), marked "included by triage" with undo. Text only, never audio.
+- Screenshots: ScreenCaptureKit capture of the chosen window (not the screen), JPEG at 1280 px width, perceptual-hash compared with the last kept frame, near-duplicates dropped. Modes Off / When someone shares (default; extension signal for Meet and Teams, else every 15 s) / Every 15 s / Only when I capture; a Capture button on the recording pill; automatic capture pauses when the meeting tab isn't showing. Experimental: relevance filter. "Use screenshots in Summary and Chat" (off by default): 6 frames per Summary chunk, 3 per Chat lookup, only to models that read images.
 - Window video is never sent to a provider.
 
 ### Companion extension
@@ -140,16 +141,17 @@ All speech-to-text, diarization, and filler detection runs on the Mac. Every mod
 - Caption-derived names: each cluster is auto-suggested the caption speaker with the greatest time overlap.
 
 ### AI provider and chat
-- One provider config: preset, base URL, model name, Keychain key. Price and context window come from the provider's model list where it has one (OpenRouter), else from a bundled price list refreshed from the repo; unknown means "cost unknown", local means free. Per-feature on/off toggles consume the single config.
-- Three built-in prompt templates (Summary, Action items, Decisions). Regenerate opens a prompt editor prefilled with the last template, with save-as-template. Templates are global.
-- Chat: one persisted thread per meeting; every turn sends transcript + summary + history. Token estimate is characters ÷ 4; cost from the resolved price, unknown price means tokens only.
+- Providers are added once; a Main model and a Fast model (provider plus model each) cover every feature, with per-feature overrides under Customize; a broken provider makes its features "Not set", never rebound. Model lists are live; price and window come from OpenRouter, Pi, OpenCode or models.dev; unknown shows "cost unknown"; local Endpoints are free. Decisions: `.scratch/local-ai/issues/09`, `29`, `10`.
+- Summary: always chunk-then-merge over template-free chunk notes; Summary templates (Recap default, Action items, Decisions, user's own) apply at the merge; every run kept as a version; edits kept; per-folder template. Story 16.
+- Chat: one thread per meeting; each request is meeting header → Chat digests → recent exchanges → question; the model reads the meeting through transcript tools, never the whole transcript. Story 17.
 
 ### Folders
 - Flat folders (no nesting in phase 1) in the Meetings sidebar; a meeting belongs to at most one folder; unfiled meetings show in Inbox. Create, rename, delete (deleting moves meetings back to Inbox), drag-and-drop and a "Move to" menu.
-- Folder suggestion: after transcription, when the AI provider is configured and the "suggest folder" toggle is on, send folder names plus the meeting title and the first lines of the transcript to the provider and ask it to pick one or "none". The result shows as a suggestion chip on the meeting until accepted or dismissed. Carries the off-device pill. If the provider is off, no suggestion.
+- Folder suggestion: a Decision task. After transcription, when the toggle is on, send folder names plus the meeting title and the first lines of the transcript to the Decision provider (else the Fast model) and ask it to pick one or "none". The result shows as a suggestion chip until accepted or dismissed. Carries the off-device pill. With neither set, no suggestion.
+- A folder can set its own Summary template and transcript cleanup prompt, falling back to the global ones.
 
 ### Storage
-- `~/Library/Application Support/Myna/`: SQLite for meetings, segments, speakers, voice profiles, templates, chats, settings; `audio/`, `video/`, `screenshots/`, `models/` on disk. Retention setting deletes audio, video, and screenshots after N days; transcripts, summaries, and chats are never auto-deleted.
+- `~/Library/Application Support/Myna/`: SQLite for meetings, segments (raw and cleaned text), speakers, voice profiles, templates, summary versions, chunk notes, chats and Chat digests, settings; `audio/`, `video/`, `screenshots/`, `models/` on disk. Retention setting deletes audio, video, and screenshots after N days; transcripts, summaries, and chats are never auto-deleted.
 
 ### Layout rules (from the prototype)
 - Transcript is a document, not chat bubbles: speaker and time sit in a left margin, prose in the content column, inspector on the right.
@@ -167,7 +169,7 @@ All speech-to-text, diarization, and filler detection runs on the Mac. Every mod
 - A screen whose data fails to load shows the error. No screen ever renders blank.
 
 ### Settings layout
-- Modules (enable Dictation / Meetings), Dictation (hotkey, mode, dictionary, paste method), Meetings (capture mode, interval, per-app mic policy, retention), Models (STT, diarization, with download state), AI provider, Decision provider, Experimental (Uhm × module, LLM cleanup × module, muted-segment triage, screenshot relevance, screenshots in AI), About (attribution, version).
+- Modules (enable Dictation / Meetings), Dictation (hotkeys, mode, dictionary, paste method, dictation cleanup and Styles), Meetings (capture mode, per-app mic policy, retention, transcript cleanup and its prompt, Summary auto-run and templates, screenshots in Summary and Chat), Models (STT and diarization with download state, meeting speech-to-text Local / Endpoint), AI providers (providers, Main and Fast, Customize, Decision provider), Experimental (Uhm × module, muted-segment triage, screenshot relevance), About (attribution, version).
 
 ## Testing Decisions
 
@@ -175,7 +177,8 @@ All speech-to-text, diarization, and filler detection runs on the Mac. Every mod
 - Highest seam: the Rust command layer that Tauri exposes to the UI. Every feature is testable there with no WebView: "given this WAV and these settings, the dictation command returns this text"; "given these two tracks, this mute timeline, and these caption events, the meeting command yields these segments with these states and names".
 - Model backends are tested behind a `Transcriber`/`Diarizer` fake that returns scripted output, so pipeline tests run in milliseconds without model downloads. One slow integration test per real backend runs the smallest model on a 10-second fixture and asserts a loose word-error threshold.
 - Rules cleanup, mute-state assignment, caption-overlap naming, perceptual-hash dedupe, and token/cost estimation are pure functions and get table-driven unit tests.
-- Providers (text, decision) are tested against a local HTTP stub that records requests; one test asserts the off-device badge state matches whether any request would leave the machine.
+- Providers (text, decision, speech-to-text) are tested against a local HTTP stub that records requests; one test asserts the off-device pill state matches whether any request would leave the machine.
+- Agent adapters are tested against each real CLI with the Seatbelt harness in `.scratch/local-ai/live/27/` (fake app socket plus relay), rerun after CLI updates; the tools-loaded check is unit-tested on recorded event streams.
 - Paste, hotkey, Core Audio taps, ScreenCaptureKit, and the Swift bridge are verified by a manual checklist per release, not automated.
 - No prior art: greenfield repo.
 
@@ -185,12 +188,13 @@ All speech-to-text, diarization, and filler detection runs on the Mac. Every mod
 - Live transcript during a meeting.
 - Zoom native mute mirroring; Safari, native Teams, Gather, Slack mirroring.
 - Speaker split.
-- Shipped local LLM (llama.cpp in-process).
-- Native Rust port of Laya.
 - Calendar integration.
 - Active-speaker detection from screen pixels.
-- Cloud "public on demand" beyond user-supplied keys.
-- LLM router: a second "cheap model" slot so small tasks (folder suggestion, titles, cleanup) go to a fast cheap model while summarization and chat go to a stronger one. Phase 1 uses the single provider for everything.
+- Myna-hosted models (including a hosted Decision provider): later, as its own effort.
+- A bundled or Myna-run LLM ([ADR 0001](../../docs/adr/0001-no-bundled-llm-phase-1.md)); Laya.
+- Live or realtime cloud speech-to-text.
+- Chat across all meetings.
+- VM isolation for Agents (shuru "Strict mode") and a host allow-list proxy for Agent runs.
 - Nested folders.
 - Mac App Store distribution. Intel Macs. Windows, Linux.
 - Multilingual UI, rules, and dictionary (models may be multilingual; the app is English-first).
@@ -198,7 +202,6 @@ All speech-to-text, diarization, and filler detection runs on the Mac. Every mod
 ## Further Notes
 
 - Desert Ant Who is beta (weights v0.3.4). If it proves unstable the default flips to Sortformer with no architecture change.
-- Laya's zero-shot accuracy is weak on large option sets. Its use stays yes/no.
 - The companion extension's selectors are the most fragile piece; budget for a quick update path from day one.
 - The fail-safe mute default means users of unsupported meeting apps see their own speech collapsed until they include it or set "always record mic". This is deliberate.
 - A throwaway HTML prototype lives in `.scratch/myna/prototype/` for look and feel only.

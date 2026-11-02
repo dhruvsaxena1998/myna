@@ -6,6 +6,8 @@
 
 Screenshots of the meeting window every 15 s with duplicates dropped, or window video, shown as a filmstrip.
 
+> Amended by [Screenshots in AI](../../local-ai/issues/32-screenshots-in-ai.md): capture modes Off / When someone shares (default) / Every 15 s / Only when I capture; a Capture button on the recording pill; automatic capture pauses when the meeting tab isn't showing.
+
 ## Stories
 - As a user, I want the meeting window auto-picked from the app holding the mic, with an override.
 - As a user, I want screenshots every 15 s, near-duplicates dropped, shown as a filmstrip with click-to-seek.

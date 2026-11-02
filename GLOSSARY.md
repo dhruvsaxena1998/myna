@@ -1,0 +1,68 @@
+# Myna
+
+A macOS app with two modules, Dictation and Meetings, that turns speech into text and meetings into transcripts, summaries and chat, on the Mac by default.
+
+## AI
+
+**AI provider**:
+Where Myna sends text for an LLM to answer: summaries, chat, cleanup, and classification prompts. It is an Endpoint, an Agent or a Decision API; Myna runs no LLM itself.
+_Avoid_: cloud provider, LLM provider, backend
+
+**Endpoint**:
+Any OpenAI-compatible URL the user points Myna at, whether it is a cloud service (OpenAI, Anthropic, OpenRouter) or a server the user runs themselves (Ollama, LM Studio, oMLX). Myna does not run or manage what is behind it.
+_Avoid_: cloud provider, local server, custom provider, built-in model
+
+**Agent**:
+A coding-agent CLI the user has installed and signed in to (Claude Code, Codex, OpenCode, Pi), which Myna runs headless under a macOS sandbox with its own tools off, so the work uses the user's own plan.
+_Avoid_: ACP, subscription, harness, CLI provider
+
+**Decision API**:
+A typed classification service with its own wire format (Jev, OpenAI Decisions, or OpenRouter's decision models), used only for Decision tasks.
+
+**Decision task**:
+A short classification Myna asks while processing: folder suggestion, muted-segment triage, screenshot relevance.
+
+**Preset**:
+A named Endpoint with its base URL filled in.
+
+**Main model**:
+The AI provider and model that Summary and Chat use unless a feature overrides it.
+
+**Fast model**:
+The AI provider and model for quick text jobs (cleanup), and for Decision tasks when no Decision provider is set.
+_Avoid_: cheap model, small model
+
+**Decision provider**:
+Where Myna sends short classification questions (keep this screenshot? include this segment? which folder?). It is a Decision API, an Endpoint, or an Agent, and falls back to the Fast model when unset.
+_Avoid_: classifier, router
+
+**Transcript tools**:
+The read-only lookups Chat's model uses to see a meeting (search the transcript, read a time range, get screenshots near a time), bound to one meeting. Chat never receives the whole transcript.
+_Avoid_: RAG, retrieval, MCP tools
+
+**Summary template**:
+The named instructions that shape a meeting's Summary (Recap, Action items, Decisions, or the user's own). A folder can set its own.
+_Avoid_: prompt, format, preset
+
+**Chunk notes**:
+The template-free notes Myna takes from each part of a transcript (points, decisions, action items, with times), which a Summary template turns into the Summary and Chat reads too.
+_Avoid_: partial summary
+
+**Chat digest**:
+A short summary of earlier Chat exchanges, sent to the model in their place so the conversation stays small. The exchanges themselves stay visible.
+_Avoid_: summary, compaction, memory
+
+**Rules cleanup**:
+The deterministic pass that removes filler words, collapses repeated words and applies the personal dictionary. It always runs and needs no AI provider.
+
+**LLM cleanup**:
+The optional pass after rules cleanup that has a model fix punctuation, capitals and slips in dictation or in a meeting transcript, without changing what was said.
+_Avoid_: polish, rewrite, AI cleanup
+
+**Style**:
+A named dictation cleanup prompt tied to a set of apps, used when one of those apps is in front at the moment dictation starts.
+_Avoid_: mode, tone, preset
+
+**Off-device**:
+True when a request goes to a host other than this Mac's loopback address, including another machine on the LAN. Off-device features carry the "sends text off this Mac" pill.
+_Avoid_: cloud, remote
