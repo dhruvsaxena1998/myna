@@ -10,7 +10,7 @@
     { id: "dictation", title: "Voice typing", soon: "Turn voice typing on, pick its shortcut, and words to remember." },
     { id: "meetings", title: "Meeting notes", soon: "Turn meeting notes on, notice calls, pictures of the call, keep your voice when muted." },
     { id: "ai", title: "AI & privacy", soon: "Speech-to-text and voice models, AI providers for summaries and chat, and quick decisions." },
-    { id: "experimental", title: "Early features", soon: "New things we're still working on. Off until you turn them on." },
+    { id: "experimental", title: "Experimental features", soon: "New things we're still working on. Off until you turn them on." },
     { id: "about", title: "About", soon: "" },
   ];
   let current = $state("look");
