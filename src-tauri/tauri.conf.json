@@ -35,6 +35,23 @@
           ],
           "state": "followsWindowActiveState"
         }
+      },
+      {
+        "label": "pill",
+        "title": "Voice typing",
+        "url": "/pill",
+        "width": 720,
+        "height": 100,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "resizable": false,
+        "alwaysOnTop": true,
+        "focus": false,
+        "focusable": false,
+        "visibleOnAllWorkspaces": true,
+        "skipTaskbar": true
       }
     ],
     "security": {

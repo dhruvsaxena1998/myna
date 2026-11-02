@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import type { Task } from "$lib/models";
 import type { Perms } from "$lib/Permissions.svelte";
+import type { Look } from "$lib/Pill.svelte";
 
 // Load before the first paint so nothing pops in after the window shows.
 export async function load() {
@@ -19,5 +20,11 @@ export async function load() {
         (err) => ({ ok: false as const, error: String(err) }),
       )
     : null;
-  return { storage, version, models, perms };
+  const look = storage.ok
+    ? await invoke<Look>("pill_look_get").then(
+        (look) => ({ ok: true as const, look }),
+        (err) => ({ ok: false as const, error: String(err) }),
+      )
+    : null;
+  return { storage, version, models, perms, look };
 }

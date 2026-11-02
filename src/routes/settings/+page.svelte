@@ -4,6 +4,7 @@
   import ModelTask from "$lib/ModelTask.svelte";
   import Permissions from "$lib/Permissions.svelte";
   import UnloadAfter from "$lib/UnloadAfter.svelte";
+  import PillLook from "$lib/PillLook.svelte";
 
   // Every page is listed from day one; unbuilt ones say what will live there.
   // Same pages and names as the prototype (docs/index.html, SET_PAGES).
@@ -63,6 +64,7 @@
           <p class="srow"><span><span class="label">Shortcut key</span><span class="hint">Hold it in any app while you talk. Let go to add your words.</span></span>
             <span class="keys" aria-label="Current shortcut: Option Space"><kbd>⌥</kbd><kbd>Space</kbd></span></p>
         </section>
+        {#if data.look?.ok}<PillLook initial={data.look.look} />{:else}<ErrorState title="Myna couldn't read the pill's look" message={data.look?.error ?? ""} />{/if}
         <Permissions initial={data.perms} />
       {:else if page.id === "about"}
         <dl>

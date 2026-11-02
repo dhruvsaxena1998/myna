@@ -818,7 +818,7 @@ const S = {
   chats:{}, tokensSent:{},
   global:{ msgs:[] }
 };
-S.set = { modules:S.modules, hotkey:'fn', mode:'hold', paste:'clipboard', dict:['Myna','Parakeet','Desert Ant'],
+S.set = { modules:S.modules, hotkey:'fn', mode:'hold', paste:'clipboard', pillStyle:'capsule', pillPlace:'bottom', dict:['Myna','Parakeet','Desert Ant'],
   capture:'shots', interval:'15', apps:{ meet:false, teams:false, zoom:false, slack:false }, ext:false, retention:'30', folder:true, dataPath:'~/Library/Application Support/Myna', dataMoved:false,
   meetKey:'ctrl-opt-m', appearance:'auto', accent:'blue', glass:'clear', detect:true,
   diar:'who', decision:'fast', decKey:'', upd:'',
@@ -1326,6 +1326,9 @@ function settingsPage() {
       ]) + (!S.modules.dictation ? '' : sgroup('Shortcut', [
         srow('Shortcut key', S.hkRec ? 'Press the key or keys you want to use. Esc cancels.' : 'Works in any app.', hotkeyRec()),
         srow('How it starts', x.mode === 'hold' ? 'Hold the key while you talk. Let go to add your words.' : 'Press once to start and again to stop.', segc('mode', [['hold','Hold to talk'],['toggle','Tap to start and stop']], 'How it starts'))
+      ]) + sgroup('Pill', [
+        srow('Style', 'How the pill looks while you talk. Settings shows a preview of it.', sel('pillStyle', [['capsule','Capsule'],['orb','Orb'],['wave','Waveform'],['card','Card']], 'Pill style')),
+        srow('Position', 'Where it shows, on the screen you’re typing on.', sel('pillPlace', [['bottom','Bottom centre'],['top','Top centre'],['bottom-right','Bottom right'],['top-right','Top right']], 'Pill position'))
       ]) + sgroup('Adding your words', [
         srow('How words are added', x.paste === 'clipboard' ? 'Fastest. Myna puts back whatever you had copied afterwards.' : 'Types each letter. Slower, but works in apps that block pasting.', segc('paste', [['clipboard','Paste'],['type','Type']], 'How words are added'))
       ]) + `<section class="sgroup"><h2>Words to remember</h2><p class="help">Names and special words Myna should spell your way.</p>

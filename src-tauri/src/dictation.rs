@@ -2,6 +2,7 @@
 
 use crate::runtime::{Transcriber, RATE};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
@@ -9,6 +10,8 @@ use std::sync::{Arc, Mutex};
 pub struct Recording {
     stop: Sender<()>,
     done: Receiver<Result<Heard, String>>,
+    /// Loudness of the latest mic buffer, 0 to 1, as f32 bits.
+    level: Arc<AtomicU32>,
 }
 
 /// Interleaved samples, sample rate, channels.
@@ -17,6 +20,8 @@ type Heard = (Vec<f32>, u32, u16);
 pub fn record() -> Recording {
     let (stop, stop_rx) = channel();
     let (done_tx, done) = channel();
+    let level = Arc::new(AtomicU32::new(0));
+    let lv = level.clone();
     std::thread::spawn(move || {
         let run = || {
             let dev = cpal::default_host().default_input_device().ok_or("No microphone found.")?;
@@ -30,7 +35,10 @@ pub fn record() -> Recording {
             let stream = dev
                 .build_input_stream(
                     cfg.config(),
-                    move |data: &[f32], _: &_| b.lock().unwrap().extend_from_slice(data),
+                    move |data: &[f32], _: &_| {
+                        lv.store(loudness(data).to_bits(), Ordering::Relaxed);
+                        b.lock().unwrap().extend_from_slice(data);
+                    },
                     |e| eprintln!("microphone: {e}"),
                     None,
                 )
@@ -43,10 +51,21 @@ pub fn record() -> Recording {
         };
         let _ = done_tx.send(run());
     });
-    Recording { stop, done }
+    Recording { stop, done, level }
+}
+
+/// How loud `samples` are, 0 (quieter than -55 dBFS) to 1 (-10 dBFS and up), for the pill's level bars.
+pub fn loudness(samples: &[f32]) -> f32 {
+    let rms = (samples.iter().map(|s| s * s).sum::<f32>() / samples.len().max(1) as f32).sqrt();
+    ((20.0 * rms.max(1e-9).log10() + 55.0) / 45.0).clamp(0.0, 1.0)
 }
 
 impl Recording {
+    /// The mic's current loudness, 0 to 1.
+    pub fn level(&self) -> f32 {
+        f32::from_bits(self.level.load(Ordering::Relaxed))
+    }
+
     /// Stops the mic and returns what it heard as 16 kHz mono.
     pub fn finish(self) -> Result<Vec<f32>, String> {
         let _ = self.stop.send(());
@@ -82,6 +101,9 @@ pub fn text(t: &mut dyn Transcriber, audio: &[f32]) -> Result<String, String> {
     Ok(words.join(" "))
 }
 
+/// What `paste` fails with when Accessibility is off.
+pub const NO_AX: &str = "Myna needs Accessibility to add your words.";
+
 /// Pastes `text` into the focused app through the clipboard, then puts back whatever was on it.
 pub fn paste(text: &str) -> Result<(), String> {
     use objc2::rc::Retained;
@@ -91,7 +113,7 @@ pub fn paste(text: &str) -> Result<(), String> {
 
     // Check first: without Accessibility the Cmd-V goes nowhere, and the user's clipboard must stay as it was.
     if !crate::permissions::ax() {
-        return Err("Myna needs Accessibility to add your words. Allow it on Settings › Voice typing.".into());
+        return Err(NO_AX.into());
     }
     let pb = NSPasteboard::generalPasteboard();
     // Copy every item in every type (text, images, files), not just text.
@@ -157,6 +179,15 @@ mod tests {
         assert!(out.iter().all(|s| (s - 0.4).abs() < 1e-6));
         assert_eq!(to_16k_mono(&[0.1, 0.2], RATE, 1), [0.1, 0.2]);
         assert_eq!(to_16k_mono(&vec![0.5; 44_100], 44_100, 1).len(), 16_000);
+    }
+
+    #[test]
+    fn loudness_spans_quiet_to_loud() {
+        assert_eq!(loudness(&[]), 0.0);
+        assert_eq!(loudness(&[0.0; 64]), 0.0);
+        assert_eq!(loudness(&[0.5, -0.5]), 1.0);
+        let mid = loudness(&[0.01, -0.01]); // -40 dBFS
+        assert!((mid - 1.0 / 3.0).abs() < 1e-3, "{mid}");
     }
 
     #[test]

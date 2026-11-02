@@ -31,13 +31,14 @@ Hold a hotkey, speak, release; text appears in the focused app.
 
 ## Tickets
 1. End to end: hold Option+Space → mic via cpal, resampled to 16 kHz mono → active speech-to-text model through `runtime::transcriber` → clipboard paste (arboard plus synthetic Cmd-V), clipboard restored. Voice typing page gets the Microphone and Accessibility rows. Command-layer test: a WAV plus the Fake transcriber gives the pasted text. The model unloads when idle (AI & privacy: right after use, 1, 5 (default), 15 or 60 minutes, or never)
-2. Pill: a floating HUD that never takes focus, showing Listening with level bars, Writing…, Added, and errors (no model, no permission, nothing heard)
+2. Pill: a floating HUD that never takes focus, showing Listening with level bars, Writing…, Added, and errors (no model, no permission, nothing heard). Style (Capsule, Orb, Waveform, Card) and position (bottom centre, top centre, bottom right, top right) are picked on Voice typing
 3. Shortcut and mode on Voice typing: the module's on/off switch, a shortcut recorder that re-registers without a restart, Hold to talk or Tap to start and stop, the 5-minute cap with its countdown
 4. fn as a shortcut: event tap on modifier changes, plus a check of the 🌐-key setting with the steps to set it to Do Nothing
 5. Rules and dictionary: filler list, repeated-word collapse and dictionary replacements as pure functions with table tests; "Words to remember" on Voice typing
 6. Typing fallback: paste method setting (paste, or type it out) and paste delay; checked in Notes, a browser field and Terminal
 7. Dictate with cleanup hotkey: starts unassigned and shows "Needs an Endpoint". Blocked by story 10
 8. Fresh-install check (human)
+9. Pill under the text cursor: a fifth position read through Accessibility, falling back to bottom centre where the app doesn't report a cursor
 
 ## Open questions for you
 - none

@@ -2,6 +2,7 @@ mod dictation;
 mod download;
 mod models;
 mod permissions;
+mod pill;
 mod runtime;
 mod storage;
 
@@ -148,6 +149,18 @@ fn stt_unload_set(app: AppHandle, d: tauri::State<Data>, secs: i64) -> Result<()
     Ok(())
 }
 
+#[tauri::command]
+fn pill_look_get(d: tauri::State<Data>) -> Result<pill::Look, String> {
+    pill::look(&d.db.lock().unwrap())
+}
+
+#[tauri::command]
+fn pill_look_set(app: AppHandle, d: tauri::State<Data>, style: String, place: String) -> Result<(), String> {
+    pill::set_look(&d.db.lock().unwrap(), &style, &place)?;
+    let _ = app.emit_to("pill", "pill-look", pill::Look { style, place });
+    Ok(())
+}
+
 /// Frees the speech-to-text model once it has sat unused for the chosen time.
 // shortcut: one sleeping thread per dictation; fine at human dictation rates.
 fn schedule_unload(app: &AppHandle) {
@@ -171,10 +184,10 @@ fn schedule_unload(app: &AppHandle) {
 fn active_stt(d: &Data) -> Result<(String, PathBuf), String> {
     let tasks = models::list(&d.db.lock().unwrap(), &d.models_dir, d.macos)?;
     let stt = tasks.into_iter().find(|t| t.id == "stt").ok_or("No speech-to-text task.")?;
-    let id = stt.active.ok_or("No speech-to-text model runs on this Mac.")?;
+    let id = stt.active.ok_or("No speech-to-text model runs on this Mac")?;
     match stt.models.iter().find(|m| m.id == id) {
         Some(m) if m.installed => Ok((id.clone(), d.models_dir.join(&id))),
-        Some(m) => Err(format!("Download {} on Settings › AI & privacy first.", m.name)),
+        Some(m) => Err(format!("Download {} in Settings › AI & privacy", m.name)),
         None => Err(format!("Unknown model {id}")),
     }
 }
@@ -195,23 +208,43 @@ fn dictate_start(app: &AppHandle) {
     if rec.is_some() {
         return; // key repeat
     }
-    match permissions::mic() {
-        permissions::Mic::Allowed => {}
+    if let Ok(look) = pill::look(&d.db.lock().unwrap()) {
+        pill::place(app, look.place);
+    }
+    // Say what's missing before the user talks, not after.
+    let missing = match permissions::mic() {
+        permissions::Mic::Allowed => None,
         permissions::Mic::Ask => {
             std::thread::spawn(permissions::ask_mic); // macOS's pop-up; the next press records
             return;
         }
-        // shortcut: errors go to the log until the pill shows them (ticket 04.2).
-        permissions::Mic::Denied => return eprintln!("dictation: Myna needs the Microphone. Allow it on Settings › Voice typing."),
+        permissions::Mic::Denied => Some(("Needs the Microphone", pill::ALLOW.to_string())),
+    };
+    let missing = missing
+        .or_else(|| (!permissions::ax()).then(|| ("Needs Accessibility", pill::ALLOW.to_string())))
+        .or_else(|| active_stt(&d).err().map(|e| ("No speech model", e)));
+    if let Some((title, hint)) = missing {
+        return pill::error(app, title, &hint);
     }
     *rec = Some(dictation::record());
-    d.used.fetch_add(1, Ordering::SeqCst); // a pending unload must not fire mid-dictation
-    // Load the model while the user talks.
+    let mine = d.used.fetch_add(1, Ordering::SeqCst) + 1; // a pending unload must not fire mid-dictation
+    pill::show(app, "listening");
+    let loader = app.clone();
+    std::thread::spawn(move || {
+        let d = loader.state::<Data>();
+        // Load the model while the user talks; a failure shows when they let go.
+        let _ = load_transcriber(&d, &mut d.transcriber.lock().unwrap());
+    });
     let app = app.clone();
     std::thread::spawn(move || {
         let d = app.state::<Data>();
-        if let Err(e) = load_transcriber(&d, &mut d.transcriber.lock().unwrap()) {
-            eprintln!("dictation: {e}");
+        // Level bars, until this recording ends.
+        while d.used.load(Ordering::SeqCst) == mine {
+            match d.recording.lock().unwrap().as_ref() {
+                Some(r) => pill::level(&app, r.level()),
+                None => break,
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
         }
     });
 }
@@ -221,19 +254,27 @@ fn dictate_stop(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
         let d = app.state::<Data>();
-        let run = || -> Result<(), String> {
+        let run = || -> Result<&'static str, String> {
             let audio = rec.finish()?;
             if audio.len() < runtime::RATE as usize / 4 {
-                return Ok(()); // a tap, not speech
+                return Ok("idle"); // a tap, not speech
             }
+            pill::show(&app, "writing");
             let mut slot = d.transcriber.lock().unwrap();
             load_transcriber(&d, &mut slot)?;
             let text = dictation::text(slot.as_mut().unwrap().1.as_mut(), &audio)?;
             drop(slot);
-            if text.is_empty() { Ok(()) } else { dictation::paste(&text) }
+            if text.is_empty() {
+                return Ok("nothing");
+            }
+            dictation::paste(&text)?;
+            Ok("added")
         };
-        if let Err(e) = run() {
-            eprintln!("dictation: {e}");
+        match run() {
+            Ok("nothing") => pill::error(&app, "Didn’t hear anything", "Hold the keys while you talk"),
+            Ok(state) => pill::show(&app, state),
+            Err(e) if e == dictation::NO_AX => pill::error(&app, "Needs Accessibility", pill::ALLOW),
+            Err(e) => pill::error(&app, "Couldn’t add your words", &e),
         }
         schedule_unload(&app);
     });
@@ -250,7 +291,7 @@ fn open_settings(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set])
+        .invoke_handler(tauri::generate_handler![storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set])
         .setup(|app| {
             app.set_activation_policy(ActivationPolicy::Accessory);
 
@@ -274,6 +315,9 @@ pub fn run() {
                             })
                             .build(),
                     )?;
+                    if let Some(w) = app.get_webview_window("pill") {
+                        pill::setup(&w);
+                    }
                     if let Err(e) = app.global_shortcut().register(DICTATE) {
                         eprintln!("dictation: couldn't use {DICTATE}: {e}"); // another app holds it
                     }
