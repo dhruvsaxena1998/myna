@@ -1,12 +1,11 @@
 <script lang="ts">
-  import { invoke } from "@tauri-apps/api/core";
-  import { getVersion } from "@tauri-apps/api/app";
+  let { data } = $props();
   import ErrorState from "$lib/ErrorState.svelte";
 
   // Every page is listed from day one; unbuilt ones say what will live there.
   // Same pages and names as the prototype (docs/index.html, SET_PAGES).
   const pages = [
-    { id: "look", title: "Look", soon: "Light or dark, highlight colour, see-through panels." },
+    { id: "look", title: "Look & appearance", soon: "Light or dark, highlight colour, see-through panels." },
     { id: "dictation", title: "Voice typing", soon: "Turn voice typing on, pick its shortcut, and words to remember." },
     { id: "meetings", title: "Meeting notes", soon: "Turn meeting notes on, notice calls, pictures of the call, keep your voice when muted." },
     { id: "ai", title: "AI & privacy", soon: "Speech-to-text and voice models, AI providers for summaries and chat, and quick decisions." },
@@ -16,9 +15,6 @@
   let current = $state("look");
   const page = $derived(pages.find((p) => p.id === current)!);
 
-  // Every setting lives in the database, so if it failed to open, every page shows why.
-  const storage = invoke<string>("storage_status");
-  const version = getVersion();
 
   function onkeydown(e: KeyboardEvent) {
     const i = pages.findIndex((p) => p.id === current);
@@ -44,21 +40,18 @@
   <main>
     <header data-tauri-drag-region><h1>{page.title}</h1></header>
     <div class="content">
-      {#await storage}
-        <!-- resolves in a frame; nothing to show meanwhile -->
-      {:then path}
-        {#if page.id === "about"}
-          <dl>
-            <dt>Version</dt><dd>{#await version then v}{v}{/await}</dd>
-            <dt>Data folder</dt><dd class="mono">{path}</dd>
-          </dl>
-          <!-- "Powered by Desert Ant Labs" appears here only while a Desert Ant model is enabled (story 03). -->
-        {:else}
-          <p class="soon">{page.soon}</p>
-        {/if}
-      {:catch err}
-        <ErrorState title="Myna couldn't open its data folder" message={String(err)} />
-      {/await}
+      <!-- Every setting lives in the database, so if it failed to open, every page shows why. -->
+      {#if !data.storage.ok}
+        <ErrorState title="Myna couldn't open its data folder" message={data.storage.error} />
+      {:else if page.id === "about"}
+        <dl>
+          <dt>Version</dt><dd>{data.version}</dd>
+          <dt>Data folder</dt><dd class="mono">{data.storage.path}</dd>
+        </dl>
+        <!-- "Powered by Desert Ant Labs" appears here only while a Desert Ant model is enabled (story 03). -->
+      {:else}
+        <p class="soon">{page.soon}</p>
+      {/if}
     </div>
   </main>
 </div>

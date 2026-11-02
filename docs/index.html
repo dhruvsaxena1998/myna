@@ -1264,7 +1264,7 @@ function send(key, text) {
 const scrollMsgs = () => { const el = $('#msgs'); if (el) el.scrollTop = el.scrollHeight; };
 
 /* ---------- settings ---------- */
-const SET_PAGES = [['appearance','Look'],['dictation','Voice typing'],['meetings','Meeting notes'],['models','AI & privacy'],['experimental','Experimental features'],['about','About']];
+const SET_PAGES = [['appearance','Look & appearance'],['dictation','Voice typing'],['meetings','Meeting notes'],['models','AI & privacy'],['experimental','Experimental features'],['about','About']];
 const getPath = p => p.split('.').reduce((o, k) => o[k], S.set);
 const setPath = (p, v) => { const ks = p.split('.'), last = ks.pop(); ks.reduce((o, k) => o[k], S.set)[last] = v; };
 const sid = p => 's-' + p.replace(/\./g, '-');
