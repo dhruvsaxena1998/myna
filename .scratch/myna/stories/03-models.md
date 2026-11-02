@@ -1,6 +1,7 @@
 # 03: Model catalog and downloads
 
-**Status:** draft
+**Status:** ready
+**GitHub:** milestone "03 · Models"
 **Spec stories:** 13, 14, 39, 61, 65
 **Depends on:** 01 (the Endpoint option for meeting speech-to-text needs 10)
 
@@ -24,6 +25,15 @@ One place to see, download, verify, pick and delete the on-device models for eac
 - [ ] Active model per task persists
 - [ ] Meeting speech-to-text on a Groq Endpoint transcribes a real meeting, with the pill shown and the Endpoint recorded in the meeting inspector
 - [ ] Checked on the real app from a fresh install
+
+## Tickets
+1. Catalog and model rows on AI & privacy: bundled catalog (Parakeet, Whisper, Sortformer; Voz and Who listed), size/accuracy/speed, Installed or Download, active model per task saved in SQLite
+2. Download manager: Hugging Face download with progress, cancel, retry, sha256 check, atomic move into `models/`, delete
+3. Runtimes: `Transcriber` / `Diarizer` behind a fake; Parakeet and Sortformer via parakeet-rs, Whisper via whisper-rs; one slow test per backend on a 10 s fixture
+4. Desert Ant via the Swift bridge: Voz and Who through swift-rs (macOS 15+), their SDK fetches weights; attribution on About while one is enabled
+5. Advanced: custom model path or Hugging Face repo for the same runtime
+6. Meeting speech-to-text on an Endpoint (Groq, Together, Test for others), blocked by stories 05 and 10
+7. Fresh-install check (human)
 
 ## Open questions for you
 - none
