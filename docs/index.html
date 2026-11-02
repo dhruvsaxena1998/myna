@@ -1,0 +1,1784 @@
+<!doctype html>
+<html lang="en" data-theme="auto" data-accent="blue" data-glass="clear">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Myna</title>
+<style>
+/* OD-LAYOUT-PRIMITIVES v1 — structure only: display, flex/grid, overflow, wrapping, ratio.
+   Put this @layer first; product CSS outside the layer always wins. */
+@layer od-layout {
+  :where(.od-stack,.od-row,.od-row-top,.od-cluster,.od-grid,.od-field,.od-stat,.od-cell,.od-tile) > :where(*) { min-width: 0; }
+  .od-stack   { display: flex; flex-direction: column; gap: var(--od-gap, 8px); }
+  .od-row     { display: flex; align-items: center; gap: var(--od-gap, 8px); }
+  .od-row-top { display: flex; align-items: flex-start; gap: var(--od-gap, 8px); }
+  .od-cluster { display: flex; flex-wrap: wrap; align-items: center; gap: var(--od-gap, 8px); }
+  .od-fill    { flex: 1 1 0; min-width: 0; }
+  .od-fixed   { flex: none; }
+  .od-grid    { display: grid; gap: var(--od-gap, 12px); grid-template-columns: repeat(var(--od-cols, 3), minmax(0, 1fr)); }
+  .od-stat, .od-field, .od-cell { display: grid; gap: var(--od-gap, 2px); }
+  :where(.od-stat,.od-field,.od-cell) > :where(*) { display: block; }
+  .od-tile { display: grid; grid-template-rows: auto 1fr; }
+  :where(.od-tile) > :where(*) { display: block; }
+  .od-media { display: block; width: 100%; height: auto; aspect-ratio: var(--od-ratio, auto); }
+  .od-media-cover { object-fit: cover; }
+  .od-truncate { display: block; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .od-clamp-2, .od-clamp-3 { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+  .od-clamp-2 { -webkit-line-clamp: 2; }
+  .od-clamp-3 { -webkit-line-clamp: 3; }
+  .od-lines-2 { min-height: calc(2 * 1.4em); }
+  .od-nowrap  { white-space: nowrap; }
+  .od-keep    { word-break: keep-all; overflow-wrap: anywhere; }
+  .od-screen { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; }
+  .od-scroll { overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+  .od-rail { display: flex; gap: var(--od-gap, 8px); overflow-x: auto; scroll-snap-type: x proximity; scrollbar-width: none;
+             padding-inline: var(--od-rail-pad, 16px); scroll-padding-inline: var(--od-rail-pad, 16px); }
+  .od-rail::-webkit-scrollbar { display: none; }
+  :where(.od-rail) > :where(*) { flex: none; scroll-snap-align: start; }
+  :where(.od-rail) > :where(:last-child) { margin-inline-end: var(--od-rail-pad, 16px); }
+  .od-spacer { flex: none; visibility: hidden; pointer-events: none; }
+  .od-touch  { min-width: 44px; min-height: 44px; }
+}
+/* /OD-LAYOUT-PRIMITIVES v1 */
+
+:root {
+  --desk: #D9DCE3; --win: #FFFFFF; --side: #F2F2F5; --inset: #F5F5F7; --raised: #FFFFFF; --hover: rgba(0,0,0,.05);
+  --line: rgba(0,0,0,.08); --line-strong: rgba(0,0,0,.16);
+  --text: #1D1D1F; --text-2: #55555B; --text-3: #6A6A70;
+  --accent: #0A64D8; --on-accent: #FFFFFF; --accent-text-l: #0A5BC4; --accent-text-d: #6AAEFF; --accent-text: var(--accent-text-l);
+  --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent); --accent-soft-strong: color-mix(in srgb, var(--accent) 20%, transparent);
+  --ok: #1E7B34; --warn: #8A5300; --alert: #B3261E; --alert-soft: rgba(179,38,30,.08);
+  /* Liquid Glass materials */
+  --glass-base: rgba(255,255,255,.56); --glass-strong-base: rgba(250,250,252,.84); --win-glass-base: rgba(244,244,247,.70);
+  --glass: var(--glass-base); --glass-strong: var(--glass-strong-base); --win-glass: var(--win-glass-base);
+  --glass-edge: rgba(255,255,255,.75); --glass-line: rgba(0,0,0,.08); --glass-blur: blur(30px) saturate(180%);
+  --field: rgba(0,0,0,.045); --btn-bg: rgba(255,255,255,.92); --btn-sel: #FFFFFF;
+  --shadow: 0 0 0 .5px rgba(0,0,0,.14), 0 24px 64px rgba(0,0,0,.20);
+  --menu-shadow: 0 0 0 .5px rgba(0,0,0,.12), 0 12px 40px rgba(0,0,0,.18);
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  --fs-xs: 11px; --fs-s: 12px; --fs-ui: 13px; --fs-body: 15px; --fs-h2: 15px; --fs-h1: 22px; --fs-hero: 26px;
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px;
+  --r-ctl: 10px; --r-win: 26px; --r-panel: 18px; --r-pill: 980px;
+  --dur: 180ms; --dur-out: 120ms; --ease-out: cubic-bezier(.28,0,.22,1); --ease-in: cubic-bezier(.5,0,.8,.3);
+  --sw-blue: #0A64D8; --sw-purple: #8E44AD; --sw-pink: #C2185B; --sw-red: #C42B1C; --sw-orange: #B35000; --sw-yellow: #FFCC00; --sw-green: #1E7B34; --sw-graphite: #5E5E63;
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+    --desk: #0E0E10; --win: #1D1D1F; --side: #232326; --inset: #232325; --raised: #2C2C2E; --hover: rgba(255,255,255,.07);
+    --line: rgba(255,255,255,.10); --line-strong: rgba(255,255,255,.18);
+    --text: #ECECEF; --text-2: #B3B3B9; --text-3: #929298;
+    --accent-text: var(--accent-text-d);
+    --ok: #4CD964; --warn: #FFD60A; --alert: #FF6961; --alert-soft: rgba(255,105,97,.12);
+    --glass-base: rgba(44,44,48,.55); --glass-strong-base: rgba(40,40,44,.82); --win-glass-base: rgba(24,24,26,.62);
+    --glass-edge: rgba(255,255,255,.12); --glass-line: rgba(255,255,255,.08);
+    --field: rgba(255,255,255,.07); --btn-bg: rgba(255,255,255,.10); --btn-sel: rgba(255,255,255,.18);
+    --shadow: 0 0 0 .5px rgba(255,255,255,.14), 0 18px 50px rgba(0,0,0,.6);
+    --menu-shadow: 0 0 0 .5px rgba(255,255,255,.14), 0 12px 40px rgba(0,0,0,.55);
+    color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="auto"] {
+    --desk: #0E0E10; --win: #1D1D1F; --side: #232326; --inset: #232325; --raised: #2C2C2E; --hover: rgba(255,255,255,.07);
+    --line: rgba(255,255,255,.10); --line-strong: rgba(255,255,255,.18);
+    --text: #ECECEF; --text-2: #B3B3B9; --text-3: #929298;
+    --accent-text: var(--accent-text-d);
+    --ok: #4CD964; --warn: #FFD60A; --alert: #FF6961; --alert-soft: rgba(255,105,97,.12);
+    --glass-base: rgba(44,44,48,.55); --glass-strong-base: rgba(40,40,44,.82); --win-glass-base: rgba(24,24,26,.62);
+    --glass-edge: rgba(255,255,255,.12); --glass-line: rgba(255,255,255,.08);
+    --field: rgba(255,255,255,.07); --btn-bg: rgba(255,255,255,.10); --btn-sel: rgba(255,255,255,.18);
+    --shadow: 0 0 0 .5px rgba(255,255,255,.14), 0 18px 50px rgba(0,0,0,.6);
+    --menu-shadow: 0 0 0 .5px rgba(255,255,255,.14), 0 12px 40px rgba(0,0,0,.55);
+    color-scheme: dark;
+  }
+}
+:root[data-accent="blue"] { --accent: #0A64D8; --on-accent: #FFFFFF; --accent-text-l: #0A5BC4; --accent-text-d: #6AAEFF; }
+:root[data-accent="purple"] { --accent: #8E44AD; --on-accent: #FFFFFF; --accent-text-l: #8E44AD; --accent-text-d: #DA8FFF; }
+:root[data-accent="pink"] { --accent: #C2185B; --on-accent: #FFFFFF; --accent-text-l: #C2185B; --accent-text-d: #FF6482; }
+:root[data-accent="red"] { --accent: #C42B1C; --on-accent: #FFFFFF; --accent-text-l: #C42B1C; --accent-text-d: #FF6961; }
+:root[data-accent="orange"] { --accent: #B35000; --on-accent: #FFFFFF; --accent-text-l: #B35000; --accent-text-d: #FF9F0A; }
+:root[data-accent="yellow"] { --accent: #FFCC00; --on-accent: #1D1D1F; --accent-text-l: #8A6D00; --accent-text-d: #FFD60A; }
+:root[data-accent="green"] { --accent: #1E7B34; --on-accent: #FFFFFF; --accent-text-l: #1E7B34; --accent-text-d: #4CD964; }
+:root[data-accent="graphite"] { --accent: #5E5E63; --on-accent: #FFFFFF; --accent-text-l: #5E5E63; --accent-text-d: #C7C7CC; }
+:root[data-glass="tinted"] {
+  --glass: color-mix(in srgb, var(--glass-base) 82%, var(--accent));
+  --glass-strong: color-mix(in srgb, var(--glass-strong-base) 90%, var(--accent));
+  --win-glass: color-mix(in srgb, var(--win-glass-base) 86%, var(--accent));
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--desk); color: var(--text); font: var(--fs-ui)/1.5 var(--font); -webkit-font-smoothing: antialiased; }
+button, input, select, textarea { font: inherit; color: inherit; }
+h1, h2, h3, p { margin: 0; }
+ul { margin: 0; padding: 0; list-style: none; }
+.ic { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.ic-s { width: 14px; height: 14px; }
+.ic-l { width: 20px; height: 20px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-ctl); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* window */
+.stage { min-height: 100%; display: grid; place-items: center; padding: var(--s5); }
+.win { width: min(1280px, 100%); height: calc(100vh - 48px); min-height: 560px; background: var(--win); border-radius: var(--r-win); box-shadow: var(--shadow); overflow: hidden; display: grid; grid-template-rows: auto minmax(0,1fr); }
+.win.win-sm { width: min(760px, 100%); height: min(640px, calc(100vh - 48px)); }
+.titlebar { height: 38px; display: flex; align-items: center; gap: var(--s3); padding: 0 var(--s3); border-bottom: 1px solid var(--line); background: var(--side); }
+.lights { display: flex; gap: 8px; }
+.lights i { width: 12px; height: 12px; border-radius: 50%; background: #FF5F57; box-shadow: inset 0 0 0 .5px rgba(0,0,0,.2); }
+.lights i:nth-child(2) { background: #FEBC2E; } .lights i:nth-child(3) { background: #28C840; }
+.titlebar .wt { flex: 1; text-align: center; font-weight: 600; color: var(--text-2); margin-right: 52px; }
+
+/* controls */
+.btn { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border-radius: var(--r-ctl); border: 1px solid var(--line-strong); background: var(--raised); cursor: pointer; white-space: nowrap; transition: background var(--dur) var(--ease-out); }
+@media (hover: hover) { .btn:hover { background: var(--hover); } .btn.primary:hover { background: #0857BD; } }
+.btn.primary { background: var(--accent); border-color: transparent; color: var(--on-accent); font-weight: 500; }
+.btn.plain { border-color: transparent; background: transparent; }
+.btn.icon { width: 28px; padding: 0; justify-content: center; }
+.btn[disabled] { opacity: .45; cursor: default; pointer-events: none; }
+.link { background: none; border: 0; padding: 0; color: var(--accent-text); cursor: pointer; }
+.input, .select, .textarea { width: 100%; border: 1px solid var(--line-strong); border-radius: var(--r-ctl); background: var(--win); padding: 5px 8px; min-height: 28px; }
+.textarea { resize: vertical; line-height: 1.5; padding: 8px; }
+.input[aria-invalid="true"] { border-color: var(--alert); }
+.label { font-weight: 500; }
+.help { color: var(--text-3); font-size: var(--fs-s); }
+.err { color: var(--alert); font-size: var(--fs-s); display: flex; gap: 6px; align-items: flex-start; }
+.pill { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 8px; border-radius: 10px; font-size: var(--fs-xs); font-weight: 500; white-space: nowrap; background: var(--hover); color: var(--text-2); }
+.pill.status { background: var(--accent-soft); color: var(--accent-text); }
+.pill.alert { background: var(--alert-soft); color: var(--alert); }
+.pill.ok { color: var(--ok); background: transparent; padding: 0; }
+.tag { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 7px; border-radius: 4px; border: 1px solid var(--line); font-size: var(--fs-s); color: var(--text-2); white-space: nowrap; }
+.tag i { width: 7px; height: 7px; border-radius: 50%; background: var(--dot, var(--text-3)); flex: none; }
+.tag button { border: 0; background: none; padding: 0; margin-right: -3px; display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 3px; cursor: pointer; color: var(--text-3); }
+@media (hover: hover) { .tag button:hover { background: var(--hover); color: var(--text); } }
+
+.switch { appearance: none; width: 32px; height: 18px; border-radius: 9px; background: var(--line-strong); position: relative; cursor: pointer; flex: none; margin: 0; transition: background var(--dur) var(--ease-out); }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); transition: transform var(--dur) var(--ease-out); }
+.switch:checked { background: var(--accent); }
+.switch:checked::after { transform: translateX(14px); }
+
+.seg { display: inline-flex; justify-self: start; align-self: start; padding: 2px; border-radius: 7px; background: var(--hover); gap: 2px; border: 0; margin: 0; }
+.seg label { position: relative; }
+.seg input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.seg span { display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 12px; border-radius: 5px; color: var(--text-2); }
+.seg input:checked + span { background: var(--raised); color: var(--text); box-shadow: 0 0 0 .5px var(--line-strong), 0 1px 2px rgba(0,0,0,.1); font-weight: 500; }
+.seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.check { width: 14px; height: 14px; margin: 0; accent-color: var(--accent); cursor: pointer; flex: none; }
+.radio { width: 14px; height: 14px; margin: 0; accent-color: var(--accent); cursor: pointer; flex: none; }
+
+/* onboarding */
+.ob { display: grid; grid-template-rows: minmax(0,1fr) auto; min-height: 0; }
+.ob-body { padding: var(--s6) var(--s7) var(--s5); }
+.ob h1 { font-size: var(--fs-hero); font-weight: 700; letter-spacing: -.01em; line-height: 1.25; }
+.ob .lead { color: var(--text-2); font-size: var(--fs-body); margin-top: var(--s2); max-width: 60ch; }
+.ob-foot { display: flex; align-items: center; gap: var(--s2); padding: var(--s4) var(--s7); border-top: 1px solid var(--line); }
+.steps { color: var(--text-3); font-size: var(--fs-s); }
+.list { margin-top: var(--s5); border: 1px solid var(--line); border-radius: 8px; background: var(--inset); }
+.list > li + li { border-top: 1px solid var(--line); }
+.li { display: flex; align-items: flex-start; gap: var(--s3); padding: var(--s3) var(--s4); }
+.li .glyph { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 7px; background: var(--raised); box-shadow: 0 0 0 .5px var(--line-strong); color: var(--text-2); flex: none; }
+.li-title { font-weight: 600; font-size: 14px; }
+.li-desc { color: var(--text-2); margin-top: 2px; }
+.li-meta { color: var(--text-3); font-size: var(--fs-s); margin-top: 4px; }
+label.li { cursor: pointer; }
+.task { margin-top: var(--s5); }
+.task-head { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
+.task-head h2 { font-size: var(--fs-h2); font-weight: 600; }
+.task-head .help { flex-basis: 100%; }
+.task .list { margin-top: var(--s3); }
+.model-row { display: grid; grid-template-columns: auto minmax(0,1fr) auto auto; gap: var(--s3); align-items: start; padding: var(--s3) var(--s4); }
+.model-row .name { font-weight: 600; }
+.model-row .vendor { color: var(--text-3); font-weight: 400; }
+.dl { display: flex; align-items: center; gap: var(--s2); justify-content: flex-end; min-width: 150px; }
+.dl .size { color: var(--text-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bar { width: 72px; height: 4px; border-radius: 2px; background: var(--line-strong); overflow: hidden; }
+.bar b { display: block; height: 100%; background: var(--accent); transform-origin: left; }
+.cloud { display: grid; gap: var(--s3); padding: var(--s4); }
+.cloud .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s3); }
+.errsum { margin-top: var(--s4); padding: var(--s3) var(--s4); border-radius: 8px; background: var(--alert-soft); color: var(--alert); }
+.errsum ul { margin-top: 4px; padding-left: 18px; list-style: disc; }
+.errsum a { color: inherit; }
+.kbd { display: inline-flex; align-items: center; height: 20px; padding: 0 6px; border-radius: 4px; border: 1px solid var(--line-strong); border-bottom-width: 2px; font-size: var(--fs-s); font-weight: 600; }
+
+/* app shell */
+.app { display: grid; grid-template-columns: 228px minmax(0,1fr); min-height: 0; position: relative; }
+.side { background: var(--side); border-right: 1px solid var(--line); padding: var(--s3) var(--s2); display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
+.side h2 { font-size: var(--fs-xs); font-weight: 600; color: var(--text-3); padding: var(--s4) var(--s2) var(--s1); }
+.nav { display: flex; align-items: center; gap: var(--s2); width: 100%; height: 28px; padding: 0 var(--s2); border-radius: var(--r-ctl); border: 0; background: none; cursor: pointer; text-align: left; color: var(--text); }
+.nav .ic { color: var(--text-2); }
+.nav .count { margin-left: auto; color: var(--text-3); font-size: var(--fs-s); font-variant-numeric: tabular-nums; }
+@media (hover: hover) { .nav:hover { background: var(--hover); } }
+.nav[aria-current="true"] { background: var(--accent); color: var(--on-accent); }
+.nav[aria-current="true"] .ic, .nav[aria-current="true"] .count { color: var(--on-accent); }
+.nav .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dot); flex: none; margin: 0 4px; }
+.side-foot { margin-top: auto; padding: var(--s4) var(--s2) var(--s1); display: grid; gap: var(--s2); color: var(--text-3); font-size: var(--fs-s); }
+.newfolder { padding: 2px var(--s2); }
+
+.main { display: grid; grid-template-rows: auto minmax(0,1fr); min-height: 0; min-width: 0; }
+.toolbar { display: flex; align-items: center; gap: var(--s2); height: 48px; padding: 0 var(--s4); border-bottom: 1px solid var(--line); }
+.toolbar h1 { font-size: 15px; font-weight: 600; }
+.toolbar .grow { flex: 1; }
+.menu-btn { display: none; }
+
+/* meetings list */
+.mlist { overflow-y: auto; }
+.mrow { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: var(--s3); align-items: start; padding: var(--s3) var(--s4); border-bottom: 1px solid var(--line); cursor: pointer; }
+@media (hover: hover) { .mrow:hover { background: var(--hover); } }
+.mrow .t { font-weight: 600; font-size: 14px; background: none; border: 0; padding: 0; text-align: left; cursor: pointer; }
+.mrow .meta { color: var(--text-3); font-size: var(--fs-s); margin-top: 2px; }
+.mrow .tags { margin-top: 6px; --od-gap: 6px; }
+.mrow .folder { color: var(--text-3); font-size: var(--fs-s); display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.listhead { display: flex; align-items: center; gap: var(--s2); padding: var(--s2) var(--s4); border-bottom: 1px solid var(--line); color: var(--text-3); font-size: var(--fs-s); }
+.empty { display: grid; place-items: center; text-align: center; padding: var(--s7) var(--s5); color: var(--text-2); gap: var(--s2); }
+.empty h2 { font-size: var(--fs-h2); color: var(--text); }
+.empty p { max-width: 42ch; }
+
+/* detail */
+.detail { overflow-y: auto; min-height: 0; padding: var(--s5) var(--s6) var(--s7); }
+.sec-h { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); font-weight: 600; }
+.doc-head h1 { font-size: var(--fs-h1); font-weight: 700; letter-spacing: -.01em; line-height: 1.3; }
+.doc-head .meta { color: var(--text-2); margin-top: 4px; }
+.tagedit { margin-top: var(--s3); --od-gap: 6px; }
+.tagedit input { width: 120px; height: 22px; min-height: 22px; padding: 0 6px; font-size: var(--fs-s); }
+.seg-row { display: grid; grid-template-columns: 112px minmax(0,1fr); gap: var(--s4); padding: var(--s2) 0; }
+.seg-who { text-align: right; padding-top: 2px; }
+.seg-who b { display: block; font-weight: 600; }
+.seg-who time { display: block; color: var(--text-3); font-size: var(--fs-s); font-variant-numeric: tabular-nums; }
+.seg-text { font-size: var(--fs-body); line-height: 1.6; max-width: 68ch; }
+.transcript .sec-h { margin-bottom: var(--s2); }
+
+.sum-meta { color: var(--text-3); font-size: var(--fs-s); display: grid; gap: 6px; }
+.sum h3 { font-size: var(--fs-s); font-weight: 600; color: var(--text-2); margin: var(--s4) 0 var(--s1); }
+.sum p, .sum li { font-size: 14px; line-height: 1.6; }
+.sum ul { padding-left: 18px; list-style: disc; display: grid; gap: 4px; }
+.regen { margin-top: var(--s3); padding: var(--s3); border: 1px solid var(--line); border-radius: 8px; background: var(--win); display: grid; gap: var(--s3); }
+.regen h3 { margin: 0; font-size: 14px; color: var(--text); }
+.skel { display: grid; gap: 8px; margin-top: var(--s4); }
+.skel i { display: block; height: 10px; border-radius: 5px; background: var(--line); animation: pulse 1.2s ease-in-out infinite; }
+.skel i:nth-child(3n) { width: 70%; }
+@keyframes pulse { 50% { opacity: .45; } }
+
+/* chat */
+.chat { display: grid; grid-template-rows: auto minmax(0,1fr) auto; min-height: 0; }
+.ctxbar { padding: var(--s3) var(--s4); border-bottom: 1px solid var(--line); display: grid; gap: var(--s2); }
+.ctxbar .od-cluster { --od-gap: 6px; }
+.msgs { overflow-y: auto; padding: var(--s4); display: flex; flex-direction: column; gap: var(--s4); }
+.msg { max-width: 72ch; font-size: 14px; line-height: 1.6; white-space: pre-line; }
+.msg.user { align-self: flex-end; background: var(--accent-soft); padding: var(--s2) var(--s3); border-radius: 10px; }
+.msg.ai .who { font-size: var(--fs-s); color: var(--text-3); font-weight: 600; margin-bottom: 2px; white-space: normal; }
+.typing { color: var(--text-3); }
+.sources { margin-top: var(--s2); white-space: normal; --od-gap: 6px; }
+.sources .help { white-space: nowrap; }
+.src { cursor: pointer; background: var(--win); max-width: 240px; }
+.src span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (hover: hover) { .src:hover { background: var(--hover); color: var(--text); } }
+.composer { border-top: 1px solid var(--line); padding: var(--s3) var(--s4); display: grid; gap: var(--s2); }
+.composer form { display: flex; gap: var(--s2); align-items: flex-end; }
+.composer textarea { flex: 1; resize: none; min-height: 36px; max-height: 120px; }
+.composer .foot { display: flex; align-items: center; gap: var(--s2); color: var(--text-3); font-size: var(--fs-s); flex-wrap: wrap; }
+.suggest { --od-gap: 6px; }
+.suggest button { height: 26px; padding: 0 10px; border-radius: 13px; border: 1px solid var(--line-strong); background: var(--win); cursor: pointer; white-space: nowrap; }
+@media (hover: hover) { .suggest button:hover { background: var(--hover); } }
+.appchat { max-width: 860px; width: 100%; margin: 0 auto; }
+.chat-wrap { display: grid; grid-template-rows: minmax(0,1fr); min-height: 0; }
+
+
+.scrim { display: none; }
+
+@media (max-width: 1100px) {
+  .detail { padding: var(--s5); }
+}
+/* menubar, popover, pills */
+:root { --hud-bg: #1d1d1f; --hud-fg: #f5f5f7; --hud-2: rgba(245,245,247,.72); --hud-btn: rgba(255,255,255,.14); --rec: #FF453A; --mb-h: 28px; }
+body.mb .stage { padding-top: calc(var(--mb-h) + var(--s5)); }
+body.mb .win { height: calc(100vh - var(--mb-h) - 48px); }
+.menubar { position: fixed; top: 0; left: 0; right: 0; height: var(--mb-h); z-index: 50; display: flex; align-items: center; gap: var(--s4); padding: 0 var(--s3);
+  background: color-mix(in oklab, var(--side), transparent 12%); -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px); border-bottom: 1px solid var(--line); }
+.mb-app { font-weight: 700; }
+.mb-item { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border: 0; border-radius: 5px; background: none; cursor: pointer; color: var(--text); }
+.mb-item[aria-expanded="true"] { background: var(--hover); }
+.mb-rec { display: inline-flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; font-size: var(--fs-s); }
+.mb-clock { color: var(--text); font-variant-numeric: tabular-nums; }
+.recdot { width: 8px; height: 8px; border-radius: 50%; background: var(--rec); flex: none; animation: pulse 1.6s ease-in-out infinite; }
+.mbpop { position: fixed; top: calc(var(--mb-h) + 4px); right: var(--s2); width: 300px; z-index: 60; padding: 5px; border-radius: 10px;
+  background: color-mix(in oklab, var(--raised), transparent 6%); -webkit-backdrop-filter: blur(30px); backdrop-filter: blur(30px); box-shadow: var(--menu-shadow); }
+.mlabel { padding: 6px 10px 2px; font-size: var(--fs-xs); font-weight: 600; color: var(--text-3); }
+.mnote { padding: 0 10px 6px; font-size: var(--fs-s); color: var(--text-2); display: flex; align-items: center; gap: 6px; }
+.mitem { display: flex; align-items: center; gap: var(--s2); width: 100%; min-height: 24px; padding: 2px 10px; border: 0; border-radius: 5px; background: none; color: var(--text); text-align: left; cursor: default; }
+.mitem .mkey { margin-left: auto; color: var(--text-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mitem:hover:not([disabled]), .mitem:focus-visible { background: var(--accent); color: var(--on-accent); outline: none; }
+.mitem:hover:not([disabled]) .mkey, .mitem:focus-visible .mkey { color: var(--on-accent); }
+.mitem[disabled] { color: var(--text-3); }
+.msep { height: 1px; margin: 5px 10px; background: var(--line); }
+.hud { display: inline-flex; align-items: center; gap: 10px; height: 36px; padding: 0 14px; border: 0; border-radius: 18px; background: var(--hud-bg); color: var(--hud-fg);
+  box-shadow: 0 8px 24px rgba(0,0,0,.28), 0 0 0 .5px rgba(255,255,255,.14); font-size: var(--fs-ui); white-space: nowrap; }
+.hud .sub { color: var(--hud-2); }
+.hud-btn { height: 24px; padding: 0 10px; border: 0; border-radius: 12px; background: var(--hud-btn); color: var(--hud-fg); cursor: pointer; }
+.hud :focus-visible, .hud:focus-visible { outline: 2px solid #6AAEFF; outline-offset: 2px; }
+.dpill { position: fixed; bottom: var(--s5); left: 50%; transform: translateX(-50%); z-index: 70; }
+.lvl { display: flex; align-items: center; gap: 2px; height: 16px; }
+.lvl i { width: 3px; height: 16px; border-radius: 2px; background: currentColor; animation: lvl .9s ease-in-out infinite; }
+.lvl i:nth-child(2) { animation-delay: .15s; } .lvl i:nth-child(3) { animation-delay: .3s; } .lvl i:nth-child(4) { animation-delay: .45s; } .lvl i:nth-child(5) { animation-delay: .6s; }
+@keyframes lvl { 0%, 100% { transform: scaleY(.3); } 50% { transform: scaleY(1); } }
+.mpill { position: fixed; bottom: var(--s5); right: var(--s5); z-index: 70; cursor: pointer; }
+button.mpill { font: inherit; }
+.mpanel { position: fixed; bottom: var(--s5); right: var(--s5); z-index: 70; width: min(380px, calc(100vw - 32px)); max-height: min(520px, calc(100vh - 96px));
+  display: grid; grid-template-rows: auto auto minmax(0,1fr) auto; border-radius: 14px; background: var(--raised); box-shadow: var(--menu-shadow); overflow: hidden; }
+.mp-head { display: flex; align-items: center; gap: var(--s2); padding: var(--s3) var(--s4); border-bottom: 1px solid var(--line); }
+.mp-head .t { font-weight: 600; }
+.mp-head time { font-variant-numeric: tabular-nums; color: var(--text-2); }
+.mp-mic { display: flex; align-items: center; gap: var(--s2); padding: var(--s2) var(--s4); border-bottom: 1px solid var(--line); font-size: var(--fs-s); color: var(--text-2); }
+.live { overflow-y: auto; padding: var(--s3) var(--s4); display: grid; gap: var(--s3); align-content: start; }
+.lline .lwho { display: flex; gap: var(--s2); align-items: baseline; font-size: var(--fs-s); }
+.lline .lwho time { color: var(--text-3); font-variant-numeric: tabular-nums; }
+.lline p { font-size: 14px; line-height: 1.5; margin-top: 2px; }
+.mp-foot { display: grid; gap: var(--s2); padding: var(--s3) var(--s4); border-top: 1px solid var(--line); }
+.btn.danger { background: var(--alert); border-color: transparent; color: #fff; font-weight: 500; }
+@media (max-width: 768px) {
+  body.mb .stage { padding-top: var(--mb-h); }
+  body.mb .win { height: calc(100vh - var(--mb-h)); }
+  .mpill, .mpanel { right: var(--s3); bottom: calc(var(--s5) + 48px); }
+}
+
+/* settings */
+.settings { display: grid; grid-template-columns: 200px minmax(0,1fr); min-height: 0; }
+.snav { border-right: 1px solid var(--line); padding: var(--s3) var(--s2); display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
+.spage { padding: var(--s5) var(--s6) var(--s7); }
+.spage > * { max-width: 720px; }
+.spage > .sgroup, .spage > .task { margin-top: var(--s5); }
+.spage > :first-child { margin-top: 0; }
+.sgroup h2 { font-size: var(--fs-h2); font-weight: 600; }
+.sgroup > .help { margin-top: 4px; }
+.sgroup .list { margin-top: var(--s2); }
+.srow { display: flex; align-items: center; gap: var(--s4); padding: var(--s3) var(--s4); }
+.srow .help .pill { margin-top: 6px; }
+.swlabel { cursor: pointer; color: var(--text-2); white-space: nowrap; }
+.dict { padding: var(--s3); }
+.path { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text-2); }
+
+@media (max-width: 860px) {
+  .settings { grid-template-columns: minmax(0,1fr); grid-template-rows: auto minmax(0,1fr); }
+  .snav { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); }
+  .snav .nav { width: auto; flex: none; }
+  .app { grid-template-columns: minmax(0,1fr); }
+  .side { position: absolute; top: 0; bottom: 0; left: 0; width: 260px; z-index: 30; transform: translateX(-100%); visibility: hidden; transition: transform var(--dur-out) var(--ease-in), visibility 0s var(--dur-out); }
+  .app.drawer .side { transform: none; visibility: visible; transition: transform var(--dur) var(--ease-out); }
+  .app.drawer .scrim { display: block; position: absolute; inset: 0; z-index: 25; background: rgba(0,0,0,.25); border: 0; }
+  .menu-btn { display: inline-flex; }
+}
+@media (max-width: 768px) {
+  .spage { padding: var(--s4); }
+  .srow { flex-wrap: wrap; }
+  .stage { padding: 0; }
+  .win, .win.win-sm { width: 100%; height: 100vh; min-height: 0; border-radius: 0; box-shadow: none; }
+  .ob-body { padding: var(--s5) var(--s4); }
+  .ob-foot { padding: var(--s3) var(--s4); }
+  .cloud .row2 { grid-template-columns: 1fr; }
+  .model-row { grid-template-columns: auto minmax(0,1fr); }
+  .model-row .dl, .model-row .rates { grid-column: 2; justify-content: flex-start; }
+  .model-row .rates { flex-direction: row; gap: var(--s3); }
+  .seg-row { grid-template-columns: minmax(0,1fr); gap: 2px; }
+  .seg-who { text-align: left; display: flex; gap: var(--s2); align-items: baseline; }
+  .detail { padding: var(--s4); }
+  .toolbar { padding: 0 var(--s3); }
+  .mrow { grid-template-columns: minmax(0,1fr); }
+}
+/* ===== Liquid Glass layer (macOS 26). The desktop wallpaper behind the window lets the glass read. ===== */
+body { background:
+  radial-gradient(60% 70% at 12% 18%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 70%),
+  radial-gradient(55% 60% at 88% 86%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 70%),
+  var(--desk); background-attachment: fixed; }
+.win { border-radius: var(--r-win); background: var(--win-glass); -webkit-backdrop-filter: blur(40px) saturate(180%); backdrop-filter: blur(40px) saturate(180%);
+  box-shadow: inset 0 0 0 .5px var(--glass-edge), var(--shadow); }
+.titlebar { height: 44px; background: transparent; border-bottom: 0; padding: 0 var(--s4); }
+.lights i { width: 13px; height: 13px; }
+.app { padding: 0 var(--s2) var(--s2); gap: var(--s2); }
+.side { background: var(--glass); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); border: 0; border-radius: var(--r-panel);
+  box-shadow: inset 0 0 0 .5px var(--glass-edge), 0 1px 3px rgba(0,0,0,.06); padding: var(--s3) var(--s2); }
+.side h2 { color: var(--text-2); }
+.main, .ob { background: var(--win); border-radius: var(--r-panel); overflow: hidden; box-shadow: 0 0 0 .5px var(--glass-line); }
+.ob { margin: 0 var(--s2) var(--s2); }
+.toolbar { border-bottom: 0; height: 56px; padding: 0 var(--s4); }
+.toolbar h1 { font-size: 17px; font-weight: 700; letter-spacing: -.01em; }
+.nav { height: 30px; border-radius: var(--r-ctl); }
+.nav[aria-current="true"] { background: var(--accent-soft-strong); color: var(--text); font-weight: 500; }
+.nav[aria-current="true"] .ic { color: var(--accent-text); }
+.nav[aria-current="true"] .count { color: var(--text-2); }
+.mrow { border-bottom: 0; margin: 0 var(--s2); border-radius: 14px; padding: var(--s3); }
+.mrow + .mrow { box-shadow: 0 -1px 0 var(--line); }
+@media (hover: hover) { .mrow:hover, .mrow:hover + .mrow { box-shadow: none; } }
+.btn { height: 30px; padding: 0 14px; border: 0; border-radius: var(--r-pill); background: var(--btn-bg); box-shadow: inset 0 0 0 .5px var(--line-strong), 0 1px 2px rgba(0,0,0,.06); }
+.btn.icon { width: 30px; padding: 0; }
+.btn.plain { background: transparent; box-shadow: none; }
+.btn.primary { background: var(--accent); color: var(--on-accent); box-shadow: 0 1px 2px rgba(0,0,0,.14); }
+@media (hover: hover) {
+  .btn:hover { background: color-mix(in srgb, var(--btn-bg) 85%, var(--text)); }
+  .btn.plain:hover { background: var(--hover); }
+  .btn.primary:hover { background: color-mix(in srgb, var(--accent) 88%, #fff); }
+}
+.btn.danger { background: var(--alert); color: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.14); }
+.input, .select, .textarea { border: 0; border-radius: var(--r-ctl); background: var(--field); box-shadow: inset 0 0 0 .5px var(--line-strong); min-height: 30px; padding: 5px 10px; }
+.textarea { border-radius: 14px; padding: 8px 12px; }
+.input[aria-invalid="true"] { box-shadow: inset 0 0 0 1.5px var(--alert); }
+.seg { border-radius: var(--r-pill); padding: 3px; background: var(--field); }
+.seg span { border-radius: var(--r-pill); height: 26px; padding: 0 14px; }
+.seg input:checked + span { background: var(--btn-sel); }
+.switch { width: 38px; height: 22px; border-radius: 11px; }
+.switch::after { width: 18px; height: 18px; }
+.switch:checked::after { transform: translateX(16px); }
+.list { border: 0; border-radius: var(--r-panel); background: var(--inset); box-shadow: inset 0 0 0 .5px var(--line); }
+.li .glyph { border-radius: 10px; }
+.tag { border: 0; border-radius: var(--r-pill); height: 22px; padding: 0 10px; background: var(--field); }
+.pill { border-radius: var(--r-pill); }
+.regen { border: 0; border-radius: 14px; box-shadow: inset 0 0 0 .5px var(--line-strong); }
+.ctxbar, .composer { border: 0; }
+.msg.user { border-radius: 18px 18px 6px 18px; background: var(--accent); color: var(--on-accent); }
+.composer .textarea { border-radius: 18px; }
+.suggest button { border: 0; border-radius: var(--r-pill); background: var(--field); box-shadow: inset 0 0 0 .5px var(--line-strong); }
+.snav { border-right: 0; }
+.menubar { background: var(--glass); border-bottom: 0; box-shadow: inset 0 -.5px 0 var(--glass-line); }
+.mb-item { border-radius: 8px; }
+.mbpop { border-radius: 14px; background: var(--glass-strong); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+  box-shadow: inset 0 0 0 .5px var(--glass-edge), var(--menu-shadow); }
+.mitem { border-radius: 8px; min-height: 26px; }
+.hud { height: 40px; padding: 0 16px; border-radius: var(--r-pill); background: rgba(28,28,30,.74); -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%);
+  box-shadow: inset 0 0 0 .5px rgba(255,255,255,.2), 0 10px 30px rgba(0,0,0,.3); }
+.hud-btn { border-radius: var(--r-pill); }
+.mpanel { border-radius: 24px; background: var(--glass-strong); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+  box-shadow: inset 0 0 0 .5px var(--glass-edge), var(--menu-shadow); }
+.mp-head, .mp-mic, .mp-foot { border-color: var(--glass-line); }
+.swatches { display: flex; flex-wrap: wrap; gap: 10px; border: 0; margin: 0; padding: 0; }
+.sw { position: relative; display: block; }
+.sw input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.sw > span[aria-hidden] { display: block; width: 22px; height: 22px; border-radius: 50%; background: var(--c); box-shadow: inset 0 0 0 .5px rgba(0,0,0,.25); transition: box-shadow var(--dur) var(--ease-out); }
+.sw input:checked + span { box-shadow: 0 0 0 2px var(--inset), 0 0 0 4px var(--c); }
+.sw input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 5px; }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .win, .menubar { background: var(--inset); }
+  .side, .mbpop, .mpanel { background: var(--raised); }
+  .hud { background: #1C1C1E; }
+}
+@media (max-width: 768px) {
+  .win, .win.win-sm { border-radius: 0; }
+  .app { padding: 0; gap: 0; }
+  .main, .ob { border-radius: 0; margin: 0; }
+  .side { border-radius: 0 var(--r-panel) var(--r-panel) 0; }
+}
+
+/* meeting detected prompt (macOS-notification position, top right under the menu bar) */
+.dtoast { position: fixed; top: calc(var(--mb-h) + 12px); right: 12px; z-index: 80; width: min(400px, calc(100vw - 24px)); display: flex; align-items: center; gap: var(--s3);
+  padding: 14px 14px 14px 16px; border-radius: var(--r-panel); background: var(--glass-strong); color: var(--text);
+  -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+  box-shadow: inset 0 0 0 .5px var(--glass-edge), var(--menu-shadow); animation: dt-in var(--dur) var(--ease-out); }
+@keyframes dt-in { from { opacity: 0; transform: translateY(-8px); } }
+.dt-x { position: absolute; top: -8px; left: -8px; width: 22px; height: 22px; display: grid; place-items: center; border: 0; border-radius: 50%; background: var(--glass-strong); color: var(--text-2); cursor: pointer;
+  -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); box-shadow: inset 0 0 0 .5px var(--glass-edge), var(--menu-shadow); }
+.dt-x:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dt-app { width: 36px; height: 36px; flex: none; display: grid; place-items: center; border-radius: 10px; background: var(--accent); color: var(--on-accent); }
+.dt-t { font-size: 14px; font-weight: 600; }
+.dt-sub { display: flex; align-items: center; gap: 6px; margin-top: 2px; color: var(--text-2); font-size: 13px; }
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: #30D158; flex: none; }
+.dt-split { position: relative; display: flex; flex: none; gap: 4px; }
+.dt-menu { position: absolute; top: calc(100% + 6px); right: 0; width: 270px; padding: 5px; border-radius: 14px; color: var(--text); background: var(--glass-strong);
+  -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); box-shadow: inset 0 0 0 .5px var(--glass-edge), var(--menu-shadow); }
+@media (max-width: 520px) { .dtoast { flex-wrap: wrap; } .dt-split { width: 100%; } .dt-split .primary { flex: 1; justify-content: center; } }
+
+.hk { display: flex; align-items: center; gap: var(--s2); }
+.hk-keys { display: flex; gap: var(--s1); }
+.hk kbd { display: inline-grid; place-items: center; min-width: 26px; height: 26px; padding: 0 8px; border-radius: 7px; background: var(--field);
+  box-shadow: inset 0 0 0 .5px var(--line-strong), 0 1px 0 var(--line-strong); font: 500 var(--fs-s) var(--font); color: var(--text); white-space: nowrap; }
+.btn.hk-live { min-width: 150px; justify-content: center; color: var(--accent-text); box-shadow: inset 0 0 0 2px var(--accent); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0s !important; animation: none !important; }
+}
+/* QoL pass: date-grouped list, live card, document meeting page, side panel, popovers, sidebar menus, clipboard history */
+.titlebar .wt { text-align: left; margin-right: 0; }
+.mlist { padding-bottom: var(--s4); }
+.dhead { position: sticky; top: 0; z-index: 1; display: flex; align-items: baseline; gap: var(--s2); padding: var(--s4) var(--s5) var(--s2); background: var(--win); font-size: var(--fs-ui); font-weight: 700; }
+.dhead .dsub { font-weight: 400; font-size: var(--fs-s); color: var(--text-3); }
+.livecard { display: flex; align-items: center; gap: var(--s3); margin: var(--s2) var(--s4) 0; padding: var(--s3) var(--s4); border-radius: var(--r-panel); background: var(--inset); box-shadow: inset 0 0 0 .5px var(--line); }
+.livecard .lc-t { font-weight: 600; }
+.livecard .help { font-variant-numeric: tabular-nums; }
+.recdot.idle { background: var(--text-3); animation: none; }
+.dbody { position: relative; display: grid; grid-template-columns: minmax(0,1fr); grid-template-rows: minmax(0,1fr); min-height: 0; }
+.dbody.has-panel { grid-template-columns: minmax(0,1fr) 400px; }
+.doc { max-width: 720px; margin: 0 auto; }
+.sumdoc { margin-top: var(--s5); }
+.sum-bar { display: flex; align-items: center; gap: var(--s2); }
+.sum-bar .sum-meta { display: flex; flex-wrap: wrap; gap: 2px var(--s2); }
+.sumdoc .skel { margin-top: var(--s4); }
+.sumdoc .sum { margin-top: var(--s4); }
+.sumdoc .sum-lead, .sumdoc .sum li { font-size: var(--fs-body); line-height: 1.6; }
+.sumdoc .sum h2 { font-size: var(--fs-body); font-weight: 600; margin: var(--s5) 0 var(--s2); }
+.popwrap { position: relative; flex: none; }
+.pop { position: absolute; top: calc(100% + 6px); right: 0; z-index: 40; border-radius: 14px; background: var(--glass-strong); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+  box-shadow: inset 0 0 0 .5px var(--glass-edge), var(--menu-shadow); animation: dt-in var(--dur) var(--ease-out); }
+.pop.menu { width: 220px; padding: 5px; }
+.pop.regen { width: min(440px, calc(100vw - 48px)); margin: 0; padding: var(--s4); display: grid; gap: var(--s3); }
+.rcards { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s2); }
+.rcard { display: grid; gap: 2px; align-content: start; padding: var(--s3); border: 0; border-radius: 12px; background: var(--field); box-shadow: inset 0 0 0 .5px var(--line-strong); color: var(--text); text-align: left; cursor: pointer; }
+.rcard .rc-t { font-weight: 600; }
+.rcard .rc-d { font-size: var(--fs-s); color: var(--text-2); }
+.rcard[aria-pressed="true"] { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); }
+@media (hover: hover) { .rcard:hover { background: var(--hover); } .rcard[aria-pressed="true"]:hover { background: var(--accent-soft); } }
+.tpls { border: 0; margin: 0; padding: 0; display: grid; gap: 2px; max-height: 220px; overflow-y: auto; }
+.tplopt { display: flex; align-items: flex-start; gap: var(--s2); padding: var(--s2); border-radius: 10px; cursor: pointer; }
+.tplopt input { margin-top: 2px; accent-color: var(--accent); }
+.tplopt:has(input:checked) { background: var(--accent-soft); }
+.rcard:focus-visible, .tplopt:focus-within, .icopt:focus-visible, .swb:focus-visible, .more:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.toolbar .btn.on { background: var(--accent-soft-strong); box-shadow: none; }
+.dpanel { display: grid; grid-template-rows: auto minmax(0,1fr); min-height: 0; background: var(--inset); box-shadow: inset .5px 0 0 var(--line); }
+.dp-head { display: flex; align-items: center; gap: var(--s2); padding: var(--s3) var(--s3) var(--s2) var(--s4); }
+.dp-head h2 { font-size: var(--fs-h2); font-weight: 600; }
+.dp-head .grow { flex: 1; }
+.dp-body { padding: 0 var(--s4) var(--s4); }
+.dpanel .seg-row { grid-template-columns: minmax(0,1fr); gap: 2px; }
+.dpanel .seg-who { text-align: left; display: flex; gap: var(--s2); align-items: baseline; }
+.sitem { position: relative; }
+.srowx { position: relative; }
+.srowx .more { position: absolute; top: 3px; right: 4px; width: 24px; height: 24px; display: grid; place-items: center; border: 0; border-radius: 7px; background: none; color: var(--text-2); cursor: pointer; opacity: 0; }
+.sitem:hover .more, .sitem:focus-within .more, .more[aria-expanded="true"] { opacity: 1; }
+.sitem:hover .count, .sitem:focus-within .count { visibility: hidden; }
+@media (hover: hover) { .srowx .more:hover { background: var(--hover); } }
+@media (hover: none) { .srowx .more { opacity: 1; } .srowx .count { visibility: hidden; } }
+.sidepop { display: grid; gap: 6px; margin: 4px var(--s1) var(--s2); padding: var(--s2); border-radius: 12px; background: var(--glass-strong); box-shadow: inset 0 0 0 .5px var(--glass-edge), 0 4px 16px rgba(0,0,0,.08); }
+.icgrid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
+.icopt { height: 30px; display: grid; place-items: center; border: 0; border-radius: 8px; background: none; color: var(--text-2); cursor: pointer; }
+@media (hover: hover) { .icopt:hover { background: var(--hover); } }
+.icopt[aria-pressed="true"] { background: var(--accent-soft-strong); color: var(--accent-text); }
+.swrow { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px; }
+.swb { width: 22px; height: 22px; border: 0; border-radius: 50%; background: var(--c); box-shadow: inset 0 0 0 .5px rgba(0,0,0,.25); cursor: pointer; }
+.swb[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--inset), 0 0 0 4px var(--c); }
+.toolbar .search { width: min(220px, 36vw); }
+.clips { padding: 0 var(--s4) var(--s5); }
+.clips-note { padding: var(--s1) var(--s2) var(--s3); }
+.clist { display: grid; gap: var(--s2); }
+.clip { display: flex; align-items: flex-start; gap: var(--s3); padding: var(--s3) var(--s4); border-radius: 14px; background: var(--inset); box-shadow: inset 0 0 0 .5px var(--line); }
+.clip p { font-size: 14px; line-height: 1.5; }
+.undo { display: flex; align-items: center; gap: var(--s2); padding: 0 var(--s2) var(--s3); color: var(--text-2); }
+@media (max-width: 1100px) {
+  .dbody.has-panel { grid-template-columns: minmax(0,1fr); }
+  .dpanel { position: absolute; top: 0; right: 0; bottom: 0; width: min(420px, 100%); z-index: 20; box-shadow: var(--menu-shadow); }
+}
+@media (max-width: 600px) {
+  .toolbar .lbl { display: none; }
+  .livecard, .clip { flex-wrap: wrap; }
+  .rcards { grid-template-columns: 1fr; }
+}
+/* Round 2: search, folder suggestions, recording card, floating side panel, chip input, settings sub-groups, attribution footer */
+.search { position: relative; display: flex; align-items: center; flex: 0 1 220px; min-width: 120px; }
+.search > .ic { position: absolute; left: 10px; color: var(--text-3); pointer-events: none; }
+.search .input { width: 100%; padding-left: 30px; padding-right: 30px; border-radius: var(--r-pill); }
+.search kbd { position: absolute; right: 8px; padding: 1px 6px; border-radius: 5px; font: 500 11px/1.4 var(--font); color: var(--text-3); box-shadow: inset 0 0 0 .5px var(--line-strong); pointer-events: none; }
+.search .input:focus + kbd, .search .input:not(:placeholder-shown) + kbd { display: none; }
+.sugg { display: flex; flex-wrap: wrap; align-items: center; gap: 6px var(--s2); width: fit-content; max-width: 100%; margin-top: var(--s2); padding: 4px 4px 4px 10px; border-radius: 12px; background: var(--accent-soft); color: var(--text-2); font-size: var(--fs-s); }
+.sugg > .ic { color: var(--accent-text); }
+.sugg b { color: var(--text); font-weight: 600; }
+.sugg .btn { height: 24px; padding: 0 10px; font-size: var(--fs-s); }
+.livecard.rec { flex-wrap: wrap; gap: var(--s3) var(--s4); padding: var(--s4) var(--s5); background: color-mix(in srgb, var(--rec) 9%, var(--win));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--rec) 30%, transparent), 0 8px 24px color-mix(in srgb, var(--rec) 12%, transparent); }
+.lc-main { display: grid; gap: 2px; }
+.lc-label { display: flex; align-items: center; gap: var(--s2); font-weight: 600; }
+.lc-time { font: 600 24px/1.15 var(--font-display); font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.lc-lvl { color: var(--rec); height: 22px; }
+.lc-lvl i { height: 22px; }
+.lc-mic { display: inline-flex; align-items: center; gap: 6px; color: var(--text-2); }
+.dpanel { margin: 0 var(--s2) var(--s2) 0; border-radius: var(--r-panel); overflow: hidden; box-shadow: inset 0 0 0 .5px var(--line); }
+@media (max-width: 1100px) { .dpanel { margin: 0; right: var(--s2); bottom: var(--s2); box-shadow: inset 0 0 0 .5px var(--glass-edge), var(--menu-shadow); } }
+.chipin { display: flex; flex-wrap: wrap; align-items: center; align-content: flex-start; gap: 6px; min-height: 80px; margin-top: var(--s2); padding: 10px 12px; border-radius: 14px; background: var(--field); box-shadow: inset 0 0 0 .5px var(--line-strong); cursor: text; }
+.chipin:focus-within { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.chipin .tag { background: var(--btn-bg); box-shadow: inset 0 0 0 .5px var(--line-strong); }
+.chipin-f { flex: 1 0 160px; }
+.chipin input { width: 100%; padding: 4px 2px; border: 0; background: none; outline: none; }
+.chipin input:focus-visible { outline: none; }
+.sgroup h3 { margin: var(--s4) 0 0; font-size: var(--fs-s); font-weight: 600; color: var(--text-2); }
+.sgroup > .help + .help { margin-top: var(--s2); }
+.confirm { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); margin: 0 0 var(--s3); padding: var(--s3) var(--s4); border-radius: 14px; background: var(--alert-soft); box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--alert) 30%, transparent); }
+.win { grid-template-rows: auto minmax(0,1fr) auto; }
+.wfoot { display: flex; justify-content: flex-end; padding: 0 var(--s4) var(--s2); font-size: var(--fs-xs); color: var(--text-3); }
+@media (max-width: 600px) { .toolbar .pill { display: none; } .search { flex-basis: 140px; } }
+
+/* Type and colour pass: softer neutrals, gentler accent tints, SF Pro Display for titles */
+:root {
+  --desk: #E4E6EC; --side: #F3F3F6; --inset: #F6F6F8; --line: rgba(0,0,0,.07); --text-2: #4A4A50;
+  --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent); --accent-soft-strong: color-mix(in srgb, var(--accent) 16%, transparent);
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", sans-serif;
+  --fs-h1: 26px;
+}
+body { letter-spacing: -.005em; text-rendering: optimizeLegibility; }
+::selection { background: color-mix(in srgb, var(--accent) 24%, transparent); }
+:focus-visible { outline-color: color-mix(in srgb, var(--accent) 80%, transparent); }
+.toolbar h1 { font-family: var(--font-display); font-size: 18px; font-weight: 600; letter-spacing: -.015em; }
+.doc-head h1 { font-family: var(--font-display); font-size: var(--fs-h1); font-weight: 700; letter-spacing: -.022em; line-height: 1.2; }
+.doc-head .meta { color: var(--text-3); }
+.dhead { font-family: var(--font-display); font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.dhead .dsub { font-family: var(--font); font-size: var(--fs-ui); }
+.mrow .meta, .clip .help { color: var(--text-3); }
+.sumdoc .sum-lead, .sumdoc .sum li { font-size: var(--fs-body); line-height: 1.6; color: var(--text); }
+.sumdoc .sum h2 { font-family: var(--font-display); font-size: 16px; letter-spacing: -.01em; }
+.seg-text, .clip p { font-size: 14px; line-height: 1.6; }
+.sgroup h2 { font-family: var(--font-display); font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.side h2 { font-size: var(--fs-xs); font-weight: 600; letter-spacing: .01em; color: var(--text-3); }
+.nav[aria-current="true"] { background: var(--accent-soft-strong); }
+.rates { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding-top: 2px; }
+.rate { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-s); color: var(--text-2); white-space: nowrap; }
+.rate-l { width: 56px; color: var(--text-3); }
+.pips { display: inline-flex; gap: 3px; }
+.pips i { width: 6px; height: 6px; border-radius: 50%; background: var(--line-strong); }
+.pips i.on { background: var(--accent); }
+.rate-w { min-width: 48px; font-weight: 500; }
+/* Round 4: minimal voice typing history, full-width folder suggestion, credit line */
+.clist { gap: 0; }
+.clip { padding: var(--s3) var(--s2); border-radius: 0; background: none; box-shadow: none; border-bottom: .5px solid var(--line); align-items: center; }
+.clip:last-child { border-bottom: 0; }
+.clip .help .link { font-size: inherit; }
+.clip-acts { opacity: 0; transition: opacity var(--dur) var(--ease-out); }
+.clip:hover .clip-acts, .clip:focus-within .clip-acts { opacity: 1; }
+@media (hover: none) { .clip-acts { opacity: 1; } }
+.mrow .sugg { grid-column: 1 / -1; display: flex; width: auto; margin-top: 0; padding: 6px 6px 6px 12px; }
+.attrib { color: var(--text-3); }
+.wfoot { display: none; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></symbol>
+  <symbol id="i-wave" viewBox="0 0 24 24"><path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2h8.5A1.5 1.5 0 0 1 21 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z"/></symbol>
+  <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M3 13l3-8h12l3 8v6H3zM3 13h5l1 2h6l1-2h5"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
+  <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v4h-4"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
+  <symbol id="i-mac" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2 19h20"/></symbol>
+  <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M7 18h10a4 4 0 0 0 .5-8A6 6 0 0 0 6 9.5 4.3 4.3 0 0 0 7 18z"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
+  <symbol id="i-screen" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="1.5"/><path d="M8 21h8M12 17v4"/></symbol>
+  <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16.5v.01"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+  <symbol id="i-tag" viewBox="0 0 24 24"><path d="M3 12V4h8l10 10-8 8z"/><circle cx="7.5" cy="8.5" r="1.2"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></symbol>
+  <symbol id="i-minimize" viewBox="0 0 24 24"><path d="M6 12h12"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5.5A1.5 1.5 0 0 0 14.5 4h-9A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16H8"/></symbol>
+  <symbol id="i-clip" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="16" rx="2"/><path d="M9 5V3.5h6V5M9 11h6M9 15h4"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="18" cy="12" r="1.4" fill="currentColor"/></symbol>
+</svg>
+
+<div class="stage" id="root"></div>
+<div id="overlay"></div>
+
+<script>
+/* ---------- sample data (synthetic) ---------- */
+const SWATCHES = [['Blue','#0A64D8'],['Purple','#8E44AD'],['Pink','#C2185B'],['Red','#C42B1C'],['Orange','#B35000'],['Yellow','#C9A000'],['Green','#1E7B34'],['Graphite','#5E5E63']];
+const FOLDER_ICONS = [['folder','Folder'],['inbox','Inbox'],['tag','Tag'],['chat','Chat'],['mic','Microphone'],['wave','Audio'],['screen','Screen'],['mac','Computer'],['cloud','Cloud'],['list','List']];
+// shortcut: sample meetings are pinned to Wed 29 Oct as "today"; the real app uses the system date
+const REL_DAY = { 'Wed 29 Oct':'Today', 'Tue 28 Oct':'Yesterday' };
+const WEEKDAY = { Mon:'Monday', Tue:'Tuesday', Wed:'Wednesday', Thu:'Thursday', Fri:'Friday', Sat:'Saturday', Sun:'Sunday' };
+const TAG_COLORS = { design:'#2F6FD0', roadmap:'#7A5AC8', client:'#1F8A4C', kickoff:'#C0731A', '1:1':'#5A6B7B', weekly:'#0F8A8A', pricing:'#B0428A', hiring:'#A35A2A' };
+
+const MEETINGS = [
+  { id:'m1', title:'Design review: Meetings module', date:'Wed 29 Oct', time:'11:00', dur:'42 min', source:'Google Meet', folder:'Platform team', tags:['design','roadmap'],
+    transcript:[
+      ['Priya Nair','11:02','Okay, so the thing I keep coming back to is the mute case. If I am muted in Meet and the app keeps recording, what ends up in the transcript?'],
+      ['Me','11:03','Audio is always kept on disk, but anything said while muted is collapsed. It only enters the transcript if you include it.'],
+      ['Tom Okafor','11:05','And when we cannot read the mute state at all, say in Safari?'],
+      ['Me','11:05','Then it is unknown, and unknown is treated the same as muted. The popover says "manual" so you know.'],
+      ['Lena Fischer','11:08','I like that. Can we rename a speaker once and have every line follow?'],
+      ['Me','11:09','Yes. Rename once, and it remembers the voice as a suggestion for the next meeting.'],
+      ['Priya Nair','11:14','Screenshots every fifteen seconds feels like a lot of disk.'],
+      ['Tom Okafor','11:15','We drop near-duplicates with a perceptual hash. Most calls keep under ten frames.'],
+      ['Lena Fischer','11:31','For the extension, Meet first and Teams web second?'],
+      ['Me','11:32','Agreed. Zoom mute mirroring moves to phase 2.']
+    ],
+    summary:{ text:'Three-person review of the Meetings module. The group agreed that mic capture follows the meeting app’s mute state and that unknown states are treated as muted. Rename-once propagation and remembered voices were confirmed.',
+      decisions:['Muted and unknown segments are collapsed and never sent to a provider unless included.','Browser extension ships for Meet first, Teams web second.','Zoom mute mirroring moves to phase 2.'],
+      actions:['Priya: write the extension’s mute-state message schema.','Tom: measure the screenshot hash threshold on five real calls.','Lena: draft copy for the "possibly muted" group.'] } },
+  { id:'m2', title:'Acme onboarding kickoff', date:'Tue 28 Oct', time:'15:30', dur:'35 min', source:'Microsoft Teams', folder:'Acme', tags:['client','kickoff'],
+    transcript:[
+      ['Daniel Reyes','15:31','Thanks for making time. Our main goal this quarter is getting the support team off spreadsheets.'],
+      ['Me','15:33','Understood. Which part hurts most today, intake or reporting?'],
+      ['Daniel Reyes','15:34','Reporting. Every Monday someone spends half a day merging exports.'],
+      ['Aisha Khan','15:40','We also need SSO before anyone outside the pilot group can log in.'],
+      ['Me','15:42','Then we start with a ten-person pilot, SSO in week two, and a reporting dashboard in week three.']
+    ],
+    summary:{ text:'Kickoff with Acme’s support leads. Their biggest pain is weekly manual reporting; SSO is a gate for rollout beyond the pilot.',
+      decisions:['Start with a ten-person pilot.','SSO lands in week two, reporting dashboard in week three.'],
+      actions:['Me: send the pilot plan by Thursday.','Aisha: share the SSO provider details.','Daniel: pick the ten pilot users.'] } },
+  { id:'m3', title:'1:1 with Priya', date:'Mon 27 Oct', time:'10:00', dur:'28 min', source:'Google Meet', folder:'1:1s', tags:['1:1'],
+    transcript:[
+      ['Priya Nair','10:01','I want to own the browser extension end to end, including the selector update path.'],
+      ['Me','10:02','That makes sense. What do you need from me?'],
+      ['Priya Nair','10:04','Mostly time. I would like Fridays without meetings for the next month.'],
+      ['Me','10:05','Done. Let us check in on the extension at the end of each week instead.']
+    ],
+    summary:{ text:'Priya asked to own the browser extension and for meeting-free Fridays this month.',
+      decisions:['Priya owns the browser extension.','Fridays stay meeting-free for a month.'],
+      actions:['Me: clear Priya’s Friday meetings.','Priya: share an extension plan next Friday.'] } },
+  { id:'m4', title:'Weekly platform sync', date:'Mon 27 Oct', time:'09:00', dur:'31 min', source:'Google Meet', folder:'Platform team', tags:['weekly','roadmap'],
+    transcript:[
+      ['Tom Okafor','09:01','The diarization fallback is wired up. Sortformer runs if the default model fails to load.'],
+      ['Lena Fischer','09:03','Onboarding copy is ready for review. I cut the permissions screen to three rows.'],
+      ['Me','09:05','Good. Model downloads need cancel and retry before we hand it to anyone.'],
+      ['Tom Okafor','09:07','I will add checksum verification while I am in there.']
+    ],
+    summary:{ text:'Weekly status. Diarization fallback works; onboarding copy is ready; model downloads still need cancel, retry and checksums.',
+      decisions:['Downloads must support cancel and retry before the first teammate test.'],
+      actions:['Tom: add cancel, retry and checksum verification to downloads.','Me: review Lena’s onboarding copy.'] } },
+  { id:'m5', title:'Acme pricing follow-up', date:'Fri 24 Oct', time:'14:00', dur:'22 min', source:'Zoom', folder:'Acme', tags:['client','pricing'],
+    transcript:[
+      ['Daniel Reyes','14:01','Finance wants annual billing, but only if the pilot hits its goals.'],
+      ['Me','14:03','We can do monthly for the pilot and switch to annual after the review.'],
+      ['Daniel Reyes','14:05','That works. Can you put the review date in writing?']
+    ],
+    summary:{ text:'Acme agreed to monthly billing during the pilot, with a switch to annual after a review.',
+      decisions:['Monthly billing for the pilot, annual after review.'],
+      actions:['Me: send the pilot terms with the review date.'] } },
+  { id:'m6', title:'Hiring debrief: frontend role', date:'Thu 23 Oct', time:'16:00', dur:'19 min', source:'Google Meet', folder:'Inbox', tags:['hiring'],
+    transcript:[
+      ['Lena Fischer','16:01','Strong on CSS and accessibility. A bit quiet in the system design part.'],
+      ['Tom Okafor','16:03','Agreed. I would still move them to the final round.'],
+      ['Me','16:04','Let us do it, and pair them with Priya for the last interview.']
+    ],
+    summary:{ text:'The panel agreed to move the frontend candidate to the final round.',
+      decisions:['Candidate moves to the final round.'],
+      actions:['Me: schedule the final round with Priya.'] } },
+  { id:'m7', title:'Untitled call', date:'Thu 23 Oct', time:'12:10', dur:'6 min', source:'Slack huddle', folder:'Inbox', tags:[],
+    transcript:[
+      ['Me','12:10','Quick one: can you send me the link to the staging build?'],
+      ['Speaker 2','12:11','Sure, sending it now.']
+    ],
+    summary:{ text:'Short huddle to share the staging build link.', decisions:[], actions:['Speaker 2: send the staging build link.'] } }
+];
+
+const BUILTIN_TEMPLATES = [
+  { id:'t-summary', name:'Summary', prompt:'Write a short recap of this meeting in plain language. Then list decisions and action items with owners.' },
+  { id:'t-actions', name:'Action items', prompt:'List every action item with its owner and any date mentioned. Keep each item to one line.' },
+  { id:'t-decisions', name:'Decisions', prompt:'List the decisions made in this meeting, and what was left open.' }
+];
+
+const STT_LOCAL = [
+  { id:'parakeet', name:'Parakeet TDT v3', vendor:'NVIDIA', desc:'Fast and accurate for English. Recommended.', size:'620 MB', acc:5, spd:5 },
+  { id:'whisper', name:'Whisper large-v3-turbo', vendor:'OpenAI', desc:'Understands many languages. Slower on long meetings.', size:'1.6 GB', acc:4, spd:3 }
+];
+const DIAR = [
+  { id:'who', name:'Desert Ant Who', vendor:'Desert Ant Labs', desc:'Recommended. Small and quick. New, so it may still make mistakes.', size:'80 MB', acc:4, spd:5 },
+  { id:'sortformer', name:'Sortformer', vendor:'NVIDIA', desc:'A backup to switch to if the recommended one gets voices mixed up.', size:'470 MB', acc:4, spd:3 }
+];
+const APPS = [
+  { id:'meet', name:'Google Meet in Chrome, Arc, Brave or Edge', mirror:true },
+  { id:'teams', name:'Microsoft Teams on the web', mirror:true },
+  { id:'zoom', name:'Zoom', mirror:false },
+  { id:'slack', name:'Slack huddles', mirror:false }
+];
+const LLM_LOCAL = [
+  { id:'qwen7', name:'Qwen2.5 7B Instruct', vendor:'Alibaba', desc:'Better summaries. Needs a Mac with 16 GB of memory or more.', size:'4.7 GB', acc:4, spd:3 },
+  { id:'llama3', name:'Llama 3.2 3B Instruct', vendor:'Meta', desc:'Lighter and faster, with shorter answers.', size:'2.0 GB', acc:3, spd:4 }
+];
+const CLOUD_MODELS = {
+  stt: { openai:['gpt-4o-transcribe','gpt-4o-mini-transcribe','whisper-1'], openrouter:['google/gemini-2.5-flash'] },
+  llm: { openai:['gpt-4.1-mini','gpt-4.1'], openrouter:['openai/gpt-4.1-mini','anthropic/claude-sonnet-4.5','google/gemini-2.5-flash'] }
+};
+/* USD per 1M input tokens; shortcut: hard-coded sample prices, the real app reads them from the provider or a maintained list */
+const PRICE = { 'gpt-4.1-mini':0.40, 'gpt-4.1':2.00, 'openai/gpt-4.1-mini':0.40, 'anthropic/claude-sonnet-4.5':3.00, 'google/gemini-2.5-flash':0.30 };
+
+/* ---------- state ---------- */
+const S = {
+  view:'onboarding', step:0,
+  modules:{ dictation:true, meetings:true },
+  perms:{ mic:false, ax:false, screen:false },
+  tasks:{
+    stt:{ route:'local', local:'parakeet', provider:'openai', model:'gpt-4o-transcribe', key:'', keyErr:'' },
+    llm:{ route:'local', local:'qwen7', provider:'openai', model:'gpt-4.1-mini', key:'', keyErr:'' }
+  },
+  dl:{}, obErrors:[],
+  setPage:'appearance',
+  folders:['Inbox','Acme','Platform team','1:1s'],
+  filter:{ type:'all' }, addingFolder:false, drawer:false, listScroll:0,
+  current:null,
+  templates:BUILTIN_TEMPLATES.slice(),
+  sums:{}, regen:{ mode:null, tpl:'t-summary', saving:false, draft:'' },
+  pop:null, panel:null, copied:null, folderIcon:{}, clipQ:'', mq:'', undoClip:null, clipConfirm:false, clipOpen:{}, suggOff:{},
+  clips:[
+    { id:'c1', text:'Can we move the design review to Thursday afternoon? Wednesday is packed.', src:'Slack', t:'Today 11:52' },
+    { id:'c2', text:'Tom, please add cancel, retry and checksum checks to the model downloads before Friday.', src:'Linear', t:'Today 11:20' },
+    { id:'c3', text:'Thanks for the call today. As promised, I will send the pilot plan by Thursday with the ten users we picked, the week-two SSO milestone and the reporting dashboard for week three. I will also loop in Aisha on the SSO provider details so her team can start the setup early, and set up a short check-in on Friday to walk through any open questions before the pilot starts.', src:'Mail', t:'Today 10:41' },
+    { id:'c4', text:'Note to self: ask Priya about the selector update path for the extension.', src:'Notes', t:'Yesterday 17:05' },
+    { id:'c5', text:'Monthly billing during the pilot, annual after the review. Can you confirm the review date?', src:'Mail', t:'Yesterday 14:30' }
+  ],
+  chats:{}, tokensSent:{},
+  global:{ msgs:[] }
+};
+S.set = { modules:S.modules, hotkey:'fn', mode:'hold', paste:'clipboard', dict:['Myna','Parakeet','Desert Ant'],
+  capture:'shots', interval:'15', apps:{ meet:false, teams:false, zoom:false, slack:false }, ext:false, retention:'30', folder:true, dataPath:'~/Library/Application Support/Myna', dataMoved:false,
+  meetKey:'ctrl-opt-m', appearance:'auto', accent:'blue', glass:'clear', detect:true,
+  diar:'who', decision:'laya', laya:'none', decUrl:'', decKey:'', upd:'',
+  exp:{ diarOn:false, uhmD:false, uhmM:false, llmD:false, llmM:false, triage:false, relevance:false, shotsAI:false } };
+S.mb = { open:false };
+S.dictS = { state:null };
+S.rec = { state:null };
+S.detect = { state:null, menu:false, ignored:false };
+MEETINGS.forEach(m => S.sums[m.id] = { tplName:'Summary', at:'11:44', custom:false, data:m.summary, loading:false });
+
+/* ---------- helpers ---------- */
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const icon = (n, c='') => `<svg class="ic ${c}" aria-hidden="true"><use href="#i-${n}"/></svg>`;
+const byId = id => MEETINGS.find(m => m.id === id);
+const now = () => new Date().toTimeString().slice(0,5);
+const tagHtml = (t, removable, mid) => `<span class="tag" style="--dot:${TAG_COLORS[t] || 'var(--text-3)'}"><i></i>${esc(t)}${removable ? `<button data-act="untag" data-tag="${esc(t)}" data-id="${mid}" aria-label="Remove tag ${esc(t)}">${icon('x','ic-s')}</button>` : ''}</span>`;
+// shortcut: per-word substring, subsequence or one-typo match; the real app would use a proper fuzzy index
+const lev = (a, b) => { const d = Array.from({ length:b.length + 1 }, (_, j) => j); for (let i = 1; i <= a.length; i++) { let p = d[0]; d[0] = i; for (let j = 1; j <= b.length; j++) { const t = d[j]; d[j] = Math.min(d[j] + 1, d[j - 1] + 1, p + (a[i - 1] === b[j - 1] ? 0 : 1)); p = t; } } return d[b.length]; };
+const subseq = (t, w) => { let i = 0; for (const c of w) if (c === t[i]) i++; return i === t.length; };
+const near = (t, w) => t.length >= 3 && (lev(t, w.slice(0, t.length)) <= 1 || (subseq(t, w) && w.length - t.length <= 2));
+function fuzzy(q, text) {
+  const hay = text.toLowerCase(), words = hay.match(/[\p{L}\p{N}:]+/gu) || [];
+  return q.toLowerCase().split(/\s+/).filter(Boolean).every(t => hay.includes(t) || words.some(w => near(t, w)));
+}
+console.assert(fuzzy('prya', 'Priya Nair') && fuzzy('acme pricng', 'Acme pricing follow-up') && fuzzy('desgn', 'Design review') && !fuzzy('zebra', 'Acme pricing'), 'fuzzy search self-check');
+const meetHay = m => [m.title, m.folder, m.tags.join(' '), [...new Set(m.transcript.map(r => r[0]))].join(' '), S.sums[m.id].data.text].join(' ');
+// shortcut: keyword hints stand in for the summary model's folder suggestion
+const FOLDER_HINTS = { 'Acme':['acme','pricing','billing','pilot'], 'Platform team':['staging','build','frontend','extension','diarization','platform','hiring'], '1:1s':['1:1'] };
+function suggestFolder(m) {
+  if (!S.set.folder || m.folder !== 'Inbox' || S.suggOff[m.id]) return null;
+  const hay = meetHay(m).toLowerCase();
+  return S.folders.find(f => f !== 'Inbox' && (hay.includes(f.toLowerCase()) || (FOLDER_HINTS[f] || []).some(k => hay.includes(k)))) || null;
+}
+const searchField = (id, label, v) => `<div class="search" role="search"><label class="sr-only" for="${id}">${label}</label>${icon('search','ic-s')}<input class="input" id="${id}" type="search" placeholder="Search" value="${esc(v)}" autocomplete="off" aria-keyshortcuts="/"><kbd aria-hidden="true">/</kbd></div>`;
+const fIcon = f => S.folderIcon[f] || (f === 'Inbox' ? 'inbox' : 'folder');
+const allTags = () => [...new Set(MEETINGS.flatMap(m => m.tags))].sort();
+const llmCloud = () => S.tasks.llm.route === 'cloud';
+const llmLabel = () => llmCloud() ? `${S.tasks.llm.provider === 'openai' ? 'OpenAI' : 'OpenRouter'} · ${S.tasks.llm.model}` : `${LLM_LOCAL.find(x => x.id === S.tasks.llm.local).name} · on this Mac`;
+const offBadge = (what='text', past) => `<span class="pill alert">${icon('cloud','ic-s')}${past ? 'Made online' : `Sends ${({ text:'your words', audio:'your voice', images:'pictures' })[what]} online`}</span>`;
+// shortcut: curated 1–5 ratings typed in by hand; the real list ships them with each model
+const ACC_WORD = ['', 'Basic', 'Fair', 'Good', 'Great', 'Best'], SPD_WORD = ['', 'Slow', 'Steady', 'Quick', 'Fast', 'Fastest'];
+const rating = (label, n, words) => `<span class="rate" role="img" aria-label="${label}: ${words[n]}, ${n} out of 5"><span class="rate-l">${label}</span><span class="pips" aria-hidden="true">${[1,2,3,4,5].map(i => `<i class="${i <= n ? 'on' : ''}"></i>`).join('')}</span><span class="rate-w">${words[n]}</span></span>`;
+const ratings = m => m.acc ? `<span class="rates">${rating('Accuracy', m.acc, ACC_WORD)}${rating('Speed', m.spd, SPD_WORD)}</span>` : '';
+const localBadge = () => `<span class="pill status">${icon('mac','ic-s')}Private · stays on this Mac</span>`;
+const fmtTok = n => n >= 1000 ? (n/1000).toFixed(1) + 'k' : String(n);
+const ctxChars = ids => ids.reduce((a, id) => { const m = byId(id); return a + m.transcript.reduce((b, r) => b + r[2].length + r[0].length, 0) + JSON.stringify(S.sums[id].data).length; }, 0);
+
+/* ---------- onboarding ---------- */
+const STEPS = ['modules','permissions','models','done'];
+function onboarding() {
+  const step = STEPS[S.step];
+  const body = { modules:obModules, permissions:obPerms, models:obModels, done:obDone }[step]();
+  const none = !S.modules.dictation && !S.modules.meetings;
+  const last = step === 'done';
+  return `<div class="win win-sm" role="dialog" aria-label="Welcome to Myna">
+    <div class="titlebar"><div class="lights" aria-hidden="true"><i></i><i></i><i></i></div><div class="wt">Welcome to Myna</div></div>
+    <div class="ob">
+      <div class="od-scroll ob-body" id="obscroll">${body}</div>
+      <div class="ob-foot">
+        <span class="steps">Step ${S.step + 1} of ${STEPS.length}</span>
+        <span class="od-fill"></span>
+        ${none && step === 'modules' ? `<span class="help" id="none-hint">Turn on at least one</span>` : ''}
+        ${S.step > 0 ? `<button class="btn" data-act="ob-back">${icon('back','ic-s')}Back</button>` : ''}
+        ${last ? `<button class="btn primary" data-act="ob-finish">Open Myna</button>`
+               : `<button class="btn primary" data-act="ob-next" ${none ? 'disabled aria-describedby="none-hint"' : ''}>Continue</button>`}
+      </div>
+    </div></div>`;
+}
+function obModules() {
+  const row = (k, ic, title, desc, meta) => `<li><label class="li">
+      <span class="glyph">${icon(ic,'ic-l')}</span>
+      <span class="od-fill"><span class="li-title" style="display:block">${title}</span><span class="li-desc" style="display:block">${desc}</span><span class="li-meta" style="display:block">${meta}</span></span>
+      <input type="checkbox" role="switch" class="switch" data-bind="module" data-k="${k}" ${S.modules[k] ? 'checked' : ''} aria-label="${title}">
+    </label></li>`;
+  return `<h1>What would you like Myna to help with?</h1>
+    <p class="lead">Pick one or both. You can change this any time in Settings.</p>
+    <ul class="list">
+      ${row('dictation','mic','Type with your voice','Hold a key, talk, and let go. Your words appear wherever you’re typing.','Works in any app')}
+      ${row('meetings','wave','Take notes in meetings','Myna records your calls and gives you notes, a summary and answers to your questions.','Works with Zoom, Meet, Teams and Slack')}
+    </ul>`;
+}
+function obPerms() {
+  const rows = [
+    ['mic','mic','Microphone','So Myna can hear you.', true],
+    ['ax','keyboard','Accessibility','So Myna can put your words into the app you’re using.', S.modules.dictation],
+    ['screen','screen','Screen & System Audio Recording','So Myna can hear the other people on a call.', S.modules.meetings]
+  ].filter(r => r[4]);
+  return `<h1>Give Myna permission</h1>
+    <p class="lead">Your Mac asks once for each. Myna only uses what the things you picked need.</p>
+    <ul class="list">${rows.map(([k, ic, t, d]) => `<li class="li">
+      <span class="glyph">${icon(ic,'ic-l')}</span>
+      <span class="od-fill"><span class="li-title" style="display:block">${t}</span><span class="li-desc" style="display:block">${d}</span></span>
+      ${S.perms[k] ? `<span class="pill ok" style="height:28px">${icon('check','ic-s')}Allowed</span>`
+                   : k === 'mic' ? `<button class="btn" data-act="grant" data-k="${k}" aria-label="Allow ${t}">Allow</button>`
+                   : `<button class="btn" data-act="grant" data-k="${k}" aria-label="Open System Settings for ${t}">Open System Settings</button>`}
+    </li>`).join('')}</ul>
+    <p class="help" style="margin-top:12px">Microphone shows a quick pop-up. For the other two, your Mac opens System Settings: switch Myna on there, then come back. You can skip these and do it later.</p>`;
+}
+function obModels() {
+  const errs = S.obErrors.length ? `<div class="errsum" role="alert" tabindex="-1" id="errsum"><b>Fix ${S.obErrors.length === 1 ? 'this' : 'these'} to continue:</b><ul>${S.obErrors.map(e => `<li><a href="#${e.field}">${esc(e.msg)}</a></li>`).join('')}</ul></div>` : '';
+  let html = `<h1>Where should the AI run?</h1>
+    <p class="lead">On this Mac is private: nothing leaves your computer, but it needs a one-time download. Online uses your OpenAI or OpenRouter account instead.</p>${errs}`;
+  html += taskBlock('stt', 'Turning speech into text', S.modules.meetings && S.modules.dictation ? 'Used for voice typing and meeting notes.' : (S.modules.dictation ? 'Used for voice typing.' : 'Used for meeting notes.'), STT_LOCAL, 'audio');
+  if (S.modules.meetings) html += taskBlock('llm', 'Summaries and answers', 'Writes meeting summaries and answers your questions about them.', LLM_LOCAL, 'text');
+  return html;
+}
+function taskBlock(k, title, help, localList, what) {
+  const t = S.tasks[k];
+  const route = `<fieldset class="seg" aria-label="${title}: where it runs">
+      <label><input type="radio" name="route-${k}" value="local" data-bind="route" data-k="${k}" ${t.route === 'local' ? 'checked' : ''}><span>${icon('mac','ic-s')}On this Mac</span></label>
+      <label><input type="radio" name="route-${k}" value="cloud" data-bind="route" data-k="${k}" ${t.route === 'cloud' ? 'checked' : ''}><span>${icon('cloud','ic-s')}Online</span></label>
+    </fieldset>`;
+  let inner;
+  if (t.route === 'local') {
+    inner = `<ul class="list" role="radiogroup" aria-label="${title} model">${localList.map(m => `<li class="model-row">
+        <input type="radio" class="radio" style="margin-top:3px" name="local-${k}" id="lm-${m.id}" data-bind="local" data-k="${k}" value="${m.id}" ${t.local === m.id ? 'checked' : ''}>
+        <label for="lm-${m.id}" style="cursor:pointer"><span class="name">${m.name} <span class="vendor">${m.vendor}</span></span><span class="li-desc" style="display:block">${m.desc}</span></label>${ratings(m)}
+        <div class="dl" data-dl="${m.id}">${dlHtml(m)}</div>
+      </li>`).join('')}</ul>`;
+  } else {
+    const opts = CLOUD_MODELS[k][t.provider];
+    inner = `<div class="list cloud">
+      <div class="row2">
+        <div class="od-field" style="--od-gap:4px"><span class="label" id="prov-${k}-l">Service</span>
+          <fieldset class="seg" aria-labelledby="prov-${k}-l">
+            <label><input type="radio" name="prov-${k}" value="openai" data-bind="provider" data-k="${k}" ${t.provider === 'openai' ? 'checked' : ''}><span>OpenAI</span></label>
+            <label><input type="radio" name="prov-${k}" value="openrouter" data-bind="provider" data-k="${k}" ${t.provider === 'openrouter' ? 'checked' : ''}><span>OpenRouter</span></label>
+          </fieldset></div>
+        <div class="od-field" style="--od-gap:4px"><label class="label" for="model-${k}">AI model</label>
+          <select class="select" id="model-${k}" data-bind="model" data-k="${k}">${opts.map(o => `<option ${o === t.model ? 'selected' : ''}>${o}</option>`).join('')}</select></div>
+      </div>
+      <div class="od-field" style="--od-gap:4px">
+        <label class="label" for="key-${k}">Account key <span aria-hidden="true">*</span><span class="sr-only">required</span></label>
+        <input class="input" id="key-${k}" type="password" autocomplete="off" spellcheck="false" placeholder="${t.provider === 'openai' ? 'sk-…' : 'sk-or-…'}" value="${esc(t.key)}" data-bind="key" data-k="${k}" aria-describedby="key-${k}-h key-${k}-e" ${t.keyErr ? 'aria-invalid="true"' : ''}>
+        <span class="help" id="key-${k}-h">Find it in your OpenAI or OpenRouter account, where it may be called an API key. Myna keeps it safe in your Mac’s Keychain.</span>
+        <span class="err" id="key-${k}-e" role="status">${t.keyErr ? icon('alert','ic-s') + esc(t.keyErr) : ''}</span>
+      </div>
+      <div>${offBadge(what)}</div>
+    </div>`;
+  }
+  return `<section class="task" aria-labelledby="task-${k}">
+    <div class="task-head"><h2 id="task-${k}">${title}</h2><span class="od-fill"></span>${route}<span class="help">${help}</span></div>
+    ${inner}</section>`;
+}
+function dlHtml(m) {
+  const d = S.dl[m.id] || { st:'idle', pct:0 };
+  if (d.st === 'done') return `<span class="pill ok">${icon('check','ic-s')}Ready</span><span class="size">${m.size}</span>`;
+  if (d.st === 'run') return `<span class="bar" role="progressbar" aria-label="Downloading ${m.name}" aria-valuenow="${d.pct}" aria-valuemin="0" aria-valuemax="100"><b style="transform:scaleX(${d.pct/100})"></b></span><span class="size">${d.pct}%</span><button class="btn" data-act="dl-cancel" data-id="${m.id}">Cancel</button>`;
+  return `<span class="size">${m.size}</span><button class="btn" data-act="dl-start" data-id="${m.id}" aria-label="Download ${m.name}">${icon(d.st === 'canceled' ? 'refresh' : 'download','ic-s')}${d.st === 'canceled' ? 'Try again' : 'Download'}</button>`;
+}
+function dlUpdate(id) {
+  const el = document.querySelector(`[data-dl="${id}"]`);
+  const m = [...STT_LOCAL, ...LLM_LOCAL, ...DIAR].find(x => x.id === id);
+  if (el && m) el.innerHTML = dlHtml(m);
+}
+function startDl(id) {
+  const d = S.dl[id] = { st:'run', pct:0 };
+  d.timer = setInterval(() => {
+    d.pct = Math.min(100, d.pct + 4 + Math.round(Math.random() * 6));
+    if (d.pct >= 100) { clearInterval(d.timer); d.st = 'done'; }
+    dlUpdate(id);
+  }, 220);
+  dlUpdate(id);
+}
+function validateKey(k) {
+  const t = S.tasks[k];
+  const pre = t.provider === 'openai' ? 'sk-' : 'sk-or-';
+  if (!t.key.trim()) t.keyErr = 'Paste your account key, or choose On this Mac.';
+  else if (!t.key.trim().startsWith(pre)) t.keyErr = `${t.provider === 'openai' ? 'OpenAI' : 'OpenRouter'} keys start with "${pre}". Make sure you copied all of it.`;
+  else t.keyErr = '';
+  return !t.keyErr;
+}
+function obDone() {
+  const tries = [];
+  if (S.modules.dictation) tries.push(`<li class="li"><span class="glyph">${icon('mic','ic-l')}</span><span class="od-fill"><span class="li-title" style="display:block">Try voice typing</span><span class="li-desc" style="display:block">Click into any text box, hold <span class="kbd">fn</span>, say a sentence, and let go.</span></span></li>`);
+  if (S.modules.meetings) tries.push(`<li class="li"><span class="glyph">${icon('wave','ic-l')}</span><span class="od-fill"><span class="li-title" style="display:block">Take notes in your next call</span><span class="li-desc" style="display:block">Click the Myna icon at the top of your screen and choose Start meeting notes. Your notes show up here when you stop.</span></span></li>`);
+  const pending = Object.values(S.dl).some(d => d.st === 'run');
+  const routes = [`Speech to text: ${S.tasks.stt.route === 'local' ? STT_LOCAL.find(x => x.id === S.tasks.stt.local).name + ' on this Mac' : S.tasks.stt.model + ' (online)'}`];
+  if (S.modules.meetings) routes.push(`Summaries and answers: ${llmLabel()}`);
+  return `<h1>You’re all set</h1>
+    <p class="lead">${routes.map(esc).join('<br>')}</p>
+    ${pending ? `<p class="help" style="margin-top:8px">Downloads keep going in the background.</p>` : ''}
+    <ul class="list">${tries.join('')}</ul>`;
+}
+
+/* ---------- app ---------- */
+function app() {
+  const v = S.view;
+  const main = v === 'detail' ? detail() : v === 'chat' ? appChat() : v === 'clips' ? clipsView() : v === 'settings' ? settings() : meetingsList();
+  return `<div class="win"><div class="titlebar"><div class="lights" aria-hidden="true"><i></i><i></i><i></i></div><div class="wt">Myna</div></div>
+    <div class="app ${S.drawer ? 'drawer' : ''}">${sidebar()}<button class="scrim" data-act="drawer" aria-label="Close sidebar" tabindex="-1"></button><main class="main">${main}</main></div></div>`;
+}
+function sidebar() {
+  const f = S.filter, inList = S.view === 'meetings' || S.view === 'detail', pop = S.pop && typeof S.pop === 'object' ? S.pop : null;
+  const nav = (act, attrs, ic, label, count, cur) => `<button class="nav" data-act="${act}" ${attrs} ${cur ? 'aria-current="true"' : ''}>${ic}<span class="od-truncate">${esc(label)}</span>${count != null ? `<span class="count">${count}</span>` : ''}</button>`;
+  // folder and tag rows carry a ⋯ menu (also on right-click) to change the folder icon or tag colour
+  const item = (kind, v, row) => {
+    const open = pop && pop.kind === kind && pop.v === v;
+    const opts = kind === 'folder'
+      ? `<span class="help">Icon for ${esc(v)}</span><div class="icgrid">${FOLDER_ICONS.map(([ic, l]) => `<button class="icopt" data-act="set-ficon" data-v="${esc(v)}" data-ic="${ic}" aria-label="${l}" aria-pressed="${fIcon(v) === ic}">${icon(ic)}</button>`).join('')}</div>`
+      : `<span class="help">Colour for ${esc(v)}</span><div class="swrow">${SWATCHES.map(([l, c]) => `<button class="swb" style="--c:${c}" data-act="set-tcolor" data-v="${esc(v)}" data-c="${c}" aria-label="${l}" aria-pressed="${TAG_COLORS[v] === c}"></button>`).join('')}</div>`;
+    return `<div class="sitem" data-pop><div class="srowx">${row}<button class="more" data-act="side-menu" data-kind="${kind}" data-v="${esc(v)}" aria-expanded="${!!open}" aria-label="${kind === 'folder' ? 'Change icon for ' : 'Change colour for '}${esc(v)}">${icon('more','ic-s')}</button></div>
+      ${open ? `<div class="sidepop" role="group" aria-label="${kind === 'folder' ? 'Folder icon' : 'Tag colour'}">${opts}</div>` : ''}</div>`;
+  };
+  return `<nav class="side" aria-label="Sidebar">
+    ${nav('filter','data-type="all"', icon('list'), 'All meetings', MEETINGS.length, inList && f.type === 'all')}
+    ${nav('go-chat','', icon('chat'), 'Chat', null, S.view === 'chat')}
+    ${nav('go-clips','', icon('clip'), 'Voice typing history', S.clips.length, S.view === 'clips')}
+    <h2>Folders</h2>
+    ${S.folders.map(name => item('folder', name, nav('filter', `data-type="folder" data-v="${esc(name)}"`, icon(fIcon(name)), name, MEETINGS.filter(m => m.folder === name).length, inList && f.type === 'folder' && f.v === name))).join('')}
+    ${S.addingFolder ? `<form class="newfolder" data-form="folder"><label class="sr-only" for="nf">Folder name</label><input class="input" id="nf" maxlength="32" placeholder="Folder name" required></form>`
+      : `<button class="nav" data-act="add-folder" style="color:var(--text-2)">${icon('plus')}New folder</button>`}
+    <h2>Tags</h2>
+    ${allTags().map(t => item('tag', t, `<button class="nav" data-act="filter" data-type="tag" data-v="${esc(t)}" ${inList && f.type === 'tag' && f.v === t ? 'aria-current="true"' : ''}><span class="dot" style="--dot:${TAG_COLORS[t] || 'var(--text-3)'}" aria-hidden="true"></span><span class="od-truncate">${esc(t)}</span><span class="count">${MEETINGS.filter(m => m.tags.includes(t)).length}</span></button>`)).join('')}
+    <div class="side-foot">${nav('go-settings','', icon('sliders'), 'Settings', null, S.view === 'settings')}<span>Sample data: all meetings here are made up.</span></div>
+  </nav>`;
+}
+function filtered() {
+  const f = S.filter;
+  return MEETINGS.filter(m => f.type === 'all' || (f.type === 'folder' && m.folder === f.v) || (f.type === 'tag' && m.tags.includes(f.v)));
+}
+function startBtn() {
+  return S.rec.state === 'rec' ? '' : `<button class="btn primary" data-act="rec-start" aria-label="Start notes" ${S.rec.state === 'proc' ? 'disabled' : ''}>${icon('mic','ic-s')}<span class="lbl">Start notes</span></button>`;
+}
+function liveCard() {
+  const r = S.rec;
+  if (r.state === 'rec') return `<section class="livecard rec" aria-label="Meeting recording in progress">
+      <div class="lc-main"><span class="lc-label"><span class="recdot" aria-hidden="true"></span>Recording · Google Meet</span><span class="lc-time od-nowrap" data-rec-time>${fmtDur(Date.now() - r.start)}</span></div>
+      <span class="lvl lc-lvl" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+      <span class="lc-mic">${icon('mic','ic-s')}${r.muted ? 'Muted' : 'Mic live'}</span><span class="od-fill"></span>
+      <button class="btn" data-act="rec-show">Show live notes</button><button class="btn danger" data-act="rec-stop">${icon('stop','ic-s')}Stop</button></section>`;
+  if (r.state === 'proc') return `<section class="livecard" role="status"><span class="recdot idle" aria-hidden="true"></span><span class="lc-t">Writing up your notes…</span></section>`;
+  return '';
+}
+function meetingsList() {
+  const f = S.filter;
+  const title = f.type === 'all' ? 'All meetings' : f.type === 'folder' ? f.v : `Tagged “${f.v}”`;
+  const menu = `<button class="btn icon plain menu-btn" data-act="drawer" aria-label="Show sidebar">${icon('sidebar')}</button>`;
+  if (!S.modules.meetings) return `<div class="toolbar">${menu}<h1>Meetings</h1></div>
+    <div class="empty"><h2>Meeting notes are off</h2><p>Turn them on to record your calls and get notes, a summary and answers to your questions. Myna will ask for permission to hear your calls first.</p><button class="btn primary" data-act="enable-meetings">Turn on meeting notes</button></div>`;
+  const all = filtered(), list = S.mq.trim() ? all.filter(m => fuzzy(S.mq, meetHay(m))) : all, groups = [];
+  list.forEach(m => { const g = groups[groups.length - 1]; g && g.date === m.date ? g.items.push(m) : groups.push({ date:m.date, items:[m] }); });
+  const row = m => `<li class="mrow" data-act="open" data-id="${m.id}">
+      <div><button class="t od-truncate" data-act="open" data-id="${m.id}">${esc(m.title)}</button>
+        <div class="meta"><span class="od-nowrap">${m.time}</span> · <span class="od-nowrap">${m.dur}</span> · ${m.source}</div>
+        ${m.tags.length ? `<div class="tags od-cluster">${m.tags.map(t => tagHtml(t)).join('')}</div>` : ''}
+</div>
+      <span class="folder">${icon(fIcon(m.folder),'ic-s')}${esc(m.folder)}</span>
+      ${(sg => sg ? `<div class="sugg">${icon(fIcon(sg),'ic-s')}<span class="od-fill">Suggested folder: <b>${esc(sg)}</b></span><button class="btn plain" data-act="sugg-off" data-id="${m.id}">Dismiss</button><button class="btn" data-act="sugg-move" data-id="${m.id}" data-f="${esc(sg)}">Move</button></div>` : '')(suggestFolder(m))}
+    </li>`;
+  const body = groups.map((g, i) => `<section class="dgroup" aria-labelledby="dg-${i}"><h2 class="dhead" id="dg-${i}"><span>${REL_DAY[g.date] || WEEKDAY[g.date.slice(0,3)] || g.date}</span><span class="dsub">${REL_DAY[g.date] || WEEKDAY[g.date.slice(0,3)] ? esc(REL_DAY[g.date] ? g.date : g.date.slice(4)) : ''}</span></h2>
+      <ul>${g.items.map(row).join('')}</ul></section>`).join('');
+  return `<div class="toolbar">${menu}<h1 class="od-truncate">${esc(title)}</h1><span class="pill">Sample data</span><span class="grow"></span>
+      ${searchField('mq', 'Search meetings', S.mq)}
+      <button class="btn" data-act="go-chat" aria-label="Ask about your meetings">${icon('chat','ic-s')}<span class="lbl">Ask about your meetings</span></button><span data-live="btn">${startBtn()}</span>
+    </div>
+    <div class="mlist" id="mlist" aria-label="${esc(title)}"><div data-live="card">${liveCard()}</div>
+    ${list.length ? body
+      : S.mq.trim() ? `<div class="empty"><h2>No meetings match “${esc(S.mq.trim())}”</h2><p>Try a person, client, tag or a word from the summary.</p><button class="btn" data-act="mq-clear">Clear search</button></div>`
+      : `<div class="empty"><h2>Nothing here yet</h2><p>${f.type === 'folder' ? 'Move a meeting into this folder from its page, using the folder button.' : 'No meetings match this filter.'}</p><button class="btn" data-act="filter" data-type="all">Show all meetings</button></div>`}</div>`;
+}
+
+function clipsView() {
+  const menu = `<button class="btn icon plain menu-btn" data-act="drawer" aria-label="Show sidebar">${icon('sidebar')}</button>`;
+  const q = S.clipQ.trim(), list = q ? S.clips.filter(c => fuzzy(q, c.text + ' ' + c.src)) : S.clips;
+  return `<div class="toolbar">${menu}<h1>Voice typing history</h1><span class="pill">Sample data</span><span class="grow"></span>
+      ${searchField('clipq', 'Search what you said', S.clipQ)}
+      <button class="btn" data-act="clip-clear" ${S.clips.length ? '' : 'disabled'}>Clear all</button></div>
+    <div class="clips od-scroll" id="clips">
+      <p class="help clips-note">Everything you’ve said with voice typing, kept on this Mac. Newest first.</p>
+      ${S.clipConfirm ? `<div class="confirm" role="alertdialog" aria-labelledby="cc-t"><span id="cc-t">Delete all ${S.clips.length} items from this list?</span><span class="od-fill"></span><button class="btn" id="cc-no" data-act="clip-clear-no">Cancel</button><button class="btn danger" data-act="clip-clear-yes">Delete all</button></div>` : ''}
+      ${S.undoClip ? `<div class="undo" role="status">${S.undoClip.all ? `Deleted ${S.undoClip.all.length} items.` : 'Deleted.'}<button class="link" id="clip-undo" data-act="clip-undo">Undo</button></div>` : ''}
+      ${list.length ? `<ul class="clist">${list.map(c => `<li class="clip"><div class="od-field od-fill" style="--od-gap:2px"><p class="${S.clipOpen[c.id] ? '' : 'od-clamp-2'}">${esc(c.text)}</p>
+            <span class="help">${esc(c.src)} · ${esc(c.t)}${c.text.length > 140 ? ` · <button class="link" data-act="clip-more" data-id="${c.id}" aria-expanded="${!!S.clipOpen[c.id]}">${S.clipOpen[c.id] ? 'Show less' : 'Show more'}</button>` : ''}</span></div>
+          <div class="clip-acts od-row od-fixed" style="--od-gap:2px"><button class="btn icon plain" data-act="clip-copy" data-id="${c.id}" aria-label="Copy again" title="Copy again">${icon('copy','ic-s')}</button><button class="btn icon plain" data-act="clip-del" data-id="${c.id}" aria-label="Delete" title="Delete">${icon('x','ic-s')}</button></div></li>`).join('')}</ul>`
+        : `<div class="empty"><h2>${q ? 'No matches' : 'Nothing here yet'}</h2><p>${q ? 'Try another word, or check the spelling.' : 'Hold your voice typing key in any app and talk. What you say shows up here too.'}</p>${q ? `<button class="btn" data-act="clipq-clear">Clear search</button>` : ''}</div>`}
+    </div>`;
+}
+
+function detail() {
+  const m = byId(S.current), p = S.panel;
+  const menu = `<button class="btn icon plain menu-btn" data-act="drawer" aria-label="Show sidebar">${icon('sidebar')}</button>`;
+  const moveMenu = S.pop === 'move' ? `<div class="pop menu" role="menu" aria-label="Move to folder">${S.folders.map(f => `<button class="mitem" role="menuitemradio" aria-checked="${f === m.folder}" data-act="move" data-f="${esc(f)}" data-id="${m.id}">${icon(fIcon(f),'ic-s')}<span class="od-truncate">${esc(f)}</span>${f === m.folder ? `<span class="mkey">${icon('check','ic-s')}</span>` : ''}</button>`).join('')}</div>` : '';
+  const tb = (k, ic, l) => `<button class="btn ${p === k ? 'on' : ''}" data-act="panel" data-p="${k}" aria-pressed="${p === k}" aria-label="${l}">${icon(ic,'ic-s')}<span class="lbl">${l}</span></button>`;
+  return `<div class="toolbar">${menu}<button class="btn plain" data-act="back" aria-label="Back to meetings">${icon('back','ic-s')}<span class="lbl">Meetings</span></button><span class="grow"></span>
+      <div class="popwrap" data-pop><button class="btn" id="move-btn" data-act="pop" data-p="move" aria-haspopup="menu" aria-expanded="${S.pop === 'move'}" aria-label="Move to folder. Now in ${esc(m.folder)}">${icon(fIcon(m.folder),'ic-s')}<span class="lbl od-truncate" style="max-width:140px">${esc(m.folder)}</span>${icon('chev','ic-s')}</button>${moveMenu}</div>
+      ${tb('transcript','list','Transcript')}${tb('chat','chat','Chat')}
+    </div>
+    <div class="dbody ${p ? 'has-panel' : ''}">
+      <article class="detail" id="detail" aria-labelledby="mt"><div class="doc">
+        <header class="doc-head">
+          <h1 id="mt">${esc(m.title)}</h1>
+          <p class="meta">${m.date} · ${m.time} · ${m.dur} · ${m.source}</p>
+          <div class="tagedit od-cluster" aria-label="Tags">${m.tags.map(t => tagHtml(t, true, m.id)).join('')}
+            <form data-form="tag" data-id="${m.id}" class="od-row" style="--od-gap:4px"><label class="sr-only" for="newtag">Add tag</label>
+              <input class="input" id="newtag" list="taglist" maxlength="20" placeholder="Add tag" autocomplete="off">
+              <datalist id="taglist">${allTags().filter(t => !m.tags.includes(t)).map(t => `<option value="${esc(t)}">`).join('')}</datalist></form>
+          </div>
+        </header>
+        ${summaryDoc(m)}
+      </div></article>
+      ${p ? sidePanel(m, p) : ''}
+    </div>`;
+}
+function sidePanel(m, p) {
+  const tr = p === 'transcript';
+  return `<aside class="dpanel" id="dpanel" aria-labelledby="dp-h">
+      <div class="dp-head"><h2 id="dp-h">${tr ? 'Transcript' : 'Chat'}</h2><span class="grow"></span>
+        ${tr ? `<button class="btn" id="copy-tr" data-act="copy-tr" data-id="${m.id}">${icon(S.copied === m.id ? 'check' : 'copy','ic-s')}<span>${S.copied === m.id ? 'Copied' : 'Copy'}</span></button>` : ''}
+        <button class="btn icon plain" id="dp-close" data-act="panel" data-p="${p}" aria-label="Close ${tr ? 'transcript' : 'chat'}">${icon('x')}</button></div>
+      ${tr ? `<div class="dp-body od-scroll transcript">${m.transcript.map(([who, t, text]) => `<div class="seg-row"><div class="seg-who"><b>${esc(who)}</b><time>${t}</time></div><p class="seg-text">${esc(text)}</p></div>`).join('')}</div>`
+        : chatView(m.id, [m.id])}
+    </aside>`;
+}
+function summaryDoc(m) {
+  const s = S.sums[m.id];
+  const body = s.loading ? `<div class="skel" role="status" aria-label="Generating summary"><i></i><i></i><i></i><i></i><i></i><i></i></div>`
+    : `<div class="sum"><p class="sum-lead">${esc(s.data.text)}</p>
+        ${s.data.decisions.length ? `<h2>Decisions</h2><ul>${s.data.decisions.map(d => `<li>${esc(d)}</li>`).join('')}</ul>` : ''}
+        ${s.data.actions.length ? `<h2>Action items</h2><ul>${s.data.actions.map(d => `<li>${esc(d)}</li>`).join('')}</ul>` : ''}</div>`;
+  return `<section class="sumdoc" aria-label="Summary">
+      <div class="sum-bar"><div class="sum-meta od-fill"><span>Written ${s.at} · ${esc(s.custom ? 'Your instructions' : s.tplName)}</span><span class="od-truncate">${esc(llmLabel())}</span></div>
+        <div class="popwrap" data-pop><button class="btn" id="regen-btn" data-act="pop" data-p="regen" aria-haspopup="dialog" aria-expanded="${S.pop === 'regen'}" ${s.loading ? 'disabled' : ''}>${icon('refresh','ic-s')}Rewrite</button>${S.pop === 'regen' ? regenPop(m) : ''}</div></div>
+      ${llmCloud() ? `<div style="margin-top:6px">${offBadge('text', true)}</div>` : ''}
+      ${body}</section>`;
+}
+function regenPop(m) {
+  const r = S.regen;
+  const card = (k, t, d) => `<button type="button" class="rcard" data-act="regen-mode" data-mode="${k}" aria-pressed="${r.mode === k}"><span class="rc-t">${t}</span><span class="rc-d">${d}</span></button>`;
+  const body = r.mode === 'tpl'
+    ? `<fieldset class="tpls"><legend class="sr-only">Template</legend>${S.templates.map(t => `<label class="tplopt"><input type="radio" name="tpl" value="${t.id}" data-bind="tpl" ${t.id === r.tpl ? 'checked' : ''}><span class="od-field"><span>${esc(t.name)}${t.user ? ' · saved' : ''}</span><span class="help od-clamp-2">${esc(t.prompt)}</span></span></label>`).join('')}</fieldset>`
+    : r.mode === 'custom'
+    ? `<div class="od-field" style="--od-gap:4px"><label class="label" for="prompt">Your instructions</label><textarea class="textarea" id="prompt" rows="4" placeholder="e.g. Write a recap for the client: what we agreed, what they owe us, and dates.">${esc(r.draft)}</textarea><span class="err" id="prompt-e" role="status"></span></div>
+       ${r.saving ? `<div class="od-field" style="--od-gap:4px"><label class="label" for="tplname">Template name</label>
+          <div class="od-row"><input class="input od-fill" id="tplname" maxlength="40" placeholder="e.g. Client recap"><button type="button" class="btn" data-act="tpl-save">Save</button></div>
+          <span class="err" id="tplname-e" role="status"></span></div>` : ''}`
+    : '';
+  return `<form class="pop regen" data-form="regen" data-id="${m.id}" role="dialog" aria-labelledby="rg-h">
+      <h3 id="rg-h">Rewrite the summary</h3>
+      <div class="rcards">${card('tpl', 'Use a template', `Pick from ${S.templates.length} ready-made styles, including ones you saved.`)}${card('custom', 'Say what you want', 'Tell Myna in your own words how to write it.')}</div>
+      ${body}
+      ${r.mode ? `<div class="od-row">${r.mode === 'custom' && !r.saving ? `<button type="button" class="btn" data-act="tpl-saving">Save as template</button>` : ''}<span class="od-fill"></span><button type="submit" class="btn primary">${icon('refresh','ic-s')}Rewrite</button></div>` : ''}
+      ${llmCloud() && r.mode ? `<div>${offBadge()}</div>` : ''}
+    </form>`;
+}
+function addDict(str) {
+  str.split(',').map(w => w.trim().slice(0, 40)).filter(Boolean).forEach(w => { if (!S.set.dict.some(x => x.toLowerCase() === w.toLowerCase())) S.set.dict.push(w); });
+  render(); $('#dict-in').focus();
+}
+function saveTpl() {
+  const name = $('#tplname').value.trim(), p = S.regen.draft.trim();
+  const err = msg => { $('#tplname-e').innerHTML = icon('alert','ic-s') + msg; $('#tplname').setAttribute('aria-invalid','true'); $('#tplname').focus(); };
+  if (!p) return err('Write your instructions first.');
+  if (!name) return err('Give the template a name.');
+  if (S.templates.some(t => t.name.toLowerCase() === name.toLowerCase())) return err('A template with this name exists. Pick another name.');
+  const t = { id:'u' + Date.now(), name, prompt:p, user:true }; S.templates.push(t);
+  Object.assign(S.regen, { mode:'tpl', tpl:t.id, saving:false }); render(); $('.tplopt input:checked')?.focus();
+}
+function generate(m, tplId, prompt) {
+  const tpl = S.templates.find(t => t.id === tplId);
+  const custom = prompt.trim() !== tpl.prompt.trim();
+  const base = m.summary;
+  let data;
+  if (!custom && tplId === 't-actions') data = { text:`${base.actions.length} action item${base.actions.length === 1 ? '' : 's'} came out of this meeting.`, decisions:[], actions:base.actions };
+  else if (!custom && tplId === 't-decisions') data = { text:`${base.decisions.length || 'No'} decision${base.decisions.length === 1 ? ' was' : 's were'} made.`, decisions:base.decisions, actions:[] };
+  else data = { ...base };
+  return { tplName:tpl.name, custom, data, at:now(), loading:false };
+}
+
+/* chat — shared by the meeting tab and the app-level screen */
+function chatView(key, ids) {
+  const msgs = key === 'global' ? S.global.msgs : (S.chats[key] = S.chats[key] || []);
+  const g = key === 'global';
+  const ctxTok = Math.round((ctxChars(ids) + msgs.reduce((a, x) => a + x.text.length, 0)) / 4);
+  const sent = S.tokensSent[key] || 0;
+  const cost = llmCloud() ? (PRICE[S.tasks.llm.model] != null ? ` · about $${(sent / 1e6 * PRICE[S.tasks.llm.model]).toFixed(4)} so far` : ' · cost not known') : ' · free';
+  const sugg = g ? ['What did we decide about the browser extension?','List action items from the Acme meetings','What did Priya ask for?'] : ['What was decided?','List the action items','Who spoke the most?'];
+  return `<div class="chat">
+    <div class="ctxbar"><span class="help">${g ? `Myna looks through all ${MEETINGS.length} meetings for each question and shows which ones it used.` : 'Answers come from this meeting’s notes and summary.'}</span></div>
+    <div class="msgs" id="msgs" aria-live="polite">
+      ${msgs.length ? msgs.map(x => x.role === 'user' ? `<div class="msg user">${esc(x.text)}</div>`
+              : `<div class="msg ai"><div class="who">Myna · ${esc(llmCloud() ? S.tasks.llm.model : LLM_LOCAL.find(l => l.id === S.tasks.llm.local).name)}</div>${x.pending ? `<span class="typing">${g ? 'Searching your meetings…' : 'Reading the transcript…'}</span>` : esc(x.text) + sources(x)}</div>`).join('')
+        : `<div class="od-stack" style="--od-gap:8px"><p class="help">${g ? 'Ask about a person, client, topic or decision. Myna finds the meetings that mention it.' : 'Ask anything about this meeting.'}</p><div class="suggest od-cluster">${sugg.map(q => `<button data-act="ask" data-q="${esc(q)}" data-key="${key}">${esc(q)}</button>`).join('')}</div></div>`}
+    </div>
+    <div class="composer">
+      <form data-form="chat" data-key="${key}">
+        <label class="sr-only" for="ask-${key}">Message</label>
+        <textarea class="textarea" id="ask-${key}" rows="1" placeholder="${g ? 'Ask about any of your meetings' : 'Ask about this meeting'}"></textarea>
+        <button class="btn primary icon" type="submit" aria-label="Send" style="height:36px;width:36px">${icon('send')}</button>
+      </form>
+      <div class="foot"><span class="od-nowrap">${g ? `Searches ${MEETINGS.length} meetings` : `Reads about ${fmtTok(Math.round(ctxTok * 0.75))} words`}</span><span class="od-nowrap">${cost}</span><span class="od-fill"></span>${llmCloud() ? offBadge() : localBadge()}</div>
+    </div></div>`;
+}
+function sources(x) {
+  if (!x.sources) return '';
+  if (!x.sources.length) return `<div class="sources help">Searched ${MEETINGS.length} meetings, none matched.</div>`;
+  return `<div class="sources od-cluster"><span class="help">Found in ${x.sources.length} of ${MEETINGS.length} meetings:</span>${x.sources.map(id => `<button class="tag src" data-act="open" data-id="${id}" aria-label="Open ${esc(byId(id).title)}"><span>${esc(byId(id).title)}</span></button>`).join('')}</div>`;
+}
+/* shortcut: keyword match over title, tags, folder, speakers, transcript and summary; the real app would use embeddings */
+const STOP = new Set('the and for with about what who whom which when where why how did does was were are our you they this that these those from any all every list show tell give summary summarize decide decided decision decisions agree agreed action actions item items todo todos next step steps said say says spoke speak speaker most meeting meetings call calls ask asked have has had can could would should there their them its into been'.split(' '));
+function search(q) {
+  const words = (q.toLowerCase().match(/[a-z0-9:]+/g) || []).filter(w => w.length > 2 && !STOP.has(w));
+  if (!words.length) return MEETINGS.slice(0, 4).map(m => m.id); // no topic named: use the most recent meetings
+  return MEETINGS.map(m => {
+    const hay = [m.title, m.folder, m.tags.join(' '), m.transcript.map(r => r[0] + ' ' + r[2]).join(' '), JSON.stringify(S.sums[m.id].data)].join(' ').toLowerCase();
+    return [m.id, words.filter(w => hay.includes(w)).length];
+  }).filter(x => x[1]).sort((a, b) => b[1] - a[1]).slice(0, 4).map(x => x[0]);
+}
+function appChat() {
+  const menu = `<button class="btn icon plain menu-btn" data-act="drawer" aria-label="Show sidebar">${icon('sidebar')}</button>`;
+  return `<div class="toolbar">${menu}<h1>Chat</h1><span class="grow"></span>
+      ${S.global.msgs.length ? `<button class="btn" data-act="new-chat">New chat</button>` : ''}</div>
+    <div class="chat-wrap"><div class="appchat chat-wrap">${chatView('global', [])}</div></div>`;
+}
+function reply(ids, q, withTitle) {
+  const s = q.toLowerCase();
+  const pick = id => {
+    const m = byId(id), d = S.sums[id].data;
+    if (/action|todo|next step|follow/.test(s)) return d.actions.length ? d.actions.map(a => '• ' + a).join('\n') : 'No action items.';
+    if (/decid|decision|agree/.test(s)) return d.decisions.length ? d.decisions.map(a => '• ' + a).join('\n') : 'Nothing was decided.';
+    if (/who|spoke|speaker|most/.test(s)) {
+      const c = {}; m.transcript.forEach(r => c[r[0]] = (c[r[0]] || 0) + 1);
+      return Object.entries(c).sort((a, b) => b[1] - a[1]).map(([n, k]) => `• ${n}: ${k} turn${k > 1 ? 's' : ''}`).join('\n');
+    }
+    return d.text;
+  };
+  if (ids.length === 1) return withTitle ? `${byId(ids[0]).title} (${byId(ids[0]).date})\n${pick(ids[0])}` : pick(ids[0]);
+  return `Across ${ids.length} meetings:\n\n` + ids.map(id => `${byId(id).title} (${byId(id).date})\n${pick(id)}`).join('\n\n');
+}
+function send(key, text) {
+  text = text.trim(); if (!text) return;
+  const g = key === 'global', ids = g ? search(text) : [key];
+  const msgs = key === 'global' ? S.global.msgs : S.chats[key];
+  S.tokensSent[key] = (S.tokensSent[key] || 0) + Math.round((ctxChars(ids) + msgs.reduce((a, x) => a + x.text.length, 0) + text.length) / 4);
+  msgs.push({ role:'user', text });
+  const p = { role:'ai', text:'', pending:true }; msgs.push(p);
+  render(); scrollMsgs();
+  setTimeout(() => { p.pending = false;
+    if (g) p.sources = ids;
+    p.text = ids.length ? reply(ids, text, g) : `I couldn’t find a meeting that mentions that. Try a person, client, tag or topic.`; render(); scrollMsgs(); const ta = document.getElementById('ask-' + key); ta && ta.focus(); }, 900);
+}
+const scrollMsgs = () => { const el = $('#msgs'); if (el) el.scrollTop = el.scrollHeight; };
+
+/* ---------- settings ---------- */
+const SET_PAGES = [['appearance','Look'],['dictation','Voice typing'],['meetings','Meeting notes'],['models','AI & privacy'],['decision','Muted speech helper'],['experimental','Early features'],['about','About']];
+const getPath = p => p.split('.').reduce((o, k) => o[k], S.set);
+const setPath = (p, v) => { const ks = p.split('.'), last = ks.pop(); ks.reduce((o, k) => o[k], S.set)[last] = v; };
+const sid = p => 's-' + p.replace(/\./g, '-');
+const sw = (p, label) => `<input type="checkbox" role="switch" class="switch" id="${sid(p)}" data-bind="set" data-path="${p}" ${getPath(p) ? 'checked' : ''} aria-label="${esc(label)}">`;
+const sel = (p, opts, label) => `<select class="select" id="${sid(p)}" data-bind="set" data-path="${p}" aria-label="${esc(label)}" style="width:auto">${opts.map(([v, l]) => `<option value="${v}" ${String(getPath(p)) === String(v) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
+const segc = (p, opts, label) => `<fieldset class="seg" aria-label="${esc(label)}">${opts.map(([v, l]) => `<label><input type="radio" name="${sid(p)}" id="${sid(p)}-${v}" value="${v}" data-bind="set" data-path="${p}" ${getPath(p) === v ? 'checked' : ''}><span>${esc(l)}</span></label>`).join('')}</fieldset>`;
+const srow = (title, help, ctrl) => `<li class="srow"><div class="od-field od-fill"><span class="label">${title}</span>${help ? `<span class="help">${help}</span>` : ''}</div><div class="od-fixed">${ctrl}</div></li>`;
+const sgroup = (title, rows, note = '') => `<section class="sgroup"><h2>${title}</h2>${note}<ul class="list">${rows.join('')}</ul></section>`;
+// shortcut recorder: a key, a combination, or a single modifier held on its own (e.g. Right ⌥)
+const hkLabel = h => h.replace(/\+/g, ' ');
+const hotkeyRec = () => S.hkRec
+  ? `<button class="btn hk-live" id="hk-btn" data-act="hk-cancel" aria-live="polite">Press a key…</button>`
+  : `<div class="hk"><span class="hk-keys" aria-label="Current hotkey: ${esc(hkLabel(S.set.hotkey))}">${S.set.hotkey.split('+').map(k => `<kbd>${esc(k)}</kbd>`).join('')}</span><button class="btn" id="hk-btn" data-act="hk-rec">Change</button></div>`;
+const MOD_SIDE = { AltLeft:'⌥', AltRight:'Right ⌥', MetaLeft:'⌘', MetaRight:'Right ⌘', ControlLeft:'⌃', ControlRight:'Right ⌃', ShiftLeft:'⇧', ShiftRight:'Right ⇧' };
+function hkKeyName(e) {
+  if (e.code.startsWith('Key')) return e.code.slice(3);
+  if (e.code.startsWith('Digit')) return e.code.slice(5);
+  if (e.code === 'Space') return 'Space';
+  return e.key.length === 1 ? e.key.toUpperCase() : e.key;
+}
+function hkSave(v) { S.set.hotkey = v; S.hkRec = false; S.hkMod = null; render(); $('#hk-btn')?.focus(); }
+// shortcut: "Choose another folder…" picks a fixed sample path; the real app opens the macOS folder picker
+const DATA_PLACES = [['This Mac (recommended)', '~/Library/Application Support/Myna'], ['iCloud Drive', '~/Library/Mobile Documents/iCloud Drive/Myna'], ['Choose another folder…', '~/Documents/Myna data']];
+const desertAnt = () => [S.modules.meetings && S.set.exp.diarOn && S.set.diar === 'who' && 'telling voices apart (Who)', (S.set.exp.uhmD || S.set.exp.uhmM) && 'removing “um” and “uh” (Uhm)'].filter(Boolean);
+
+function settings() {
+  const menu = `<button class="btn icon plain menu-btn" data-act="drawer" aria-label="Show sidebar">${icon('sidebar')}</button>`;
+  return `<div class="toolbar">${menu}<h1>Settings</h1></div>
+    <div class="settings">
+      <nav class="snav" aria-label="Settings pages">${SET_PAGES.map(([id, l]) => `<button class="nav" data-act="spage" data-p="${id}" ${S.setPage === id ? 'aria-current="true"' : ''}>${l}</button>`).join('')}</nav>
+      <div class="spage od-scroll" id="spage">${settingsPage()}</div>
+    </div>`;
+}
+function settingsPage() {
+  const x = S.set, e = x.exp;
+  switch (S.setPage) {
+    case 'appearance': {
+      const ACC = [['blue','Blue'],['purple','Purple'],['pink','Pink'],['red','Red'],['orange','Orange'],['yellow','Yellow'],['green','Green'],['graphite','Graphite']];
+      return sgroup('Appearance', [
+        srow('Appearance', 'Auto follows your Mac’s light or dark setting.', segc('appearance', [['auto','Auto'],['light','Light'],['dark','Dark']], 'Appearance')),
+        srow('Highlight colour', `Used for buttons and selected items. Now: ${ACC.find(a => a[0] === x.accent)[1]}.`,
+          `<fieldset class="swatches" aria-label="Accent colour">${ACC.map(([id, l]) => `<label class="sw"><input type="radio" name="${sid('accent')}" id="${sid('accent')}-${id}" value="${id}" data-bind="set" data-path="accent" ${x.accent === id ? 'checked' : ''}><span aria-hidden="true" style="--c:var(--sw-${id})"></span><span class="sr-only">${l}</span></label>`).join('')}</fieldset>`),
+        srow('See-through panels', x.glass === 'clear' ? 'The sidebar and menus show a little of what’s behind them.' : 'The sidebar and menus take on a hint of your highlight colour.', segc('glass', [['clear','Clear'],['tinted','Tinted']], 'See-through panels'))
+      ]);
+    }
+    case 'dictation': return sgroup('Voice typing', [
+        srow('Use voice typing', 'Hold a key, talk, and let go. Your words appear wherever you’re typing.', sw('modules.dictation', 'Use voice typing'))
+      ]) + (!S.modules.dictation ? '' : sgroup('Shortcut', [
+        srow('Shortcut key', S.hkRec ? 'Press the key or keys you want to use. Esc cancels.' : 'Works in any app.', hotkeyRec()),
+        srow('How it starts', x.mode === 'hold' ? 'Hold the key while you talk. Let go to add your words.' : 'Press once to start and again to stop.', segc('mode', [['hold','Hold to talk'],['toggle','Tap to start and stop']], 'How it starts'))
+      ]) + sgroup('Adding your words', [
+        srow('How words are added', x.paste === 'clipboard' ? 'Fastest. Myna puts back whatever you had copied afterwards.' : 'Types each letter. Slower, but works in apps that block pasting.', segc('paste', [['clipboard','Paste'],['type','Type']], 'How words are added'))
+      ]) + `<section class="sgroup"><h2>Words to remember</h2><p class="help">Names and special words Myna should spell your way.</p>
+        <div class="chipin" data-act="dict-focus">${x.dict.map(w => `<span class="tag">${esc(w)}<button data-act="dict-rm" data-w="${esc(w)}" aria-label="Remove ${esc(w)}">${icon('x','ic-s')}</button></span>`).join('')}
+          <form data-form="dict" class="chipin-f"><label class="sr-only" for="dict-in">Add words for Myna to remember</label><input id="dict-in" maxlength="200" placeholder="${x.dict.length ? 'Add a word' : 'Type a word, then a comma'}" autocomplete="off" aria-describedby="dict-help"></form></div>
+        <p class="help" id="dict-help" style="margin-top:6px">Press comma or Return to add a word. Press Backspace in an empty box to remove the last one.</p></section>`);
+    case 'meetings': return sgroup('Meeting notes', [
+        srow('Use meeting notes', 'Record your calls and get notes, a summary and answers to your questions.', sw('modules.meetings', 'Use meeting notes'))
+      ]) + (!S.modules.meetings ? '' : sgroup('Shortcut', [
+        srow('Start or stop notes', 'Works from any app, even when the Myna window is closed.', sel('meetKey', [['ctrl-opt-m','⌃⌥M'],['ctrl-opt-n','⌃⌥N'],['none','No shortcut']], 'Meeting notes shortcut'))
+      ]) + sgroup('Notice calls', [
+        srow('Offer to take notes when a call starts', 'When Zoom, Meet, Teams or another app starts using your microphone, Myna asks first. Nothing is recorded until you say yes.', sw('detect', 'Offer to take notes when a call starts'))
+      ]) + sgroup('Pictures of the call', [
+        srow('Save the call window', { off:'Only the sound is saved.', shots:'Saves a picture of the call window every few seconds.', video:'Saves a video of the call window. Video takes more space and always stays on this Mac.' }[x.capture],
+          segc('capture', [['off','Off'],['shots','Pictures'],['video','Video']], 'Save the call window')),
+        ...(x.capture === 'shots' ? [srow('Take a picture every', 'Pictures that look the same as the last one are skipped.', sel('interval', [['10','10 seconds'],['15','15 seconds'],['30','30 seconds'],['60','1 minute']], 'Take a picture every'))] : [])
+      ]) + `<section class="sgroup"><h2>Keep my voice when I’m muted</h2>
+        <p class="help">Normally, anything you say while muted in a call is left out of the notes. Turn on an app below to keep it in.</p>
+        <h3>Myna sees your mute button through the browser add-on</h3>
+        <ul class="list">${APPS.filter(a => a.mirror).map(a => srow(esc(a.name), 'Keeps your voice in the notes even while you’re muted.', sw('apps.' + a.id, 'Keep my voice when muted in ' + a.name))).join('')}</ul>
+        ${x.ext ? '' : `<p class="help">Needs the browser add-on. Connect it below.</p>`}
+        <h3>Myna can’t see your mute button, so it guesses</h3>
+        <ul class="list">${APPS.filter(a => !a.mirror).map(a => srow(esc(a.name), 'Keeps your voice in the notes even while you’re muted. Parts Myna isn’t sure about are marked for you to check.', sw('apps.' + a.id, 'Keep my voice when muted in ' + a.name))).join('')}</ul>
+      </section>`
+      + sgroup('Browser add-on', [
+        srow('Status', x.ext ? 'Connected. Myna can see when you’re muted in Meet and Teams, and who is talking.' : 'Not connected. Install the Myna add-on in your browser, then connect it here.',
+          x.ext ? `<button class="btn" data-act="ext">Disconnect</button>` : `<button class="btn" data-act="ext">Connect</button>`),
+        srow('Connection code', 'Type this into the add-on so it can talk to Myna.', `<span class="path">MYNA-4F7Q-K2</span>`)
+      ]) + sgroup('Folders', [
+        srow('Suggest a folder for new meetings', 'Myna looks at the title and the first few lines of the call.' + (x.folder && llmCloud() ? '<br>' + offBadge() : ''), sw('folder', 'Suggest a folder for new meetings'))
+      ]) + sgroup('Storage', [
+        srow('Delete recordings after', 'Your notes, summaries and chats are kept until you delete them.', sel('retention', [['7','7 days'],['30','30 days'],['90','90 days'],['never','Never']], 'Delete recordings after'))
+      ]));
+    case 'models': return taskBlock('stt', 'Turning speech into text', 'Used for voice typing and meeting notes.', STT_LOCAL, 'audio')
+      + (S.modules.meetings ? taskBlock('llm', 'Summaries and answers', 'Writes meeting summaries and answers your questions about them.', LLM_LOCAL, 'text')
+        + (!x.exp.diarOn ? '' : `<section class="task" aria-labelledby="diar-h"><div class="task-head"><h2 id="diar-h">Telling voices apart</h2><span class="help">Works out who said what. Always runs on this Mac. Your own voice is always “Me”.</span></div>
+          <ul class="list" role="radiogroup" aria-label="Telling voices apart">${DIAR.map(m => `<li class="model-row">
+            <input type="radio" class="radio" style="margin-top:3px" name="${sid('diar')}" id="${sid('diar')}-${m.id}" data-bind="set" data-path="diar" value="${m.id}" ${x.diar === m.id ? 'checked' : ''}>
+            <label for="${sid('diar')}-${m.id}" style="cursor:pointer"><span class="name">${m.name} <span class="vendor">${m.vendor}</span></span><span class="li-desc" style="display:block">${m.desc}</span></label>${ratings(m)}
+            <div class="dl" data-dl="${m.id}">${dlHtml(m)}</div></li>`).join('')}</ul></section>`) : '');
+    case 'decision': {
+      const head = sgroup('Muted speech helper', [
+        srow('Helper', '', segc('decision', [['laya','Laya'],['jev','Jev'],['openai','OpenAI Decisions'],['custom','Other']], 'Muted speech helper'))
+      ], `<p class="help">Only used by the early feature “Decide on muted speech”. It reads text, and never hears your voice.</p>`);
+      if (x.decision === 'laya') return head + sgroup('Laya on this Mac', [srow('Status',
+        { none:'Not set up yet. Myna installs it for you.', installing:'Installing. This can take a few minutes.', ready:'Ready. It starts when needed and stops when you quit Myna.' }[x.laya],
+        { none:`<button class="btn" data-act="laya">Set up Laya</button>`, installing:`<span class="pill status" role="status">Setting up…</span>`, ready:`<span class="pill ok">${icon('check','ic-s')}Ready</span>` }[x.laya])]);
+      return head + `<section class="sgroup"><h2>Connect your account</h2><div class="list cloud">
+          ${x.decision === 'custom' ? `<div class="od-field" style="--od-gap:4px"><label class="label" for="${sid('decUrl')}">Web address</label><input class="input" type="url" id="${sid('decUrl')}" data-bind="set" data-path="decUrl" value="${esc(x.decUrl)}" placeholder="https://"></div>` : ''}
+          <div class="od-field" style="--od-gap:4px"><label class="label" for="${sid('decKey')}">Account key</label><input class="input" type="password" id="${sid('decKey')}" data-bind="set" data-path="decKey" value="${esc(x.decKey)}" autocomplete="off"><span class="help">Myna keeps it safe in your Mac’s Keychain.</span></div>
+          <div>${offBadge()}</div></div></section>`;
+    }
+    case 'experimental': {
+      const row = (t, h, p, badge) => srow(t, h + (getPath(p) && badge ? '<br>' + badge : ''), sw(p, t + (p.endsWith('D') ? ' in voice typing' : ' in meeting notes')));
+      return `<p class="help">New things we’re still working on. They stay off until you turn them on, and they may change.</p>`
+        + sgroup('Voice typing', [
+          row('Remove “um” and “uh”', 'Takes out filler words before your text is added. Stays on this Mac.', 'exp.uhmD'),
+          row('Tidy up with AI', 'Fixes punctuation and wording.', 'exp.llmD', llmCloud() && offBadge())
+        ]) + sgroup('Meeting notes', [
+          row('Tell voices apart', 'Works out who said what, so notes show names instead of one long block. Stays on this Mac.', 'exp.diarOn'),
+          row('Remove “um” and “uh”', 'Takes out filler words from the notes. Stays on this Mac.', 'exp.uhmM'),
+          row('Tidy up with AI', 'Cleans up the notes after the call.', 'exp.llmM', llmCloud() && offBadge()),
+          row('Decide on muted speech', 'Lets the muted speech helper decide if what you said while muted belongs in the notes.', 'exp.triage', x.decision !== 'laya' && offBadge()),
+          row('Keep only useful pictures', 'Skips pictures where nothing changed on screen.', 'exp.relevance', llmCloud() && offBadge('images')),
+          row('Use pictures in summaries', 'Lets the AI look at up to 20 pictures from the call, if it can.', 'exp.shotsAI', llmCloud() && offBadge('images'))
+        ]);
+    }
+    case 'about': return sgroup('Myna', [
+        srow('Version', '0.1.0 (prototype)', { '':`<button class="btn" data-act="upd">Check for updates</button>`, checking:`<span class="pill status" role="status">Checking…</span>`, ok:`<span class="pill ok">${icon('check','ic-s')}Up to date</span>` }[x.upd]),
+        srow('Where your data lives', `<span class="path">${esc(x.dataPath)}</span><br>${x.dataMoved ? 'Moved. Everything now lives in this folder.' : 'Your meetings, AI models and settings are all in one folder. Copy it to back everything up.'}`,
+          `<div class="popwrap" data-pop><button class="btn" id="data-btn" data-act="pop" data-p="data" aria-haspopup="menu" aria-expanded="${S.pop === 'data'}">Change…</button>${S.pop === 'data' ? `<div class="pop menu" role="menu" aria-label="Where your data lives">${DATA_PLACES.map(([l, v]) => `<button class="mitem" role="menuitemradio" aria-checked="${x.dataPath === v}" data-act="data-path" data-v="${esc(v)}"><span class="od-truncate">${l}</span>${x.dataPath === v ? `<span class="mkey">${icon('check','ic-s')}</span>` : ''}</button>`).join('')}</div>` : ''}</div>`),
+        srow('License', 'Free and open source (MIT license).' + (desertAnt().length ? `<br><span class="attrib">Powered by Desert Ant Labs · ${desertAnt().join(' and ')}</span>` : ''), ''),
+        srow('Setup guide', 'Go through the first-time setup again. Your meetings and settings stay as they are.', `<button class="btn" data-act="restart">Start setup again</button>`)
+      ]);
+  }
+}
+
+/* ---------- menubar, dictation pill, meeting pill ---------- */
+const MEET_KEYS = { 'ctrl-opt-m':'⌃⌥M', 'ctrl-opt-n':'⌃⌥N', none:'' };
+const fmtDur = ms => { const t = Math.floor(ms / 1000); return String(Math.floor(t / 60)).padStart(2, '0') + ':' + String(t % 60).padStart(2, '0'); };
+const DICT_SAMPLE = 'Can you pull the decisions from Tuesday’s design review?';
+const LIVE = [
+  ['Me', 'Okay, let’s start. Two things today: the launch date, then the pricing page.'],
+  ['Speaker 2', 'Launch is still the 18th. QA signed off on the installer this morning.'],
+  ['Speaker 3', 'Pricing page copy is ready. I just need the final numbers.'],
+  ['Me', 'I’ll send those right after this call.'],
+  ['Speaker 2', 'One risk: the Teams extension sometimes reports mute as unknown.'],
+  ['Me', 'Let’s keep that speech hidden by default and look at it next week.']
+];
+
+function overlay() {
+  if (S.view === 'onboarding') return '';
+  const r = S.rec, rec = r.state === 'rec';
+  let h = `<header class="menubar"><span class="mb-app">Myna</span><span class="od-fill"></span>
+    <button class="mb-item" id="theme-btn" data-act="theme-toggle" aria-label="${effDark() ? 'Switch to light appearance' : 'Switch to dark appearance'}">${icon(effDark() ? 'sun' : 'moon')}</button>
+    <button class="mb-item" id="mb-btn" data-act="mb" aria-haspopup="menu" aria-expanded="${S.mb.open}" aria-label="${rec ? 'Myna, recording' : 'Myna menu'}">${icon('wave')}${rec ? `<span class="mb-rec"><span class="recdot" aria-hidden="true"></span><span data-rec-time>${fmtDur(Date.now() - r.start)}</span></span>` : ''}</button>
+    <span class="mb-clock">${now()}</span></header>`;
+  if (S.mb.open) {
+    const mk = MEET_KEYS[S.set.meetKey];
+    h += `<div class="mbpop" role="menu" aria-label="Myna">
+      <div class="mlabel">Meeting notes</div>
+      ${rec ? `<button class="mitem" role="menuitem" data-act="rec-stop">Stop recording<span class="mkey" data-rec-time>${fmtDur(Date.now() - r.start)}</span></button>
+              <button class="mitem" role="menuitem" data-act="rec-mute">${r.muted ? 'Unmute mic' : 'Mute mic'}</button>
+              <div class="mnote"><span class="recdot" aria-hidden="true"></span>${r.muted ? 'You’re muted' : 'Your microphone is on'}</div>`
+            : `<button class="mitem" role="menuitem" data-act="rec-start" ${S.modules.meetings ? '' : 'disabled'}>Start meeting notes<span class="mkey">${mk}</span></button>
+               <div class="mnote">${S.modules.meetings ? 'Records whichever app is using your microphone.' : 'Meeting notes are off. Turn them on in Settings.'}</div>`}
+      <div class="msep"></div>
+      <div class="mlabel">Voice typing</div>
+      <button class="mitem" role="menuitem" data-act="dict-start" ${S.modules.dictation && !S.dictS.state ? '' : 'disabled'}>Start voice typing<span class="mkey">${hkLabel(S.set.hotkey)}</span></button>
+      ${S.modules.dictation ? '' : '<div class="mnote">Voice typing is off. Turn it on in Settings.</div>'}
+      <div class="msep"></div>
+      <div class="mlabel">Recent</div>
+      ${MEETINGS.slice(0, 3).map(m => `<button class="mitem" role="menuitem" data-act="open" data-id="${m.id}"><span class="od-truncate">${esc(m.title)}</span><span class="mkey">${m.date === 'Today' ? m.time : m.date.split(' ')[0]}</span></button>`).join('')}
+      <div class="msep"></div>
+      <button class="mitem" role="menuitem" data-act="mb-open">Open Myna</button>
+      <button class="mitem" role="menuitem" data-act="mb-settings">Settings…<span class="mkey">⌘,</span></button>
+    </div>`;
+  }
+  if (S.detect.state === 'shown' && !rec) h += `<section class="dtoast" role="alertdialog" aria-labelledby="det-t" aria-describedby="det-d">
+      <button class="dt-x" id="det-x" data-act="det-close" aria-label="Dismiss">${icon('x','ic-s')}</button>
+      <span class="dt-app" aria-hidden="true">${icon('wave')}</span>
+      <div class="od-fill"><h2 class="dt-t" id="det-t">Meeting detected</h2><p class="dt-sub" id="det-d"><span class="live-dot" aria-hidden="true"></span><span class="od-truncate">Google Meet in Chrome · now</span></p></div>
+      <div class="dt-split">
+        <button class="btn primary" id="det-start" data-act="det-start">Start notes</button>
+        <button class="btn icon" id="det-more" data-act="det-menu" aria-haspopup="menu" aria-expanded="${S.detect.menu}" aria-label="More options">${icon('chev')}</button>
+        ${S.detect.menu ? `<div class="dt-menu" role="menu" aria-label="Meeting detected options">
+          <button class="mitem" role="menuitem" data-act="det-live">Start and show live notes</button>
+          <button class="mitem" role="menuitem" data-act="det-close">Not a meeting</button>
+          <button class="mitem" role="menuitem" data-act="det-ignore">Don’t ask again for Google Meet</button>
+        </div>` : ''}
+      </div>
+    </section>`;
+  const d = S.dictS;
+  if (d.state === 'rec') h += `<div class="hud dpill" role="status" aria-label="Voice typing: listening"><span class="lvl" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><span>Listening</span>${d.hold ? '<span class="sub">Release to paste</span>' : '<button class="hud-btn" id="dict-done" data-act="dict-stop">Done</button>'}</div>`;
+  if (d.state === 'proc') h += `<div class="hud dpill" role="status"><span>Writing…</span></div>`;
+  if (d.state === 'done') h += `<div class="hud dpill" role="status">${icon('check','ic-s')}<span>${d.into ? 'Added to ' + d.into : 'Added where you were typing'}</span></div>`;
+  if (rec && !r.open) h += `<button class="hud mpill" id="rec-pill" data-act="rec-toggle" aria-expanded="false" aria-label="Meeting recording, show live notes"><span class="recdot" aria-hidden="true"></span><span>Recording</span><span class="od-nowrap" data-rec-time>${fmtDur(Date.now() - r.start)}</span><span class="sub">${r.muted ? 'Muted' : 'Mic live'}</span></button>`;
+  if (rec && r.open) h += `<section class="mpanel" aria-label="Live meeting notes">
+      <div class="mp-head"><span class="recdot" aria-hidden="true"></span><span class="t">Recording</span><time data-rec-time>${fmtDur(Date.now() - r.start)}</time><span class="help od-fill od-truncate">Google Meet · Chrome</span>
+        <button class="btn icon plain" id="rec-hide" data-act="rec-toggle" aria-expanded="true" aria-label="Minimize to pill" title="Minimize">${icon('minimize')}</button></div>
+      <div class="mp-mic"><span class="od-fill">${r.muted ? 'You’re muted. What you say is saved, but left out of the notes.' : 'Your microphone is on.'}</span><button class="btn" id="rec-mute" data-act="rec-mute">${r.muted ? 'Unmute' : 'Mute'}</button></div>
+      <div class="live" id="live" aria-live="polite">${r.lines.length ? r.lines.map(l => `<div class="lline"><div class="lwho"><b>${esc(l.who)}</b><time>${l.t}</time></div><p>${l.muted ? '<span class="help">Said while muted · left out for now</span>' : esc(l.text)}</p></div>`).join('') : '<p class="help">Listening. Lines appear here as people speak.</p>'}</div>
+      <div class="mp-foot"><span class="help">A first draft. Names are added when you stop.</span><button class="btn danger" id="rec-stop" data-act="rec-stop">Stop recording</button></div>
+    </section>`;
+  if (r.state === 'proc') h += `<div class="hud mpill" role="status"><span>Writing up your notes…</span></div>`;
+  if (r.state === 'saved') h += `<div class="hud mpill" role="status">${icon('check','ic-s')}<span>Notes saved to Inbox</span><button class="hud-btn" id="rec-open" data-act="open" data-id="${r.savedId}">Open</button><button class="hud-btn" data-act="rec-dismiss" aria-label="Dismiss">${icon('x','ic-s')}</button></div>`;
+  return h;
+}
+function renderOverlay() {
+  const ov = $('#overlay'), fid = ov.contains(document.activeElement) ? document.activeElement.id : null;
+  const liveBottom = !$('#live') || $('#live').scrollTop + $('#live').clientHeight >= $('#live').scrollHeight - 8;
+  ov.innerHTML = overlay();
+  document.body.classList.toggle('mb', S.view !== 'onboarding');
+  if (fid && document.getElementById(fid)) document.getElementById(fid).focus();
+  if ($('#live') && liveBottom) $('#live').scrollTop = $('#live').scrollHeight;
+  document.querySelectorAll('[data-live]').forEach(n => { if (!n.contains(document.activeElement)) n.innerHTML = n.dataset.live === 'card' ? liveCard() : startBtn(); });
+}
+// shortcut: simulates the mic-in-use signal once after onboarding; the real app watches which app holds the mic
+function maybeDetect() {
+  if (!S.set.detect || S.detect.ignored || !S.modules.meetings || S.rec.state === 'rec' || S.view === 'onboarding') return;
+  S.detect.state = 'shown'; renderOverlay();
+}
+function startDict(hold) {
+  if (!S.modules.dictation || S.dictS.state) return;
+  const a = document.activeElement;
+  S.dictS = { state:'rec', hold, t0:Date.now(), target: a && a.matches('textarea:not([disabled]), input[type=text], input:not([type])') ? a : null };
+  renderOverlay();
+}
+function stopDict() {
+  const d = S.dictS; if (d.state !== 'rec') return;
+  if (d.hold && Date.now() - d.t0 < 300) { S.dictS = { state:null }; renderOverlay(); return; } // a tap, not a hold
+  d.state = 'proc'; renderOverlay();
+  setTimeout(() => {
+    const t = d.target && document.contains(d.target) ? d.target : null;
+    if (t) { t.value = (t.value ? t.value.trimEnd() + ' ' : '') + DICT_SAMPLE; t.focus(); d.into = t.closest('.composer') ? 'chat' : 'the text field'; }
+    S.clips.unshift({ id:'c' + Date.now(), text:DICT_SAMPLE, src: t ? (d.into === 'chat' ? 'Myna chat' : 'a text field') : 'the focused app', t:'Today ' + now() });
+    d.state = 'done'; if (S.view === 'clips') render(); else renderOverlay();
+    setTimeout(() => { if (S.dictS === d) { S.dictS = { state:null }; renderOverlay(); } }, 1600);
+  }, 700);
+}
+function startRec() {
+  if (!S.modules.meetings || S.rec.state === 'rec') return;
+  const r = S.rec = { state:'rec', start:Date.now(), lines:[], muted:false, open:false, i:0 };
+  r.timer = setInterval(() => document.querySelectorAll('[data-rec-time]').forEach(e => e.textContent = fmtDur(Date.now() - r.start)), 1000);
+  r.feed = setInterval(() => {
+    if (r.i >= LIVE.length) return clearInterval(r.feed);
+    const [who, text] = LIVE[r.i++];
+    r.lines.push({ who, text, t: fmtDur(Date.now() - r.start), muted: who === 'Me' && r.muted });
+    renderOverlay();
+  }, 2600);
+  renderOverlay();
+}
+function stopRec() {
+  const r = S.rec; if (r.state !== 'rec') return;
+  clearInterval(r.timer); clearInterval(r.feed);
+  r.state = 'proc'; r.open = false; S.mb.open = false; renderOverlay();
+  setTimeout(() => {
+    const id = 'r' + Date.now(), mins = Math.max(1, Math.round((Date.now() - r.start) / 60000)), kept = r.lines.filter(l => !l.muted);
+    const m = { id, title:'Untitled meeting', date:'Wed 29 Oct', time:now(), dur: mins + ' min', source:'Google Meet', folder:'Inbox', tags:[],
+      transcript: kept.length ? kept.map(l => [l.who, l.t, l.text]) : [['Me', '00:00', 'No speech was captured.']],
+      summary: kept.length > 3
+        ? { text:'Short sync on launch timing and the pricing page.', decisions:['Launch stays on the 18th.'], actions:['Me: send the final pricing numbers.'] }
+        : { text:'Too little speech to summarize.', decisions:[], actions:[] } };
+    MEETINGS.unshift(m);
+    S.sums[id] = { tplName:'Summary', at:now(), custom:false, data:m.summary, loading:false };
+    r.state = 'saved'; r.savedId = id;
+    if (S.view === 'meetings') render(); else renderOverlay();
+    setTimeout(() => { if (S.rec === r && r.state === 'saved') { S.rec = { state:null }; renderOverlay(); } }, 8000);
+  }, 1800);
+}
+
+/* ---------- render + events ---------- */
+function render() {
+  applyTheme();
+  const st = $('#detail')?.scrollTop, sst = $('#spage')?.scrollTop;
+  $('#root').innerHTML = S.view === 'onboarding' ? onboarding() : app();
+  if (st && $('#detail')) $('#detail').scrollTop = st;
+  if (sst && $('#spage')) $('#spage').scrollTop = sst;
+  renderOverlay();
+}
+const effDark = () => S.set.appearance === 'dark' || (S.set.appearance === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
+function applyTheme() { const r = document.documentElement.dataset; r.theme = S.set.appearance; r.accent = S.set.accent; r.glass = S.set.glass; }
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (S.set.appearance === 'auto') renderOverlay(); });
+function go(view, extra = {}) {
+  if (S.view === 'meetings' && $('#mlist')) S.listScroll = $('#mlist').scrollTop;
+  Object.assign(S, { view, drawer:false, pop:null }, extra);
+  render();
+  if (view === 'meetings' && $('#mlist')) $('#mlist').scrollTop = S.listScroll;
+  const h = $('main h1, .ob h1'); if (h) { h.tabIndex = -1; h.focus({ preventScroll:true }); }
+}
+
+document.addEventListener('click', e => {
+  if (S.mb.open && !e.target.closest('.mbpop, #mb-btn')) { S.mb.open = false; renderOverlay(); }
+  if (S.detect.menu && !e.target.closest('.dt-split')) { S.detect.menu = false; renderOverlay(); }
+  if (S.pop && !e.target.closest('[data-pop]')) { S.pop = null; render(); }
+  const el = e.target.closest('[data-act]'); if (!el) return;
+  if (e.target.closest('input[type=checkbox]')) return;
+  const a = el.dataset.act, id = el.dataset.id;
+  switch (a) {
+    case 'ob-next':
+      if (STEPS[S.step] === 'models') {
+        S.obErrors = [];
+        ['stt','llm'].forEach(k => {
+          if ((k === 'llm' && !S.modules.meetings) || S.tasks[k].route !== 'cloud') return;
+          if (!validateKey(k)) S.obErrors.push({ field:'key-' + k, msg:`${k === 'stt' ? 'Speech to text' : 'Summaries and answers'}: ${S.tasks[k].keyErr}` });
+        });
+        if (S.obErrors.length) { render(); $('#errsum').focus(); return; }
+      }
+      S.step++; render(); $('#obscroll').scrollTop = 0; $('.ob h1').tabIndex = -1; $('.ob h1').focus(); break;
+    case 'ob-back': S.step--; S.obErrors = []; render(); break;
+    case 'ob-finish': go('meetings'); setTimeout(maybeDetect, 6000); break;
+    case 'grant': S.perms[el.dataset.k] = true; render(); break;
+    case 'dl-start': startDl(id); break;
+    case 'dl-cancel': clearInterval(S.dl[id].timer); S.dl[id] = { st:'canceled', pct:0 }; dlUpdate(id); break;
+    case 'restart': S.step = 0; go('onboarding'); break;
+    case 'enable-meetings': S.modules.meetings = true; S.step = 1; go('onboarding'); break;
+    case 'drawer': S.drawer = !S.drawer; render(); if (S.drawer) $('.side .nav').focus(); break;
+    case 'filter': S.listScroll = 0; go('meetings', { filter: el.dataset.type === 'all' ? { type:'all' } : { type:el.dataset.type, v:el.dataset.v } }); break;
+    case 'add-folder': S.addingFolder = true; render(); $('#nf').focus(); break;
+    case 'open': S.mb.open = false; if (S.rec.state === 'saved') S.rec = { state:null }; go('detail', { current:id, panel:null, regen:{ ...S.regen, mode:null, saving:false, draft:'' } }); break;
+    case 'back': go('meetings'); break;
+    case 'go-chat': go('chat'); break;
+    case 'go-clips': go('clips', { undoClip:null, clipConfirm:false }); break;
+    case 'rec-show': S.rec.open = true; renderOverlay(); $('#rec-hide')?.focus(); break;
+    case 'pop': {
+      const p = el.dataset.p; S.pop = S.pop === p ? null : p;
+      if (p === 'regen') Object.assign(S.regen, { mode:null, saving:false });
+      render(); (S.pop ? $(p === 'regen' ? '.rcard' : '.pop .mitem') : $('#' + el.id))?.focus(); break;
+    }
+    case 'move': byId(id).folder = el.dataset.f; S.pop = null; render(); $('#move-btn').focus(); break;
+    case 'panel': { const p = el.dataset.p; S.panel = S.panel === p ? null : p; render(); $(S.panel ? '#dp-close' : `.toolbar [data-act=panel][data-p=${p}]`)?.focus(); break; }
+    case 'copy-tr': {
+      const m = byId(id), text = m.transcript.map(([w, t, x]) => `${w} (${t}): ${x}`).join('\n');
+      navigator.clipboard?.writeText(text).catch(() => {});
+      S.copied = id; render(); $('#copy-tr').focus();
+      setTimeout(() => { if (S.copied === id) { S.copied = null; const b = $('#copy-tr'); if (b) b.innerHTML = icon('copy','ic-s') + '<span>Copy</span>'; } }, 1600); break;
+    }
+    case 'regen-mode': Object.assign(S.regen, { mode:el.dataset.mode, saving:false }); render(); $(S.regen.mode === 'tpl' ? '.tplopt input:checked' : '#prompt')?.focus(); break;
+    case 'side-menu': {
+      const k = el.dataset.kind, v = el.dataset.v, same = S.pop && S.pop.kind === k && S.pop.v === v;
+      S.pop = same ? null : { kind:k, v }; render();
+      (same ? $(`[data-act=side-menu][data-kind=${k}][data-v="${CSS.escape(v)}"]`) : $('.sidepop button'))?.focus(); break;
+    }
+    case 'set-ficon': S.folderIcon[el.dataset.v] = el.dataset.ic; render(); $(`[data-act=set-ficon][data-ic=${el.dataset.ic}]`)?.focus(); break;
+    case 'set-tcolor': TAG_COLORS[el.dataset.v] = el.dataset.c; render(); $(`[data-act=set-tcolor][data-c="${el.dataset.c}"]`)?.focus(); break;
+    case 'clip-copy': {
+      const c = S.clips.find(x => x.id === id); navigator.clipboard?.writeText(c.text).catch(() => {});
+      el.innerHTML = icon('check','ic-s'); el.setAttribute('aria-label', 'Copied'); setTimeout(() => { if (document.contains(el)) { el.innerHTML = icon('copy','ic-s'); el.setAttribute('aria-label', 'Copy again'); } }, 1600); break;
+    }
+    case 'clip-del': { const i = S.clips.findIndex(x => x.id === id); S.undoClip = { c:S.clips[i], i }; S.clips.splice(i, 1); render(); $('#clip-undo')?.focus(); break; }
+    case 'clip-undo': if (S.undoClip) { const u = S.undoClip; u.all ? S.clips = u.all : S.clips.splice(u.i, 0, u.c); S.undoClip = null; render(); $('#clipq')?.focus(); } break;
+    case 'clip-clear': S.clipConfirm = true; render(); $('#cc-no').focus(); break;
+    case 'clip-clear-no': S.clipConfirm = false; render(); $('[data-act=clip-clear]').focus(); break;
+    case 'clip-clear-yes': S.undoClip = { all:S.clips }; S.clips = []; S.clipConfirm = false; render(); $('#clip-undo').focus(); break;
+    case 'clipq-clear': S.clipQ = ''; render(); $('#clipq').focus(); break;
+    case 'mq-clear': S.mq = ''; render(); $('#mq').focus(); break;
+    case 'sugg-move': byId(id).folder = el.dataset.f; render(); $('#mq')?.focus(); break;
+    case 'sugg-off': S.suggOff[id] = true; render(); $('#mq')?.focus(); break;
+    case 'dict-focus': $('#dict-in').focus(); break;
+    case 'data-path': if (S.set.dataPath !== el.dataset.v) { S.set.dataPath = el.dataset.v; S.set.dataMoved = true; } S.pop = null; render(); $('#data-btn').focus(); break;
+    case 'clip-more': S.clipOpen[id] = !S.clipOpen[id]; render(); $(`[data-act=clip-more][data-id=${id}]`)?.focus(); break;
+    case 'go-settings': go('settings'); break;
+    case 'hk-rec': S.hkRec = true; S.hkMod = null; render(); $('#hk-btn')?.focus(); break;
+    case 'hk-cancel': S.hkRec = false; render(); $('#hk-btn')?.focus(); break;
+    case 'det-start': S.detect.state = null; startRec(); $('#rec-pill')?.focus(); break;
+    case 'det-live': S.detect.state = null; startRec(); S.rec.open = true; renderOverlay(); $('#rec-hide')?.focus(); break;
+    case 'det-close': S.detect = { ...S.detect, state:null, menu:false }; renderOverlay(); break;
+    case 'det-ignore': S.detect = { state:null, menu:false, ignored:true }; renderOverlay(); break;
+    case 'det-menu': S.detect.menu = !S.detect.menu; renderOverlay(); if (S.detect.menu) $('.dt-menu .mitem')?.focus(); break;
+    case 'theme-toggle': S.set.appearance = effDark() ? 'light' : 'dark'; render(); $('#theme-btn').focus(); break;
+    case 'mb': S.mb.open = !S.mb.open; renderOverlay(); if (S.mb.open) $('.mbpop .mitem:not([disabled])')?.focus(); break;
+    case 'mb-open': S.mb.open = false; go('meetings'); break;
+    case 'mb-settings': S.mb.open = false; go('settings'); break;
+    case 'rec-start': S.mb.open = false; startRec(); $('#rec-pill')?.focus(); break;
+    case 'rec-stop': stopRec(); break;
+    case 'rec-mute': S.rec.muted = !S.rec.muted; renderOverlay(); break;
+    case 'rec-toggle': S.rec.open = !S.rec.open; renderOverlay(); $(S.rec.open ? '#rec-hide' : '#rec-pill')?.focus(); break;
+    case 'rec-dismiss': S.rec = { state:null }; renderOverlay(); break;
+    case 'dict-start': S.mb.open = false; startDict(false); $('#dict-done')?.focus(); break;
+    case 'dict-stop': stopDict(); break;
+    case 'spage': S.setPage = el.dataset.p; render(); $('#spage').scrollTop = 0; $(`[data-act=spage][data-p=${S.setPage}]`).focus(); break;
+    case 'dict-rm': S.set.dict = S.set.dict.filter(w => w !== el.dataset.w); render(); $('#dict-in').focus(); break;
+    case 'ext': S.set.ext = !S.set.ext; render(); $('[data-act=ext]').focus(); break;
+    case 'laya': S.set.laya = 'installing'; render(); setTimeout(() => { S.set.laya = 'ready'; if (S.view === 'settings') render(); }, 2500); break;
+    case 'upd': S.set.upd = 'checking'; render(); setTimeout(() => { S.set.upd = 'ok'; if (S.view === 'settings') render(); }, 1200); break;
+    case 'new-chat': S.global.msgs = []; S.tokensSent.global = 0; render(); break;
+    case 'untag': { const m = byId(id); m.tags = m.tags.filter(t => t !== el.dataset.tag); render(); $('#newtag').focus(); break; }
+    case 'tpl-saving': S.regen.saving = true; render(); $('#tplname').focus(); break;
+    case 'tpl-save': saveTpl(); break;
+    case 'ask': send(el.dataset.key, el.dataset.q); break;
+  }
+});
+document.addEventListener('change', e => {
+  const el = e.target, b = el.dataset.bind; if (!b) return;
+  const k = el.dataset.k, t = S.tasks[k];
+  switch (b) {
+    case 'module': S.modules[k] = el.checked; render(); document.querySelector(`[data-bind=module][data-k=${k}]`).focus(); break;
+    case 'route': t.route = el.value; t.keyErr = ''; S.obErrors = []; render(); document.querySelector(`[name=route-${k}][value=${el.value}]`).focus(); break;
+    case 'local': t.local = el.value; break;
+    case 'provider': t.provider = el.value; t.model = CLOUD_MODELS[k][el.value][0]; t.keyErr = ''; render(); document.querySelector(`[name=prov-${k}][value=${el.value}]`).focus(); break;
+    case 'model': t.model = el.value; break;
+    case 'set':
+      if (/^(text|url|password)$/.test(el.type)) { setPath(el.dataset.path, el.value); break; }
+      setPath(el.dataset.path, el.type === 'checkbox' ? el.checked : el.value); render(); document.getElementById(el.id)?.focus(); break;
+    case 'folder': byId(el.dataset.id).folder = el.value; break;
+    case 'tpl': S.regen.tpl = el.value; break;
+  }
+});
+document.addEventListener('input', e => {
+  const el = e.target;
+  if (el.dataset.bind === 'key') S.tasks[el.dataset.k].key = el.value;
+  if (el.id === 'prompt') S.regen.draft = el.value;
+  if (el.id === 'clipq' || el.id === 'mq') {
+    S[el.id === 'mq' ? 'mq' : 'clipQ'] = el.value; S.undoClip = null; render();
+    const i = document.getElementById(el.id); i.focus(); i.setSelectionRange(i.value.length, i.value.length);
+  }
+  if (el.id === 'dict-in' && el.value.includes(',')) { addDict(el.value); }
+});
+document.addEventListener('contextmenu', e => {
+  const n = e.target.closest('.sitem'); if (!n) return;
+  e.preventDefault(); n.querySelector('[data-act=side-menu]').click();
+});
+document.addEventListener('focusout', e => {
+  const el = e.target;
+  if (el.dataset.bind === 'key') { const k = el.dataset.k; validateKey(k);
+    el.setAttribute('aria-invalid', S.tasks[k].keyErr ? 'true' : 'false');
+    $('#key-' + k + '-e').innerHTML = S.tasks[k].keyErr ? icon('alert','ic-s') + esc(S.tasks[k].keyErr) : ''; }
+  if (el.id === 'nf' && !el.value.trim()) setTimeout(() => { if (S.addingFolder) { S.addingFolder = false; render(); } }, 0);
+});
+document.addEventListener('submit', e => {
+  e.preventDefault();
+  const f = e.target, kind = f.dataset.form;
+  if (kind === 'folder') {
+    const name = $('#nf').value.trim().slice(0, 32);
+    if (name && !S.folders.some(x => x.toLowerCase() === name.toLowerCase())) S.folders.push(name);
+    S.addingFolder = false; render();
+  }
+  if (kind === 'tag') {
+    const v = $('#newtag').value.trim().toLowerCase().slice(0, 20), m = byId(f.dataset.id);
+    if (v && !m.tags.includes(v)) m.tags.push(v);
+    render(); $('#newtag').focus();
+  }
+  if (kind === 'regen') {
+    if (document.activeElement?.id === 'tplname') { saveTpl(); return; }   // Enter in the name field saves, not regenerates
+    const m = byId(f.dataset.id), mode = S.regen.mode, tpl = mode === 'custom' ? 't-summary' : S.regen.tpl;
+    if (!mode) return;
+    const p = mode === 'custom' ? S.regen.draft.trim() : S.templates.find(t => t.id === tpl).prompt;
+    if (!p) { $('#prompt-e').innerHTML = icon('alert','ic-s') + 'Write what you want first, or pick a template.'; $('#prompt').setAttribute('aria-invalid','true'); $('#prompt').focus(); return; }
+    S.sums[m.id] = { ...S.sums[m.id], loading:true }; S.pop = null; render();
+    setTimeout(() => { S.sums[m.id] = { ...generate(m, tpl, p), ...(mode === 'custom' ? { custom:true } : {}) }; if (S.current === m.id) render(); $('#regen-btn')?.focus(); }, 1400);
+  }
+  if (kind === 'dict') addDict($('#dict-in').value);
+  if (kind === 'chat') { const ta = f.querySelector('textarea'); send(f.dataset.key, ta.value); }
+});
+document.addEventListener('keydown', e => {
+  if (S.hkRec) {
+    e.preventDefault(); e.stopPropagation();
+    if (e.key === 'Escape') { S.hkRec = false; render(); $('#hk-btn')?.focus(); return; }
+    if (MOD_SIDE[e.code]) { S.hkMod = MOD_SIDE[e.code]; return; }   // wait: modifier alone or part of a combo
+    const mods = [e.ctrlKey && '⌃', e.altKey && '⌥', e.shiftKey && '⇧', e.metaKey && '⌘'].filter(Boolean);
+    hkSave([...mods, hkKeyName(e)].join('+'));
+    return;
+  }
+  const typing = e.target.matches('input, textarea, select, [contenteditable]');
+  if (e.key === '/' && !typing && !e.metaKey && !e.ctrlKey && (S.view === 'meetings' || S.view === 'clips')) {
+    e.preventDefault(); const f = $(S.view === 'clips' ? '#clipq' : '#mq'); if (f) { f.focus(); f.select(); } return;
+  }
+  if (e.key === 'Escape' && (e.target.id === 'mq' || e.target.id === 'clipq') && e.target.value) {
+    S[e.target.id === 'mq' ? 'mq' : 'clipQ'] = ''; render(); document.getElementById(e.target.id).focus(); return;
+  }
+  if (e.key === 'Backspace' && e.target.id === 'dict-in' && !e.target.value && S.set.dict.length) { S.set.dict.pop(); render(); $('#dict-in').focus(); return; }
+  if (S.view !== 'onboarding') {
+    const mk = S.set.meetKey;
+    if (e.ctrlKey && e.altKey && ((mk === 'ctrl-opt-m' && e.code === 'KeyM') || (mk === 'ctrl-opt-n' && e.code === 'KeyN'))) {
+      e.preventDefault(); if (S.dictS.state === 'rec') S.dictS = { state:null };
+      S.rec.state === 'rec' ? stopRec() : startRec(); return;
+    }
+    // shortcut: the browser cannot see fn, so holding Option stands in for the dictation hotkey
+    if (e.key === 'Alt' && !e.repeat && !e.ctrlKey && !e.metaKey && S.set.mode === 'hold') startDict(true);
+    else if (e.key !== 'Alt' && S.dictS.state === 'rec' && S.dictS.hold) { S.dictS = { state:null }; renderOverlay(); }
+    if (S.mb.open && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+      e.preventDefault();
+      const items = [...document.querySelectorAll('.mbpop .mitem:not([disabled])')], i = items.indexOf(document.activeElement);
+      items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus(); return;
+    }
+  }
+  if (e.metaKey && e.key === ',' && S.view !== 'onboarding') { e.preventDefault(); go('settings'); return; }
+  if (e.key === 'Enter' && !e.shiftKey && e.target.matches('.composer textarea')) { e.preventDefault(); e.target.form.requestSubmit(); }
+  if (e.key === 'Escape') {
+    if (S.mb.open) { S.mb.open = false; renderOverlay(); $('#mb-btn').focus(); return; }
+    if (S.detect.menu) { S.detect.menu = false; renderOverlay(); $('#det-more')?.focus(); return; }
+    if (S.dictS.state === 'rec') { S.dictS = { state:null }; renderOverlay(); return; }
+    if (S.rec.open) { S.rec.open = false; renderOverlay(); $('#rec-pill')?.focus(); return; }
+    if (S.pop) {
+      const p = S.pop; S.pop = null; render();
+      $(typeof p === 'object' ? `[data-act=side-menu][data-kind=${p.kind}][data-v="${CSS.escape(p.v)}"]` : p === 'move' ? '#move-btn' : p === 'data' ? '#data-btn' : '#regen-btn')?.focus(); return;
+    }
+    if (S.panel && S.view === 'detail') { const p = S.panel; S.panel = null; render(); $(`.toolbar [data-act=panel][data-p=${p}]`)?.focus(); return; }
+    if (S.drawer) { S.drawer = false; render(); return; }
+    if (S.addingFolder) { S.addingFolder = false; render(); }
+  }
+});
+
+document.addEventListener('keyup', e => {
+  if (S.hkRec) { if (S.hkMod && MOD_SIDE[e.code] === S.hkMod) hkSave(S.hkMod); return; }
+  if (e.key !== 'Alt' || S.view === 'onboarding') return;
+  if (S.dictS.state === 'rec' && S.dictS.hold) stopDict();
+  else if (S.set.mode === 'toggle' && !e.ctrlKey && !e.metaKey) S.dictS.state === 'rec' ? stopDict() : startDict(false);
+});
+
+// deep links from flow.html, e.g. index.html#settings/about or #onboarding/models
+(function () {
+  const [v, a] = decodeURIComponent(location.hash.slice(1)).split('/'); if (!v) return;
+  if (v === 'onboarding') { S.step = Math.max(0, STEPS.indexOf(a)); return; }
+  Object.assign(S.perms, { mic:true, ax:true, screen:true });
+  S.view = ['meetings', 'detail', 'chat', 'clips', 'settings'].includes(v) ? v : 'meetings';
+  if (v === 'detail') { S.current = byId(a) ? a : MEETINGS[0].id; if (a === 'transcript' || a === 'chat') S.panel = a; }
+  if (v === 'settings' && a) S.setPage = a;
+  if (v === 'record') setTimeout(() => { startRec(); if (a === 'live') { S.rec.open = true; renderOverlay(); } }, 0);
+  if (v === 'detected') setTimeout(() => { S.detect.state = 'shown'; renderOverlay(); }, 0);
+  if (v === 'menu') setTimeout(() => { S.mb.open = true; renderOverlay(); }, 0);
+  if (v === 'voice') setTimeout(() => startDict(false), 0);
+})();
+render();
+</script>
+</body>
+</html>
