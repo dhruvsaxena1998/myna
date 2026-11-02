@@ -1,6 +1,5 @@
 //! On-device model runtimes behind the `Transcriber` and `Diarizer` traits.
 //! Audio in is 16 kHz mono f32; times out are seconds from the start of that audio.
-#![cfg_attr(not(test), allow(dead_code))] // first caller is Dictation (story 04)
 
 use crate::models;
 use parakeet_rs::sortformer::{DiarizationConfig, Sortformer};
@@ -18,6 +17,7 @@ pub struct Segment {
     pub text: String,
 }
 
+#[cfg_attr(not(test), allow(dead_code))] // first caller is Meetings (story 05)
 #[derive(Debug, Clone, PartialEq)]
 pub struct Turn {
     pub start: f32,
@@ -29,6 +29,7 @@ pub trait Transcriber: Send {
     fn transcribe(&mut self, audio: &[f32]) -> Result<Vec<Segment>, String>;
 }
 
+#[cfg_attr(not(test), allow(dead_code))] // first caller is Meetings (story 05)
 pub trait Diarizer: Send {
     fn diarize(&mut self, audio: &[f32]) -> Result<Vec<Turn>, String>;
 }
@@ -50,6 +51,7 @@ pub fn transcriber(id: &str, dir: &Path) -> Result<Box<dyn Transcriber>, String>
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))] // first caller is Meetings (story 05)
 /// Loads the diarization model `id` from its folder (`models/<id>/`).
 pub fn diarizer(id: &str, dir: &Path) -> Result<Box<dyn Diarizer>, String> {
     let m = models::find(id).ok_or_else(|| format!("Unknown model {id}"))?;
@@ -109,6 +111,7 @@ impl Transcriber for Whisper {
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))] // first caller is Meetings (story 05)
 struct Sort(Sortformer);
 
 impl Diarizer for Sort {

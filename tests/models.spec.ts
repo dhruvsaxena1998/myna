@@ -144,3 +144,15 @@ test("Cancel and Try again respond at once, before the backend answers", async (
   await row(page).getByRole("button", { name: "Download parakeet" }).click();
   await expect(row(page).getByRole("progressbar")).toBeVisible();
 });
+
+test("unload time shows the saved choice, saves a new one, and reverts a failed save", async ({ page }) => {
+  await open(page, "() => null", `stt_unload_get: () => 900, stt_unload_set: ({ secs }) => { if (secs === -1) throw "Couldn't save when to unload the model: locked" }`);
+  const unload = page.getByLabel("Free up memory when idle");
+  await expect(unload).toHaveValue("900");
+  await unload.selectOption({ label: "After 1 hour" });
+  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "stt_unload_set")))
+    .toEqual([["stt_unload_set", { secs: 3600 }]]);
+  await unload.selectOption({ label: "Never" });
+  await expect(page.getByText("Couldn't save when to unload the model: locked")).toBeVisible();
+  await expect(unload).toHaveValue("3600");
+});

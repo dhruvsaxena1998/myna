@@ -6,6 +6,7 @@ use std::path::Path;
 const MIGRATIONS: &[&str] = &[
     "",
     "CREATE TABLE active_model(task TEXT PRIMARY KEY, model_id TEXT NOT NULL);",
+    "CREATE TABLE setting(key TEXT PRIMARY KEY, value TEXT NOT NULL);",
 ];
 const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
 

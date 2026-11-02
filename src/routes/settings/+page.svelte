@@ -2,6 +2,8 @@
   let { data } = $props();
   import ErrorState from "$lib/ErrorState.svelte";
   import ModelTask from "$lib/ModelTask.svelte";
+  import Permissions from "$lib/Permissions.svelte";
+  import UnloadAfter from "$lib/UnloadAfter.svelte";
 
   // Every page is listed from day one; unbuilt ones say what will live there.
   // Same pages and names as the prototype (docs/index.html, SET_PAGES).
@@ -50,9 +52,18 @@
         {:else}
           {@const [stt, diar] = data.models.tasks}
           <ModelTask task={stt} title="Turning speech into text" help="Used for voice typing and meeting notes." />
+          <UnloadAfter initial={data.models.unload} />
           <ModelTask task={diar} title="Telling voices apart" help="Works out who said what. Always runs on this Mac. Your own voice is always “Me”." />
           <p class="soon later">AI providers for summaries and chat, and quick decisions, will live here too.</p>
         {/if}
+      {:else if page.id === "dictation"}
+        <section class="group" aria-labelledby="hk-h">
+          <h2 id="hk-h">Shortcut</h2>
+          <!-- Changing it arrives with ticket 04.3. -->
+          <p class="srow"><span><span class="label">Shortcut key</span><span class="hint">Hold it in any app while you talk. Let go to add your words.</span></span>
+            <span class="keys" aria-label="Current shortcut: Option Space"><kbd>⌥</kbd><kbd>Space</kbd></span></p>
+        </section>
+        <Permissions initial={data.perms} />
       {:else if page.id === "about"}
         <dl>
           <dt>Version</dt><dd>{data.version}</dd>
@@ -88,5 +99,14 @@
   dl { display: grid; grid-template-columns: max-content 1fr; gap: var(--sp-2) var(--sp-4); margin: 0; }
   dt { color: var(--text-3); }
   dd { margin: 0; user-select: text; }
+  .group { margin-bottom: var(--sp-5); }
+  h2 { margin: 0 0 var(--sp-3); font-size: var(--fs-title3); line-height: var(--lh-title3); font-weight: var(--fw-semibold); }
+  .srow { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); margin: 0; padding: var(--sp-3) var(--sp-4);
+    border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); }
+  .label { display: block; font-weight: var(--fw-semibold); }
+  .hint { display: block; margin-top: 2px; color: var(--text-2); }
+  .keys { display: inline-flex; gap: var(--sp-1); }
+  kbd { min-width: 24px; height: 24px; padding: 0 var(--sp-2); box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center;
+    border-radius: var(--r-md); background: var(--fill-control); box-shadow: inset 0 0 0 .5px var(--line-strong), var(--shadow-control); font: inherit; }
   .mono { font: 12px/var(--lh-body) var(--font-mono); overflow-wrap: anywhere; }
 </style>

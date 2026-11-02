@@ -117,6 +117,30 @@ pub fn select(conn: &Connection, task: &str, id: &str, macos: u32) -> Result<(),
     Ok(())
 }
 
+/// Seconds the speech-to-text model stays loaded after its last use; 0 unloads right away, -1 never.
+pub const UNLOAD_CHOICES: [i64; 6] = [0, 60, 300, 900, 3600, -1];
+const UNLOAD_DEFAULT: i64 = 300;
+
+pub fn unload_after(conn: &Connection) -> Result<i64, String> {
+    let saved: Option<String> = conn
+        .query_row("SELECT value FROM setting WHERE key = 'stt_unload_secs'", [], |r| r.get(0))
+        .optional()
+        .map_err(|e| format!("Couldn't read when to unload the model: {e}"))?;
+    Ok(saved.and_then(|v| v.parse().ok()).filter(|v| UNLOAD_CHOICES.contains(v)).unwrap_or(UNLOAD_DEFAULT))
+}
+
+pub fn set_unload_after(conn: &Connection, secs: i64) -> Result<(), String> {
+    if !UNLOAD_CHOICES.contains(&secs) {
+        return Err(format!("{secs} s isn't one of the choices."));
+    }
+    conn.execute(
+        "INSERT INTO setting(key, value) VALUES ('stt_unload_secs', ?1) ON CONFLICT(key) DO UPDATE SET value = ?1",
+        [secs.to_string()],
+    )
+    .map_err(|e| format!("Couldn't save when to unload the model: {e}"))?;
+    Ok(())
+}
+
 /// Major macOS version, e.g. 15. 0 if unknown, which hides the macOS 15+ models rather than letting them fail later.
 pub fn macos_major() -> u32 {
     std::process::Command::new("/usr/bin/sw_vers")
@@ -139,6 +163,16 @@ mod tests {
 
     fn active(conn: &Connection, dir: &Path, macos: u32) -> Vec<Option<String>> {
         list(conn, dir, macos).unwrap().into_iter().map(|t| t.active).collect()
+    }
+
+    #[test]
+    fn unload_time_defaults_to_5_minutes_and_saves_only_listed_choices() {
+        let (_tmp, conn) = db();
+        assert_eq!(unload_after(&conn), Ok(300));
+        set_unload_after(&conn, -1).unwrap();
+        assert_eq!(unload_after(&conn), Ok(-1));
+        assert!(set_unload_after(&conn, 7).is_err());
+        assert_eq!(unload_after(&conn), Ok(-1));
     }
 
     #[test]
