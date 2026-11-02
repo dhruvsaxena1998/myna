@@ -23,7 +23,7 @@ The bare app: lives in the menubar with no Dock icon, opens a native-looking pop
 ## Decisions
 - Settings is its own window (menu, `⌘,`), sidebar of pages like macOS Settings. The main window (Meetings, Dictation history) comes with stories 04 and 05.
 - Popover shows only real rows: a "Myna" header, **Settings… ⌘,** and **Quit Myna ⌘Q**. Stories 04 and 05 add their rows when built; no greyed-out placeholders.
-- Left-click opens a borderless `NSPanel` with `NSVisualEffectView` vibrancy under the icon, HTML content styled with DESIGN.md menu tokens (a real NSMenu can't hold the custom rows later stories need). Right-click opens a real native menu (Settings, Quit). The first build's popover did not feel native, so a small panel prototype is judged on a Mac before the rest is built.
+- Left- and right-click both open a real native menu (NSMenu). Revised 2026-11-02 after the panel prototype looked worse than the native menu. Nothing in the planned menu needs a custom panel: section headers (`NSMenuItem.sectionHeader`), trailing text like `00:15`, `fn`, `Wed` (`NSMenuItemBadge`), the mic-on status row (disabled item with an image) and the live timer (update while open) are all native on macOS 14+. Tauri's menu API lacks headers and badges, so stories 04/05 build the NSMenu directly via objc2.
 - Every Settings page is in the sidebar: Modules, Dictation, Meetings, Models, AI providers, Experimental, About. Unbuilt pages show their title and one line on what will live there. About is real (version, attribution slot). One shared error state.
 
 ## Tickets

@@ -13,25 +13,6 @@
     "macOSPrivateApi": true,
     "windows": [
       {
-        "label": "popover",
-        "url": "/popover",
-        "width": 300,
-        "height": 100,
-        "visible": false,
-        "decorations": false,
-        "transparent": true,
-        "resizable": false,
-        "skipTaskbar": true,
-        "shadow": true,
-        "windowEffects": {
-          "effects": [
-            "popover"
-          ],
-          "state": "active",
-          "radius": 14
-        }
-      },
-      {
         "label": "settings",
         "title": "Settings",
         "url": "/settings",
