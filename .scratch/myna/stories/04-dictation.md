@@ -26,6 +26,7 @@ Hold a hotkey, speak, release; text appears in the focused app.
 ## Decisions
 - Default hotkey is Option+Space, through tauri-plugin-global-shortcut. Onboarding (story 02) will ask which key to use, fn included.
 - Tap to start and stop is capped at 5 minutes, which fits one Parakeet call with no chunking. The pill counts down the last 30 s, then stops and pastes.
+- Tap mode has no Done button (04.3): a click on the pill would activate Myna and take focus from the app being typed into. Pressing the shortcut again stops it.
 - The speech-to-text model unloads after 5 idle minutes by default, set under AI & privacy since meetings share it.
 - Microphone and Accessibility permissions are rows on the Voice typing page (state, and Allow opens the System Settings pane). Onboarding reuses the same rows.
 

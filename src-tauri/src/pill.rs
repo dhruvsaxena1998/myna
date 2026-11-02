@@ -72,9 +72,14 @@ pub fn place(app: &AppHandle, place: String) {
     });
 }
 
-/// Shows "listening", "writing", "added" or "idle" (nothing) on the pill.
+/// Shows "writing", "added" or "idle" (nothing) on the pill.
 pub fn show(app: &AppHandle, state: &str) {
     let _ = app.emit_to("pill", "dictation", serde_json::json!({ "state": state }));
+}
+
+/// Shows "listening": `hold` says let go of `key` to paste; otherwise press it again, before `limit` seconds run out.
+pub fn listening(app: &AppHandle, hold: bool, key: &str, limit: u64) {
+    let _ = app.emit_to("pill", "dictation", serde_json::json!({ "state": "listening", "hold": hold, "key": key, "limit": limit }));
 }
 
 /// Shows an error: what went wrong, and what to do about it.

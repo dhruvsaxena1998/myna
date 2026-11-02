@@ -12,10 +12,6 @@ async function open(page: import("@playwright/test").Page) {
   await page.getByRole("option", { name: "Voice typing" }).click();
 }
 
-test("shows the shortcut", async ({ page }) => {
-  await open(page);
-  await expect(page.getByLabel("Current shortcut: Option Space")).toHaveText("⌥Space");
-});
 
 test("Allow asks macOS for the mic and shows the answer", async ({ page }) => {
   await open(page);

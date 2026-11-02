@@ -5,6 +5,7 @@ mod permissions;
 mod pill;
 mod runtime;
 mod storage;
+mod voice;
 
 use rusqlite::Connection;
 use std::collections::HashMap;
@@ -13,9 +14,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tauri::image::Image;
-use tauri::menu::{MenuBuilder, MenuItemBuilder};
+use tauri::menu::{MenuBuilder, MenuItem, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
-use tauri::{ActivationPolicy, AppHandle, Emitter, Manager, WindowEvent};
+use tauri::{ActivationPolicy, AppHandle, Emitter, Manager, WindowEvent, Wry};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 /// Result of creating the data folder and database: the folder path, or the error to show.
@@ -34,12 +35,16 @@ struct Data {
     transcriber: Mutex<Loaded>,
     /// Bumped on every dictation, so an unload timer knows the model was used after it started.
     used: AtomicU64,
+    /// The shortcut registered with macOS right now, if any.
+    shortcut: Mutex<Option<String>>,
+    /// Set while Settings records a new shortcut, so pressing the old one types into the recorder.
+    paused: AtomicBool,
 }
 
-type Loaded = Option<(String, Box<dyn runtime::Transcriber>)>;
+/// "Start voice typing" in the menubar menu, which shows the shortcut.
+struct VoiceItem(MenuItem<Wry>);
 
-// shortcut: fixed until the shortcut recorder lands (ticket 04.3).
-const DICTATE: &str = "Alt+Space";
+type Loaded = Option<(String, Box<dyn runtime::Transcriber>)>;
 
 #[tauri::command]
 fn storage_status(storage: tauri::State<Storage>) -> Result<String, String> {
@@ -161,6 +166,60 @@ fn pill_look_set(app: AppHandle, d: tauri::State<Data>, style: String, place: St
     Ok(())
 }
 
+#[tauri::command]
+fn voice_get(d: tauri::State<Data>) -> Result<voice::Voice, String> {
+    voice::get(&d.db.lock().unwrap())
+}
+
+/// Saves voice typing's settings and registers the shortcut at once. If macOS won't take the new
+/// shortcut (another app has it), puts everything back as it was and says so.
+#[tauri::command]
+fn voice_set(app: AppHandle, d: tauri::State<Data>, voice: voice::Voice) -> Result<(), String> {
+    let was = voice::get(&d.db.lock().unwrap())?;
+    voice::set(&d.db.lock().unwrap(), &voice)?;
+    d.paused.store(false, Ordering::SeqCst);
+    if let Err(e) = sync_shortcut(&app) {
+        voice::set(&d.db.lock().unwrap(), &was)?;
+        let _ = sync_shortcut(&app);
+        return Err(e);
+    }
+    Ok(())
+}
+
+/// Lets go of the shortcut while Settings records a new one, and takes it back after.
+#[tauri::command]
+fn voice_pause(app: AppHandle, d: tauri::State<Data>, paused: bool) -> Result<(), String> {
+    d.paused.store(paused, Ordering::SeqCst);
+    sync_shortcut(&app)
+}
+
+/// Registers the saved shortcut while voice typing is on (and not paused), and drops it otherwise.
+/// The new one is taken before the old one goes, so a failure leaves the old one working.
+fn sync_shortcut(app: &AppHandle) -> Result<(), String> {
+    let d = app.state::<Data>();
+    let v = voice::get(&d.db.lock().unwrap())?;
+    let want = (v.on && !d.paused.load(Ordering::SeqCst)).then(|| v.key.clone());
+    let mut have = d.shortcut.lock().unwrap();
+    if *have != want {
+        let gs = app.global_shortcut();
+        if let Some(k) = &want {
+            gs.register(k.as_str()).map_err(|e| {
+                eprintln!("dictation: couldn't use {k}: {e}");
+                "Another app is using that shortcut. Pick a different one.".to_string()
+            })?;
+        }
+        if let Some(k) = have.take() {
+            let _ = gs.unregister(k.as_str());
+        }
+        *have = want;
+    }
+    if let Some(item) = app.try_state::<VoiceItem>() {
+        let _ = item.0.set_accelerator(Some(v.key.as_str()));
+        let _ = item.0.set_enabled(v.on);
+    }
+    Ok(())
+}
+
 /// Frees the speech-to-text model once it has sat unused for the chosen time.
 // shortcut: one sleeping thread per dictation; fine at human dictation rates.
 fn schedule_unload(app: &AppHandle) {
@@ -202,12 +261,14 @@ fn load_transcriber(d: &Data, slot: &mut Loaded) -> Result<(), String> {
     Ok(())
 }
 
-fn dictate_start(app: &AppHandle) {
+/// Starts recording. `hold`: it stops when the shortcut is let go; otherwise on the next tap, or at the time limit.
+fn dictate_start(app: &AppHandle, hold: bool) {
     let d = app.state::<Data>();
     let mut rec = d.recording.lock().unwrap();
     if rec.is_some() {
         return; // key repeat
     }
+    let Ok(v) = voice::get(&d.db.lock().unwrap()) else { return };
     if let Ok(look) = pill::look(&d.db.lock().unwrap()) {
         pill::place(app, look.place);
     }
@@ -228,7 +289,7 @@ fn dictate_start(app: &AppHandle) {
     }
     *rec = Some(dictation::record());
     let mine = d.used.fetch_add(1, Ordering::SeqCst) + 1; // a pending unload must not fire mid-dictation
-    pill::show(app, "listening");
+    pill::listening(app, hold, &v.key, voice::TAP_LIMIT_SECS);
     let loader = app.clone();
     std::thread::spawn(move || {
         let d = loader.state::<Data>();
@@ -238,8 +299,13 @@ fn dictate_start(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
         let d = app.state::<Data>();
+        let started = std::time::Instant::now();
         // Level bars, until this recording ends.
         while d.used.load(Ordering::SeqCst) == mine {
+            if !hold && started.elapsed().as_secs() >= voice::TAP_LIMIT_SECS {
+                dictate_stop(&app);
+                break;
+            }
             match d.recording.lock().unwrap().as_ref() {
                 Some(r) => pill::level(&app, r.level()),
                 None => break,
@@ -247,6 +313,15 @@ fn dictate_start(app: &AppHandle) {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
     });
+}
+
+/// The menu item, or a tap of the shortcut: start, or stop if already listening.
+fn dictate_toggle(app: &AppHandle) {
+    if app.state::<Data>().recording.lock().unwrap().is_some() {
+        dictate_stop(app);
+    } else {
+        dictate_start(app, false);
+    }
 }
 
 fn dictate_stop(app: &AppHandle) {
@@ -271,7 +346,10 @@ fn dictate_stop(app: &AppHandle) {
             Ok("added")
         };
         match run() {
-            Ok("nothing") => pill::error(&app, "Didn’t hear anything", "Hold the keys while you talk"),
+            Ok("nothing") => {
+                let tap = voice::get(&d.db.lock().unwrap()).is_ok_and(|v| v.mode == "tap");
+                pill::error(&app, "Didn’t hear anything", if tap { "Press the keys, talk, then press them again" } else { "Hold the keys while you talk" })
+            }
             Ok(state) => pill::show(&app, state),
             Err(e) if e == dictation::NO_AX => pill::error(&app, "Needs Accessibility", pill::ALLOW),
             Err(e) => pill::error(&app, "Couldn’t add your words", &e),
@@ -291,7 +369,7 @@ fn open_settings(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set])
+        .invoke_handler(tauri::generate_handler![storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, voice_get, voice_set, voice_pause])
         .setup(|app| {
             app.set_activation_policy(ActivationPolicy::Accessory);
 
@@ -306,20 +384,25 @@ pub fn run() {
                         recording: Default::default(),
                         transcriber: Default::default(),
                         used: Default::default(),
+                        shortcut: Default::default(),
+                        paused: Default::default(),
                     });
                     app.handle().plugin(
                         tauri_plugin_global_shortcut::Builder::new()
-                            .with_handler(|app, _, e| match e.state() {
-                                ShortcutState::Pressed => dictate_start(app),
-                                ShortcutState::Released => dictate_stop(app),
+                            .with_handler(|app, _, e| {
+                                let tap = voice::get(&app.state::<Data>().db.lock().unwrap()).is_ok_and(|v| v.mode == "tap");
+                                match (e.state(), tap) {
+                                    (ShortcutState::Pressed, false) => dictate_start(app, true),
+                                    (ShortcutState::Released, false) => dictate_stop(app),
+                                    // On release: a press may repeat while the key is down; a release comes once.
+                                    (ShortcutState::Released, true) => dictate_toggle(app),
+                                    (ShortcutState::Pressed, true) => {}
+                                }
                             })
                             .build(),
                     )?;
                     if let Some(w) = app.get_webview_window("pill") {
                         pill::setup(&w);
-                    }
-                    if let Err(e) = app.global_shortcut().register(DICTATE) {
-                        eprintln!("dictation: couldn't use {DICTATE}: {e}"); // another app holds it
                     }
                     Ok(dir.display().to_string())
                 }
@@ -332,19 +415,26 @@ pub fn run() {
             // shortcut: Tauri menus have no section headers or badges; stories 04/05 build the NSMenu via objc2.
             let settings_item = MenuItemBuilder::with_id("settings", "Settings…").accelerator("Cmd+,").build(app)?;
             let quit_item = MenuItemBuilder::with_id("quit", "Quit Myna").accelerator("Cmd+Q").build(app)?;
-            let menu = MenuBuilder::new(app).item(&settings_item).separator().item(&quit_item).build()?;
+            // The shortcut and enabled state are set by sync_shortcut below.
+            let voice_item = MenuItemBuilder::with_id("dictate", "Start voice typing").enabled(false).build(app)?;
+            let menu = MenuBuilder::new(app).item(&voice_item).separator().item(&settings_item).separator().item(&quit_item).build()?;
+            app.manage(VoiceItem(voice_item));
             TrayIconBuilder::with_id("myna")
                 .icon(Image::from_bytes(include_bytes!("../icons/tray.png"))?)
                 .icon_as_template(true)
                 .tooltip("Myna")
                 .menu(&menu)
                 .on_menu_event(|app, e| match e.id().as_ref() {
+                    "dictate" => dictate_toggle(app),
                     "settings" => open_settings(app),
                     "quit" => app.exit(0),
                     _ => {}
                 })
                 .build(app)?;
 
+            if !failed && let Err(e) = sync_shortcut(app.handle()) {
+                eprintln!("dictation: {e}"); // Voice typing still shows the saved shortcut; picking it again says why
+            }
             if failed {
                 open_settings(app.handle()); // never fail silently: Settings shows the error
             }

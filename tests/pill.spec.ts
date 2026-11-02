@@ -11,7 +11,7 @@ async function open(page: Page, look = { style: "capsule", place: "bottom" }) {
   await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(3);
 }
 const emit = (page: Page, event: string, payload: unknown) => page.evaluate(([e, p]) => (window as any).__emit(e, p), [event, payload] as const);
-const say = (page: Page, state: string) => emit(page, "dictation", { state });
+const say = (page: Page, state: string, hold = true) => emit(page, "dictation", state === "listening" ? { state, hold, key: "Alt+Space", limit: 300 } : { state });
 const fail = (page: Page, title: string, hint: string) => emit(page, "dictation", { state: "error", title, hint });
 
 test("hidden until dictation starts", async ({ page }) => {
@@ -116,4 +116,31 @@ test("sits against the edges of its position, and moves when the setting changes
   }
   await emit(page, "pill-look", { style: "card", place: "bottom" });
   await expect(page.locator(".hud.card")).toBeVisible();
+});
+
+test("tap mode: Press again to paste, and the shortcut on the card", async ({ page }) => {
+  await open(page, { style: "card", place: "bottom" });
+  await say(page, "listening", false);
+  await expect(page.getByRole("status")).toHaveText("Listening Press ⌥Space again to paste");
+  await say(page, "listening", true);
+  await expect(page.getByRole("status")).toHaveText("Listening Release ⌥Space to paste");
+});
+
+// Every style says how long is left in tap mode's last 30 s.
+for (const [style, words] of [["capsule", "ListeningAdding in 30 s"], ["orb", "Listening30"], ["wave", "Listening4:30 left"], ["card", "Listening Adding in 30 s"]]) {
+  test(`${style}: tap mode counts down its last 30 s`, async ({ page }) => {
+    await open(page, { style, place: "bottom" });
+    await say(page, "listening", false);
+    await page.clock.runFor(269_000);
+    await expect(page.getByRole("status")).not.toContainText(/Adding in|left|30$/);
+    await page.clock.runFor(1_000);
+    await expect(page.getByRole("status")).toHaveText(words.replace("4:30", "0:30"));
+  });
+}
+
+test("hold mode never counts down", async ({ page }) => {
+  await open(page);
+  await say(page, "listening", true);
+  await page.clock.runFor(290_000);
+  await expect(page.getByRole("status")).toHaveText("ListeningRelease to paste");
 });

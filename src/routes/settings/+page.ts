@@ -3,6 +3,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import type { Task } from "$lib/models";
 import type { Perms } from "$lib/Permissions.svelte";
 import type { Look } from "$lib/Pill.svelte";
+import type { Voice } from "$lib/VoiceShortcut.svelte";
 
 // Load before the first paint so nothing pops in after the window shows.
 export async function load() {
@@ -26,5 +27,11 @@ export async function load() {
         (err) => ({ ok: false as const, error: String(err) }),
       )
     : null;
-  return { storage, version, models, perms, look };
+  const voice = storage.ok
+    ? await invoke<Voice>("voice_get").then(
+        (voice) => ({ ok: true as const, voice }),
+        (err) => ({ ok: false as const, error: String(err) }),
+      )
+    : null;
+  return { storage, version, models, perms, look, voice };
 }

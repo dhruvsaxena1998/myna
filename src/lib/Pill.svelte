@@ -4,7 +4,8 @@
   export type Place = "bottom" | "top" | "bottom-right" | "top-right";
   export type Look = { style: Style; place: Place };
   export type Shown =
-    | { state: "listening" | "writing" | "added" }
+    | { state: "listening"; hold: boolean; key: string; limit?: number }
+    | { state: "writing" | "added" }
     | { state: "error"; title: string; hint: string };
   export const STYLES: [Style, string][] = [["capsule", "Capsule"], ["orb", "Orb"], ["wave", "Waveform"], ["card", "Card"]];
   export const PLACES: [Place, string][] = [["bottom", "Bottom centre"], ["top", "Top centre"], ["bottom-right", "Bottom right"], ["top-right", "Top right"]];
@@ -13,13 +14,19 @@
 </script>
 
 <script lang="ts">
+  import { keycaps } from "./shortcut";
   // `wave` is the recent mic levels, 0 to 1, oldest first; its last one drives the bars and the ring.
-  let { style, pill, wave, secs }: { style: Style; pill: Shown; wave: number[]; secs: number } = $props();
+  // `left`: seconds until tap mode stops by itself, during the last 30; otherwise null.
+  let { style, pill, wave, secs, left = null }: { style: Style; pill: Shown; wave: number[]; secs: number; left?: number | null } = $props();
   const level = $derived(wave.at(-1) ?? 0);
   const WEIGHTS = [0.5, 0.8, 1, 0.75, 0.45]; // the middle bars move most
   // Orb says nothing while things go well, so screen readers still get words.
   const quiet = $derived(style === "orb" && pill.state !== "error");
-  const clock = $derived(`${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`);
+  const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  const clock = $derived(fmt(secs));
+  const keys = $derived(pill.state === "listening" ? keycaps(pill.key) : []);
+  // What ends it: letting go, or pressing again; near the limit, how long until it adds your words anyway.
+  const hint = $derived(pill.state !== "listening" ? "" : left !== null ? `Adding in ${left} s` : pill.hold ? "Release to paste" : "Press again to paste");
 </script>
 
 {#snippet icon(kind: "check" | "warn" | "mic")}
@@ -39,7 +46,8 @@
       {#if pill.state === "listening"}{@render icon("mic")}{:else if pill.state === "writing"}<span class="spin"></span>{:else if pill.state === "added"}{@render icon("check")}{:else}{@render icon("warn")}{/if}
     </span>
     <span class="lines">
-      {#if pill.state === "listening"}<span class="t">Listening</span><span class="sub">Release <kbd>⌥</kbd><kbd>Space</kbd> to paste</span>
+      {#if pill.state === "listening"}<span class="t">Listening</span>
+        <span class="sub">{#if left !== null}{hint}{:else}{pill.hold ? "Release" : "Press"} {#each keys as k}<kbd>{k}</kbd>{/each} {pill.hold ? "to paste" : "again to paste"}{/if}</span>
       {:else if pill.state === "writing"}<span class="t">Writing…</span><span class="sub">On this Mac</span>
       {:else if pill.state === "added"}<span class="t">Added</span><span class="sub">Where you were typing</span>
       {:else if pill.state === "error"}<span class="t">{pill.title}</span><span class="sub">{pill.hint}</span>{/if}
@@ -50,10 +58,11 @@
     {#if style === "wave"}
       <span class="mic">{@render icon("mic")}</span>
       <span class="trace" aria-hidden="true">{#each wave as l}<i style:height="{3 + 21 * l}px"></i>{/each}</span>
-      <span class="sr">Listening</span><time>{clock}</time>
+      <span class="sr">Listening</span>{#if left !== null}<time class="end">{fmt(left)} left</time>{:else}<time>{clock}</time>{/if}
     {:else}
       {@render bars()}
-      {#if quiet}<span class="sr">Listening</span>{:else}<span>Listening</span><span class="sub">Release to paste</span>{/if}
+      {#if quiet}<span class="sr">Listening</span>{#if left !== null}<span class="end" aria-label={hint}>{left}</span>{/if}
+      {:else}<span>Listening</span><span class="sub" class:end={left !== null}>{hint}</span>{/if}
     {/if}
   {:else if pill.state === "writing"}
     {#if style !== "capsule"}<span class="spin" aria-hidden="true"></span>{/if}<span class:sr={quiet}>Writing…</span>
@@ -84,6 +93,8 @@
   .trace { display: flex; flex: 1; align-items: center; gap: 2px; height: 24px; min-width: 0; overflow: hidden; }
   .trace i { flex: none; width: 2px; border-radius: 1px; background: currentColor; }
   .wave time { font-variant-numeric: tabular-nums; color: var(--hud-2); }
+  /* The last 30 s of tap mode. */
+  .hud .end { color: var(--hud-fg); font-variant-numeric: tabular-nums; font-weight: var(--fw-semibold); }
   .mic { width: 22px; height: 22px; flex: none; display: grid; place-items: center; border-radius: 50%; background: var(--rec); }
   .mic .ic { width: 12px; height: 12px; stroke: #fff; }
   /* Card: two lines, a mic ring that swells with your voice. */

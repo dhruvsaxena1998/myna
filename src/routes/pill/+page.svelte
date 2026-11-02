@@ -5,12 +5,14 @@
 
   let look = $state<Look>({ style: "capsule", place: "bottom" });
   // What the pill last said; kept while it fades out so the text doesn't vanish first.
-  let pill = $state<Shown>({ state: "listening" });
+  let pill = $state<Shown>({ state: "listening", hold: true, key: "Alt+Space" });
   let on = $state(false);
   let wave = $state<number[]>(Array(WAVE).fill(0));
   let started = 0;
   let secs = $state(0);
   let hide: ReturnType<typeof setTimeout> | undefined;
+  // Tap mode counts down its last 30 s; the backend stops it at the limit.
+  const left = $derived(pill.state === "listening" && pill.limit && !pill.hold && pill.limit - secs <= 30 ? Math.max(0, pill.limit - secs) : null);
 
   $effect(() => {
     invoke<Look>("pill_look_get").then((l) => (look = l), () => {}); // the default look until it answers
@@ -35,7 +37,7 @@
 
 <!-- The window sits against the same screen edges (pill.rs `place`), so the pill keeps clear of the menubar and Dock. -->
 <div class="spot {look.place}" class:on role="status">
-  <Pill style={look.style} {pill} {wave} {secs} />
+  <Pill style={look.style} {pill} {wave} {secs} {left} />
 </div>
 
 <style>
