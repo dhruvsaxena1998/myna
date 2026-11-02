@@ -68,7 +68,8 @@
   li.selected { background: var(--accent-soft-strong); }
   main { border-radius: var(--r-xl); background: var(--bg-content); box-shadow: var(--shadow-panel); overflow: auto; }
   header { height: var(--h-toolbar); display: flex; align-items: center; padding: 0 var(--sp-5); }
-  h1 { margin: 0; font-size: var(--fs-title2); line-height: var(--lh-title2); font-weight: var(--fw-semibold); }
+  /* Let drags on the title fall through to the header's drag region. */
+  h1 { pointer-events: none; margin: 0; font-size: var(--fs-title2); line-height: var(--lh-title2); font-weight: var(--fw-semibold); }
   .content { padding: 0 var(--sp-5) var(--sp-5); }
   .soon { margin: 0; color: var(--text-2); }
   dl { display: grid; grid-template-columns: max-content 1fr; gap: var(--sp-2) var(--sp-4); margin: 0; }
