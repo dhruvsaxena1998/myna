@@ -2,6 +2,8 @@
 //! It deletes listed filler words and repeats, writes spoken numbers as digits and respells the user's
 //! words to remember, then repairs the gap. It never adds, reorders or rephrases.
 
+use rusqlite::{Connection, OptionalExtension};
+
 /// A name or special word the user lists, with the wrong form the model tends to write (heard as), if any.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Word {
@@ -282,6 +284,53 @@ fn remember(toks: &mut Vec<Tok>, words: &[Word]) {
         }
         i += 1;
     }
+}
+
+fn read(conn: &Connection, key: &str) -> Result<Option<String>, String> {
+    conn.query_row("SELECT value FROM setting WHERE key = ?1", [key], |r| r.get(0))
+        .optional()
+        .map_err(|e| format!("Couldn't read your words: {e}"))
+}
+
+pub fn load(conn: &Connection) -> Result<Settings, String> {
+    let err = |e: rusqlite::Error| format!("Couldn't read your words: {e}");
+    let mut q = conn.prepare("SELECT spelling, heard FROM word ORDER BY id").map_err(err)?;
+    let words = q.query_map([], |r| Ok(Word { spelling: r.get(0)?, heard: r.get(1)? })).map_err(err)?;
+    Ok(Settings {
+        language: read(conn, "dictation_language")?.unwrap_or("en".into()),
+        tidy: read(conn, "dictation_tidy")?.is_none_or(|v| v == "1"),
+        words: words.collect::<Result<_, _>>().map_err(err)?,
+    })
+}
+
+/// Replaces the saved settings; `words` keep their order, oldest first.
+// The settings page (ticket 04.10) is the first caller.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn save(conn: &Connection, s: &Settings) -> Result<(), String> {
+    let err = |e: rusqlite::Error| format!("Couldn't save your words: {e}");
+    let tx = conn.unchecked_transaction().map_err(err)?;
+    for (k, v) in [("dictation_language", s.language.as_str()), ("dictation_tidy", if s.tidy { "1" } else { "0" })] {
+        tx.execute("INSERT INTO setting(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2", [k, v]).map_err(err)?;
+    }
+    tx.execute("DELETE FROM word", []).map_err(err)?;
+    for w in &s.words {
+        tx.execute("INSERT INTO word(spelling, heard) VALUES (?1, ?2)", (&w.spelling, &w.heard)).map_err(err)?;
+    }
+    tx.commit().map_err(err)
+}
+
+/// Whisper's initial prompt: the entries, newest first, as many as fit in its ~224 tokens.
+// shortcut: counts a token as 3 characters, a safe overestimate for names; count with Whisper's tokenizer if prompts get cut.
+pub fn prompt(s: &Settings) -> String {
+    let mut out = String::new();
+    for w in s.words.iter().rev() {
+        let add = if out.is_empty() { w.spelling.clone() } else { format!(", {}", w.spelling) };
+        if (out.len() + add.len()).div_ceil(3) > 224 {
+            break;
+        }
+        out += &add;
+    }
+    out
 }
 
 pub fn clean(raw: &str, s: &Settings) -> String {

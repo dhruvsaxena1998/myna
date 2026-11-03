@@ -27,6 +27,8 @@ pub struct Turn {
 
 pub trait Transcriber: Send {
     fn transcribe(&mut self, audio: &[f32]) -> Result<Vec<Segment>, String>;
+    /// Nudges the next `transcribe` toward these words' spelling. Only Whisper takes one.
+    fn bias(&mut self, _words: &str) {}
 }
 
 #[cfg_attr(not(test), allow(dead_code))] // first caller is Meetings (story 05)
@@ -45,7 +47,7 @@ pub fn transcriber(id: &str, dir: &Path) -> Result<Box<dyn Transcriber>, String>
         "whisper-large-v3-turbo" => {
             let ctx = WhisperContext::new_with_params(first_file(&m, dir), WhisperContextParameters::default())
                 .map_err(|e| err(e.to_string()))?;
-            Ok(Box::new(Whisper(ctx.create_state().map_err(|e| err(e.to_string()))?)))
+            Ok(Box::new(Whisper(ctx.create_state().map_err(|e| err(e.to_string()))?, String::new())))
         }
         "apple-speech" => Ok(Box::new(AppleSpeech)),
         _ => Err(format!("{} can't run in Myna yet", m.name)),
@@ -90,9 +92,14 @@ impl Transcriber for Parakeet {
     }
 }
 
-struct Whisper(WhisperState);
+/// The model state and the initial prompt.
+struct Whisper(WhisperState, String);
 
 impl Transcriber for Whisper {
+    fn bias(&mut self, words: &str) {
+        self.1 = words.to_string();
+    }
+
     fn transcribe(&mut self, audio: &[f32]) -> Result<Vec<Segment>, String> {
         let mut p = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
         p.set_language(Some("auto"));
@@ -100,6 +107,9 @@ impl Transcriber for Whisper {
         p.set_print_realtime(false);
         p.set_print_special(false);
         p.set_print_timestamps(false);
+        if !self.1.is_empty() {
+            p.set_initial_prompt(&self.1);
+        }
         self.0.full(p, audio).map_err(|e| e.to_string())?;
         self.0
             .as_iter()
