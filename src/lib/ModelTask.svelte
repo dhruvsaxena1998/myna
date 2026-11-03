@@ -69,7 +69,7 @@
   <p class="help">{help}</p>
   <ul class="list" role="radiogroup" aria-label="{title} model">
     {#each task.models as m (m.id)}
-      {@const blocked = !m.runs_here}
+      {@const blocked = !!m.needs}
       <li class="row" class:blocked>
         <input type="radio" name="model-{task.id}" id="m-{m.id}" value={m.id} checked={active === m.id}
           disabled={blocked} onchange={() => pick(m.id)} />
@@ -80,20 +80,23 @@
         <span class="rates">{@render rating("Accuracy", m.acc, ACC)}{@render rating("Speed", m.spd, SPD)}</span>
         <!-- Fixed width so the state can change (Download → progress → Installed) without moving the row. -->
         <div class="dl">
+          <!-- Apple Speech: macOS owns the model, so no size, no Cancel (Apple's download can't stop), no Remove. -->
           {#if blocked}
-            <span class="size">{fmtSize(m.size)}</span><span class="pill">Needs macOS {m.min_macos}</span>
+            {#if !m.system}<span class="size">{fmtSize(m.size)}</span>{/if}<span class="pill">{m.needs}</span>
           {:else if m.id in dl.pct}
             <span class="bar" role="progressbar" aria-label="Downloading {m.name}" aria-valuenow={dl.pct[m.id]} aria-valuemin="0" aria-valuemax="100"><b style:transform="scaleX({dl.pct[m.id] / 100})"></b></span>
             <span class="size">{dl.pct[m.id]}%</span>
-            <button class="btn" onclick={() => cancel(m.id)}>Cancel</button>
+            {#if !m.system}<button class="btn" onclick={() => cancel(m.id)}>Cancel</button>{/if}
           {:else if installed(m)}
             <span class="ok"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>Installed</span>
-            <span class="size">{fmtSize(m.size)}</span>
-            <button class="btn quiet" aria-label="Remove {m.name}" onclick={() => remove(m.id)}>Remove</button>
-          {:else if m.files.length === 0}
+            {#if !m.system}
+              <span class="size">{fmtSize(m.size)}</span>
+              <button class="btn quiet" aria-label="Remove {m.name}" onclick={() => remove(m.id)}>Remove</button>
+            {/if}
+          {:else if m.files.length === 0 && !m.system}
             <span class="size">{fmtSize(m.size)}</span><span class="pill">Coming soon</span>
           {:else}
-            <span class="size">{fmtSize(m.size)}</span>
+            {#if !m.system}<span class="size">{fmtSize(m.size)}</span>{/if}
             <button class="btn" aria-label="Download {m.name}" onclick={() => start(m.id)}>
               <svg class="ic" viewBox="0 0 24 24" aria-hidden="true">{#if dl.retry[m.id]}<path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6" />{:else}<path d="M12 4v11M7 10l5 5 5-5M5 20h14" />{/if}</svg>{dl.retry[m.id] ? "Try again" : "Download"}
             </button>

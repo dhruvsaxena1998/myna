@@ -3,13 +3,13 @@ import { fakeTauri } from "./tauri";
 
 const model = (id: string, extra = {}) => ({
   id, name: id, vendor: "Vendor", desc: `${id} description`, acc: 4, spd: 3, default: false,
-  size: 670_479_942, min_macos: 0, repo: "r", revision: "x".repeat(40), files: [{}], installed: false, runs_here: true, ...extra,
+  size: 670_479_942, min_macos: 0, repo: "r", revision: "x".repeat(40), files: [{}], system: false, installed: false, needs: null, ...extra,
 });
 
 // Fresh install on macOS 14: nothing installed, Desert Ant models blocked.
 const tasks = JSON.stringify([
-  { id: "stt", active: "parakeet", models: [model("parakeet", { default: true }), model("voz", { min_macos: 15, runs_here: false, files: [] }), model("whisper", { size: 1_624_555_275, installed: true })] },
-  { id: "diar", active: "sortformer", models: [model("who", { default: true, min_macos: 15, runs_here: false }), model("sortformer")] },
+  { id: "stt", active: "parakeet", models: [model("parakeet", { default: true }), model("voz", { min_macos: 15, needs: "Needs macOS 15", files: [] }), model("whisper", { size: 1_624_555_275, installed: true })] },
+  { id: "diar", active: "sortformer", models: [model("who", { default: true, min_macos: 15, needs: "Needs macOS 15" }), model("sortformer")] },
 ]);
 
 async function open(page: import("@playwright/test").Page, select = "() => null", extra = "") {
@@ -155,4 +155,41 @@ test("unload time shows the saved choice, saves a new one, and reverts a failed 
   await unload.selectOption({ label: "Never" });
   await expect(page.getByText("Couldn't save when to unload the model: locked")).toBeVisible();
   await expect(unload).toHaveValue("3600");
+});
+
+const apple = (extra = {}) => model("apple", { name: "Apple Speech", size: 0, min_macos: 26, system: true, files: [], desc: "Built into macOS. Listens in English (India).", ...extra });
+async function openApple(page: import("@playwright/test").Page, a: object, extra = "") {
+  const t = JSON.stringify([{ id: "stt", active: "apple", models: [apple(a), model("parakeet", { default: true })] }, { id: "diar", active: null, models: [] }]);
+  await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", models_list: () => (${t}), ${extra} }`);
+  await page.goto("/settings");
+  await page.getByRole("option", { name: "AI & privacy" }).click();
+  return row(page);
+}
+
+test("Apple Speech, when macOS has its model, says its language with no size and no Remove", async ({ page }) => {
+  const r = await openApple(page, { installed: true });
+  await expect(r).toContainText("Listens in English (India).");
+  await expect(r).toContainText("Installed");
+  await expect(r).not.toContainText("MB");
+  await expect(r.getByRole("button")).toHaveCount(0);
+  await expect(page.getByRole("radio", { name: /Apple Speech/ })).toBeChecked();
+});
+
+test("Apple Speech downloads through macOS with progress and no Cancel, without moving the row", async ({ page }) => {
+  const r = await openApple(page, {}, "model_download: () => null");
+  const before = await r.boundingBox();
+  await r.getByRole("button", { name: "Download Apple Speech" }).click();
+  await emit(page, { id: "apple", state: "progress", pct: 40 });
+  await expect(r.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "40");
+  await expect(r.getByRole("button")).toHaveCount(0);
+  expect(await r.boundingBox()).toEqual(before);
+  await emit(page, { id: "apple", state: "done" });
+  await expect(r).toContainText("Installed");
+  expect(await r.boundingBox()).toEqual(before);
+});
+
+test("Apple Speech in a language Apple doesn't support can't be picked", async ({ page }) => {
+  await openApple(page, { needs: "Needs a language Apple supports", desc: "Built into macOS." });
+  await expect(page.getByRole("radio", { name: /Apple Speech/ })).toBeDisabled();
+  await expect(page.getByText("Needs a language Apple supports")).toBeVisible();
 });

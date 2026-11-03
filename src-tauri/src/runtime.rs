@@ -10,7 +10,7 @@ use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextPar
 
 pub const RATE: u32 = 16_000;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
 pub struct Segment {
     pub start: f32,
     pub end: f32,
@@ -47,6 +47,7 @@ pub fn transcriber(id: &str, dir: &Path) -> Result<Box<dyn Transcriber>, String>
                 .map_err(|e| err(e.to_string()))?;
             Ok(Box::new(Whisper(ctx.create_state().map_err(|e| err(e.to_string()))?)))
         }
+        "apple-speech" => Ok(Box::new(AppleSpeech)),
         _ => Err(format!("{} can't run in Myna yet", m.name)),
     }
 }
@@ -108,6 +109,15 @@ impl Transcriber for Whisper {
                 Ok(Segment { start: s.start_timestamp() as f32 / 100.0, end: s.end_timestamp() as f32 / 100.0, text })
             })
             .collect()
+    }
+}
+
+/// macOS holds the model, so there's nothing to load or unload.
+struct AppleSpeech;
+
+impl Transcriber for AppleSpeech {
+    fn transcribe(&mut self, audio: &[f32]) -> Result<Vec<Segment>, String> {
+        crate::apple::transcribe(audio)
     }
 }
 
@@ -230,6 +240,12 @@ mod tests {
     #[ignore = "slow: needs the downloaded Whisper model"]
     fn whisper_transcribes() {
         transcribes_the_fixture("whisper-large-v3-turbo");
+    }
+
+    #[test]
+    #[ignore = "slow: needs macOS 26 and Apple's model for the Mac's language"]
+    fn apple_speech_transcribes() {
+        transcribes_the_fixture("apple-speech");
     }
 
     #[test]

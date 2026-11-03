@@ -19,6 +19,18 @@
       ]
     },
     {
+      "id": "apple-speech",
+      "name": "Apple Speech",
+      "vendor": "Apple",
+      "desc": "Built into macOS.",
+      "acc": 4,
+      "spd": 5,
+      "size": 0,
+      "min_macos": 26,
+      "system": true,
+      "files": []
+    },
+    {
       "id": "voz",
       "name": "Desert Ant Voz",
       "vendor": "Desert Ant Labs",

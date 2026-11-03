@@ -1,3 +1,4 @@
+mod apple;
 mod dictation;
 mod download;
 mod models;
@@ -51,14 +52,15 @@ fn storage_status(storage: tauri::State<Storage>) -> Result<String, String> {
     storage.0.clone()
 }
 
+/// Asking macOS about Apple Speech waits on it briefly, so these run off the main thread.
 #[tauri::command]
-fn models_list(d: tauri::State<Data>) -> Result<Vec<models::Task>, String> {
-    models::list(&d.db.lock().unwrap(), &d.models_dir, d.macos)
+async fn models_list(d: tauri::State<'_, Data>) -> Result<Vec<models::Task>, String> {
+    models::list(&d.db.lock().unwrap(), &d.models_dir, d.macos, &apple::status())
 }
 
 #[tauri::command]
-fn model_select(d: tauri::State<Data>, task: String, id: String) -> Result<(), String> {
-    models::select(&d.db.lock().unwrap(), &task, &id, d.macos)
+async fn model_select(d: tauri::State<'_, Data>, task: String, id: String) -> Result<(), String> {
+    models::select(&d.db.lock().unwrap(), &task, &id, d.macos, &apple::status())
 }
 
 /// What the Settings window hears while a model downloads: `{ id, state: "progress" | "done" | "canceled" | "failed", ... }`.
@@ -73,11 +75,11 @@ fn model_event(app: &AppHandle, id: &str, state: &str, extra: serde_json::Value)
 #[tauri::command]
 fn model_download(app: AppHandle, d: tauri::State<Data>, id: String) -> Result<(), String> {
     let m = models::find(&id).ok_or_else(|| format!("Unknown model {id}"))?;
-    if m.files.is_empty() {
+    if m.files.is_empty() && !m.system {
         return Err(format!("{} can't be downloaded yet.", m.name));
     }
-    if !models::runs_here(&m, d.macos) {
-        return Err(format!("{} needs macOS {}.", m.name, m.min_macos));
+    if let Some(n) = models::needs(&m, d.macos, &apple::status()) {
+        return Err(format!("{}: {n}.", m.name));
     }
     let cancel = Arc::new(AtomicBool::new(false));
     if d.downloads.lock().unwrap().insert(id.clone(), cancel.clone()).is_some() {
@@ -85,14 +87,19 @@ fn model_download(app: AppHandle, d: tauri::State<Data>, id: String) -> Result<(
     }
     let dir = d.models_dir.clone();
     std::thread::spawn(move || {
-        let (total, mut last) = (m.size, u64::MAX);
-        let result = download::fetch(download::HF, &m, &dir, &cancel, |done| {
-            let pct = done * 100 / total;
+        let mut last = u64::MAX;
+        let mut progress = |pct: u64| {
             if pct != last && !cancel.load(Ordering::Relaxed) {
                 last = pct;
                 model_event(&app, &m.id, "progress", serde_json::json!({ "pct": pct }));
             }
-        });
+        };
+        // Apple's download can't be canceled; the row shows no Cancel for it.
+        let result = if m.system {
+            apple::download(|done| progress((done.clamp(0.0, 1.0) * 100.0) as u64)).map(|()| true)
+        } else {
+            download::fetch(download::HF, &m, &dir, &cancel, |done| progress(done * 100 / m.size))
+        };
         if cancel.load(Ordering::Relaxed) {
             return; // model_cancel already answered, and a retry may own the entry now
         }
@@ -247,11 +254,12 @@ fn schedule_unload(app: &AppHandle) {
 
 /// The active speech-to-text model's id and folder, if it's downloaded.
 fn active_stt(d: &Data) -> Result<(String, PathBuf), String> {
-    let tasks = models::list(&d.db.lock().unwrap(), &d.models_dir, d.macos)?;
+    let tasks = models::list(&d.db.lock().unwrap(), &d.models_dir, d.macos, &apple::status())?;
     let stt = tasks.into_iter().find(|t| t.id == "stt").ok_or("No speech-to-text task.")?;
     let id = stt.active.ok_or("No speech-to-text model runs on this Mac")?;
     match stt.models.iter().find(|m| m.id == id) {
         Some(m) if m.installed => Ok((id.clone(), d.models_dir.join(&id))),
+        Some(m) if m.system => Err(format!("Download {}’s language in Settings › AI & privacy", m.name)),
         Some(m) => Err(format!("Download {} in Settings › AI & privacy", m.name)),
         None => Err(format!("Unknown model {id}")),
     }

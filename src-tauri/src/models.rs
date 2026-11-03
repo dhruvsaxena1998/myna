@@ -25,14 +25,28 @@ pub struct Model {
     /// 0 = any macOS Myna runs on.
     #[serde(default)]
     pub min_macos: u32,
+    #[serde(default)]
     pub repo: String,
+    #[serde(default)]
     pub revision: String,
-    /// Empty for Desert Ant models: their SDK fetches and verifies its own weights (ticket 03.4).
+    /// Empty for Desert Ant models (their SDK fetches and verifies its own weights, ticket 03.4) and Apple Speech.
     pub files: Vec<File>,
+    /// Built into macOS (Apple Speech): macOS downloads and owns its model.
+    #[serde(default)]
+    pub system: bool,
     #[serde(default)]
     pub installed: bool,
+    /// Why it can't be picked on this Mac, e.g. "Needs macOS 15". None if it can.
     #[serde(default)]
-    pub runs_here: bool,
+    pub needs: Option<String>,
+}
+
+/// What macOS says about Apple Speech on this Mac.
+#[derive(Deserialize, Default, Clone)]
+pub struct System {
+    /// The Mac's language, e.g. "English (India)". None if Apple Speech can't hear it.
+    pub language: Option<String>,
+    pub installed: bool,
 }
 
 #[derive(Deserialize)]
@@ -62,8 +76,11 @@ fn task_models(task: &str) -> Option<Vec<Model>> {
     }
 }
 
-pub fn runs_here(m: &Model, macos: u32) -> bool {
-    macos >= m.min_macos
+pub fn needs(m: &Model, macos: u32, sys: &System) -> Option<String> {
+    if macos < m.min_macos {
+        return Some(format!("Needs macOS {}", m.min_macos));
+    }
+    (m.system && sys.language.is_none()).then(|| "Needs a language Apple supports".into())
 }
 
 pub fn find(id: &str) -> Option<Model> {
@@ -79,23 +96,29 @@ fn is_installed(m: &Model, models_dir: &Path) -> bool {
         })
 }
 
-pub fn list(conn: &Connection, models_dir: &Path, macos: u32) -> Result<Vec<Task>, String> {
+pub fn list(conn: &Connection, models_dir: &Path, macos: u32, sys: &System) -> Result<Vec<Task>, String> {
     ["stt", "diar"]
         .into_iter()
         .map(|id| {
             let mut models = task_models(id).unwrap();
             for m in &mut models {
-                m.installed = is_installed(m, models_dir);
-                m.runs_here = runs_here(m, macos);
+                m.installed = if m.system { sys.installed } else { is_installed(m, models_dir) };
+                m.needs = needs(m, macos, sys);
+                if let (true, Some(lang)) = (m.system, &sys.language) {
+                    m.desc = format!("{} Listens in {lang}.", m.desc);
+                }
             }
             let saved: Option<String> = conn
                 .query_row("SELECT model_id FROM active_model WHERE task = ?1", [id], |r| r.get(0))
                 .optional()
                 .map_err(|e| format!("Couldn't read the chosen models: {e}"))?;
             let usable = |want: &dyn Fn(&Model) -> bool| {
-                models.iter().find(|m| m.runs_here && want(m)).map(|m| m.id.clone())
+                models.iter().find(|m| m.needs.is_none() && want(m)).map(|m| m.id.clone())
             };
+            // The recommended model once it's downloaded; until then Apple Speech, so nobody waits on a download.
             let active = usable(&|m| Some(&m.id) == saved.as_ref())
+                .or_else(|| usable(&|m| m.default && m.installed))
+                .or_else(|| usable(&|m| m.system))
                 .or_else(|| usable(&|m| m.default))
                 .or_else(|| usable(&|_| true));
             Ok(Task { id, models, active })
@@ -103,11 +126,11 @@ pub fn list(conn: &Connection, models_dir: &Path, macos: u32) -> Result<Vec<Task
         .collect()
 }
 
-pub fn select(conn: &Connection, task: &str, id: &str, macos: u32) -> Result<(), String> {
+pub fn select(conn: &Connection, task: &str, id: &str, macos: u32, sys: &System) -> Result<(), String> {
     let models = task_models(task).ok_or_else(|| format!("Unknown task {task}"))?;
     let m = models.iter().find(|m| m.id == id).ok_or_else(|| format!("Unknown model {id}"))?;
-    if !runs_here(m, macos) {
-        return Err(format!("{} needs macOS {}.", m.name, m.min_macos));
+    if let Some(n) = needs(m, macos, sys) {
+        return Err(format!("{}: {n}.", m.name));
     }
     conn.execute(
         "INSERT INTO active_model(task, model_id) VALUES (?1, ?2) ON CONFLICT(task) DO UPDATE SET model_id = ?2",
@@ -161,8 +184,13 @@ mod tests {
         (tmp, conn)
     }
 
+    /// macOS 26+ in a language Apple Speech hears.
+    fn english(installed: bool) -> System {
+        System { language: Some("English (India)".into()), installed }
+    }
+
     fn active(conn: &Connection, dir: &Path, macos: u32) -> Vec<Option<String>> {
-        list(conn, dir, macos).unwrap().into_iter().map(|t| t.active).collect()
+        list(conn, dir, macos, &english(true)).unwrap().into_iter().map(|t| t.active).collect()
     }
 
     #[test]
@@ -181,7 +209,7 @@ mod tests {
             assert_eq!(models.iter().filter(|m| m.default).count(), 1, "{task}: one default");
             for m in &models {
                 assert!((1..=5).contains(&m.acc) && (1..=5).contains(&m.spd), "{}", m.id);
-                assert_eq!(m.revision.len(), 40, "{}: pinned commit", m.id);
+                assert!(m.system || m.revision.len() == 40, "{}: pinned commit", m.id);
                 if !m.files.is_empty() {
                     assert_eq!(m.files.iter().map(|f| f.size).sum::<u64>(), m.size, "{}: size", m.id);
                 }
@@ -195,8 +223,8 @@ mod tests {
     #[test]
     fn fresh_install_lists_everything_uninstalled_with_defaults() {
         let (tmp, conn) = db();
-        let tasks = list(&conn, &tmp.path().join("models"), 15).unwrap();
-        assert!(tasks.iter().flat_map(|t| &t.models).all(|m| !m.installed));
+        let tasks = list(&conn, &tmp.path().join("models"), 15, &english(true)).unwrap();
+        assert!(tasks.iter().flat_map(|t| &t.models).all(|m| m.system || !m.installed), "macOS owns Apple Speech");
         assert_eq!(active(&conn, tmp.path(), 15), [Some("parakeet-tdt-v3".into()), Some("who".into())]);
     }
 
@@ -204,18 +232,57 @@ mod tests {
     fn macos_14_falls_back_from_desert_ant_and_cant_pick_it() {
         let (tmp, conn) = db();
         assert_eq!(active(&conn, tmp.path(), 14), [Some("parakeet-tdt-v3".into()), Some("sortformer".into())]);
-        assert!(select(&conn, "diar", "who", 14).unwrap_err().contains("macOS 15"));
+        assert!(select(&conn, "diar", "who", 14, &english(true)).unwrap_err().contains("macOS 15"));
+    }
+
+    fn installed_parakeet(models: &Path) {
+        let dir = models.join("parakeet-tdt-v3");
+        std::fs::create_dir_all(&dir).unwrap();
+        for f in find("parakeet-tdt-v3").unwrap().files {
+            std::fs::File::create(dir.join(&f.path)).unwrap().set_len(f.size).unwrap(); // sparse
+        }
+    }
+
+    #[test]
+    fn apple_speech_is_active_until_parakeet_is_downloaded() {
+        let (tmp, conn) = db();
+        let models = tmp.path().join("models");
+        let stt = |sys: &System, macos| list(&conn, &models, macos, sys).unwrap().remove(0);
+        assert_eq!(stt(&english(false), 26).active.as_deref(), Some("apple-speech"), "not installed still wins over a download");
+        assert_eq!(stt(&System::default(), 26).active.as_deref(), Some("parakeet-tdt-v3"), "unsupported language");
+        assert_eq!(stt(&english(true), 15).active.as_deref(), Some("parakeet-tdt-v3"), "macOS 15");
+        installed_parakeet(&models);
+        assert_eq!(stt(&english(true), 26).active.as_deref(), Some("parakeet-tdt-v3"));
+        select(&conn, "stt", "apple-speech", 26, &english(true)).unwrap();
+        assert_eq!(stt(&english(true), 26).active.as_deref(), Some("apple-speech"), "a pick sticks");
+    }
+
+    #[test]
+    fn apple_speech_row_says_its_language_or_what_it_needs() {
+        let (tmp, conn) = db();
+        let row = |sys: &System, macos| {
+            list(&conn, &tmp.path().join("models"), macos, sys).unwrap().remove(0).models.into_iter().find(|m| m.system).unwrap()
+        };
+        let r = row(&english(true), 26);
+        assert_eq!((r.desc.as_str(), r.installed, r.needs), ("Built into macOS. Listens in English (India).", true, None));
+        assert_eq!(row(&english(true), 15).needs.as_deref(), Some("Needs macOS 26"));
+        assert_eq!(row(&System::default(), 26).needs.as_deref(), Some("Needs a language Apple supports"));
+        assert!(!row(&english(false), 26).installed);
+        assert_eq!(
+            select(&conn, "stt", "apple-speech", 26, &System::default()).unwrap_err(),
+            "Apple Speech: Needs a language Apple supports."
+        );
     }
 
     #[test]
     fn choice_persists_across_reopen() {
         let (tmp, conn) = db();
-        select(&conn, "stt", "whisper-large-v3-turbo", 15).unwrap();
-        select(&conn, "stt", "voz", 15).unwrap();
+        select(&conn, "stt", "whisper-large-v3-turbo", 15, &english(true)).unwrap();
+        select(&conn, "stt", "voz", 15, &english(true)).unwrap();
         drop(conn);
         let conn = crate::storage::open(tmp.path()).unwrap();
         assert_eq!(active(&conn, tmp.path(), 15)[0].as_deref(), Some("voz"));
-        assert!(select(&conn, "stt", "nope", 15).is_err());
+        assert!(select(&conn, "stt", "nope", 15, &english(true)).is_err());
     }
 
     #[test]
@@ -225,7 +292,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let f = std::fs::File::create(dir.join("ggml-large-v3-turbo.bin")).unwrap();
         let installed = |conn: &Connection| {
-            list(conn, &tmp.path().join("models"), 15).unwrap()[0].models.iter().find(|m| m.id.starts_with("whisper")).unwrap().installed
+            list(conn, &tmp.path().join("models"), 15, &english(true)).unwrap()[0].models.iter().find(|m| m.id.starts_with("whisper")).unwrap().installed
         };
         assert!(!installed(&conn), "partial file");
         f.set_len(1624555275).unwrap(); // sparse, no real disk use
