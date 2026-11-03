@@ -809,8 +809,8 @@ const S = {
   sums:{}, regen:{ mode:null, tpl:'t-summary', saving:false, draft:'' },
   pop:null, panel:null, copied:null, folderIcon:{}, clipQ:'', mq:'', undoClip:null, clipConfirm:false, clipOpen:{}, suggOff:{},
   clips:[
-    { id:'c1', text:'Can we move the design review to Thursday afternoon? Wednesday is packed.', src:'Slack', t:'Today 11:52' },
-    { id:'c2', text:'Tom, please add cancel, retry and checksum checks to the model downloads before Friday.', src:'Linear', t:'Today 11:20' },
+    { id:'c1', text:'Can we move the design review to Thursday afternoon? Wednesday is packed.', raw:'Um, can we move the the design review to Thursday afternoon? Wednesday is packed.', src:'Slack', t:'Today 11:52' },
+    { id:'c2', text:'Tom, please add cancel, retry and checksum checks to the model downloads before Friday.', raw:'Tom, please add uh cancel, retry and checksum checks to the model downloads before Friday.', src:'Linear', t:'Today 11:20' },
     { id:'c3', text:'Thanks for the call today. As promised, I will send the pilot plan by Thursday with the ten users we picked, the week-two SSO milestone and the reporting dashboard for week three. I will also loop in Aisha on the SSO provider details so her team can start the setup early, and set up a short check-in on Friday to walk through any open questions before the pilot starts.', src:'Mail', t:'Today 10:41' },
     { id:'c4', text:'Note to self: ask Priya about the selector update path for the extension.', src:'Notes', t:'Yesterday 17:05' },
     { id:'c5', text:'Monthly billing during the pilot, annual after the review. Can you confirm the review date?', src:'Mail', t:'Yesterday 14:30' }
@@ -818,7 +818,7 @@ const S = {
   chats:{}, tokensSent:{},
   global:{ msgs:[] }
 };
-S.set = { modules:S.modules, hotkey:'fn', mode:'hold', paste:'clipboard', pillStyle:'capsule', pillPlace:'bottom', dict:['Myna','Parakeet','Desert Ant'],
+S.set = { modules:S.modules, hotkey:'fn', mode:'hold', paste:'clipboard', pillStyle:'capsule', pillPlace:'bottom', dict:['Myna','Parakeet','Desert Ant','Drove → Dhruv'], lang:'en', rules:true,
   capture:'shots', interval:'15', apps:{ meet:false, teams:false, zoom:false, slack:false }, ext:false, retention:'30', folder:true, dataPath:'~/Library/Application Support/Myna', dataMoved:false,
   meetKey:'ctrl-opt-m', appearance:'auto', accent:'blue', glass:'clear', detect:true,
   diar:'who', decision:'fast', decKey:'', upd:'',
@@ -868,6 +868,7 @@ const fmtTok = n => n >= 1000 ? (n/1000).toFixed(1) + 'k' : String(n);
 const ctxChars = ids => ids.reduce((a, id) => { const m = byId(id); return a + m.transcript.reduce((b, r) => b + r[2].length + r[0].length, 0) + JSON.stringify(S.sums[id].data).length; }, 0);
 
 /* ---------- onboarding ---------- */
+const LANGS = [['en','English'],['de','German'],['fr','French'],['es','Spanish'],['it','Italian'],['nl','Dutch'],['pt','Portuguese']]; // the active model's languages, pre-filled from the Mac's
 const STEPS = ['modules','permissions','models','done'];
 function onboarding() {
   const step = STEPS[S.step];
@@ -899,7 +900,8 @@ function obModules() {
     <ul class="list">
       ${row('dictation','mic','Type with your voice','Hold a key, talk, and let go. Your words appear wherever you’re typing.','Works in any app')}
       ${row('meetings','wave','Take notes in meetings','Myna records your calls and gives you notes, a summary and answers to your questions.','Works with Zoom, Meet, Teams and Slack')}
-    </ul>`;
+    </ul>
+    ${S.modules.dictation ? `<div class="od-field" style="--od-gap:4px;margin-top:var(--s4)"><label class="label" for="${sid('lang')}">Language you speak</label>${sel('lang', LANGS, 'Language you speak')}<span class="help">Myna tidies up English. In other languages it keeps your words as said.</span></div>` : ''}`;
 }
 function obPerms() {
   const rows = [
@@ -1094,7 +1096,7 @@ function clipsView() {
       ${S.undoClip ? `<div class="undo" role="status">${S.undoClip.all ? `Deleted ${S.undoClip.all.length} items.` : 'Deleted.'}<button class="link" id="clip-undo" data-act="clip-undo">Undo</button></div>` : ''}
       ${list.length ? `<ul class="clist">${list.map(c => `<li class="clip"><div class="od-field od-fill" style="--od-gap:2px"><p class="${S.clipOpen[c.id] ? '' : 'od-clamp-2'}">${esc(c.text)}</p>
             <span class="help">${esc(c.src)} · ${esc(c.t)}${c.text.length > 140 ? ` · <button class="link" data-act="clip-more" data-id="${c.id}" aria-expanded="${!!S.clipOpen[c.id]}">${S.clipOpen[c.id] ? 'Show less' : 'Show more'}</button>` : ''}</span></div>
-          <div class="clip-acts od-row od-fixed" style="--od-gap:2px"><button class="btn icon plain" data-act="clip-copy" data-id="${c.id}" aria-label="Copy again" title="Copy again">${icon('copy','ic-s')}</button><button class="btn icon plain" data-act="clip-del" data-id="${c.id}" aria-label="Delete" title="Delete">${icon('x','ic-s')}</button></div></li>`).join('')}</ul>`
+          <div class="clip-acts od-row od-fixed" style="--od-gap:2px">${c.raw && c.raw !== c.text ? `<button class="btn icon plain" data-act="clip-raw" data-id="${c.id}" aria-label="Copy what I said" title="Copy what I said">${icon('mic','ic-s')}</button>` : ''}<button class="btn icon plain" data-act="clip-copy" data-id="${c.id}" aria-label="Copy again" title="Copy again">${icon('copy','ic-s')}</button><button class="btn icon plain" data-act="clip-del" data-id="${c.id}" aria-label="Delete" title="Delete">${icon('x','ic-s')}</button></div></li>`).join('')}</ul>`
         : `<div class="empty"><h2>${q ? 'No matches' : 'Nothing here yet'}</h2><p>${q ? 'Try another word, or check the spelling.' : 'Hold your voice typing key in any app and talk. What you say shows up here too.'}</p>${q ? `<button class="btn" data-act="clipq-clear">Clear search</button>` : ''}</div>`}
     </div>`;
 }
@@ -1166,7 +1168,7 @@ function regenPop(m) {
     </form>`;
 }
 function addDict(str) {
-  str.split(',').map(w => w.trim().slice(0, 40)).filter(Boolean).forEach(w => { if (!S.set.dict.some(x => x.toLowerCase() === w.toLowerCase())) S.set.dict.push(w); });
+  str.split(',').map(w => w.trim().replace(/\s*->\s*/, ' → ').slice(0, 40)).filter(Boolean).forEach(w => { if (!S.set.dict.some(x => x.toLowerCase() === w.toLowerCase())) S.set.dict.push(w); });
   render(); $('#dict-in').focus();
 }
 function saveTpl() {
@@ -1331,10 +1333,13 @@ function settingsPage() {
         srow('Position', 'Where it shows, on the screen you’re typing on.', sel('pillPlace', [['bottom','Bottom centre'],['top','Top centre'],['bottom-right','Bottom right'],['top-right','Top right']], 'Pill position'))
       ]) + sgroup('Adding your words', [
         srow('How words are added', x.paste === 'clipboard' ? 'Fastest. Myna puts back whatever you had copied afterwards.' : 'Types each letter. Slower, but works in apps that block pasting.', segc('paste', [['clipboard','Paste'],['type','Type']], 'How words are added'))
+      ]) + sgroup('Your words', [
+        srow('Language you speak', 'Myna tidies up English. In other languages it keeps your words as said.', sel('lang', LANGS, 'Language you speak')),
+        srow('Tidy up as I talk', x.rules ? 'Removes um and uh and repeated words, and writes numbers like 25 as digits.' : 'Pastes exactly what the model heard. Words to remember still apply.', sw('rules', 'Tidy up as I talk'))
       ]) + `<section class="sgroup"><h2>Words to remember</h2><p class="help">Names and special words Myna should spell your way.</p>
         <div class="chipin" data-act="dict-focus">${x.dict.map(w => `<span class="tag">${esc(w)}<button data-act="dict-rm" data-w="${esc(w)}" aria-label="Remove ${esc(w)}">${icon('x','ic-s')}</button></span>`).join('')}
           <form data-form="dict" class="chipin-f"><label class="sr-only" for="dict-in">Add words for Myna to remember</label><input id="dict-in" maxlength="200" placeholder="${x.dict.length ? 'Add a word' : 'Type a word, then a comma'}" autocomplete="off" aria-describedby="dict-help"></form></div>
-        <p class="help" id="dict-help" style="margin-top:6px">Press comma or Return to add a word. Press Backspace in an empty box to remove the last one.</p></section>`);
+        <p class="help" id="dict-help" style="margin-top:6px">Press comma or Return to add a word. Press Backspace in an empty box to remove the last one. If Myna keeps mishearing a word, type it like Drove -&gt; Dhruv.</p></section>`);
     case 'meetings': return sgroup('Meeting notes', [
         srow('Use meeting notes', 'Record your calls and get notes, a summary and answers to your questions.', sw('modules.meetings', 'Use meeting notes'))
       ]) + (!S.modules.meetings ? '' : sgroup('Shortcut', [
@@ -1603,9 +1608,10 @@ document.addEventListener('click', e => {
     }
     case 'set-ficon': S.folderIcon[el.dataset.v] = el.dataset.ic; render(); $(`[data-act=set-ficon][data-ic=${el.dataset.ic}]`)?.focus(); break;
     case 'set-tcolor': TAG_COLORS[el.dataset.v] = el.dataset.c; render(); $(`[data-act=set-tcolor][data-c="${el.dataset.c}"]`)?.focus(); break;
-    case 'clip-copy': {
-      const c = S.clips.find(x => x.id === id); navigator.clipboard?.writeText(c.text).catch(() => {});
-      el.innerHTML = icon('check','ic-s'); el.setAttribute('aria-label', 'Copied'); setTimeout(() => { if (document.contains(el)) { el.innerHTML = icon('copy','ic-s'); el.setAttribute('aria-label', 'Copy again'); } }, 1600); break;
+    case 'clip-copy': case 'clip-raw': {
+      const c = S.clips.find(x => x.id === id), raw = a === 'clip-raw', label = raw ? 'Copy what I said' : 'Copy again', ic = raw ? 'mic' : 'copy';
+      navigator.clipboard?.writeText(raw ? c.raw : c.text).catch(() => {});
+      el.innerHTML = icon('check','ic-s'); el.setAttribute('aria-label', 'Copied'); setTimeout(() => { if (document.contains(el)) { el.innerHTML = icon(ic,'ic-s'); el.setAttribute('aria-label', label); } }, 1600); break;
     }
     case 'clip-del': { const i = S.clips.findIndex(x => x.id === id); S.undoClip = { c:S.clips[i], i }; S.clips.splice(i, 1); render(); $('#clip-undo')?.focus(); break; }
     case 'clip-undo': if (S.undoClip) { const u = S.undoClip; u.all ? S.clips = u.all : S.clips.splice(u.i, 0, u.c); S.undoClip = null; render(); $('#clipq')?.focus(); } break;
