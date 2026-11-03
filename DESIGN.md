@@ -46,6 +46,7 @@ Rules:
 - **Red is reserved for capture.** `--rec` appears only when a mic is live. Errors and destructive actions use `--danger`, a different red tuned for text and fills. Never use either for decoration.
 - **Privacy states are amber, not red.** "Possibly muted" and "sends off this Mac" are things to notice, not errors. They share `--caution` so the user learns one colour for "this concerns your privacy".
 - **Status is never colour alone.** Mic state is a dot plus words ("Mic live · mirrored from Meet", "Mic off · manual"). The recording dot pulses; possibly-muted groups carry a text label; badges are text pills.
+- No pure white surfaces in light mode: the page is a soft off-white and grouped lists sit a shade darker, so a full window doesn't glare. White stays for small raised things (selected segment, switch knob, default button).
 - Text tiers: `--text` for content and labels, `--text-2` for secondary copy, `--text-3` for help, timestamps and section labels. All three clear 4.5:1 on every surface, checked by script.
 - Accent is user-selectable (Settings → Look: blue default, plus purple, pink, red, orange, yellow, green, graphite) with optional tinted glass. Every accent defines its own fill, on-fill text and light/dark text colour.
 - HUD pills (dictation, recording) are dark in both themes, like system HUDs.
