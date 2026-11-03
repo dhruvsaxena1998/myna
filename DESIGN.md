@@ -20,6 +20,8 @@ References: macOS 26 system apps (Notes, Settings, Control Center), Things, Craf
 
 **Materials are real vibrancy in the app.** CSS `backdrop-filter` only blurs what is inside the WebView. In Tauri the window and sidebar glass come from native vibrancy (transparent window plus `NSVisualEffectView`); the `--mat-*` tokens are the tint laid over it. Menus and popovers inside the window can use CSS blur. Without blur support, the opaque `--bg-*` fallbacks apply automatically.
 
+**Liquid Glass (experimental, macOS 26+).** Settings › Experimental features can swap the vibrancy for macOS's own glass (`NSGlassEffectView`): one sheet of Regular glass behind the whole Settings window, and Clear glass behind the pill. While it's on, and only then, the page is not opaque: `--bg-content`, `--bg-inset` and `--mat-sidebar` thin into frosted fills (`html[data-liquid]` in `tokens.css`) so the glass shows through. Contrast then depends on the desktop, so it stays experimental.
+
 **Radii are concentric.** Inner radius = outer radius − padding between them. Window 26, panels 18 (26 − 8), popover 14 with menu items 8 at 5–6px padding. Interactive controls are capsules (`--r-full`); fields are `--r-md`; multi-line text areas `--r-lg`.
 
 **Reading column.** Document pages are centred at `--w-doc` (720px). Reading text stops at `--measure` (68ch). The inspector (transcript, chat) is `--w-inspector` on the right of the document; below 1100px it floats over it.
@@ -44,6 +46,7 @@ Rules:
 - **Red is reserved for capture.** `--rec` appears only when a mic is live. Errors and destructive actions use `--danger`, a different red tuned for text and fills. Never use either for decoration.
 - **Privacy states are amber, not red.** "Possibly muted" and "sends off this Mac" are things to notice, not errors. They share `--caution` so the user learns one colour for "this concerns your privacy".
 - **Status is never colour alone.** Mic state is a dot plus words ("Mic live · mirrored from Meet", "Mic off · manual"). The recording dot pulses; possibly-muted groups carry a text label; badges are text pills.
+- No pure white surfaces in light mode: the page is a soft off-white and grouped lists sit a shade darker, so a full window doesn't glare. White stays for small raised things (selected segment, switch knob, default button).
 - Text tiers: `--text` for content and labels, `--text-2` for secondary copy, `--text-3` for help, timestamps and section labels. All three clear 4.5:1 on every surface, checked by script.
 - Accent is user-selectable (Settings → Look: blue default, plus purple, pink, red, orange, yellow, green, graphite) with optional tinted glass. Every accent defines its own fill, on-fill text and light/dark text colour.
 - HUD pills (dictation, recording) are dark in both themes, like system HUDs.

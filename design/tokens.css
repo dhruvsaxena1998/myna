@@ -64,9 +64,9 @@
   --mat-window-base: rgba(244,244,247,.70);    /* window chrome behind the panels */
   --mat-sidebar-base: rgba(255,255,255,.56);
   --mat-menu-base: rgba(250,250,252,.84);      /* menus, popovers, toasts, live-notes panel */
-  --bg-content: #FFFFFF;                  /* main panel: the page */
+  --bg-content: #F7F7F9;                  /* main panel: the page; never pure white, which glares */
   --bg-sidebar: #F3F3F6;                  /* opaque fallback for --mat-sidebar */
-  --bg-inset: #F6F6F8;                    /* grouped lists, inspector, cards on the page */
+  --bg-inset: #EFEFF2;                    /* grouped lists, inspector, cards on the page */
   --bg-raised: #FFFFFF;                   /* opaque fallback for --mat-menu */
   --blur: blur(30px) saturate(180%);
 
@@ -176,6 +176,8 @@
 :root[data-accent="yellow"]   { --accent: #FFCC00; --on-accent: #1D1D1F; --accent-text-l: #806600; --accent-text-d: #FFD60A; }
 :root[data-accent="green"]    { --accent: #1E7B34; --on-accent: #FFFFFF; --accent-text-l: #1E7B34; --accent-text-d: #4CD964; }
 :root[data-accent="graphite"] { --accent: #5E5E63; --on-accent: #FFFFFF; --accent-text-l: #5E5E63; --accent-text-d: #C7C7CC; }
+/* Swatches on Look & appearance: every accent at once, whichever is chosen. */
+:root { --sw-blue: #0A64D8; --sw-purple: #8E44AD; --sw-pink: #C2185B; --sw-red: #C42B1C; --sw-orange: #B35000; --sw-yellow: #FFCC00; --sw-green: #1E7B34; --sw-graphite: #5E5E63; }
 
 /* Derived accent tokens. Defined once so every accent and theme gets them. */
 :root {
@@ -197,6 +199,12 @@
   --mat-menu: color-mix(in srgb, var(--mat-menu-base) 90%, var(--accent));
   --mat-window: color-mix(in srgb, var(--mat-window-base) 86%, var(--accent));
 }
+
+/* Liquid Glass (experimental, Settings › Experimental features): the window is one sheet of macOS's own glass,
+   so the panels thin into frosted fills on it. Contrast then depends on the desktop; Regular glass keeps it readable. */
+:root[data-liquid] { --mat-sidebar: rgba(255,255,255,.18); --bg-content: rgba(255,255,255,.48); --bg-inset: rgba(255,255,255,.55); }
+:root[data-liquid][data-theme="dark"] { --mat-sidebar: rgba(255,255,255,.04); --bg-content: rgba(20,20,22,.42); --bg-inset: rgba(255,255,255,.05); }
+@media (prefers-color-scheme: dark) { :root[data-liquid][data-theme="auto"] { --mat-sidebar: rgba(255,255,255,.04); --bg-content: rgba(20,20,22,.42); --bg-inset: rgba(255,255,255,.05); } }
 
 /* ---------- 5. Base ---------- */
 html { background: var(--bg-desk); color: var(--text); font: var(--fs-body)/var(--lh-body) var(--font);

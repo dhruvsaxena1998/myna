@@ -43,7 +43,7 @@ pub fn set_look(conn: &Connection, style: &str, place: &str) -> Result<(), Strin
     Ok(())
 }
 
-fn ns(w: &WebviewWindow) -> Option<&NSWindow> {
+pub fn ns(w: &WebviewWindow) -> Option<&NSWindow> {
     // SAFETY: Tauri hands back the window's live NSWindow; it outlives the call.
     w.ns_window().ok().map(|p| unsafe { &*p.cast::<NSWindow>() })
 }
