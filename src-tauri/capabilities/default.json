@@ -1,9 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Settings window",
+  "description": "Settings window and the dictation pill",
   "windows": [
-    "settings"
+    "settings",
+    "pill"
   ],
   "permissions": [
     "core:default",

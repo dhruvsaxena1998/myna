@@ -1,0 +1,32 @@
+import { expect, test } from "@playwright/test";
+import { fakeTauri } from "./tauri";
+
+// Fresh install: macOS hasn't asked for the mic, Accessibility is off. `permission_ask` grants what it's asked for.
+async function open(page: import("@playwright/test").Page) {
+  await fakeTauri(page, `{
+    storage_status: () => "/tmp/Myna", models_list: () => [],
+    permissions_state: () => ({ ...(window.__perms ??= { mic: "ask", ax: false }) }), // a copy, like JSON from Rust
+    permission_ask: ({ kind }) => { if (kind === "mic") window.__perms.mic = "allowed"; },
+  }`);
+  await page.goto("/settings");
+  await page.getByRole("option", { name: "Voice typing" }).click();
+}
+
+
+test("Allow asks macOS for the mic and shows the answer", async ({ page }) => {
+  await open(page);
+  await page.getByRole("button", { name: "Allow Microphone" }).click();
+  await expect(page.getByRole("listitem").filter({ hasText: "Microphone" })).toContainText("Allowed");
+  expect(await page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "permission_ask"))).toEqual([["permission_ask", { kind: "mic" }]]);
+});
+
+test("Accessibility refreshes when the user comes back from System Settings, without moving the rows", async ({ page }) => {
+  await open(page);
+  const row = page.getByRole("listitem").filter({ hasText: "Accessibility" });
+  await row.getByRole("button", { name: "Open System Settings for Accessibility" }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__calls.some((c: any) => c[0] === "permission_ask" && c[1].kind === "ax"))).toBe(true);
+  const before = await row.getByText("So Myna can put").boundingBox();
+  await page.evaluate(() => { (window as any).__perms.ax = true; (window as any).__emit("tauri://focus", null); });
+  await expect(row).toContainText("Allowed");
+  expect(await row.getByText("So Myna can put").boundingBox()).toEqual(before);
+});

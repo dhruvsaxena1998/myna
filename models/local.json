@@ -1,0 +1,91 @@
+{
+  "checked": "2026-11-02",
+  "stt": [
+    {
+      "id": "parakeet-tdt-v3",
+      "name": "Parakeet TDT v3",
+      "vendor": "NVIDIA",
+      "desc": "Fast and accurate in English and 24 other European languages. Recommended.",
+      "acc": 5,
+      "spd": 5,
+      "default": true,
+      "size": 670479942,
+      "repo": "istupakov/parakeet-tdt-0.6b-v3-onnx",
+      "revision": "8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce",
+      "files": [
+        { "path": "encoder-model.int8.onnx", "size": 652183999, "sha256": "6139d2fa7e1b086097b277c7149725edbab89cc7c7ae64b23c741be4055aff09" },
+        { "path": "decoder_joint-model.int8.onnx", "size": 18202004, "sha256": "eea7483ee3d1a30375daedc8ed83e3960c91b098812127a0d99d1c8977667a70" },
+        { "path": "vocab.txt", "size": 93939, "sha256": "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d" }
+      ]
+    },
+    {
+      "id": "apple-speech",
+      "name": "Apple Speech",
+      "vendor": "Apple",
+      "desc": "Built into macOS.",
+      "acc": 4,
+      "spd": 5,
+      "size": 0,
+      "min_macos": 26,
+      "system": true,
+      "files": []
+    },
+    {
+      "id": "voz",
+      "name": "Desert Ant Voz",
+      "vendor": "Desert Ant Labs",
+      "desc": "Parakeet on the Neural Engine. Quicker and easier on the battery.",
+      "acc": 5,
+      "spd": 5,
+      "size": 337000000,
+      "min_macos": 15,
+      "repo": "desert-ant-labs/voz",
+      "revision": "4eb6031cc91a71aa7ae6edb0fa518dc8c12f565f",
+      "files": []
+    },
+    {
+      "id": "whisper-large-v3-turbo",
+      "name": "Whisper large-v3-turbo",
+      "vendor": "OpenAI",
+      "desc": "Understands many languages. Slower on long meetings.",
+      "acc": 4,
+      "spd": 3,
+      "size": 1624555275,
+      "repo": "ggerganov/whisper.cpp",
+      "revision": "5359861c739e955e79d9a303bcbc70fb988958b1",
+      "files": [
+        { "path": "ggml-large-v3-turbo.bin", "size": 1624555275, "sha256": "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69" }
+      ]
+    }
+  ],
+  "diar": [
+    {
+      "id": "who",
+      "name": "Desert Ant Who",
+      "vendor": "Desert Ant Labs",
+      "desc": "Recommended. Small and quick. New, so it may still make mistakes.",
+      "acc": 4,
+      "spd": 5,
+      "default": true,
+      "size": 80000000,
+      "min_macos": 15,
+      "repo": "desert-ant-labs/who",
+      "revision": "9b7037848b9e03988f0157e6be26607b36fe452b",
+      "files": []
+    },
+    {
+      "id": "sortformer",
+      "name": "Sortformer",
+      "vendor": "NVIDIA",
+      "desc": "A backup to switch to if the recommended one gets voices mixed up.",
+      "acc": 4,
+      "spd": 3,
+      "size": 402167515,
+      "repo": "altunenes/parakeet-rs",
+      "revision": "664cc742197053fa11afd12f5100749fb8000181",
+      "files": [
+        { "path": "nemotron-3-diarization/nemotron3_diar_v3.onnx", "size": 402167515, "sha256": "c32d6056f1ca52bdd50a74e1e7c66d91e5147bc29f19ffa4c39cbe5452397d15" }
+      ]
+    }
+  ]
+}

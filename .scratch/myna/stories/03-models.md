@@ -1,6 +1,7 @@
 # 03: Model catalog and downloads
 
-**Status:** draft
+**Status:** ready
+**GitHub:** milestone "03 · Models"
 **Spec stories:** 13, 14, 39, 61, 65
 **Depends on:** 01 (the Endpoint option for meeting speech-to-text needs 10)
 
@@ -24,6 +25,30 @@ One place to see, download, verify, pick and delete the on-device models for eac
 - [ ] Active model per task persists
 - [ ] Meeting speech-to-text on a Groq Endpoint transcribes a real meeting, with the pill shown and the Endpoint recorded in the meeting inspector
 - [ ] Checked on the real app from a fresh install
+
+## Tickets
+1. Catalog and model rows on AI & privacy: bundled catalog (Parakeet, Whisper, Sortformer; Voz and Who listed), size/accuracy/speed, Installed or Download, active model per task saved in SQLite
+2. Download manager: Hugging Face download with progress, cancel, retry, sha256 check, atomic move into `models/`, delete
+3. Runtimes: `Transcriber` / `Diarizer` behind a fake; Parakeet and Sortformer via parakeet-rs, Whisper via whisper-rs; one slow test per backend on a 10 s fixture
+4. Desert Ant via the Swift bridge: Voz and Who through swift-rs (macOS 15+), their SDK fetches weights; attribution on About while one is enabled
+5. Advanced: custom model path or Hugging Face repo for the same runtime
+6. Meeting speech-to-text on an Endpoint (Groq, Together, Test for others), blocked by stories 05 and 10
+7. Fresh-install check (human)
+8. Apple Speech: Apple's built-in speech-to-text as a speech-to-text model on macOS 26+, so a user can dictate without downloading Parakeet (detail below)
+
+## 03.8 Apple Speech
+
+Settled with the user on 2026-11-03. Spike on macOS 27 (headless CLI, `say` audio plus `two-speakers.wav`): no Speech Recognition prompt, fillers and stutters kept ("um", "uh", "we should, we should"), the fixture word for word with punctuation, 9 s of audio in 0.16 s, 45 languages, English variants preinstalled.
+
+- **API:** SpeechTranscriber (SpeechAnalyzer), macOS 26+. Below 26 the row shows "Needs macOS 26", like Voz. No SFSpeechRecognizer fallback.
+- **Bridge:** this ticket adds the swift-rs Swift package (the spec's Swift bridge; 03.4 reuses it). `@_cdecl` functions: transcribe 16 kHz f32 to segments with times; the language and whether it's installed; download its assets. The deployment target stays 14.2 behind `#available(macOS 26, *)`.
+- **Row:** "Apple Speech", vendor Apple, "Built into macOS. Listens in <language>." from the Mac's language (`supportedLocale(equivalentTo: Locale.current)`). No size. Installed when the language is in `installedLocales` (not `AssetInventory.status`, which says "supported" for preinstalled English). Otherwise Download through `AssetInventory`, with progress and no Cancel (unverified: English is preinstalled on the dev Mac). No Remove: macOS owns the assets. An unsupported language shows "Needs a language Apple supports" and can't be picked.
+- **Ratings:** placeholder Accuracy 4, Speed 5. A prototype measures them against Parakeet later.
+- **Active model:** the saved pick if it runs here; else Parakeet if installed; else Apple Speech if it runs here; else Parakeet ("Download Parakeet…"). Parakeet stays the recommended model, and downloading it takes over from an Apple Speech that was never picked explicitly.
+- **Shared:** one speech-to-text slot for Dictation and Meetings, as today.
+- **Permissions:** no Speech Recognition row and no Info.plist key. If macOS refuses anyway, its message shows on the pill.
+- **Not here:** Words to remember (SpeechTranscriber has no documented vocabulary option; the rules-cleanup map decides), a language picker.
+- **Tests:** active-model rule and catalog in `models.rs`; Apple Speech row states in Playwright; one slow test on `two-speakers.wav` (macOS 26+).
 
 ## Open questions for you
 - none

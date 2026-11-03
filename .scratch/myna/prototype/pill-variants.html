@@ -1,0 +1,217 @@
+<!doctype html>
+<!-- PROTOTYPE, throwaway. Question: what should the dictation pill look like, and where on screen? (ticket 04.2)
+     Open in a browser. ←/→ design, ↑/↓ placement, 1–5 state, Space plays a dictation, T theme, Z zoom. -->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>PROTOTYPE · dictation pill</title>
+<style>
+  /* Tokens copied from design/tokens.css so this file works on its own. */
+  :root { --font: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; --fs-body: 13px; --lh-body: 18px; --fs-footnote: 12px;
+    --dur: 180ms; --ease-out: cubic-bezier(.28,0,.22,1); --accent: #0A84FF;
+    --hud-bg: rgba(28,28,30,.74); --hud-fg: #F5F5F7; --hud-2: rgba(245,245,247,.72); --hud-edge: rgba(255,255,255,.20);
+    --shadow-hud: 0 10px 30px rgba(0,0,0,.30); --bg-inset: #FFFFFF; --text: #1D1D1F; color-scheme: light; }
+  :root[data-theme="dark"] { --bg-inset: #2A2A2C; --text: #F5F5F7; --shadow-hud: 0 10px 30px rgba(0,0,0,.50); color-scheme: dark; }
+</style>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  body { font: var(--fs-body)/var(--lh-body) var(--font); -webkit-font-smoothing: antialiased; }
+
+  /* ---------- fake desktop ---------- */
+  .desk { position: fixed; inset: 0; background: linear-gradient(160deg, #6b8fb8, #c9a27e 55%, #e8c9a0); transition: background .3s; }
+  [data-theme="dark"] .desk { background: linear-gradient(160deg, #0f1a2e, #2d2440 55%, #4a3550); }
+  .menubar { position: absolute; top: 0; left: 0; right: 0; height: 26px; display: flex; align-items: center; gap: 18px; padding: 0 14px;
+    background: rgba(255,255,255,.35); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); color: #111; font-weight: 500; font-size: 13px; }
+  [data-theme="dark"] .menubar { background: rgba(0,0,0,.35); color: #eee; }
+  .menubar .r { margin-left: auto; display: flex; gap: 14px; align-items: center; }
+  .menubar .myna { width: 16px; height: 12px; border-radius: 3px; border: 1.5px solid currentColor; }
+  .dock { position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%); height: 58px; width: 520px; border-radius: 18px;
+    background: rgba(255,255,255,.3); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); display: flex; gap: 10px; align-items: center; padding: 0 10px; box-sizing: border-box; }
+  .dock i { width: 44px; height: 44px; border-radius: 11px; background: rgba(255,255,255,.55); }
+  [data-theme="dark"] .dock { background: rgba(60,60,70,.45); } [data-theme="dark"] .dock i { background: rgba(255,255,255,.18); }
+  .note { position: absolute; top: 90px; left: 50%; transform: translateX(-50%); width: 620px; height: 340px; border-radius: 12px; background: var(--bg-inset, #fff);
+    box-shadow: 0 20px 60px rgba(0,0,0,.35); color: var(--text); padding: 44px 32px 0; box-sizing: border-box; font-size: 15px; line-height: 24px; }
+  .note::before { content: ""; position: absolute; top: 14px; left: 14px; width: 52px; height: 12px;
+    background: radial-gradient(circle at 6px 6px, #ff5f57 5px, transparent 6px), radial-gradient(circle at 26px 6px, #febc2e 5px, transparent 6px), radial-gradient(circle at 46px 6px, #28c840 5px, transparent 6px); }
+  .note h3 { margin: 0 0 8px; font-size: 18px; }
+  .caret { display: inline-block; width: 2px; height: 19px; background: var(--accent, #0a84ff); vertical-align: -4px; animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .added { background: color-mix(in oklab, var(--accent, #0a84ff), transparent 80%); border-radius: 3px; }
+
+  /* ---------- placement: the pill's anchor ---------- */
+  .anchor { position: fixed; z-index: 70; transition: all .25s var(--ease-out); }
+  .p-bottom   { bottom: 88px; left: 50%; transform: translateX(-50%); }              /* above the Dock */
+  .p-top      { top: 40px; left: 50%; transform: translateX(-50%); }                 /* under the menubar / notch */
+  .p-br       { bottom: 88px; right: 24px; }
+  .p-tr       { top: 40px; right: 24px; }                                            /* under Myna's menubar icon */
+  .zoom .pill { zoom: 2; }
+  .p-caret    { top: var(--cy); left: var(--cx); transform: translate(-6px, 10px); } /* just under the text cursor */
+
+  /* ---------- shared bits ---------- */
+  .ic { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .sub { color: var(--hud-2); }
+  .hudbase { background: var(--hud-bg); color: var(--hud-fg); -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%);
+    box-shadow: inset 0 0 0 .5px var(--hud-edge), var(--shadow-hud); white-space: nowrap; }
+  .pill { animation: enter var(--dur) var(--ease-out); }
+  @keyframes enter { from { opacity: 0; transform: translateY(6px) scale(.97); } }
+  .spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(255,255,255,.25); border-top-color: var(--hud-fg); animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* A · Capsule (what 04.2 built): 40px, bars + words */
+  .A { display: inline-flex; align-items: center; gap: 10px; height: 40px; padding: 0 16px; border-radius: 999px; }
+  .A .lvl { display: flex; align-items: center; gap: 2px; height: 16px; }
+  .A .lvl i { width: 3px; height: 16px; border-radius: 2px; background: currentColor; transition: transform 80ms linear; }
+
+  /* B · Orb: tiny, no words while listening; grows into a capsule only to say something */
+  .B { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 32px; min-width: 32px; padding: 0 10px; border-radius: 999px; box-sizing: border-box; }
+  .B.only { width: 56px; padding: 0; }
+  .B .dot { width: 8px; height: 8px; border-radius: 50%; background: #FF453A; }
+  .B .lvl { display: flex; align-items: center; gap: 2px; height: 14px; }
+  .B .lvl i { width: 2.5px; height: 14px; border-radius: 2px; background: currentColor; transition: transform 80ms linear; }
+
+  /* C · Waveform strip: a wide live waveform and a timer; words only for results */
+  .C { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px; width: 300px; height: 44px; padding: 0 16px; border-radius: 14px; box-sizing: border-box; }
+  .C .wave { display: flex; align-items: center; gap: 2px; height: 24px; overflow: hidden; }
+  .C .wave i { flex: none; width: 2px; border-radius: 1px; background: currentColor; opacity: .9; }
+  .C time { font-variant-numeric: tabular-nums; color: var(--hud-2); }
+  .C .mic { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: #FF453A; }
+  .C .mic .ic { width: 12px; height: 12px; stroke: #fff; }
+  .C .msg { grid-column: 2 / 4; overflow: hidden; text-overflow: ellipsis; }
+
+  /* D · Card: two lines, a mic in a ring that swells with the level, the shortcut spelled out */
+  .D { display: flex; align-items: center; gap: 12px; width: 280px; padding: 10px 16px 10px 10px; border-radius: 18px; box-sizing: border-box; min-height: 56px; }
+  .D .ring { position: relative; width: 36px; height: 36px; flex: none; display: grid; place-items: center; border-radius: 50%; background: rgba(255,255,255,.12); }
+  .D .ring::before { content: ""; position: absolute; inset: -4px; border-radius: 50%; border: 2px solid #FF453A; transform: scale(var(--s, .85)); opacity: var(--o, .4); transition: transform 80ms linear, opacity 80ms linear; }
+  .D .ring.ok::before, .D .ring.err::before, .D .ring.busy::before { display: none; }
+  .D .t { font-weight: 600; } .D .sub { font-size: var(--fs-footnote); }
+  .D .txt { display: grid; min-width: 0; } .D .txt span { overflow: hidden; text-overflow: ellipsis; }
+  kbd { font: inherit; padding: 0 4px; border-radius: 4px; background: rgba(255,255,255,.14); }
+
+  /* ---------- prototype controls (not part of the design) ---------- */
+  .ctl { position: fixed; z-index: 100; left: 50%; bottom: 72px; transform: translateX(-50%); display: none; }
+  .bar { position: fixed; z-index: 100; top: 34px; left: 12px; width: 230px; padding: 12px; border-radius: 12px; background: #fffbe6; color: #222;
+    box-shadow: 0 6px 24px rgba(0,0,0,.3); font: 12px/1.4 ui-monospace, Menlo, monospace; border: 2px dashed #d4a300; }
+  .bar b { display: block; margin: 8px 0 4px; } .bar b:first-child { margin-top: 0; }
+  .bar button { font: inherit; margin: 0 4px 4px 0; padding: 3px 7px; border-radius: 6px; border: 1px solid #bbb; background: #fff; color: #222; cursor: pointer; }
+  .bar button[aria-pressed="true"] { background: #222; color: #fff; border-color: #222; }
+  .bar .note2 { color: #666; margin-top: 6px; }
+</style>
+</head>
+<body>
+<div class="desk">
+  <div class="menubar"><b></b><b>Notes</b><span>File</span><span>Edit</span><span>Format</span>
+    <span class="r"><span class="myna" title="Myna"></span><span>Wi‑Fi</span><span>Mon 2 Nov 15:42</span></span></div>
+  <div class="note"><h3>Standup notes</h3>Ship the dictation pill this week. <span id="text"></span><span class="caret" id="caret"></span></div>
+  <div class="dock"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+</div>
+
+<div class="anchor" id="anchor"></div>
+
+<div class="bar" id="bar"></div>
+
+<script>
+const DESIGNS = { A: "Capsule (built in 04.2)", B: "Orb (no words while listening)", C: "Waveform strip + timer", D: "Card, two lines" };
+const PLACES = { bottom: "Bottom centre", top: "Top centre", br: "Bottom right", tr: "Top right", caret: "Under the text cursor" };
+const STATES = { listening: "Listening", writing: "Writing…", added: "Added", error: "Error", nothing: "Nothing heard" };
+const q = new URLSearchParams(location.search);
+const S = { d: q.get("d") || "A", p: q.get("p") || "bottom", s: q.get("s") || "listening", t0: Date.now(), level: 0, hist: Array(60).fill(0) };
+
+const check = '<svg class="ic" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+const warn = '<svg class="ic" viewBox="0 0 24 24"><path d="M12 4 2.5 20h19zM12 10v4.5M12 17.2v.1"/></svg>';
+const mic = '<svg class="ic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg>';
+const ERR = "Allow Accessibility in Settings › Voice typing", NOTHING = "Didn’t hear anything";
+const W = [.5, .8, 1, .75, .45];
+const bars = (n, cls = "") => `<span class="lvl ${cls}">${'<i></i>'.repeat(n)}</span>`;
+const fmt = (ms) => { const s = Math.floor(ms / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+
+function pill() {
+  const { d, s } = S, msg = s === "error" ? ERR : NOTHING;
+  if (d === "A") return {
+    listening: `${bars(5)}<span>Listening</span><span class="sub">Release to paste</span>`,
+    writing: `<span>Writing…</span>`,
+    added: `${check}<span>Added where you were typing</span>`,
+    error: `${warn}<span>${ERR}</span>`, nothing: `${warn}<span>${NOTHING}</span>`,
+  }[s];
+  if (d === "B") return {
+    listening: `${bars(5)}`, writing: `<span class="spin"></span>`, added: `${check}`,
+    error: `${warn}<span>${ERR}</span>`, nothing: `${warn}<span>${NOTHING}</span>`,
+  }[s];
+  if (d === "C") return {
+    listening: `<span class="mic">${mic}</span><span class="wave" id="wave">${'<i></i>'.repeat(60)}</span><time id="time">0:00</time>`,
+    writing: `<span class="spin"></span><span class="msg">Writing…</span>`,
+    added: `${check}<span class="msg">Added where you were typing</span>`,
+    error: `${warn}<span class="msg">${ERR}</span>`, nothing: `${warn}<span class="msg">${NOTHING}</span>`,
+  }[s];
+  return {
+    listening: `<span class="ring" id="ring">${mic}</span><span class="txt"><span class="t">Listening</span><span class="sub">Release <kbd>⌥</kbd><kbd>Space</kbd> to paste</span></span>`,
+    writing: `<span class="ring busy"><span class="spin"></span></span><span class="txt"><span class="t">Writing…</span><span class="sub">Parakeet v3 · on this Mac</span></span>`,
+    added: `<span class="ring ok">${check}</span><span class="txt"><span class="t">Added</span><span class="sub">Where you were typing</span></span>`,
+    error: `<span class="ring err">${warn}</span><span class="txt"><span class="t">Needs Accessibility</span><span class="sub">Allow it in Settings › Voice typing</span></span>`,
+    nothing: `<span class="ring err">${warn}</span><span class="txt"><span class="t">Didn’t hear anything</span><span class="sub">Hold the keys while you talk</span></span>`,
+  }[s];
+}
+
+function render() {
+  const a = document.getElementById("anchor");
+  a.className = `anchor p-${S.p}${S.zoom ? " zoom" : ""}`;
+  const only = S.d === "B" && ["listening", "writing", "added"].includes(S.s) ? " only" : "";
+  a.innerHTML = `<div class="pill hudbase ${S.d}${only}" role="status">${pill()}</div>`;
+  const r = document.getElementById("caret").getBoundingClientRect();
+  a.style.setProperty("--cx", r.left + "px"); a.style.setProperty("--cy", r.bottom + "px");
+  history.replaceState(null, "", `?d=${S.d}&p=${S.p}&s=${S.s}`);
+  const btns = (obj, key) => Object.entries(obj).map(([k, v]) => `<button data-k="${key}" data-v="${k}" aria-pressed="${S[key] === k}" title="${v}">${key === "d" ? k : v}</button>`).join("");
+  document.getElementById("bar").innerHTML =
+    `<b>PROTOTYPE · pill</b>Design: ${DESIGNS[S.d]}<b>Design ←/→</b>${btns(DESIGNS, "d")}<b>Placement ↑/↓</b>${btns(PLACES, "p")}<b>State 1–5</b>${btns(STATES, "s")}` +
+    `<b>Other</b><button data-act="play">▶ Play a dictation (Space)</button><button data-act="theme">Theme: ${document.documentElement.dataset.theme} (T)</button><button data-act="zoom" aria-pressed="${S.zoom}">Zoom pill 2× (Z)</button>` +
+    `<div class="note2">Pill is dark in both themes. Level is simulated speech.</div>`;
+}
+
+// Fake mic: bursts of syllables with pauses.
+let phase = 0;
+setInterval(() => {
+  phase += 0.05;
+  const talk = Math.sin(phase * 0.9) > -0.3;
+  S.level = talk ? Math.min(1, Math.max(0, 0.45 + 0.4 * Math.sin(phase * 7) * Math.sin(phase * 2.3) + (Math.random() - .5) * .35)) : Math.random() * .08;
+  S.hist.push(S.level); S.hist.shift();
+  document.querySelectorAll(".A .lvl i, .B .lvl i").forEach((el, i) => el.style.transform = `scaleY(${.2 + .8 * S.level * W[i % 5]})`);
+  document.querySelectorAll("#wave i").forEach((el, i) => el.style.height = `${3 + 21 * S.hist[i]}px`);
+  const t = document.getElementById("time"); if (t) t.textContent = fmt(Date.now() - S.t0);
+  const ring = document.getElementById("ring"); if (ring) { ring.style.setProperty("--s", .85 + .3 * S.level); ring.style.setProperty("--o", .35 + .65 * S.level); }
+}, 50);
+
+const order = (o) => Object.keys(o);
+const step = (key, obj, n) => { const k = order(obj); S[key] = k[(k.indexOf(S[key]) + n + k.length) % k.length]; if (key === "s" && S.s === "listening") S.t0 = Date.now(); render(); };
+
+let timers = [];
+function play() {
+  timers.forEach(clearTimeout); document.getElementById("text").textContent = "";
+  S.s = "listening"; S.t0 = Date.now(); render();
+  timers = [
+    setTimeout(() => { S.s = "writing"; render(); }, 3200),
+    setTimeout(() => { S.s = "added"; render(); const t = document.getElementById("text"); t.textContent = "Remember to test it in Terminal too."; t.className = "added"; }, 4200),
+    setTimeout(() => { document.getElementById("anchor").innerHTML = ""; document.getElementById("text").className = ""; }, 5800),
+  ];
+}
+
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.act === "play") return play();
+  if (b.dataset.act === "zoom") { S.zoom = !S.zoom; return render(); }
+  if (b.dataset.act === "theme") { const h = document.documentElement; h.dataset.theme = h.dataset.theme === "dark" ? "light" : "dark"; return render(); }
+  timers.forEach(clearTimeout); S[b.dataset.k] = b.dataset.v; if (b.dataset.k === "s") S.t0 = Date.now(); render();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowRight") step("d", DESIGNS, 1);
+  else if (e.key === "ArrowLeft") step("d", DESIGNS, -1);
+  else if (e.key === "ArrowDown") step("p", PLACES, 1);
+  else if (e.key === "ArrowUp") step("p", PLACES, -1);
+  else if (e.key >= "1" && e.key <= "5") { timers.forEach(clearTimeout); S.s = order(STATES)[e.key - 1]; S.t0 = Date.now(); render(); }
+  else if (e.key.toLowerCase() === "z") { S.zoom = !S.zoom; render(); }
+  else if (e.key === " ") { e.preventDefault(); play(); }
+  else if (e.key.toLowerCase() === "t") { const h = document.documentElement; h.dataset.theme = h.dataset.theme === "dark" ? "light" : "dark"; render(); }
+});
+addEventListener("resize", render);
+render();
+</script>
+</body>
+</html>
