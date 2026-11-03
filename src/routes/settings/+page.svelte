@@ -4,6 +4,7 @@
   import ModelTask from "$lib/ModelTask.svelte";
   import Permissions from "$lib/Permissions.svelte";
   import UnloadAfter from "$lib/UnloadAfter.svelte";
+  import Look from "$lib/Look.svelte";
   import PillLook from "$lib/PillLook.svelte";
   import VoiceShortcut from "$lib/VoiceShortcut.svelte";
 
@@ -50,6 +51,9 @@
       <!-- Every setting lives in the database, so if it failed to open, every page shows why. -->
       {#if !data.storage.ok}
         <ErrorState title="Myna couldn't open its data folder" message={data.storage.error} />
+      {:else if page.id === "look"}
+        {#if data.appearance.ok}<Look initial={data.appearance.look} />
+        {:else}<ErrorState title="Myna couldn't read its look" message={data.appearance.error} />{/if}
       {:else if page.id === "ai"}
         {#if !data.models?.ok}
           <ErrorState title="Myna couldn't list its models" message={data.models?.error ?? ""} />

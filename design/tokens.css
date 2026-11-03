@@ -176,6 +176,8 @@
 :root[data-accent="yellow"]   { --accent: #FFCC00; --on-accent: #1D1D1F; --accent-text-l: #806600; --accent-text-d: #FFD60A; }
 :root[data-accent="green"]    { --accent: #1E7B34; --on-accent: #FFFFFF; --accent-text-l: #1E7B34; --accent-text-d: #4CD964; }
 :root[data-accent="graphite"] { --accent: #5E5E63; --on-accent: #FFFFFF; --accent-text-l: #5E5E63; --accent-text-d: #C7C7CC; }
+/* Swatches on Look & appearance: every accent at once, whichever is chosen. */
+:root { --sw-blue: #0A64D8; --sw-purple: #8E44AD; --sw-pink: #C2185B; --sw-red: #C42B1C; --sw-orange: #B35000; --sw-yellow: #FFCC00; --sw-green: #1E7B34; --sw-graphite: #5E5E63; }
 
 /* Derived accent tokens. Defined once so every accent and theme gets them. */
 :root {

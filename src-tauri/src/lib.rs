@@ -1,6 +1,7 @@
 mod apple;
 mod dictation;
 mod download;
+mod look;
 mod models;
 mod permissions;
 mod pill;
@@ -176,6 +177,21 @@ fn pill_look_get(d: tauri::State<Data>) -> Result<pill::Look, String> {
 fn pill_look_set(app: AppHandle, d: tauri::State<Data>, style: String, place: String) -> Result<(), String> {
     pill::set_look(&d.db.lock().unwrap(), &style, &place)?;
     let _ = app.emit_to("pill", "pill-look", pill::Look { style, place });
+    Ok(())
+}
+
+#[tauri::command]
+fn look_get(d: tauri::State<Data>) -> Result<look::Look, String> {
+    look::get(&d.db.lock().unwrap())
+}
+
+/// Saves the look and tells every window, so each one restyles at once.
+#[tauri::command]
+fn look_set(app: AppHandle, d: tauri::State<Data>, look: look::Look) -> Result<(), String> {
+    look::set(&d.db.lock().unwrap(), &look)?;
+    let theme = look.theme.clone();
+    let _ = app.run_on_main_thread(move || look::apply_native(&theme));
+    let _ = app.emit("look", look);
     Ok(())
 }
 
@@ -383,7 +399,7 @@ fn open_settings(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![debug_on, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, voice_get, voice_set, voice_pause])
+        .invoke_handler(tauri::generate_handler![debug_on, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, voice_get, voice_set, voice_pause])
         .setup(|app| {
             app.set_activation_policy(ActivationPolicy::Accessory);
 
@@ -417,6 +433,9 @@ pub fn run() {
                     )?;
                     if let Some(w) = app.get_webview_window("pill") {
                         pill::setup(&w);
+                    }
+                    if let Ok(l) = look::get(&app.state::<Data>().db.lock().unwrap()) {
+                        look::apply_native(&l.theme);
                     }
                     Ok(dir.display().to_string())
                 }
