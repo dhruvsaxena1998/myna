@@ -21,7 +21,7 @@ The bare app: lives in the menubar with no Dock icon, opens a native-looking pop
 - [ ] Settings window lists all pages; every page shows its error if its data fails to load, never blank
 - [ ] Data folder `~/Library/Application Support/Myna/` with SQLite created on first launch
 - [ ] Look & appearance sets light/dark, highlight colour and see-through panels, saved and applied live to every window
-- [ ] Liquid Glass (experimental) gives the pill real system glass on macOS 26+, off by default
+- [ ] Liquid Glass (experimental) gives the pill and the Settings window real system glass on macOS 26+, off by default
 - [ ] Checked on the real app from a fresh install, light and dark, on macOS 26 and on 14.x or 15.x: window corners, shadow, sidebar vibrancy and traffic lights look right on both
 
 ## Decisions
@@ -38,7 +38,7 @@ The bare app: lives in the menubar with no Dock icon, opens a native-looking pop
 5. Data folder and SQLite on first launch, with schema version table; errors shown
 6. Fresh-install check on macOS 26 and 14 or 15 (human; blocked by 1 to 5)
 7. (#60) Look & appearance page: Appearance, Highlight colour, See-through panels, saved and applied live (detail below)
-8. (#61) Liquid Glass (experimental): native NSGlassEffectView on the pill, macOS 26+, blocked by 7 (detail below)
+8. (#61) Liquid Glass (experimental): native NSGlassEffectView on the pill and the Settings window, macOS 26+, blocked by 7 (detail below)
 
 ## Ticket 7: Look & appearance
 
@@ -64,17 +64,20 @@ Done when:
 
 Research: `.scratch/glass-ui/research.md` (Glisse ruled out: React-only, and its refraction is Chromium-only).
 
-- First, add the row to `docs/index.html` (Look & appearance, below See-through panels, in an "Experimental" group): **Liquid Glass**, switch, "Uses macOS's own glass for the pill. Still being tested." Off by default. Shown only on macOS 26 or later; on 14/15 the row isn't there.
-- When on: Rust calls `window_vibrancy::apply_liquid_glass` on the pill window (add `window-vibrancy` as a direct dependency, the version Tauri already pulls in if it's 0.8+, else bump). Style Clear when See-through panels is Clear, tinted with the highlight colour when Tinted. Corner radius follows the pill style (capsule, orb, wave, card differ in height). The pill page drops its CSS `--hud-bg` fill and backdrop blur so only the native glass shows. When off: `clear_liquid_glass` and today's look.
+- Experimental features gets a master switch at the top, **Use experimental features**, "New things we're still working on. They may change. Turning this off turns them all off." Off by default. While off, the feature groups are hidden and every experimental feature acts off; their own switches keep their saved state. (Added 2026-11-03.)
+- First, add the row to `docs/index.html` (Experimental features, in a "Look" group below the master switch): **Liquid Glass**, switch, "Uses macOS's own glass for the pill and the Settings window. Still being tested." Off by default. (Revised 2026-11-03: was on Look & appearance and pill-only.) Shown only on macOS 26 or later; on 14/15 the row isn't there.
+- When on: Rust puts an `NSGlassEffectView` (objc2) behind the pill. (Planned via `window_vibrancy::apply_liquid_glass`; dropped because it manages one glass view per window and puts it under the window's vibrancy.) Style Clear when See-through panels is Clear, tinted with the highlight colour when Tinted. Corner radius follows the pill style (capsule, orb, wave, card differ in height). The pill page drops its CSS `--hud-bg` fill and backdrop blur so only the native glass shows. When off: `clear_liquid_glass` and today's look.
 - The glass view must sit exactly behind the drawn pill: the pill window is wider than the pill (720×100), so either size the glass view to the pill's rect or resize the window to the pill. Pick the one with no layout shift when the pill changes state.
+- Settings window: when on, one sheet of Regular glass (tinted with the highlight colour when Tinted) goes behind the whole window in place of its `sidebar` vibrancy, which is hidden meanwhile (glass over the vibrancy only shows the vibrancy, near-white in light mode). The sidebar, page and grouped lists thin into frosted fills on it, so the page is see-through while Liquid Glass is on (DESIGN.md, Liquid Glass). Revised 2026-11-03 after hand checks: glass behind the panels over an opaque page looked too dark in dark and too white in light. When off: the vibrancy and opaque page come back.
 - Toggling, or changing pill style, highlight colour or See-through panels, updates the glass at once, no restart.
-- Settings window glass is out of scope; a later ticket, content panels stay opaque.
+- The menubar menu is a native NSMenu and already gets system glass on macOS 26; nothing to do.
 
 Risk: window-vibrancy issue #229 reports AppKit crashes on macOS 27 in packaged builds with a glass view behind the webview. The developer's Mac is on macOS 27.
 
 Done when:
-- [ ] Row in `docs/index.html` and in the app; hidden below macOS 26
+- [ ] Master switch and Liquid Glass row in `docs/index.html` and in the app; Liquid Glass hidden below macOS 26 and while the master switch is off
 - [ ] Pill shows real system glass in all four styles and positions, light and dark, clear and tinted
-- [ ] Off restores today's pill exactly
+- [ ] Settings window shows system glass with frosted panels, light and dark, clear and tinted; text stays readable over light and dark desktops
+- [ ] Off restores today's pill and Settings window exactly
 - [ ] Tests: Rust unit test for the saved switch and the macOS-version gate; Playwright for the row and its hiding
 - [ ] Checked by hand in a dev build and a packaged build (`pnpm tauri build`) on macOS 27; if the packaged build crashes, the switch stays hidden and the ticket says so

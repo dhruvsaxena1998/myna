@@ -182,16 +182,24 @@ fn pill_look_set(app: AppHandle, d: tauri::State<Data>, style: String, place: St
 
 #[tauri::command]
 fn look_get(d: tauri::State<Data>) -> Result<look::Look, String> {
-    look::get(&d.db.lock().unwrap())
+    look::get(&d.db.lock().unwrap(), d.macos)
 }
 
 /// Saves the look and tells every window, so each one restyles at once.
 #[tauri::command]
 fn look_set(app: AppHandle, d: tauri::State<Data>, look: look::Look) -> Result<(), String> {
-    look::set(&d.db.lock().unwrap(), &look)?;
+    look::set(&d.db.lock().unwrap(), &look, d.macos)?;
     let theme = look.theme.clone();
     let _ = app.run_on_main_thread(move || look::apply_native(&theme));
-    let _ = app.emit("look", look);
+    let _ = app.emit("look", look); // each page re-sends glass_set, which picks up the new tint
+    Ok(())
+}
+
+/// A page says where it drew what the glass goes behind (the pill; the Settings panels); none takes it away.
+#[tauri::command]
+fn glass_set(app: AppHandle, window: tauri::Window, d: tauri::State<Data>, glass: Vec<look::Glass>) -> Result<(), String> {
+    let l = look::get(&d.db.lock().unwrap(), d.macos)?;
+    look::glass(&app, window.label(), if look::glass_on(&l) { glass } else { vec![] }, look::tint(&l));
     Ok(())
 }
 
@@ -399,7 +407,7 @@ fn open_settings(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![debug_on, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, voice_get, voice_set, voice_pause])
+        .invoke_handler(tauri::generate_handler![debug_on, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, voice_pause])
         .setup(|app| {
             app.set_activation_policy(ActivationPolicy::Accessory);
 
@@ -434,7 +442,7 @@ pub fn run() {
                     if let Some(w) = app.get_webview_window("pill") {
                         pill::setup(&w);
                     }
-                    if let Ok(l) = look::get(&app.state::<Data>().db.lock().unwrap()) {
+                    if let Ok(l) = look::get(&app.state::<Data>().db.lock().unwrap(), models::macos_major()) {
                         look::apply_native(&l.theme);
                     }
                     Ok(dir.display().to_string())

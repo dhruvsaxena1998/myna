@@ -20,7 +20,8 @@ export async function fakeTauri(page: Page, handlers: string) {
         if (cmd === "permissions_state" && !(cmd in h)) return { mic: "allowed", ax: true };
         if (cmd === "stt_unload_get" && !(cmd in h)) return 300;
         if (cmd === "pill_look_get" && !(cmd in h)) return { style: "capsule", place: "bottom" };
-        if (cmd === "look_get" && !(cmd in h)) return { theme: "auto", accent: "blue", glass: "clear" };
+        if (cmd === "look_get" && !(cmd in h)) return { theme: "auto", accent: "blue", glass: "clear", liquid: null, experimental: false };
+        if (cmd === "glass_set" && !(cmd in h)) return;
         if (cmd === "voice_get" && !(cmd in h)) return { on: true, key: "Alt+Space", mode: "hold" };
         if (!(cmd in h)) throw `no fake for ${cmd}`;
         return h[cmd](args);

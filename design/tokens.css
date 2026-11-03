@@ -200,6 +200,12 @@
   --mat-window: color-mix(in srgb, var(--mat-window-base) 86%, var(--accent));
 }
 
+/* Liquid Glass (experimental, Settings › Experimental features): the window is one sheet of macOS's own glass,
+   so the panels thin into frosted fills on it. Contrast then depends on the desktop; Regular glass keeps it readable. */
+:root[data-liquid] { --mat-sidebar: rgba(255,255,255,.18); --bg-content: rgba(255,255,255,.48); --bg-inset: rgba(255,255,255,.55); }
+:root[data-liquid][data-theme="dark"] { --mat-sidebar: rgba(255,255,255,.04); --bg-content: rgba(20,20,22,.42); --bg-inset: rgba(255,255,255,.05); }
+@media (prefers-color-scheme: dark) { :root[data-liquid][data-theme="auto"] { --mat-sidebar: rgba(255,255,255,.04); --bg-content: rgba(20,20,22,.42); --bg-inset: rgba(255,255,255,.05); } }
+
 /* ---------- 5. Base ---------- */
 html { background: var(--bg-desk); color: var(--text); font: var(--fs-body)/var(--lh-body) var(--font);
   -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }

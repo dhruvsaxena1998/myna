@@ -8,7 +8,7 @@ async function open(page: Page, look = { style: "capsule", place: "bottom" }) {
   await fakeTauri(page, `{ pill_look_get: () => (${JSON.stringify(look)}) }`);
   await page.clock.install();
   await page.goto("/pill");
-  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(4); // the layout's "look" too
+  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(5); // the layout's and the page's "look" too
 }
 const emit = (page: Page, event: string, payload: unknown) => page.evaluate(([e, p]) => (window as any).__emit(e, p), [event, payload] as const);
 const say = (page: Page, state: string, hold = true) => emit(page, "dictation", state === "listening" ? { state, hold, key: "Alt+Space", limit: 300 } : { state });
@@ -143,4 +143,38 @@ test("hold mode never counts down", async ({ page }) => {
   await say(page, "listening", true);
   await page.clock.runFor(290_000);
   await expect(page.getByRole("status")).toHaveText("ListeningRelease to paste");
+});
+
+// Liquid Glass: the backend puts macOS's glass where the page says the pill is.
+async function openGlass(page: Page, look: object) {
+  await fakeTauri(page, `{ look_get: () => (${JSON.stringify({ theme: "auto", accent: "green", glass: "clear", liquid: true, experimental: true, ...look })}) }`);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/pill");
+  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(5);
+}
+const lastGlass = (page: Page) => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "glass_set").at(-1)?.[1].glass?.[0] ?? null);
+
+test("Liquid Glass: the glass follows the drawn pill, its corners, and whether it shows", async ({ page }) => {
+  await openGlass(page, {});
+  await expect.poll(() => lastGlass(page)).toMatchObject({ shown: false });
+  await say(page, "listening");
+  const b = (await page.locator(".hud").boundingBox())!;
+  await expect.poll(() => lastGlass(page)).toEqual({ x: b.x, y: b.y, w: b.width, h: b.height, radius: 20, shown: true });
+  await expect(page.locator(".hud")).toHaveCSS("background-color", "rgba(0, 0, 0, 0)"); // only the native glass shows
+  await emit(page, "pill-look", { style: "card", place: "top-right" });
+  const c = (await page.locator(".hud").boundingBox())!;
+  await expect.poll(() => lastGlass(page)).toMatchObject({ x: c.x, y: c.y, w: c.width, h: c.height, radius: 18 });
+});
+
+test("Liquid Glass: a new tint re-dresses the glass, and turning it off takes the glass away", async ({ page }) => {
+  await openGlass(page, { glass: "tinted" });
+  await expect.poll(() => lastGlass(page)).toBeTruthy();
+  const sends = () => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "glass_set").length);
+  const before = await sends();
+  await emit(page, "look", { theme: "auto", accent: "pink", glass: "tinted", liquid: true, experimental: true });
+  await expect.poll(sends).toBeGreaterThan(before);
+  await emit(page, "look", { theme: "auto", accent: "pink", glass: "tinted", liquid: true, experimental: false });
+  await expect.poll(() => lastGlass(page)).toBeNull(); // the master switch alone takes it away
+  await say(page, "listening");
+  await expect(page.locator(".hud")).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)"); // today's pill again
 });

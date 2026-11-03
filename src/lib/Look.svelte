@@ -3,8 +3,8 @@
   import { invoke } from "@tauri-apps/api/core";
   import { applyLook, type Look } from "./look";
 
-  let { initial }: { initial: Look } = $props();
-  let look = $derived({ ...initial }); // assignable: a failed save reverts it
+  // Shared with Experimental features (Liquid Glass), so neither saves a stale copy of the other's choice.
+  let { look = $bindable() }: { look: Look } = $props();
   let error = $state("");
 
   const THEMES = [["auto", "Auto"], ["light", "Light"], ["dark", "Dark"]];
@@ -54,11 +54,10 @@
       {@render seg("glass", GLASSES, "glass-l")}
     </li>
   </ul>
-  <p class="err" role="status">{error}</p>
 </section>
+<p class="err" role="status">{error}</p>
 
 <style>
-  .group { margin-bottom: var(--sp-5); }
   h2 { margin: 0 0 var(--sp-3); font-size: var(--fs-title3); line-height: var(--lh-title3); font-weight: var(--fw-semibold); }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   .list { list-style: none; margin: 0; padding: 0; border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); }

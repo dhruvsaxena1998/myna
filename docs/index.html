@@ -820,7 +820,7 @@ const S = {
 };
 S.set = { modules:S.modules, hotkey:'fn', mode:'hold', paste:'clipboard', pillStyle:'capsule', pillPlace:'bottom', dict:['Myna','Parakeet','Desert Ant','Drove → Dhruv'], lang:'en', rules:true,
   capture:'shots', interval:'15', apps:{ meet:false, teams:false, zoom:false, slack:false }, ext:false, retention:'30', folder:true, dataPath:'~/Library/Application Support/Myna', dataMoved:false,
-  meetKey:'ctrl-opt-m', appearance:'auto', accent:'blue', glass:'clear', detect:true,
+  meetKey:'ctrl-opt-m', appearance:'auto', accent:'blue', glass:'clear', liquid:false, expOn:false, detect:true,
   diar:'who', decision:'fast', decKey:'', upd:'',
   exp:{ diarOn:false, uhmD:false, uhmM:false, llmD:false, llmM:false, triage:false, relevance:false, shotsAI:false } };
 S.mb = { open:false };
@@ -1377,7 +1377,13 @@ function settingsPage() {
       + quickDecisions(x);
     case 'experimental': {
       const row = (t, h, p, badge) => srow(t, h + (getPath(p) && badge ? '<br>' + badge : ''), sw(p, t + (p.endsWith('D') ? ' in voice typing' : ' in meeting notes')));
-      return `<p class="help">New things we’re still working on. They stay off until you turn them on, and they may change.</p>`
+      return sgroup('Experimental features', [
+          srow('Use experimental features', 'New things we’re still working on. They may change. Turning this off turns them all off.', sw('expOn', 'Use experimental features'))
+        ]) + (!x.expOn ? '' : ''
+        // Shown only on macOS 26 or later; on 14 and 15 the group isn't there.
+        + sgroup('Look', [
+          srow('Liquid Glass', 'Uses macOS’s own glass for the pill and the Settings window. Still being tested.', sw('liquid', 'Liquid Glass'))
+        ])
         + sgroup('Voice typing', [
           row('Remove “um” and “uh”', 'Takes out filler words before your text is added. Stays on this Mac.', 'exp.uhmD'),
           row('Tidy up with AI', 'Fixes punctuation and wording.', 'exp.llmD', llmCloud() && offBadge())
@@ -1388,7 +1394,7 @@ function settingsPage() {
           row('Decide on muted speech', 'Lets quick decisions (in AI & privacy) choose if what you said while muted belongs in the notes.', 'exp.triage', (x.decision !== 'fast' || llmCloud()) && offBadge()),
           row('Keep only useful pictures', 'Skips pictures where nothing changed on screen.', 'exp.relevance', llmCloud() && offBadge('images')),
           row('Use pictures in summaries', 'Lets the AI look at up to 20 pictures from the call, if it can.', 'exp.shotsAI', llmCloud() && offBadge('images'))
-        ]);
+        ]));
     }
     case 'about': return sgroup('Myna', [
         srow('Version', '0.1.0 (prototype)', { '':`<button class="btn" data-act="upd">Check for updates</button>`, checking:`<span class="pill status" role="status">Checking…</span>`, ok:`<span class="pill ok">${icon('check','ic-s')}Up to date</span>` }[x.upd]),

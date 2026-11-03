@@ -2,8 +2,14 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import Pill, { WAVE, type Look, type Shown } from "$lib/Pill.svelte";
+  import { glassOn, type Look as Appearance } from "$lib/look";
+
+  let { data } = $props();
 
   let look = $state<Look>({ style: "capsule", place: "bottom" });
+  // Liquid Glass and what tints it; the layout already loaded them before first paint.
+  let appearance = $derived<Appearance | null>(data.appearance.ok ? data.appearance.look : null); // assignable: the "look" event updates it
+  let spot: HTMLElement;
   // What the pill last said; kept while it fades out so the text doesn't vanish first.
   let pill = $state<Shown>({ state: "listening", hold: true, key: "Alt+Space" });
   let on = $state(false);
@@ -30,13 +36,31 @@
       }),
       listen<number>("dictation-level", ({ payload }) => (wave = [...wave.slice(1), payload])),
       listen<Look>("pill-look", ({ payload }) => (look = payload)),
+      listen<Appearance>("look", ({ payload }) => (appearance = payload)),
     ];
     return () => (clearInterval(tick), un.forEach((p) => p.then((f) => f())));
+  });
+
+  // Liquid Glass: tell the backend where the pill is drawn, so its native glass sits exactly behind it.
+  function syncGlass() {
+    const hud = spot.firstElementChild as HTMLElement | null;
+    if (!appearance || !glassOn(appearance) || !hud) return void invoke("glass_set", { glass: [] });
+    const r = hud.getBoundingClientRect(), css = getComputedStyle(hud);
+    invoke("glass_set", { glass: [{ x: r.x, y: r.y, w: r.width, h: r.height, radius: Math.min(parseFloat(css.borderTopLeftRadius), r.height / 2), shown: on }] });
+  }
+  $effect(() => {
+    void [appearance && glassOn(appearance), appearance?.glass, appearance?.accent, look.style, look.place, on]; // any of these moves or restyles the glass (the backend picks the tint)
+    syncGlass();
+  });
+  $effect(() => {
+    const ro = new ResizeObserver(() => syncGlass()); // the pill's words change its width
+    ro.observe(spot.firstElementChild!);
+    return () => ro.disconnect();
   });
 </script>
 
 <!-- The window sits against the same screen edges (pill.rs `place`), so the pill keeps clear of the menubar and Dock. -->
-<div class="spot {look.place}" class:on role="status">
+<div class="spot {look.place}" class:on role="status" bind:this={spot}>
   <Pill style={look.style} {pill} {wave} {secs} {left} />
 </div>
 
@@ -50,4 +74,7 @@
   .top, .top-right { translate: 0 -8px; }
   .bottom, .top { left: 0; right: 0; justify-content: center; }
   .bottom-right, .top-right { right: var(--sp-5); }
+  /* Liquid Glass: only the native glass shows, and the pill fades in place so the glass stays behind it. */
+  :global(html[data-liquid]) .spot { translate: none; }
+  :global(html[data-liquid]) .spot :global(.hud) { background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: none; }
 </style>
