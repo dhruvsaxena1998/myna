@@ -5,6 +5,7 @@ mod look;
 mod models;
 mod permissions;
 mod pill;
+mod rules;
 mod runtime;
 mod storage;
 mod voice;

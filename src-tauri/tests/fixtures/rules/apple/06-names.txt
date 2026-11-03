@@ -1,0 +1,1 @@
+Ask Drov to deploy money on Cubanitis with the Dowry and CivilKit. Then post the post-race migration in slack.

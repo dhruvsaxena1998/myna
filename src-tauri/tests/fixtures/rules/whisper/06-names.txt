@@ -1,0 +1,1 @@
+Ask Dhruv to deploy Mania on Kubernetes with Tauri and Seville kit. ⏐ Then post the postgres migration in Slack.
