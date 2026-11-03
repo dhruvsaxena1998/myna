@@ -18,6 +18,7 @@ After a meeting is transcribed, Myna can clean the transcript and writes a Summa
 - Always chunk-then-merge along transcription chunks; only included lines are sent: [Fitting long meetings into the context window](../../local-ai/issues/11-long-meetings-context.md), [Cost and context-window display](../../local-ai/issues/10-cost-and-context-display.md).
 - Transcript cleanup per chunk by line id, guards, raw kept, collapsed segments never sent, editable prompt in a fixed wrapper, off by default under Meetings: [LLM cleanup for dictation and transcripts](../../local-ai/issues/28-llm-cleanup.md).
 - Screenshots ride with their chunk (6 per chunk, manual captures first); image support from server metadata or a Test images check; "Use screenshots in Summary and Chat" off by default: [Screenshots in AI](../../local-ai/issues/32-screenshots-in-ai.md).
+- The LLM cleanup prompt asks for dates, times, phone numbers, versions and decades in digits (rules cleanup leaves those as words), and carries one line, "Spell these exactly as written: …", listing Words to remember (an alias's correct form). Styles don't change that line: [rules cleanup map](../../rules-cleanup/map.md).
 - Cost line under each Summary version; Regenerate shows the estimate above $1.
 
 ## Done when

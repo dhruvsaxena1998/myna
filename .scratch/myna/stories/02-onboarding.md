@@ -12,6 +12,7 @@ First launch takes a new user, including a teammate who has never seen the app, 
 - As a new user, I want the model each module needs downloaded during onboarding with progress, so that the app works when setup ends.
 - As a new user who enabled Meetings, I want to see how to install the browser extension, so that mute mirroring works on my first call.
 - As a new user, I want to pick my voice typing key (fn, Option+Space, or my own), so that it fits how I work. Picking fn walks through the 🌐-key setting (story 04, ticket 4).
+- As a new user who picked Voice typing, I want to say which language I speak (pre-filled from my Mac's language) on "What to help with", so that rules cleanup and Apple Speech know it. Same setting as Language you speak on Voice typing (story 04, ticket 10).
 - As a new user, I want a final screen telling me what to try first, so that I know it works.
 - As a user, I want to turn the other module on later and be walked through only its missing steps.
 

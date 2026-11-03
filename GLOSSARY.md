@@ -53,7 +53,19 @@ A short summary of earlier Chat exchanges, sent to the model in their place so t
 _Avoid_: summary, compaction, memory
 
 **Rules cleanup**:
-The deterministic pass that removes filler words, collapses repeated words and applies the personal dictionary. It always runs and needs no AI provider.
+The deterministic pass that removes filler words, collapses repeated words, writes spoken numbers as digits and applies the user's words to remember. It only deletes listed words, writes a number in digits, respells words the user listed, and repairs the gap left behind; it never adds, reorders or rephrases. It is on by default and the user can switch it off for dictation; words to remember always apply. It needs no AI provider.
+
+**Filler word**:
+A hesitation sound with no meaning (um, uh, er, hmm) that rules cleanup removes from dictation. Words like "like", "you know" or "so" are not filler words; rules cleanup leaves them.
+_Avoid_: filler for discourse words, disfluency
+
+**Dictation language**:
+The one language the user says they dictate in. It decides which filler words and repeats rules cleanup removes; a language without lists gets none removed.
+_Avoid_: locale, detected language
+
+**Word to remember**:
+A name or special word the user lists so dictation spells it their way, optionally with the wrong form the model tends to write instead (heard as).
+_Avoid_: dictionary, personal dictionary, vocabulary, custom words
 
 **LLM cleanup**:
 The optional pass after rules cleanup that has a model fix punctuation, capitals and slips in dictation or in a meeting transcript, without changing what was said.

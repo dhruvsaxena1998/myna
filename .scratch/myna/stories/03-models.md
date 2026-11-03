@@ -42,12 +42,12 @@ Settled with the user on 2026-11-03. Spike on macOS 27 (headless CLI, `say` audi
 
 - **API:** SpeechTranscriber (SpeechAnalyzer), macOS 26+. Below 26 the row shows "Needs macOS 26", like Voz. No SFSpeechRecognizer fallback.
 - **Bridge:** this ticket adds the swift-rs Swift package (the spec's Swift bridge; 03.4 reuses it). `@_cdecl` functions: transcribe 16 kHz f32 to segments with times; the language and whether it's installed; download its assets. The deployment target stays 14.2 behind `#available(macOS 26, *)`.
-- **Row:** "Apple Speech", vendor Apple, "Built into macOS. Listens in <language>." from the Mac's language (`supportedLocale(equivalentTo: Locale.current)`). No size. Installed when the language is in `installedLocales` (not `AssetInventory.status`, which says "supported" for preinstalled English). Otherwise Download through `AssetInventory`, with progress and no Cancel (unverified: English is preinstalled on the dev Mac). No Remove: macOS owns the assets. An unsupported language shows "Needs a language Apple supports" and can't be picked.
+- **Row:** "Apple Speech", vendor Apple, "Built into macOS. Listens in <language>." from the Dictation language (Language you speak on Voice typing, pre-filled from the Mac's language; `supportedLocale(equivalentTo:)`), per the [rules cleanup map](../../rules-cleanup/issues/06-non-english.md). No size. Installed when the language is in `installedLocales` (not `AssetInventory.status`, which says "supported" for preinstalled English). Otherwise Download through `AssetInventory`, with progress and no Cancel (unverified: English is preinstalled on the dev Mac). No Remove: macOS owns the assets. An unsupported language shows "Needs a language Apple supports" and can't be picked.
 - **Ratings:** placeholder Accuracy 4, Speed 5. A prototype measures them against Parakeet later.
 - **Active model:** the saved pick if it runs here; else Parakeet if installed; else Apple Speech if it runs here; else Parakeet ("Download Parakeet…"). Parakeet stays the recommended model, and downloading it takes over from an Apple Speech that was never picked explicitly.
 - **Shared:** one speech-to-text slot for Dictation and Meetings, as today.
 - **Permissions:** no Speech Recognition row and no Info.plist key. If macOS refuses anyway, its message shows on the pill.
-- **Not here:** Words to remember (SpeechTranscriber has no documented vocabulary option; the rules-cleanup map decides), a language picker.
+- **Not here:** Words to remember (SpeechTranscriber has no documented vocabulary option; rules cleanup respells after it, story 04 ticket 5), the language picker (story 04 ticket 10).
 - **Tests:** active-model rule and catalog in `models.rs`; Apple Speech row states in Playwright; one slow test on `two-speakers.wav` (macOS 26+).
 
 ## Open questions for you

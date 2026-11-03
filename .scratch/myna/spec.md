@@ -38,8 +38,8 @@ Speech-to-text, diarization and filler detection run on the Mac by default; meet
 8. As a user, I want a small floating pill that shows level and state (idle, recording, processing), so that I know the app heard me.
 9. As a user, I want the text pasted into the focused app via the clipboard with my previous clipboard restored, so that dictation does not clobber what I copied.
 10. As a user, I want a keystroke-simulation fallback for apps that reject paste, so that dictation works in terminals and password-free fields.
-11. As a user, I want filler words and stutters removed by deterministic rules, so that the output reads cleanly without surprises.
-12. As a user, I want a personal dictionary for names and jargon, so that the transcriber spells them right.
+11. As a user, I want filler words, stutters and repeats removed and spoken numbers written as digits by deterministic rules, so that the output reads cleanly without surprises.
+12. As a user, I want Words to remember for names and jargon, with what the model mishears them as, so that dictation spells them right.
 13. As a user, I want to pick the speech-to-text model from a curated list with size, speed, and quality labels, so that I can trade accuracy for latency.
 14. As a user, I want to point the app at a custom model path or Hugging Face repo for the same runtime, so that I am not limited to the curated list.
 15. As a user, I want a second hotkey that adds LLM cleanup, falling back to the rules output within 3 s, so that a slow network never holds up a paste and I choose per dictation whether cleanup runs.
@@ -125,7 +125,7 @@ Speech-to-text, diarization and filler detection run on the Mac by default; meet
 - Meeting speech-to-text can run on an Endpoint after the meeting (Groq, Together, or any that passes a word-timestamp test); Dictation never does. Story 03.
 
 ### Pipelines
-- Dictation: hotkey down → capture mic → hotkey up → [Uhm on audio, experimental] → local STT → rules (filler list, repeated-word collapse, dictionary) → [LLM cleanup, only on the Dictate with cleanup hotkey, Endpoint only, own 3 s budget, falls back to rules output] → paste.
+- Dictation: hotkey down → capture mic → hotkey up → [Uhm on audio, experimental] → local STT → rules cleanup (English only: filler words, repeats, spoken numbers; always: Words to remember) → [LLM cleanup, only on the Dictate with cleanup hotkey, Endpoint only, own 3 s budget, falls back to rules output] → paste.
 - Meeting post-process: [Uhm] → STT on both tracks (local, or an Endpoint by chunk with possibly-muted mic spans kept local) → diarize system track → assign mute state per mic segment → caption-name suggestion (if extension events exist) → voice-profile suggestion → [transcript LLM cleanup, if on] → [folder suggestion, if on] → Summary (if a Main model is set) → store.
 - Mute state per mic segment: `unmuted`, `muted`, `unknown`. Only `unmuted` appears by default. Myna's own mute toggle sets `muted`. Mirrored state from the extension sets `unmuted`/`muted`. No source means `unknown`. Mic audio is always recorded to disk; the state gates inclusion, not capture. Nothing collapsed is sent to any provider unless the user includes it or experimental triage is on.
 - Experimental triage: for each collapsed segment, send segment text plus the two neighboring included lines to the Decision provider with a yes/no question; include at p ≥ 0.8 (Decision API) or on yes (chat model), marked "included by triage" with undo. Text only, never audio.
@@ -169,7 +169,7 @@ Speech-to-text, diarization and filler detection run on the Mac by default; meet
 - A screen whose data fails to load shows the error. No screen ever renders blank.
 
 ### Settings layout
-- Sidebar pages and names follow the prototype (`docs/index.html`): Look & appearance (light/dark, highlight colour, see-through panels), Voice typing (on/off, hotkeys, mode, dictionary, paste method, dictation cleanup and Styles), Meeting notes (on/off, capture mode, per-app mic policy, retention, transcript cleanup and its prompt, Summary auto-run and templates, screenshots in Summary and Chat), AI & privacy (STT and diarization with download state, meeting speech-to-text Local / Endpoint, AI providers, Main and Fast, Customize, and "Quick decisions": the Decision provider), Experimental features (Uhm × module, muted-segment triage, screenshot relevance), About (attribution, version). No separate Modules page: each module's switch tops its own page.
+- Sidebar pages and names follow the prototype (`docs/index.html`): Look & appearance (light/dark, highlight colour, see-through panels), Voice typing (on/off, hotkeys, mode, Language you speak, Tidy up as I talk, Words to remember, paste method, dictation cleanup and Styles), Meeting notes (on/off, capture mode, per-app mic policy, retention, transcript cleanup and its prompt, Summary auto-run and templates, screenshots in Summary and Chat), AI & privacy (STT and diarization with download state, meeting speech-to-text Local / Endpoint, AI providers, Main and Fast, Customize, and "Quick decisions": the Decision provider), Experimental features (Uhm × module, muted-segment triage, screenshot relevance), About (attribution, version). No separate Modules page: each module's switch tops its own page.
 
 ## Testing Decisions
 
@@ -197,7 +197,7 @@ Speech-to-text, diarization and filler detection run on the Mac by default; meet
 - VM isolation for Agents (shuru "Strict mode") and a host allow-list proxy for Agent runs.
 - Nested folders.
 - Mac App Store distribution. Intel Macs. Windows, Linux.
-- Multilingual UI, rules, and dictionary (models may be multilingual; the app is English-first).
+- Multilingual UI and rules beyond English (models may be multilingual; the app is English-first). Words to remember already work in every language.
 
 ## Further Notes
 
