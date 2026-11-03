@@ -127,6 +127,12 @@ fn model_delete(d: tauri::State<Data>, id: String) -> Result<(), String> {
     }
 }
 
+/// `MYNA_DEBUG=1` turns on debug aids in the UI (for now: the window size while resizing).
+#[tauri::command]
+fn debug_on() -> bool {
+    std::env::var("MYNA_DEBUG").is_ok_and(|v| !v.is_empty() && v != "0")
+}
+
 #[tauri::command]
 fn permissions_state() -> permissions::State {
     permissions::state()
@@ -369,7 +375,7 @@ fn open_settings(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, voice_get, voice_set, voice_pause])
+        .invoke_handler(tauri::generate_handler![debug_on, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, voice_get, voice_set, voice_pause])
         .setup(|app| {
             app.set_activation_policy(ActivationPolicy::Accessory);
 
