@@ -1,6 +1,6 @@
 <!-- Voice typing's switch, its shortcut recorder, and how it starts (prototype: the dictation page and `hotkeyRec`). -->
 <script lang="ts" module>
-  export type Voice = { on: boolean; key: string; mode: "hold" | "tap" };
+  export type Voice = { on: boolean; key: string; mode: "hold" | "tap"; paste: "clipboard" | "type" };
 </script>
 
 <script lang="ts">

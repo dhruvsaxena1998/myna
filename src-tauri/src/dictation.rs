@@ -105,17 +105,22 @@ pub fn text(t: &mut dyn Transcriber, audio: &[f32], settings: &crate::rules::Set
 /// What `paste` fails with when Accessibility is off.
 pub const NO_AX: &str = "Myna needs Accessibility to add your words.";
 
-/// Pastes `text` into the focused app through the clipboard, then puts back whatever was on it.
-pub fn paste(text: &str) -> Result<(), String> {
+/// Adds `text` to the focused app: typed out key by key if `typed`, else pasted through the clipboard.
+pub fn paste(text: &str, typed: bool) -> Result<(), String> {
+    // Check first: without Accessibility the keystrokes go nowhere, and the user's clipboard must stay as it was.
+    if !crate::permissions::ax() {
+        return Err(NO_AX.into());
+    }
+    if typed { type_out(text) } else { via_clipboard(text) }
+}
+
+/// Puts `text` on the clipboard, sends Cmd-V, then puts back whatever was on it.
+fn via_clipboard(text: &str) -> Result<(), String> {
     use objc2::rc::Retained;
     use objc2::runtime::ProtocolObject;
     use objc2_app_kit::{NSPasteboard, NSPasteboardItem, NSPasteboardTypeString, NSPasteboardWriting};
     use objc2_foundation::{NSArray, NSString};
 
-    // Check first: without Accessibility the Cmd-V goes nowhere, and the user's clipboard must stay as it was.
-    if !crate::permissions::ax() {
-        return Err(NO_AX.into());
-    }
     let pb = NSPasteboard::generalPasteboard();
     // Copy every item in every type (text, images, files), not just text.
     let saved: Vec<Retained<ProtocolObject<dyn NSPasteboardWriting>>> = pb
@@ -140,7 +145,7 @@ pub fn paste(text: &str) -> Result<(), String> {
     pb.setString_forType(&NSString::from_str(text), unsafe { NSPasteboardTypeString });
     let ours = pb.changeCount();
     cmd_v()?;
-    // shortcut: fixed wait for the app to read the clipboard; ticket 04.6 makes it a setting.
+    // shortcut: a fixed wait for the app to read the clipboard; add a setting only if an app needs longer.
     std::thread::sleep(std::time::Duration::from_millis(300));
     if pb.changeCount() == ours {
         // Unless the user copied something meanwhile.
@@ -157,11 +162,64 @@ fn cmd_v() -> Result<(), String> {
     use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
     // A private source, so modifiers still held from the hotkey (Option) don't join the Cmd-V.
     let src = CGEventSource::new(CGEventSourceStateID::Private).map_err(|_| "Couldn't send the paste keystroke.")?;
-    // shortcut: key code 9 is V on QWERTY-shaped layouts; Dvorak users without "QWERTY ⌘" need the typing fallback (04.6).
+    // shortcut: key code 9 is V on QWERTY-shaped layouts; Dvorak users without "QWERTY ⌘" need the Type method.
     for down in [true, false] {
         let e = CGEvent::new_keyboard_event(src.clone(), 9, down).map_err(|_| "Couldn't send the paste keystroke.")?;
         e.set_flags(CGEventFlags::CGEventFlagCommand);
         e.post(CGEventTapLocation::HID);
+    }
+    Ok(())
+}
+
+/// One keystroke's worth of typing: up to `TYPE_UNITS` UTF-16 units of text, or the Return key.
+#[derive(Debug, PartialEq)]
+enum Key<'a> {
+    Text(&'a str),
+    Return,
+}
+
+/// A key event carries at most 20 UTF-16 units; an emoji is two, and never gets split.
+const TYPE_UNITS: usize = 20;
+
+fn keys(text: &str) -> Vec<Key<'_>> {
+    let mut out = vec![];
+    for (i, line) in text.split('\n').enumerate() {
+        if i > 0 {
+            out.push(Key::Return);
+        }
+        let (mut start, mut units) = (0, 0);
+        for (at, c) in line.char_indices() {
+            if units + c.len_utf16() > TYPE_UNITS {
+                out.push(Key::Text(&line[start..at]));
+                (start, units) = (at, 0);
+            }
+            units += c.len_utf16();
+        }
+        if start < line.len() {
+            out.push(Key::Text(&line[start..]));
+        }
+    }
+    out
+}
+
+/// Types `text` as keystrokes, for apps that block pasting.
+fn type_out(text: &str) -> Result<(), String> {
+    use core_graphics::event::{CGEvent, CGEventTapLocation};
+    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+    const FAIL: &str = "Couldn't type your words.";
+    // A private source, so modifiers still held from the hotkey don't join the keys.
+    let src = CGEventSource::new(CGEventSourceStateID::Private).map_err(|_| FAIL)?;
+    for key in keys(text) {
+        for down in [true, false] {
+            // Return is key code 36; text rides on a blank key event as its Unicode string.
+            let e = CGEvent::new_keyboard_event(src.clone(), if key == Key::Return { 36 } else { 0 }, down).map_err(|_| FAIL)?;
+            if let Key::Text(t) = key {
+                e.set_string(t);
+            }
+            e.post(CGEventTapLocation::HID);
+        }
+        // shortcut: a fixed pause so apps don't drop keys; long text takes a moment, speed it up if that's felt.
+        std::thread::sleep(std::time::Duration::from_millis(5));
     }
     Ok(())
 }
@@ -217,5 +275,21 @@ mod tests {
         assert_eq!(heard(&[" Uh, the the report", "is on post gres."], &s), "The report is on Postgres.");
         // Nothing left to paste: the command layer shows "didn't hear anything" for an empty text.
         assert_eq!(heard(&["Hmm,", " um."], &s), "");
+    }
+
+    #[test]
+    fn typing_splits_text_without_cutting_characters_and_sends_newlines_as_return() {
+        assert_eq!(keys("Hello"), [Key::Text("Hello")]);
+        assert_eq!(keys("a\nb\n"), [Key::Text("a"), Key::Return, Key::Text("b"), Key::Return]);
+        assert_eq!(keys(""), []);
+        // 21 letters: 20 then 1. Emoji are 2 units each, so 10 fit; é stays whole.
+        assert_eq!(keys(&"x".repeat(21)), [Key::Text(&"x".repeat(20)), Key::Text("x")]);
+        let smileys = "😀".repeat(11);
+        assert_eq!(keys(&smileys), [Key::Text(&"😀".repeat(10)), Key::Text("😀")]);
+        let long = "é😀 ".repeat(40);
+        let parts = keys(&long);
+        assert!(parts.iter().all(|k| matches!(k, Key::Text(t) if t.encode_utf16().count() <= TYPE_UNITS)));
+        let joined: String = parts.iter().map(|k| if let Key::Text(t) = k { *t } else { "" }).collect();
+        assert_eq!(joined, long);
     }
 }

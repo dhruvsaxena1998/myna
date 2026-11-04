@@ -7,7 +7,7 @@ async function open(page: Page, key = "Alt+Space", globe = false) {
   await page.addInitScript((g) => ((window as any).__globe = g), globe);
   await fakeTauri(page, `{
     storage_status: () => "/tmp/Myna", models_list: () => [],
-    voice_get: () => ({ on: true, key: "${key}", mode: "hold" }),
+    voice_get: () => ({ on: true, key: "${key}", mode: "hold", paste: "clipboard" }),
     globe_ok: () => window.__globe, globe_open: () => {},
     voice_set: ({ voice }) => { if (voice.key.startsWith("Ctrl+Alt")) throw "Another app is using that shortcut. Pick a different one."; },
     voice_pause: () => {},
@@ -34,7 +34,7 @@ test("Change records a new shortcut and saves it; the old one is paused meanwhil
   await page.keyboard.up("Control");
   await expect(page.getByLabel("Current shortcut: Control Shift D")).toHaveText("⌃⇧D");
   expect(await calls(page, "voice_pause")).toEqual([{ paused: true }]);
-  expect(await calls(page, "voice_set")).toEqual([{ voice: { on: true, key: "Ctrl+Shift+KeyD", mode: "hold" } }]);
+  expect(await calls(page, "voice_set")).toEqual([{ voice: { on: true, key: "Ctrl+Shift+KeyD", mode: "hold", paste: "clipboard" } }]);
 });
 
 test("Esc cancels and gives the old shortcut back", async ({ page }) => {
@@ -93,7 +93,7 @@ test("fn can be picked while recording; the browser never sees it, so the backen
   await page.evaluate(() => (window as any).__emit("voice-fn", null));
   await expect(page.getByLabel("Current shortcut: fn")).toHaveText("fn");
   await expect(page.getByRole("button", { name: "Change" })).toBeFocused();
-  expect(await calls(page, "voice_set")).toEqual([{ voice: { on: true, key: "Fn", mode: "hold" } }]);
+  expect(await calls(page, "voice_set")).toEqual([{ voice: { on: true, key: "Fn", mode: "hold", paste: "clipboard" } }]);
 });
 
 test("with fn, the 🌐 key row shows the steps until the key is set to Do Nothing", async ({ page }) => {
@@ -110,4 +110,13 @@ test("with fn, the 🌐 key row shows the steps until the key is set to Do Nothi
 test("the 🌐 key row is only for fn", async ({ page }) => {
   await open(page);
   await expect(page.getByText("Set the 🌐 key to Do Nothing")).toBeHidden();
+});
+
+test("How words are added: Paste by default, Type saves and changes the help", async ({ page }) => {
+  await open(page);
+  await expect(page.getByRole("radio", { name: "Paste" })).toBeChecked();
+  await expect(page.getByText("Fastest. Myna puts back whatever you had copied afterwards.")).toBeVisible();
+  await page.getByRole("radio", { name: "Type" }).check();
+  await expect(page.getByText("Types each letter. Slower, but works in apps that block pasting.")).toBeVisible();
+  expect(await calls(page, "voice_set")).toEqual([{ voice: { on: true, key: "Alt+Space", mode: "hold", paste: "type" } }]);
 });

@@ -42,7 +42,7 @@ pub trait World: Send + Sync + 'static {
     fn speech(&self) -> System;
     fn record(&self) -> Box<dyn Recording>;
     /// Fails with `dictation::NO_AX` when Accessibility is off, leaving the clipboard as it was.
-    fn paste(&self, text: &str) -> Result<(), String>;
+    fn paste(&self, text: &str, typed: bool) -> Result<(), String>;
     fn show(&self, p: Pill);
     /// The mic loudness for the level bars, 0 to 1.
     fn level(&self, level: f32);
@@ -222,17 +222,18 @@ impl Session {
                 s.world.show(Pill::Writing);
                 let mut slot = s.transcriber.lock().unwrap();
                 s.load(&mut slot)?;
+                let voice = voice::get(&s.db.lock().unwrap())?;
                 let words = rules::load(&s.db.lock().unwrap())?;
                 let model = slot.as_mut().unwrap().1.as_mut();
                 model.bias(&rules::prompt(&words));
                 let text = dictation::text(model, &audio, &words)?;
                 drop(slot);
                 if text.is_empty() {
-                    let tap = voice::get(&s.db.lock().unwrap()).is_ok_and(|v| v.mode == "tap");
+                    let tap = voice.mode == "tap";
                     let hint = if tap { "Press the keys, talk, then press them again" } else { "Hold the keys while you talk" };
                     return Ok(Pill::Error { title: "Didn’t hear anything".into(), hint: hint.into() });
                 }
-                s.world.paste(&text)?;
+                s.world.paste(&text, voice.paste == "type")?;
                 Ok(Pill::Added)
             };
             s.world.show(match run() {
@@ -273,8 +274,8 @@ impl World for Mac {
     fn record(&self) -> Box<dyn Recording> {
         Box::new(dictation::record())
     }
-    fn paste(&self, text: &str) -> Result<(), String> {
-        dictation::paste(text)
+    fn paste(&self, text: &str, typed: bool) -> Result<(), String> {
+        dictation::paste(text, typed)
     }
     fn show(&self, p: Pill) {
         match p {
@@ -323,6 +324,7 @@ mod tests {
         levels: usize,
         shown: Vec<Pill>,
         pasted: Vec<String>,
+        typed: Vec<bool>,
     }
 
     #[derive(Clone, Default)]
@@ -377,12 +379,13 @@ mod tests {
             let audio = l.audio.clone().unwrap_or(vec![0.1; runtime::RATE as usize]);
             Box::new(FakeRecording(l.mic_fails.map_or(Ok(audio), |e| Err(e.into()))))
         }
-        fn paste(&self, text: &str) -> Result<(), String> {
+        fn paste(&self, text: &str, typed: bool) -> Result<(), String> {
             let mut l = self.0.lock().unwrap();
             if !l.ax {
                 return Err(dictation::NO_AX.into());
             }
             l.pasted.push(text.into());
+            l.typed.push(typed);
             Ok(())
         }
         fn show(&self, p: Pill) {
@@ -455,6 +458,20 @@ mod tests {
         mac.wait(|l| l.shown.len() == 3);
         assert_eq!(mac.shown(), [listening(true), Pill::Writing, Pill::Added]);
         assert_eq!(mac.0.lock().unwrap().pasted, ["Hello there."]);
+    }
+
+    #[test]
+    fn the_paste_method_setting_decides_between_pasting_and_typing() {
+        let (s, mac, _tmp) = session("hold");
+        for (method, n) in [("clipboard", 1), ("type", 2)] {
+            let mut v = voice::get(&s.db.lock().unwrap()).unwrap();
+            v.paste = method.into();
+            voice::set(&s.db.lock().unwrap(), &v).unwrap();
+            s.key(true);
+            s.key(false);
+            mac.wait(|l| l.pasted.len() == n);
+        }
+        assert_eq!(mac.0.lock().unwrap().typed, [false, true]);
     }
 
     #[test]
