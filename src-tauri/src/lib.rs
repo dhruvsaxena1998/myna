@@ -8,6 +8,7 @@ mod permissions;
 mod pill;
 mod rules;
 mod runtime;
+mod session;
 mod storage;
 mod update;
 mod voice;
@@ -15,13 +16,14 @@ mod voice;
 use rusqlite::Connection;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tauri::image::Image;
 use tauri::menu::{MenuBuilder, MenuItem, MenuItemBuilder, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{ActivationPolicy, AppHandle, Emitter, Listener, Manager, WindowEvent, Wry};
+use session::Session;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 /// Result of creating the data folder and database: the folder path, or the error to show.
@@ -29,17 +31,11 @@ struct Storage(Result<String, String>);
 
 /// Managed only when the database opened.
 struct Data {
-    db: Mutex<Connection>,
+    db: Arc<Mutex<Connection>>,
     models_dir: PathBuf,
     macos: u32,
     /// Model id -> cancel flag, for each download in progress.
     downloads: Mutex<HashMap<String, Arc<AtomicBool>>>,
-    /// The mic recording while the dictation hotkey is held.
-    recording: Mutex<Option<dictation::Recording>>,
-    /// The loaded speech-to-text model and its id, kept between dictations (loading takes seconds).
-    transcriber: Mutex<Loaded>,
-    /// Bumped on every dictation, so an unload timer knows the model was used after it started.
-    used: AtomicU64,
     /// The shortcut registered with macOS right now, if any.
     shortcut: Mutex<Option<String>>,
     /// Set while Settings records a new shortcut, so pressing the old one types into the recorder.
@@ -48,8 +44,6 @@ struct Data {
 
 /// "Start voice typing" in the menubar menu, which shows the shortcut.
 struct VoiceItem(MenuItem<Wry>);
-
-type Loaded = Option<(String, Box<dyn runtime::Transcriber>)>;
 
 #[tauri::command]
 fn storage_status(storage: tauri::State<Storage>) -> Result<String, String> {
@@ -170,9 +164,9 @@ fn stt_unload_get(d: tauri::State<Data>) -> Result<i64, String> {
 }
 
 #[tauri::command]
-fn stt_unload_set(app: AppHandle, d: tauri::State<Data>, secs: i64) -> Result<(), String> {
+fn stt_unload_set(d: tauri::State<Data>, s: tauri::State<Arc<Session>>, secs: i64) -> Result<(), String> {
     models::set_unload_after(&d.db.lock().unwrap(), secs)?;
-    schedule_unload(&app); // the new time counts from now
+    s.schedule_unload(); // the new time counts from now
     Ok(())
 }
 
@@ -299,10 +293,8 @@ async fn update_download(app: AppHandle) -> Result<(), String> {
 
 /// Restart now: installs the downloaded update and relaunches, unless a dictation is under way.
 #[tauri::command]
-fn update_restart(app: AppHandle, d: tauri::State<Data>) -> Result<(), String> {
-    // The transcriber stays locked after the key is let go, until the words are typed.
-    let busy = d.recording.lock().unwrap().is_some() || d.transcriber.try_lock().is_err();
-    update::install(&app, busy)?;
+fn update_restart(app: AppHandle, s: tauri::State<Arc<Session>>) -> Result<(), String> {
+    update::install(&app, s.busy())?;
     app.restart()
 }
 
@@ -358,148 +350,6 @@ fn sync_shortcut(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Frees the speech-to-text model once it has sat unused for the chosen time.
-// shortcut: one sleeping thread per dictation; fine at human dictation rates.
-fn schedule_unload(app: &AppHandle) {
-    let d = app.state::<Data>();
-    let mine = d.used.fetch_add(1, Ordering::SeqCst) + 1;
-    let secs = models::unload_after(&d.db.lock().unwrap()).unwrap_or(-1);
-    if secs < 0 {
-        return;
-    }
-    let app = app.clone();
-    std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_secs(secs as u64));
-        let d = app.state::<Data>();
-        if d.used.load(Ordering::SeqCst) == mine && d.recording.lock().unwrap().is_none() {
-            *d.transcriber.lock().unwrap() = None;
-        }
-    });
-}
-
-/// The active speech-to-text model's id, if it's downloaded.
-fn active_stt(d: &Data) -> Result<String, String> {
-    let tasks = models::list(&d.db.lock().unwrap(), &d.models_dir, d.macos, &apple::status())?;
-    let stt = tasks.into_iter().find(|t| t.id == "stt").ok_or("No speech-to-text task.")?;
-    let id = stt.active.ok_or("No speech-to-text model runs on this Mac")?;
-    match stt.models.iter().find(|m| m.id == id) {
-        Some(m) if m.installed => Ok(id),
-        Some(m) if m.system => Err(format!("Download {}’s language in Settings › AI & privacy", m.name)),
-        Some(m) => Err(format!("Download {} in Settings › AI & privacy", m.name)),
-        None => Err(format!("Unknown model {id}")),
-    }
-}
-
-/// Loads the active model into `slot` unless it's already there.
-fn load_transcriber(d: &Data, slot: &mut Loaded) -> Result<(), String> {
-    let id = active_stt(d)?;
-    if slot.as_ref().is_none_or(|(loaded, _)| *loaded != id) {
-        *slot = None; // free the old model before loading the new one
-        *slot = Some((id.clone(), runtime::transcriber(&id, &d.models_dir)?));
-    }
-    Ok(())
-}
-
-/// Starts recording. `hold`: it stops when the shortcut is let go; otherwise on the next tap, or at the time limit.
-fn dictate_start(app: &AppHandle, hold: bool) {
-    let d = app.state::<Data>();
-    let mut rec = d.recording.lock().unwrap();
-    if rec.is_some() {
-        return; // key repeat
-    }
-    let Ok(v) = voice::get(&d.db.lock().unwrap()) else { return };
-    if let Ok(look) = pill::look(&d.db.lock().unwrap()) {
-        pill::place(app, look.place);
-    }
-    // Say what's missing before the user talks, not after.
-    let missing = match permissions::mic() {
-        permissions::Mic::Allowed => None,
-        permissions::Mic::Ask => {
-            std::thread::spawn(permissions::ask_mic); // macOS's pop-up; the next press records
-            return;
-        }
-        permissions::Mic::Denied => Some(("Needs the Microphone", pill::ALLOW.to_string())),
-    };
-    let missing = missing
-        .or_else(|| (!permissions::ax()).then(|| ("Needs Accessibility", pill::ALLOW.to_string())))
-        .or_else(|| active_stt(&d).err().map(|e| ("No speech model", e)));
-    if let Some((title, hint)) = missing {
-        return pill::error(app, title, &hint);
-    }
-    *rec = Some(dictation::record());
-    let mine = d.used.fetch_add(1, Ordering::SeqCst) + 1; // a pending unload must not fire mid-dictation
-    pill::listening(app, hold, &v.key, voice::TAP_LIMIT_SECS);
-    let loader = app.clone();
-    std::thread::spawn(move || {
-        let d = loader.state::<Data>();
-        // Load the model while the user talks; a failure shows when they let go.
-        let _ = load_transcriber(&d, &mut d.transcriber.lock().unwrap());
-    });
-    let app = app.clone();
-    std::thread::spawn(move || {
-        let d = app.state::<Data>();
-        let started = std::time::Instant::now();
-        // Level bars, until this recording ends.
-        while d.used.load(Ordering::SeqCst) == mine {
-            if !hold && started.elapsed().as_secs() >= voice::TAP_LIMIT_SECS {
-                dictate_stop(&app);
-                break;
-            }
-            match d.recording.lock().unwrap().as_ref() {
-                Some(r) => pill::level(&app, r.level()),
-                None => break,
-            }
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
-    });
-}
-
-/// The menu item, or a tap of the shortcut: start, or stop if already listening.
-fn dictate_toggle(app: &AppHandle) {
-    if app.state::<Data>().recording.lock().unwrap().is_some() {
-        dictate_stop(app);
-    } else {
-        dictate_start(app, false);
-    }
-}
-
-fn dictate_stop(app: &AppHandle) {
-    let Some(rec) = app.state::<Data>().recording.lock().unwrap().take() else { return };
-    let app = app.clone();
-    std::thread::spawn(move || {
-        let d = app.state::<Data>();
-        let run = || -> Result<&'static str, String> {
-            let audio = rec.finish()?;
-            if audio.len() < runtime::RATE as usize / 4 {
-                return Ok("idle"); // a tap, not speech
-            }
-            pill::show(&app, "writing");
-            let mut slot = d.transcriber.lock().unwrap();
-            load_transcriber(&d, &mut slot)?;
-            let words = rules::load(&d.db.lock().unwrap())?;
-            let model = slot.as_mut().unwrap().1.as_mut();
-            model.bias(&rules::prompt(&words));
-            let text = dictation::text(model, &audio, &words)?;
-            drop(slot);
-            if text.is_empty() {
-                return Ok("nothing");
-            }
-            dictation::paste(&text)?;
-            Ok("added")
-        };
-        match run() {
-            Ok("nothing") => {
-                let tap = voice::get(&d.db.lock().unwrap()).is_ok_and(|v| v.mode == "tap");
-                pill::error(&app, "Didn’t hear anything", if tap { "Press the keys, talk, then press them again" } else { "Hold the keys while you talk" })
-            }
-            Ok(state) => pill::show(&app, state),
-            Err(e) if e == dictation::NO_AX => pill::error(&app, "Needs Accessibility", pill::ALLOW),
-            Err(e) => pill::error(&app, "Couldn’t add your words", &e),
-        }
-        schedule_unload(&app);
-    });
-}
-
 fn open_window(app: &AppHandle, label: &str) {
     if let Some(w) = app.get_webview_window(label) {
         let _ = w.show();
@@ -527,29 +377,22 @@ pub fn run() {
             let dir = app.path().data_dir()?.join("Myna");
             let status = match storage::open(&dir) {
                 Ok(db) => {
+                    let db = Arc::new(Mutex::new(db));
+                    let world = Box::new(session::Mac(app.handle().clone()));
+                    let tap_limit = std::time::Duration::from_secs(voice::TAP_LIMIT_SECS);
+                    let second = std::time::Duration::from_secs(1);
+                    app.manage(Session::new(world, db.clone(), dir.join("models"), models::macos_major(), tap_limit, second));
                     app.manage(Data {
-                        db: Mutex::new(db),
+                        db,
                         models_dir: dir.join("models"),
                         macos: models::macos_major(),
                         downloads: Default::default(),
-                        recording: Default::default(),
-                        transcriber: Default::default(),
-                        used: Default::default(),
                         shortcut: Default::default(),
                         paused: Default::default(),
                     });
                     app.handle().plugin(
                         tauri_plugin_global_shortcut::Builder::new()
-                            .with_handler(|app, _, e| {
-                                let tap = voice::get(&app.state::<Data>().db.lock().unwrap()).is_ok_and(|v| v.mode == "tap");
-                                match (e.state(), tap) {
-                                    (ShortcutState::Pressed, false) => dictate_start(app, true),
-                                    (ShortcutState::Released, false) => dictate_stop(app),
-                                    // On release: a press may repeat while the key is down; a release comes once.
-                                    (ShortcutState::Released, true) => dictate_toggle(app),
-                                    (ShortcutState::Pressed, true) => {}
-                                }
-                            })
+                            .with_handler(|app, _, e| app.state::<Arc<Session>>().key(e.state() == ShortcutState::Pressed))
                             .build(),
                     )?;
                     if let Some(w) = app.get_webview_window("pill") {
@@ -600,7 +443,7 @@ pub fn run() {
                 .tooltip("Myna")
                 .menu(&menu)
                 .on_menu_event(|app, e| match e.id().as_ref() {
-                    "dictate" => dictate_toggle(app),
+                    "dictate" => app.state::<Arc<Session>>().toggle(),
                     "settings" => open_window(app, "settings"),
                     "update" => open_update(app),
                     "quit" => app.exit(0),
