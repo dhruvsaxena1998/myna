@@ -2,22 +2,38 @@
 
 use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Deserialize, Serialize, Clone)]
 pub struct File {
     pub path: String,
     pub size: u64,
     pub sha256: String,
+    /// Set when the file isn't in the model's Hugging Face repo but is one member of a .tgz at a URL.
+    #[serde(default)]
+    pub archive: Option<Archive>,
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+pub struct Archive {
+    pub url: String,
+    pub size: u64,
+    pub sha256: String,
+    /// The path inside the archive of the file to keep.
+    pub member: String,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
 pub struct Model {
     pub id: String,
     pub name: String,
+    #[serde(default)]
     pub vendor: String,
+    #[serde(default)]
     pub desc: String,
+    #[serde(default)]
     pub acc: u8,
+    #[serde(default)]
     pub spd: u8,
     #[serde(default)]
     pub default: bool,
@@ -34,6 +50,9 @@ pub struct Model {
     /// Built into macOS (Apple Speech): macOS downloads and owns its model.
     #[serde(default)]
     pub system: bool,
+    /// Runs on ONNX Runtime, which is downloaded with it and shared with the other models that need it.
+    #[serde(default)]
+    pub runtime: bool,
     #[serde(default)]
     pub installed: bool,
     /// Why it can't be picked on this Mac, e.g. "Needs macOS 15". None if it can.
@@ -51,6 +70,8 @@ pub struct System {
 
 #[derive(Deserialize)]
 struct Catalog {
+    /// ONNX Runtime, a dependency of the models with `runtime` set. Not a model anyone picks.
+    runtime: Model,
     stt: Vec<Model>,
     diar: Vec<Model>,
 }
@@ -84,12 +105,26 @@ pub fn needs(m: &Model, macos: u32, sys: &System) -> Option<String> {
 }
 
 pub fn find(id: &str) -> Option<Model> {
+    all().into_iter().find(|m| m.id == id)
+}
+
+pub fn all() -> Vec<Model> {
     let c = catalog();
-    c.stt.into_iter().chain(c.diar).find(|m| m.id == id)
+    c.stt.into_iter().chain(c.diar).collect()
+}
+
+pub fn runtime() -> Model {
+    catalog().runtime
+}
+
+/// Where the ONNX Runtime library is once it's downloaded.
+pub fn runtime_dylib(models_dir: &Path) -> PathBuf {
+    let r = runtime();
+    models_dir.join(&r.id).join(&r.files[0].path)
 }
 
 /// Every catalog file is in `models/<id>/` at its catalog size. The sha256 is checked when it's downloaded.
-fn is_installed(m: &Model, models_dir: &Path) -> bool {
+pub fn is_installed(m: &Model, models_dir: &Path) -> bool {
     !m.files.is_empty()
         && m.files.iter().all(|f| {
             std::fs::metadata(models_dir.join(&m.id).join(&f.path)).is_ok_and(|md| md.len() == f.size)
@@ -97,12 +132,17 @@ fn is_installed(m: &Model, models_dir: &Path) -> bool {
 }
 
 pub fn list(conn: &Connection, models_dir: &Path, macos: u32, sys: &System) -> Result<Vec<Task>, String> {
+    let rt = runtime();
+    let rt_there = is_installed(&rt, models_dir);
     ["stt", "diar"]
         .into_iter()
         .map(|id| {
             let mut models = task_models(id).unwrap();
             for m in &mut models {
-                m.installed = if m.system { sys.installed } else { is_installed(m, models_dir) };
+                m.installed = if m.system { sys.installed } else { is_installed(m, models_dir) && (rt_there || !m.runtime) };
+                if m.runtime && !rt_there {
+                    m.size += rt.size; // one combined size
+                }
                 m.needs = needs(m, macos, sys);
                 if let (true, Some(lang)) = (m.system, &sys.language) {
                     m.desc = format!("{} Listens in {lang}.", m.desc);
@@ -235,11 +275,14 @@ mod tests {
         assert!(select(&conn, "diar", "who", 14, &english(true)).unwrap_err().contains("macOS 15"));
     }
 
+    /// Parakeet and the ONNX Runtime it needs.
     fn installed_parakeet(models: &Path) {
-        let dir = models.join("parakeet-tdt-v3");
-        std::fs::create_dir_all(&dir).unwrap();
-        for f in find("parakeet-tdt-v3").unwrap().files {
-            std::fs::File::create(dir.join(&f.path)).unwrap().set_len(f.size).unwrap(); // sparse
+        for m in [find("parakeet-tdt-v3").unwrap(), runtime()] {
+            let dir = models.join(&m.id);
+            std::fs::create_dir_all(&dir).unwrap();
+            for f in m.files {
+                std::fs::File::create(dir.join(&f.path)).unwrap().set_len(f.size).unwrap(); // sparse
+            }
         }
     }
 

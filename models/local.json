@@ -1,5 +1,25 @@
 {
   "checked": "2026-11-02",
+  "runtime": {
+    "id": "onnxruntime",
+    "name": "ONNX Runtime",
+    "vendor": "Microsoft",
+    "desc": "Runs Parakeet and Sortformer. Downloaded with the first of them.",
+    "size": 33057743,
+    "files": [
+      {
+        "path": "libonnxruntime.dylib",
+        "size": 39350024,
+        "sha256": "0c8707e83b3389849d03a3264308e905169b94b546f84df6bf662649bd89c3bb",
+        "archive": {
+          "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.28.3/onnxruntime-osx-arm64-1.28.3.tgz",
+          "size": 33057743,
+          "sha256": "c436bd9f47dbce6f6311ccc21de97f829b3c862c09d24aa321958cb72f0a1d32",
+          "member": "onnxruntime-osx-arm64-1.28.3/lib/libonnxruntime.1.28.3.dylib"
+        }
+      }
+    ]
+  },
   "stt": [
     {
       "id": "parakeet-tdt-v3",
@@ -9,6 +29,7 @@
       "acc": 5,
       "spd": 5,
       "default": true,
+      "runtime": true,
       "size": 670479942,
       "repo": "istupakov/parakeet-tdt-0.6b-v3-onnx",
       "revision": "8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce",
@@ -80,6 +101,7 @@
       "desc": "A backup to switch to if the recommended one gets voices mixed up.",
       "acc": 4,
       "spd": 3,
+      "runtime": true,
       "size": 402167515,
       "repo": "altunenes/parakeet-rs",
       "revision": "664cc742197053fa11afd12f5100749fb8000181",
