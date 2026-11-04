@@ -11,6 +11,7 @@
   import Experimental from "$lib/Experimental.svelte";
   import Look from "$lib/Look.svelte";
   import PillLook from "$lib/PillLook.svelte";
+  import Words from "$lib/Words.svelte";
   import VoiceShortcut from "$lib/VoiceShortcut.svelte";
 
   // Every page is listed from day one; unbuilt ones say what will live there.
@@ -93,6 +94,8 @@
             {#if data.look?.ok}<PillLook initial={data.look.look} listening={{ state: "listening", hold: voice.mode === "hold", key: voice.key }} />
             {:else}<ErrorState title="Myna couldn't read the pill's look" message={data.look?.error ?? ""} />{/if}
             <PasteMethod bind:voice />
+            {#if data.rules?.ok}<Words initial={data.rules.rules} />
+            {:else}<ErrorState title="Myna couldn't read your words" message={data.rules?.error ?? ""} />{/if}
             <Permissions initial={data.perms} />
           {/if}
         {/if}

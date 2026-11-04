@@ -206,6 +206,19 @@ fn glass_set(app: AppHandle, window: tauri::Window, d: tauri::State<Data>, glass
     Ok(())
 }
 
+/// Dictation's language and Tidy up switch, and the words to remember.
+#[tauri::command]
+fn rules_get(d: tauri::State<Data>) -> Result<serde_json::Value, String> {
+    let s = rules::load(&d.db.lock().unwrap())?;
+    Ok(serde_json::json!({ "settings": s, "languages": rules::LANGUAGES }))
+}
+
+/// Saved settings take effect on the next dictation, which loads them when it starts.
+#[tauri::command]
+fn rules_set(d: tauri::State<Data>, rules: rules::Settings) -> Result<(), String> {
+    rules::save(&d.db.lock().unwrap(), &rules)
+}
+
 #[tauri::command]
 fn voice_get(d: tauri::State<Data>) -> Result<voice::Voice, String> {
     voice::get(&d.db.lock().unwrap())
@@ -399,7 +412,7 @@ fn open_update(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![debug_on, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, voice_pause, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
+        .invoke_handler(tauri::generate_handler![debug_on, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, voice_pause, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::Updates::default())
         .setup(|app| {
