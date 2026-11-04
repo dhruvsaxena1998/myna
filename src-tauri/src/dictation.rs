@@ -95,10 +95,11 @@ pub fn to_16k_mono(input: &[f32], rate: u32, channels: u16) -> Vec<f32> {
 }
 
 /// What gets pasted for this 16 kHz mono audio: the model's segments joined into one line.
-pub fn text(t: &mut dyn Transcriber, audio: &[f32]) -> Result<String, String> {
+/// Rules cleanup runs on the joined text; an empty result means nothing was heard.
+pub fn text(t: &mut dyn Transcriber, audio: &[f32], settings: &crate::rules::Settings) -> Result<String, String> {
     let segs = t.transcribe(audio)?;
     let words: Vec<_> = segs.iter().map(|s| s.text.trim()).filter(|s| !s.is_empty()).collect();
-    Ok(words.join(" "))
+    Ok(crate::rules::clean(&words.join(" "), settings))
 }
 
 /// What `paste` fails with when Accessibility is off.
@@ -190,13 +191,31 @@ mod tests {
         assert!((mid - 1.0 / 3.0).abs() < 1e-3, "{mid}");
     }
 
-    #[test]
-    fn a_recording_becomes_the_text_to_paste() {
+    fn heard(segs: &[&str], settings: &crate::rules::Settings) -> String {
         let r = hound::WavReader::open(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/two-speakers.wav")).unwrap();
         let (rate, ch) = (r.spec().sample_rate, r.spec().channels);
         let samples: Vec<f32> = r.into_samples::<i16>().map(|s| s.unwrap() as f32 / 32768.0).collect();
         let seg = |text: &str| Segment { start: 0.0, end: 1.0, text: text.into() };
-        let mut t = Fake(vec![seg(" The report is ready. "), seg(""), seg("Thanks.")]);
-        assert_eq!(text(&mut t, &to_16k_mono(&samples, rate, ch)).unwrap(), "The report is ready. Thanks.");
+        let mut t = Fake(segs.iter().map(|s| seg(s)).collect());
+        text(&mut t, &to_16k_mono(&samples, rate, ch), settings).unwrap()
+    }
+
+    #[test]
+    fn a_recording_becomes_the_text_to_paste() {
+        let plain = crate::rules::Settings::default();
+        assert_eq!(heard(&[" The report is ready. ", "", "Thanks."], &plain), "The report is ready. Thanks.");
+    }
+
+    #[test]
+    fn rules_run_between_speech_to_text_and_paste_and_all_filler_is_nothing_heard() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = crate::storage::open(tmp.path()).unwrap();
+        let mut s = crate::rules::Settings::default();
+        s.words.push(crate::rules::Word { spelling: "Postgres".into(), heard: None });
+        crate::rules::save(&conn, &s).unwrap();
+        let s = crate::rules::load(&conn).unwrap(); // the settings come back from the database
+        assert_eq!(heard(&[" Uh, the the report", "is on post gres."], &s), "The report is on Postgres.");
+        // Nothing left to paste: the command layer shows "didn't hear anything" for an empty text.
+        assert_eq!(heard(&["Hmm,", " um."], &s), "");
     }
 }

@@ -5,6 +5,7 @@ mod look;
 mod models;
 mod permissions;
 mod pill;
+mod rules;
 mod runtime;
 mod storage;
 mod voice;
@@ -375,7 +376,10 @@ fn dictate_stop(app: &AppHandle) {
             pill::show(&app, "writing");
             let mut slot = d.transcriber.lock().unwrap();
             load_transcriber(&d, &mut slot)?;
-            let text = dictation::text(slot.as_mut().unwrap().1.as_mut(), &audio)?;
+            let words = rules::load(&d.db.lock().unwrap())?;
+            let model = slot.as_mut().unwrap().1.as_mut();
+            model.bias(&rules::prompt(&words));
+            let text = dictation::text(model, &audio, &words)?;
             drop(slot);
             if text.is_empty() {
                 return Ok("nothing");

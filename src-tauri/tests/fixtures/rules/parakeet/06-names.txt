@@ -1,0 +1,1 @@
+Ask Drove to deploy manual in Kubernetes with the Dowry and Cell kit. ⏐ Then post the Postgres migration in Slack.

@@ -7,6 +7,7 @@ const MIGRATIONS: &[&str] = &[
     "",
     "CREATE TABLE active_model(task TEXT PRIMARY KEY, model_id TEXT NOT NULL);",
     "CREATE TABLE setting(key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+    "CREATE TABLE word(id INTEGER PRIMARY KEY, spelling TEXT NOT NULL, heard TEXT);",
 ];
 const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
 
