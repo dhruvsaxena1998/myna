@@ -252,6 +252,7 @@ fn updates_set(app: AppHandle, d: tauri::State<Data>, prefs: update::Prefs) -> R
     update::set(&d.db.lock().unwrap(), &prefs)?;
     if was.channel != prefs.channel {
         update::forget(&app);
+        let _ = app.emit("update-channel", &prefs.channel); // the pop-up's "You have Y · Beta"
     }
     Ok(())
 }
@@ -261,11 +262,32 @@ fn update_state(u: tauri::State<update::Updates>) -> update::State {
     u.state.lock().unwrap().clone()
 }
 
-/// The Check for updates button. The error comes back here and in the update state.
+/// The Check for updates button: the update pop-up opens with the result. The error also comes back here.
 #[tauri::command]
 async fn update_check(app: AppHandle, d: tauri::State<'_, Data>) -> Result<(), String> {
     let p = update::get(&d.db.lock().unwrap(), prerelease(&app))?;
-    update::check(&app, update::FEEDS, &p, true).await
+    let r = update::check(&app, update::FEEDS, &p, true).await;
+    open_update(&app);
+    r
+}
+
+#[tauri::command]
+fn update_cancel(app: AppHandle) {
+    update::cancel(&app);
+}
+
+#[tauri::command]
+fn update_open(app: AppHandle) {
+    open_update(&app);
+}
+
+/// Links in What's new open in the browser, never in the pop-up.
+#[tauri::command]
+fn open_link(url: String) -> Result<(), String> {
+    if !url.starts_with("https://") && !url.starts_with("http://") {
+        return Err(format!("{url} isn't a web link."));
+    }
+    std::process::Command::new("open").arg(&url).spawn().map(drop).map_err(|e| format!("Couldn't open {url}: {e}"))
 }
 
 #[tauri::command]
@@ -467,18 +489,25 @@ fn dictate_stop(app: &AppHandle) {
     });
 }
 
-fn open_settings(app: &AppHandle) {
-    if let Some(w) = app.get_webview_window("settings") {
+fn open_window(app: &AppHandle, label: &str) {
+    if let Some(w) = app.get_webview_window(label) {
         let _ = w.show();
         let _ = w.unminimize();
         let _ = w.set_focus();
     }
 }
 
+/// The update pop-up, from About and the manual check (and, in 14.5, the notification and the menubar item).
+/// Never on its own from an automatic check.
+fn open_update(app: &AppHandle) {
+    open_window(app, "update");
+    let _ = app.emit_to("update", "update-open", ()); // the page moves focus to its main button
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![debug_on, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, voice_pause, updates_get, updates_set, update_state, update_check, update_download, update_restart])
+        .invoke_handler(tauri::generate_handler![debug_on, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, voice_pause, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::Updates::default())
         .setup(|app| {
@@ -540,7 +569,7 @@ pub fn run() {
                 .menu(&menu)
                 .on_menu_event(|app, e| match e.id().as_ref() {
                     "dictate" => dictate_toggle(app),
-                    "settings" => open_settings(app),
+                    "settings" => open_window(app, "settings"),
                     "quit" => app.exit(0),
                     _ => {}
                 })
@@ -550,15 +579,15 @@ pub fn run() {
                 eprintln!("dictation: {e}"); // Voice typing still shows the saved shortcut; picking it again says why
             }
             if failed {
-                open_settings(app.handle()); // never fail silently: Settings shows the error
+                open_window(app.handle(), "settings"); // never fail silently: Settings shows the error
             } else {
                 watch_updates(app.handle().clone());
             }
             Ok(())
         })
         .on_window_event(|w, e| {
-            // Closing Settings hides it; the app lives on in the menubar.
-            if let (WindowEvent::CloseRequested { api, .. }, "settings") = (e, w.label()) {
+            // Closing Settings or the update pop-up hides it; the app lives on in the menubar.
+            if let (WindowEvent::CloseRequested { api, .. }, "settings" | "update") = (e, w.label()) {
                 api.prevent_close();
                 let _ = w.hide();
             }

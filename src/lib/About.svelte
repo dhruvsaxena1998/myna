@@ -27,12 +27,9 @@
     }
   }
 
-  // Check and download report through the update state; only Restart now's refusal ("Finish recording first") lands here.
-  // shortcut: "Update available" downloads straight away and "Restart to update" restarts; story 14.4 opens the update pop-up from both.
-  function run(cmd: string) {
-    error = "";
-    invoke(cmd).catch((e) => cmd === "update_restart" && (error = String(e)));
-  }
+  // The check reports through the update state, and opens the update pop-up with the result.
+  const check = () => invoke("update_check").catch(() => {});
+  const open = () => invoke("update_open");
   let shown = $derived(error || (upd.s.state === "error" ? upd.s.message : ""));
 </script>
 
@@ -44,11 +41,11 @@
       <!-- Fixed size, so no state moves the row. -->
       <div class="slot">
         {#if upd.s.state === "checking"}<span class="pill" role="status">Checking…</span>
-        {:else if upd.s.state === "available"}<button class="btn" onclick={() => run("update_download")}>Update available · {upd.s.version}</button>
+        {:else if upd.s.state === "available"}<button class="btn" onclick={open}>Update available · {upd.s.version}</button>
         {:else if upd.s.state === "downloading"}<span class="pill" role="status">Downloading {upd.s.pct}%</span>
-        {:else if upd.s.state === "downloaded"}<button class="btn" onclick={() => run("update_restart")}>Restart to update</button>
-        {:else if upd.s.state === "error"}<span class="pill alert">Update failed</span><button class="btn" onclick={() => run("update_check")}>Try again</button>
-        {:else}<button class="btn" onclick={() => run("update_check")}>Check for updates</button>{/if}
+        {:else if upd.s.state === "downloaded"}<button class="btn" onclick={open}>Restart to update</button>
+        {:else if upd.s.state === "error"}<span class="pill alert">Update failed</span><button class="btn" onclick={check}>Try again</button>
+        {:else}<button class="btn" onclick={check}>Check for updates</button>{/if}
       </div>
     </li>
     <li class="row">
