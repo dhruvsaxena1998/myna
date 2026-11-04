@@ -28,7 +28,7 @@ Cut a release by pushing a tag; installed copies of Myna find it, download it an
 - Update mode: Check and download (default), Check only, Off. Automatic modes check at launch and every 24 h. Off checks only from the button.
 - New installs start on their build's Channel; switchable in About.
 - Notify = one macOS notification per version (permission asked the first time there is one), plus a lasting menubar item and the About row. The pop-up opens from the button, the menubar item or the notification, never on its own in the automatic modes.
-- The pop-up shows the newest release's notes only, from the GitHub release body (Markdown) via the feed's `notes`. Buttons: Later, Download and restart, Restart now, OK, Try again, Close. No Skip.
+- The pop-up shows the newest release's notes only, written as the annotated tag's message (Markdown, `git tag -a --cleanup=verbatim`), which becomes the release body and the feed's `notes`. Buttons: Later, Download and restart, Restart now, OK, Try again, Close. No Skip.
 - Installing happens on Restart now, never at quit (not built into the updater), and never while dictating or recording.
 - Automatic modes fail quietly and retry at the next check; a manual check shows the error; a bad signature is always shown.
 
