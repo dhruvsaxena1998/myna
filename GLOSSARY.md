@@ -52,6 +52,10 @@ _Avoid_: partial summary
 A short summary of earlier Chat exchanges, sent to the model in their place so the conversation stays small. The exchanges themselves stay visible.
 _Avoid_: summary, compaction, memory
 
+**Dictation session**:
+The part of Myna that runs one dictation, from the shortcut to the paste: the checks before recording, the recording, transcription, rules cleanup, the paste and what the pill shows. It also keeps the speech model loaded between dictations and frees it after the idle time. It reaches the Mac only through one port, so tests run it with a fake.
+_Avoid_: dictation flow, dictation handler
+
 **Rules cleanup**:
 The deterministic pass that removes filler words, collapses repeated words, writes spoken numbers as digits and applies the user's words to remember. It only deletes listed words, writes a number in digits, respells words the user listed, and repairs the gap left behind; it never adds, reorders or rephrases. It is on by default and the user can switch it off for dictation; words to remember always apply. It needs no AI provider.
 
