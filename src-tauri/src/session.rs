@@ -278,7 +278,7 @@ impl World for Mac {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::{Fake, Segment};
+    use crate::runtime::Segment;
     use std::time::Instant;
 
     /// What the fake Mac answers, and what the session asked of it.
@@ -291,9 +291,14 @@ mod tests {
         audio: Option<Vec<f32>>,
         /// What the transcriber hears in that audio.
         words: Vec<&'static str>,
+        /// Scripted failures: opening the mic, loading the model, transcribing.
+        mic_fails: Option<&'static str>,
+        load_fails: Option<&'static str>,
+        transcribe_fails: Option<&'static str>,
         asked_mic: usize,
         recorded: usize,
         loaded: Vec<String>,
+        freed: Vec<String>,
         shown: Vec<Pill>,
         pasted: Vec<String>,
     }
@@ -301,14 +306,33 @@ mod tests {
     #[derive(Clone, Default)]
     struct FakeMac(Arc<Mutex<Log>>);
 
-    struct FakeRecording(Vec<f32>);
+    struct FakeRecording(Result<Vec<f32>, String>);
+
+    /// A model that hears the log's words, or fails as scripted, and notes when it's freed.
+    struct FakeModel(String, FakeMac);
+
+    impl Transcriber for FakeModel {
+        fn transcribe(&mut self, _: &[f32]) -> Result<Vec<Segment>, String> {
+            let l = self.1.0.lock().unwrap();
+            if let Some(e) = l.transcribe_fails {
+                return Err(e.into());
+            }
+            Ok(l.words.iter().map(|t| Segment { start: 0.0, end: 1.0, text: t.to_string() }).collect())
+        }
+    }
+
+    impl Drop for FakeModel {
+        fn drop(&mut self) {
+            self.1.0.lock().unwrap().freed.push(self.0.clone());
+        }
+    }
 
     impl Recording for FakeRecording {
         fn level(&self) -> f32 {
             0.5
         }
         fn finish(self: Box<Self>) -> Result<Vec<f32>, String> {
-            Ok(self.0)
+            self.0
         }
     }
 
@@ -328,7 +352,8 @@ mod tests {
         fn record(&self) -> Box<dyn Recording> {
             let mut l = self.0.lock().unwrap();
             l.recorded += 1;
-            Box::new(FakeRecording(l.audio.clone().unwrap_or(vec![0.1; runtime::RATE as usize])))
+            let audio = l.audio.clone().unwrap_or(vec![0.1; runtime::RATE as usize]);
+            Box::new(FakeRecording(l.mic_fails.map_or(Ok(audio), |e| Err(e.into()))))
         }
         fn paste(&self, text: &str) -> Result<(), String> {
             let mut l = self.0.lock().unwrap();
@@ -345,9 +370,11 @@ mod tests {
         fn place(&self, _: String) {}
         fn transcriber(&self, id: &str, _: &Path) -> Result<Box<dyn Transcriber>, String> {
             let mut l = self.0.lock().unwrap();
+            if let Some(e) = l.load_fails {
+                return Err(e.into());
+            }
             l.loaded.push(id.into());
-            let seg = |t: &str| Segment { start: 0.0, end: 1.0, text: t.into() };
-            Ok(Box::new(Fake(l.words.iter().map(|t| seg(t)).collect())))
+            Ok(Box::new(FakeModel(id.into(), self.clone())))
         }
     }
 
@@ -468,5 +495,82 @@ mod tests {
         s.key(false);
         mac.wait(|l| l.pasted.len() == 2);
         assert_eq!(mac.0.lock().unwrap().loaded, ["apple-speech"]);
+    }
+
+    /// One whole dictation in `s`'s mode; returns what the pill showed after Listening.
+    fn dictate(s: &Arc<Session>, mac: &FakeMac, tap: bool) -> Vec<Pill> {
+        mac.0.lock().unwrap().shown.clear();
+        if tap {
+            s.toggle();
+            s.toggle();
+        } else {
+            s.key(true);
+            s.key(false);
+        }
+        // Ends on Added, Idle or an error.
+        mac.wait(|l| l.shown.last().is_some_and(|p| !matches!(p, Pill::Listening { .. } | Pill::Writing)));
+        mac.shown().into_iter().filter(|p| !matches!(p, Pill::Listening { .. })).collect()
+    }
+
+    #[test]
+    fn a_recording_under_a_quarter_second_shows_and_pastes_nothing() {
+        let (s, mac, _tmp) = session("hold");
+        mac.0.lock().unwrap().audio = Some(vec![0.1; runtime::RATE as usize / 4 - 1]);
+        assert_eq!(dictate(&s, &mac, false), [Pill::Idle]);
+        assert!(mac.0.lock().unwrap().pasted.is_empty());
+    }
+
+    #[test]
+    fn no_words_heard_says_so_with_a_hint_for_the_mode() {
+        let (s, mac, _tmp) = session("hold");
+        mac.0.lock().unwrap().words = vec!["Um,", " uh."]; // all filler: nothing left after rules cleanup
+        assert_eq!(dictate(&s, &mac, false), [Pill::Writing, error("Didn’t hear anything", "Hold the keys while you talk")]);
+        let (s, mac, _tmp) = session("tap");
+        mac.0.lock().unwrap().words = vec![];
+        assert_eq!(dictate(&s, &mac, true), [Pill::Writing, error("Didn’t hear anything", "Press the keys, talk, then press them again")]);
+        assert!(mac.0.lock().unwrap().pasted.is_empty());
+    }
+
+    #[test]
+    fn accessibility_lost_mid_dictation_pastes_nothing() {
+        let (s, mac, _tmp) = session("hold");
+        s.key(true);
+        mac.0.lock().unwrap().ax = false;
+        s.key(false);
+        mac.wait(|l| l.shown.len() == 3);
+        assert_eq!(mac.shown()[1..], [Pill::Writing, error("Needs Accessibility", pill::ALLOW)]);
+        assert!(mac.0.lock().unwrap().pasted.is_empty());
+    }
+
+    #[test]
+    fn a_model_or_mic_failure_says_couldnt_add_your_words_with_the_reason() {
+        let (s, mac, _tmp) = session("hold");
+        let fails = |e: &str| error("Couldn’t add your words", e);
+        mac.0.lock().unwrap().load_fails = Some("Couldn't load Apple Speech: broken");
+        assert_eq!(dictate(&s, &mac, false), [Pill::Writing, fails("Couldn't load Apple Speech: broken")]);
+        let mut l = mac.0.lock().unwrap();
+        (l.load_fails, l.transcribe_fails) = (None, Some("The model choked."));
+        drop(l);
+        assert_eq!(dictate(&s, &mac, false), [Pill::Writing, fails("The model choked.")]);
+        let mut l = mac.0.lock().unwrap();
+        (l.transcribe_fails, l.mic_fails) = (None, Some("The microphone stopped unexpectedly."));
+        drop(l);
+        assert_eq!(dictate(&s, &mac, false), [fails("The microphone stopped unexpectedly.")]);
+        assert!(mac.0.lock().unwrap().pasted.is_empty());
+    }
+
+    #[test]
+    fn switching_models_frees_the_old_one_and_loads_the_new_one_on_the_next_dictation() {
+        let (s, mac, tmp) = session("hold");
+        assert_eq!(dictate(&s, &mac, false), [Pill::Writing, Pill::Added]);
+        // Whisper downloaded (a sparse file at its catalog size) and picked on AI & privacy.
+        let dir = tmp.path().join("models/whisper-large-v3-turbo");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::File::create(dir.join("ggml-large-v3-turbo.bin")).unwrap().set_len(1624555275).unwrap();
+        let speech = mac.speech();
+        models::select(&s.db.lock().unwrap(), "stt", "whisper-large-v3-turbo", 26, &speech).unwrap();
+        assert_eq!(dictate(&s, &mac, false), [Pill::Writing, Pill::Added]);
+        let l = mac.0.lock().unwrap();
+        assert_eq!((l.loaded.as_slice(), l.freed.as_slice()), (&["apple-speech".to_string(), "whisper-large-v3-turbo".into()][..], &["apple-speech".to_string()][..]));
     }
 }
