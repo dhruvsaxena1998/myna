@@ -2,10 +2,13 @@ import { expect, test, type Page } from "@playwright/test";
 import { fakeTauri } from "./tauri";
 
 // `voice_set` fails for any shortcut using Ctrl+Alt, like a shortcut another app holds.
-async function open(page: Page) {
+// `__globe` stands for the 🌐 key's setting being Do Nothing.
+async function open(page: Page, key = "Alt+Space", globe = false) {
+  await page.addInitScript((g) => ((window as any).__globe = g), globe);
   await fakeTauri(page, `{
     storage_status: () => "/tmp/Myna", models_list: () => [],
-    voice_get: () => ({ on: true, key: "Alt+Space", mode: "hold" }),
+    voice_get: () => ({ on: true, key: "${key}", mode: "hold" }),
+    globe_ok: () => window.__globe, globe_open: () => {},
     voice_set: ({ voice }) => { if (voice.key.startsWith("Ctrl+Alt")) throw "Another app is using that shortcut. Pick a different one."; },
     voice_pause: () => {},
   }`);
@@ -80,4 +83,31 @@ test("turning voice typing off hides its settings; on brings them back", async (
   await sw.click();
   await expect(page.getByRole("heading", { name: "Shortcut" })).toBeVisible();
   expect((await calls(page, "voice_set")).map((c: any) => c.voice.on)).toEqual([false, true]);
+});
+
+test("fn can be picked while recording; the browser never sees it, so the backend says so", async ({ page }) => {
+  await open(page);
+  await page.evaluate(() => (window as any).__emit("voice-fn", null)); // not recording: ignored
+  await expect(page.getByLabel("Current shortcut: Option Space")).toBeVisible();
+  await page.getByRole("button", { name: "Change" }).click();
+  await page.evaluate(() => (window as any).__emit("voice-fn", null));
+  await expect(page.getByLabel("Current shortcut: fn")).toHaveText("fn");
+  await expect(page.getByRole("button", { name: "Change" })).toBeFocused();
+  expect(await calls(page, "voice_set")).toEqual([{ voice: { on: true, key: "Fn", mode: "hold" } }]);
+});
+
+test("with fn, the 🌐 key row shows the steps until the key is set to Do Nothing", async ({ page }) => {
+  await open(page, "Fn");
+  const row = page.getByRole("listitem").filter({ hasText: "Set the 🌐 key to Do Nothing" });
+  await expect(row).toContainText("“Press 🌐 key to”");
+  await row.getByRole("button", { name: "Open Keyboard Settings" }).click();
+  expect(await calls(page, "globe_open")).toHaveLength(1);
+  // Changed in System Settings, then back to Myna.
+  await page.evaluate(() => { (window as any).__globe = true; (window as any).__emit("tauri://focus", null); });
+  await expect(row).toBeHidden();
+});
+
+test("the 🌐 key row is only for fn", async ({ page }) => {
+  await open(page);
+  await expect(page.getByText("Set the 🌐 key to Do Nothing")).toBeHidden();
 });

@@ -1,7 +1,8 @@
 // Shortcuts are stored as accelerators like "Alt+Space" or "Ctrl+Shift+KeyD": the form the global
 // shortcut and the menubar menu both read. These turn them into keycaps and back from a key press.
+// "Fn" is fn on its own, which the backend watches for and tells the recorder about ("voice-fn").
 
-const MODS: Record<string, string> = { Ctrl: "⌃", Alt: "⌥", Shift: "⇧", Super: "⌘" };
+const MODS: Record<string, string> = { Ctrl: "⌃", Alt: "⌥", Shift: "⇧", Super: "⌘", Fn: "fn" };
 const PUNCT: Record<string, string> = {
   Comma: ",", Period: ".", Slash: "/", Semicolon: ";", Quote: "'", BracketLeft: "[", BracketRight: "]",
   Backslash: "\\", Minus: "-", Equal: "=", Backquote: "`", Enter: "Return", ArrowUp: "↑", ArrowDown: "↓", ArrowLeft: "←", ArrowRight: "→",
@@ -20,7 +21,7 @@ export const spoken = (accel: string) =>
  * or an error when the key would stop typing its character everywhere.
  */
 export function fromKey(e: KeyboardEvent): string | null | { error: string } {
-  if (["Shift", "Control", "Alt", "Meta"].includes(e.key)) return null;
+  if (["Shift", "Control", "Alt", "Meta", "Fn"].includes(e.key)) return null;
   const mods = [e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", e.metaKey && "Super"].filter(Boolean);
   // Shift alone still types: ⇧A is just "A".
   const types = /^(Key|Digit)|^(Space|Tab|Backspace)$/.test(e.code) || e.code in PUNCT;

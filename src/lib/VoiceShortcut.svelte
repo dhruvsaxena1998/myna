@@ -5,10 +5,21 @@
 
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import { tick } from "svelte";
+  import { listen } from "@tauri-apps/api/event";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { onMount, tick } from "svelte";
   import { fromKey, keycaps, spoken } from "./shortcut";
 
-  let { voice = $bindable() }: { voice: Voice } = $props();
+  // `globe`: the 🌐 key is set to Do Nothing, so fn only starts voice typing.
+  let { voice = $bindable(), globe: initial }: { voice: Voice; globe: boolean } = $props();
+  let globe = $derived(initial); // assignable: refreshed on focus
+  onMount(() => {
+    // The browser never sees fn; the backend tells us when it’s let go while recording.
+    const offFn = listen("voice-fn", () => recording && pick("Fn"));
+    // Changed in System Settings, then back to Myna.
+    const offFocus = getCurrentWindow().onFocusChanged(async ({ payload }) => payload && (globe = await invoke<boolean>("globe_ok")));
+    return () => [offFn, offFocus].forEach((off) => void off.then((f) => f()));
+  });
   let recording = $state(false);
   let error = $state("");
   let btn = $state<HTMLButtonElement>();
@@ -42,6 +53,10 @@
     const key = fromKey(e);
     if (key === null) return;
     if (typeof key === "object") return void (error = key.error);
+    pick(key);
+  }
+
+  function pick(key: string) {
     recording = false;
     save({ ...voice, key }).then(() => btn?.focus());
   }
@@ -77,6 +92,12 @@
           {/if}
         </span>
       </li>
+      {#if voice.key === "Fn" && !globe}
+        <li class="row">
+          <span><span class="name">Set the 🌐 key to Do Nothing</span><span class="desc">Otherwise fn also does what your Mac set it to, like showing emoji. In Keyboard settings, choose Do Nothing for “Press 🌐 key to” (on some keyboards, “Press fn key to”).</span></span>
+          <button class="btn" onclick={() => invoke("globe_open")}>Open Keyboard Settings</button>
+        </li>
+      {/if}
       <li class="row">
         <span><span class="name" id="mode-l">How it starts</span><span class="desc">{voice.mode === "hold" ? "Hold the key while you talk. Let go to add your words." : "Press once to start and again to stop. Stops by itself after 5 minutes."}</span></span>
         <fieldset class="seg" aria-labelledby="mode-l">
