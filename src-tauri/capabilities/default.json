@@ -1,13 +1,15 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Settings window and the dictation pill",
+  "description": "Settings window, the update pop-up and the dictation pill",
   "windows": [
     "settings",
+    "update",
     "pill"
   ],
   "permissions": [
     "core:default",
-    "core:window:allow-start-dragging"
+    "core:window:allow-start-dragging",
+    "core:window:allow-hide"
   ]
 }

@@ -3,6 +3,7 @@ mod dictation;
 mod download;
 mod look;
 mod models;
+mod notify;
 mod permissions;
 mod pill;
 mod rules;
@@ -19,9 +20,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tauri::image::Image;
-use tauri::menu::{MenuBuilder, MenuItem, MenuItemBuilder};
+use tauri::menu::{MenuBuilder, MenuItem, MenuItemBuilder, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{ActivationPolicy, AppHandle, Emitter, Manager, WindowEvent, Wry};
+use tauri::{ActivationPolicy, AppHandle, Emitter, Listener, Manager, WindowEvent, Wry};
 use session::Session;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
@@ -246,6 +247,7 @@ fn updates_set(app: AppHandle, d: tauri::State<Data>, prefs: update::Prefs) -> R
     update::set(&d.db.lock().unwrap(), &prefs)?;
     if was.channel != prefs.channel {
         update::forget(&app);
+        let _ = app.emit("update-channel", &prefs.channel); // the pop-up's "You have Y · Beta"
     }
     Ok(())
 }
@@ -255,11 +257,33 @@ fn update_state(u: tauri::State<update::Updates>) -> update::State {
     u.state.lock().unwrap().clone()
 }
 
-/// The Check for updates button. The error comes back here and in the update state.
+/// The Check for updates button: the update pop-up opens with the result. The error also comes back here.
 #[tauri::command]
 async fn update_check(app: AppHandle, d: tauri::State<'_, Data>) -> Result<(), String> {
     let p = update::get(&d.db.lock().unwrap(), prerelease(&app))?;
-    update::check(&app, update::FEEDS, &p, true).await
+    let r = update::check(&app, update::FEEDS, &p, true).await;
+    tell_update(&app, &p.mode, true);
+    open_update(&app);
+    r
+}
+
+#[tauri::command]
+fn update_cancel(app: AppHandle) {
+    update::cancel(&app);
+}
+
+#[tauri::command]
+fn update_open(app: AppHandle) {
+    open_update(&app);
+}
+
+/// Links in What's new open in the browser, never in the pop-up.
+#[tauri::command]
+fn open_link(url: String) -> Result<(), String> {
+    if !url.starts_with("https://") && !url.starts_with("http://") {
+        return Err(format!("{url} isn't a web link."));
+    }
+    std::process::Command::new("open").arg(&url).spawn().map(drop).map_err(|e| format!("Couldn't open {url}: {e}"))
 }
 
 #[tauri::command]
@@ -285,9 +309,18 @@ fn watch_updates(app: AppHandle) {
         let prefs = update::get(&app.state::<Data>().db.lock().unwrap(), prerelease(&app));
         if let Some(p) = prefs.ok().filter(|p| update::due(&p.mode, last, std::time::SystemTime::now())) {
             let _ = tauri::async_runtime::block_on(update::check(&app, update::FEEDS, &p, false));
+            tell_update(&app, &p.mode, false);
         }
         std::thread::sleep(std::time::Duration::from_secs(3600));
     });
+}
+
+/// Sends the notification a check earned, if any.
+fn tell_update(app: &AppHandle, mode: &str, manual: bool) {
+    let s = app.state::<update::Updates>().state.lock().unwrap().clone();
+    if let Ok(Some((title, body))) = update::tell(&app.state::<Data>().db.lock().unwrap(), mode, &s, manual) {
+        notify::send(&title, &body);
+    }
 }
 
 /// Registers the saved shortcut while voice typing is on (and not paused), and drops it otherwise.
@@ -317,18 +350,25 @@ fn sync_shortcut(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-fn open_settings(app: &AppHandle) {
-    if let Some(w) = app.get_webview_window("settings") {
+fn open_window(app: &AppHandle, label: &str) {
+    if let Some(w) = app.get_webview_window(label) {
         let _ = w.show();
         let _ = w.unminimize();
         let _ = w.set_focus();
     }
 }
 
+/// The update pop-up, from About, the manual check, the notification and the menubar item.
+/// Never on its own from an automatic check.
+fn open_update(app: &AppHandle) {
+    open_window(app, "update");
+    let _ = app.emit_to("update", "update-open", ()); // the page moves focus to its main button
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![debug_on, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, voice_pause, updates_get, updates_set, update_state, update_check, update_download, update_restart])
+        .invoke_handler(tauri::generate_handler![debug_on, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, voice_pause, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::Updates::default())
         .setup(|app| {
@@ -376,6 +416,27 @@ pub fn run() {
             let voice_item = MenuItemBuilder::with_id("dictate", "Start voice typing").enabled(false).build(app)?;
             let menu = MenuBuilder::new(app).item(&voice_item).separator().item(&settings_item).separator().item(&quit_item).build()?;
             app.manage(VoiceItem(voice_item));
+            // Tauri menus can't hide an item, so the update item and its separator go in and out at the top.
+            let (update_item, update_sep) = (MenuItemBuilder::with_id("update", "").build(app)?, PredefinedMenuItem::separator(app)?);
+            let (h, m) = (app.handle().clone(), menu.clone());
+            app.listen_any("update-state", move |_| {
+                // Read first: the menu calls wait on the main thread, which mustn't wait on this lock.
+                let label = update::menu_label(&h.state::<update::Updates>().state.lock().unwrap());
+                match label {
+                    Some(label) => {
+                        let _ = update_item.set_text(label);
+                        if m.get("update").is_none() {
+                            let _ = m.insert_items(&[&update_item, &update_sep], 0);
+                        }
+                    }
+                    None => {
+                        let _ = m.remove(&update_item);
+                        let _ = m.remove(&update_sep);
+                    }
+                }
+            });
+            let h = app.handle().clone();
+            notify::setup(move || open_update(&h));
             TrayIconBuilder::with_id("myna")
                 .icon(Image::from_bytes(include_bytes!("../icons/tray.png"))?)
                 .icon_as_template(true)
@@ -383,7 +444,8 @@ pub fn run() {
                 .menu(&menu)
                 .on_menu_event(|app, e| match e.id().as_ref() {
                     "dictate" => app.state::<Arc<Session>>().toggle(),
-                    "settings" => open_settings(app),
+                    "settings" => open_window(app, "settings"),
+                    "update" => open_update(app),
                     "quit" => app.exit(0),
                     _ => {}
                 })
@@ -393,15 +455,15 @@ pub fn run() {
                 eprintln!("dictation: {e}"); // Voice typing still shows the saved shortcut; picking it again says why
             }
             if failed {
-                open_settings(app.handle()); // never fail silently: Settings shows the error
+                open_window(app.handle(), "settings"); // never fail silently: Settings shows the error
             } else {
                 watch_updates(app.handle().clone());
             }
             Ok(())
         })
         .on_window_event(|w, e| {
-            // Closing Settings hides it; the app lives on in the menubar.
-            if let (WindowEvent::CloseRequested { api, .. }, "settings") = (e, w.label()) {
+            // Closing Settings or the update pop-up hides it; the app lives on in the menubar.
+            if let (WindowEvent::CloseRequested { api, .. }, "settings" | "update") = (e, w.label()) {
                 api.prevent_close();
                 let _ = w.hide();
             }

@@ -3,9 +3,9 @@ import { listen } from "@tauri-apps/api/event";
 
 export type Prefs = { mode: "auto" | "check" | "off"; channel: "stable" | "beta" };
 export type UpdateState =
-  | { state: "idle" | "checking" | "downloaded" | "uptodate" }
-  | { state: "available"; version: string; notes: string }
-  | { state: "downloading"; pct: number }
+  | { state: "idle" | "checking" | "uptodate" }
+  | { state: "available" | "downloaded"; version: string; notes: string }
+  | { state: "downloading"; version: string; notes: string; pct: number }
   | { state: "error"; kind: "check" | "download" | "install" | "signature"; message: string };
 
 export const upd = $state({ s: { state: "idle" } as UpdateState });

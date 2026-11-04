@@ -28,9 +28,10 @@ pub enum State {
     #[default]
     Idle,
     Checking,
+    /// `notes`: the release's Markdown, kept through Downloaded so the pop-up can show it at any point.
     Available { version: String, notes: String },
-    Downloading { pct: u64 },
-    Downloaded,
+    Downloading { version: String, notes: String, pct: u64 },
+    Downloaded { version: String, notes: String },
     /// `kind`: "check", "download", "install", or "signature" (always shown, even from an automatic check).
     Error { kind: String, message: String },
     Uptodate,
@@ -43,6 +44,8 @@ pub struct Updates {
     bytes: Mutex<Option<Vec<u8>>>,
     /// The last check, manual or not. In memory only, so every launch checks.
     pub last: Mutex<Option<SystemTime>>,
+    /// Stops the download in progress.
+    cancel: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 fn read(conn: &Connection, key: &str) -> Result<Option<String>, String> {
@@ -79,11 +82,42 @@ pub fn due(mode: &str, last: Option<SystemTime>, now: SystemTime) -> bool {
     mode != "off" && last.is_none_or(|t| !now.duration_since(t).is_ok_and(|d| d < DAY))
 }
 
+/// The notification for where a check left things, as (version, title, body): only at the state the mode
+/// stops at, and once per version. `seen`: the versions already told about, comma-separated.
+pub fn notice(mode: &str, s: &State, seen: &str) -> Option<(String, String, String)> {
+    let (version, what, body) = match s {
+        State::Available { version, .. } if mode == "check" => (version, "is available", "Click to see what’s new."),
+        State::Downloaded { version, .. } if mode == "auto" => (version, "is ready", "Restart to finish updating."),
+        _ => return None,
+    };
+    (!seen.split(',').any(|v| v == version)).then(|| (version.clone(), format!("Myna {version} {what}"), body.into()))
+}
+
+/// After a check: the notification to send as (title, body), if any, remembered across restarts.
+/// A manual check sends none, since its pop-up opened, but what it found counts as told.
+pub fn tell(conn: &Connection, mode: &str, s: &State, manual: bool) -> Result<Option<(String, String)>, String> {
+    let seen = read(conn, "update_seen")?.unwrap_or_default();
+    // A manual check always stops at Available, which Check only's notice matches.
+    let Some((version, title, body)) = notice(if manual { "check" } else { mode }, s, &seen) else { return Ok(None) };
+    conn.execute("INSERT INTO setting(key, value) VALUES ('update_seen', ?1) ON CONFLICT(key) DO UPDATE SET value = ?1", [format!("{seen},{version}")])
+        .map_err(|e| format!("Couldn't save the update settings: {e}"))?;
+    Ok((!manual).then_some((title, body)))
+}
+
+/// The menubar item's label for `s`; None hides it.
+pub fn menu_label(s: &State) -> Option<&'static str> {
+    match s {
+        State::Available { .. } | State::Downloading { .. } => Some("Update available…"),
+        State::Downloaded { .. } => Some("Restart to update"),
+        _ => None,
+    }
+}
+
 pub fn can_install(busy: bool, s: &State) -> Result<(), String> {
     if busy {
         return Err(BUSY.into());
     }
-    if *s != State::Downloaded {
+    if !matches!(s, State::Downloaded { .. }) {
         return Err("Download the update first.".into());
     }
     Ok(())
@@ -94,8 +128,13 @@ fn show<R: Runtime>(app: &AppHandle<R>, s: State) {
     let _ = app.emit("update-state", s);
 }
 
+fn info(up: &Update) -> (String, String) {
+    (up.version.clone(), up.body.clone().unwrap_or_default())
+}
+
 fn available(up: &Update) -> State {
-    State::Available { version: up.version.clone(), notes: up.body.clone().unwrap_or_default() }
+    let (version, notes) = info(up);
+    State::Available { version, notes }
 }
 
 fn bad_signature(e: &Error) -> bool {
@@ -131,7 +170,7 @@ pub async fn check<R: Runtime>(app: &AppHandle<R>, base: &str, p: &Prefs, manual
     let u = app.state::<Updates>();
     let was = {
         let s = u.state.lock().unwrap();
-        if matches!(*s, State::Checking | State::Downloading { .. } | State::Downloaded) {
+        if matches!(*s, State::Checking | State::Downloading { .. } | State::Downloaded { .. }) {
             return Ok(()); // one at a time, and never over an update already on its way
         }
         s.clone()
@@ -161,32 +200,55 @@ pub async fn download<R: Runtime>(app: &AppHandle<R>, quiet: bool) -> Result<(),
     let u = app.state::<Updates>();
     let up = {
         let s = u.state.lock().unwrap();
-        if matches!(*s, State::Checking | State::Downloading { .. } | State::Downloaded) {
+        if matches!(*s, State::Checking | State::Downloading { .. } | State::Downloaded { .. }) {
             return Ok(());
         }
         u.found.lock().unwrap().clone().ok_or("Check for updates first.")?
     };
-    show(app, State::Downloading { pct: 0 });
-    let (mut got, mut last) = (0u64, 0u64);
-    let chunk = |n: usize, total: Option<u64>| {
-        got += n as u64;
-        let pct = total.filter(|t| *t > 0).map_or(0, |t| (got * 100 / t).min(100));
-        if pct != last {
-            last = pct;
-            show(app, State::Downloading { pct });
-        }
-    };
-    match up.download(chunk, || {}).await {
-        Ok(b) => {
-            *u.bytes.lock().unwrap() = Some(b);
-            show(app, State::Downloaded);
+    let (version, notes) = info(&up);
+    let downloading = move |pct| State::Downloading { version: version.clone(), notes: notes.clone(), pct };
+    show(app, downloading(0));
+    let (a, task_up) = (app.clone(), up.clone());
+    // Its own task, so Cancel can drop it mid-download (the updater has no cancel of its own).
+    let task = tauri::async_runtime::spawn(async move {
+        let (mut got, mut last) = (0u64, 0u64);
+        let chunk = |n: usize, total: Option<u64>| {
+            got += n as u64;
+            let pct = total.filter(|t| *t > 0).map_or(0, |t| (got * 100 / t).min(100));
+            if pct != last {
+                last = pct;
+                show(&a, downloading(pct));
+            }
+        };
+        task_up.download(chunk, || {}).await
+    });
+    let abort = task.inner().abort_handle();
+    *u.cancel.lock().unwrap() = Some(Box::new(move || abort.abort()));
+    let r = task.await;
+    u.cancel.lock().unwrap().take();
+    match r {
+        Err(_) => {
+            show(app, available(&up)); // cancelled
             Ok(())
         }
-        Err(e) if quiet && !bad_signature(&e) => {
+        Ok(Ok(b)) => {
+            *u.bytes.lock().unwrap() = Some(b);
+            let (version, notes) = info(&up);
+            show(app, State::Downloaded { version, notes });
+            Ok(())
+        }
+        Ok(Err(e)) if quiet && !bad_signature(&e) => {
             show(app, available(&up));
             Ok(())
         }
-        Err(e) => Err(fail(app, &e, "download")),
+        Ok(Err(e)) => Err(fail(app, &e, "download")),
+    }
+}
+
+/// Cancel in the pop-up: the download in progress stops and the update is offered again.
+pub fn cancel<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(stop) = app.state::<Updates>().cancel.lock().unwrap().take() {
+        stop();
     }
 }
 
@@ -233,11 +295,19 @@ mod tests {
                     "/beta.json" => beta.as_ref(),
                     _ => Some(&b), // the update bundle; its contents don't matter
                 };
+                if path.contains("stall") {
+                    // A download that never finishes, for Cancel.
+                    std::thread::spawn(move || {
+                        let _ = write!(s, "HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\npartial");
+                        std::thread::sleep(Duration::from_secs(30));
+                    });
+                    continue;
+                }
                 let body = match v {
                     None => { let _ = write!(s, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"); continue; }
                     Some(_) if !path.ends_with(".json") => "not a real bundle".to_string(),
                     Some(v) => {
-                        let p = serde_json::json!({ "signature": "bm90IGEgc2lnbmF0dXJl", "url": format!("{b}/Myna.app.tar.gz") });
+                        let p = serde_json::json!({ "signature": "bm90IGEgc2lnbmF0dXJl", "url": format!("{b}/{v}.tar.gz") });
                         serde_json::json!({ "version": v, "notes": "## What’s new", "platforms": { "darwin-aarch64": p, "darwin-x86_64": p } }).to_string()
                     }
                 };
@@ -330,13 +400,65 @@ mod tests {
 
     #[test]
     fn install_is_refused_while_recording() {
-        assert_eq!(can_install(true, &State::Downloaded), Err(BUSY.into()));
+        let done = State::Downloaded { version: "0.0.2".into(), notes: "".into() };
+        assert_eq!(can_install(true, &done), Err(BUSY.into()));
         assert!(can_install(false, &avail("0.0.2")).is_err(), "nothing downloaded yet");
-        assert_eq!(can_install(false, &State::Downloaded), Ok(()));
+        assert_eq!(can_install(false, &done), Ok(()));
         let a = app("0.0.2-beta.1");
-        show(a.handle(), State::Downloaded);
+        show(a.handle(), done.clone());
         assert_eq!(install(a.handle(), true), Err(BUSY.into()));
-        assert_eq!(*a.state::<Updates>().state.lock().unwrap(), State::Downloaded, "still ready for Restart now");
+        assert_eq!(*a.state::<Updates>().state.lock().unwrap(), done, "still ready for Restart now");
+    }
+
+    #[test]
+    fn cancel_stops_the_download_and_offers_the_update_again() {
+        let base = feed(None, Some("0.0.3-stall.1"));
+        let a = app("0.0.2-beta.1");
+        assert_eq!(run(&a, &base, "check", "beta", true), (Ok(()), avail("0.0.3-stall.1")));
+        let h = a.handle().clone();
+        let dl = std::thread::spawn(move || tauri::async_runtime::block_on(download(&h, false)));
+        for _ in 0..500 {
+            if a.state::<Updates>().cancel.lock().unwrap().is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(matches!(*a.state::<Updates>().state.lock().unwrap(), State::Downloading { .. }));
+        cancel(a.handle());
+        assert_eq!(dl.join().unwrap(), Ok(()));
+        assert_eq!(*a.state::<Updates>().state.lock().unwrap(), avail("0.0.3-stall.1"));
+    }
+
+    #[test]
+    fn a_notification_comes_once_per_version_only_from_automatic_checks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = crate::storage::open(tmp.path()).unwrap();
+        let ready = |v: &str| State::Downloaded { version: v.into(), notes: "".into() };
+        let ready_msg = |v: &str| Some((format!("Myna {v} is ready"), "Restart to finish updating.".into()));
+        assert_eq!(tell(&conn, "off", &ready("0.0.3"), false), Ok(None));
+        assert_eq!(tell(&conn, "off", &avail("0.0.3"), false), Ok(None));
+        assert_eq!(tell(&conn, "auto", &avail("0.0.3"), false), Ok(None), "Check and download waits for the download");
+        assert_eq!(tell(&conn, "auto", &ready("0.0.3"), false), Ok(ready_msg("0.0.3")));
+        assert_eq!(tell(&conn, "auto", &ready("0.0.3"), false), Ok(None), "once per version");
+        drop(conn);
+        let conn = crate::storage::open(tmp.path()).unwrap();
+        assert_eq!(tell(&conn, "auto", &ready("0.0.3"), false), Ok(None), "not again after a restart");
+        assert_eq!(tell(&conn, "check", &avail("0.0.4"), false), Ok(Some(("Myna 0.0.4 is available".into(), "Click to see what’s new.".into()))));
+        assert_eq!(tell(&conn, "check", &avail("0.0.5"), true), Ok(None), "a manual check opened the pop-up");
+        assert_eq!(tell(&conn, "check", &avail("0.0.5"), false), Ok(None), "and counts as told");
+        assert_eq!(tell(&conn, "off", &avail("0.0.6"), true), Ok(None));
+        assert_eq!(tell(&conn, "auto", &ready("0.0.7"), false), Ok(ready_msg("0.0.7")));
+    }
+
+    #[test]
+    fn the_menubar_item_shows_while_an_update_is_on_its_way() {
+        let downloading = State::Downloading { version: "0.0.3".into(), notes: "".into(), pct: 40 };
+        assert_eq!(menu_label(&avail("0.0.3")), Some("Update available…"));
+        assert_eq!(menu_label(&downloading), Some("Update available…"));
+        assert_eq!(menu_label(&State::Downloaded { version: "0.0.3".into(), notes: "".into() }), Some("Restart to update"));
+        for s in [State::Idle, State::Checking, State::Uptodate, State::Error { kind: "check".into(), message: "".into() }] {
+            assert_eq!(menu_label(&s), None, "{s:?}");
+        }
     }
 
     #[test]
