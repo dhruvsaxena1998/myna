@@ -71,7 +71,7 @@ test("Tap to start and stop saves, says how it stops, and the preview follows", 
   await page.getByText("Tap to start and stop").click();
   await expect(page.getByText("Press once to start and again to stop. Stops by itself after 5 minutes.")).toBeVisible();
   await expect(page.getByRole("img", { name: /Preview/ })).toContainText("Press again to paste");
-  expect(await calls(page, "voice_set")).toEqual([{ voice: { on: true, key: "Alt+Space", mode: "tap" } }]);
+  expect(await calls(page, "voice_set")).toEqual([{ voice: { on: true, key: "Alt+Space", mode: "tap", paste: "clipboard" } }]);
 });
 
 test("turning voice typing off hides its settings; on brings them back", async ({ page }) => {
