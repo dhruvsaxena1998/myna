@@ -35,6 +35,7 @@ One place to see, download, verify, pick and delete the on-device models for eac
 6. Meeting speech-to-text on an Endpoint (Groq, Together, Test for others), blocked by stories 05 and 10
 7. Fresh-install check (human)
 8. Apple Speech: Apple's built-in speech-to-text as a speech-to-text model on macOS 26+, so a user can dictate without downloading Parakeet (detail below)
+9. ONNX Runtime on demand: ship without it, download it with the first model that needs it (detail below)
 
 ## 03.8 Apple Speech
 
@@ -52,3 +53,17 @@ Settled with the user on 2026-11-03. Spike on macOS 27 (headless CLI, `say` audi
 
 ## Open questions for you
 - none
+
+## 03.9 ONNX Runtime on demand
+
+ONNX Runtime is 12.6 MiB of the 27 MiB app binary (cargo-bloat on 0.0.1-beta1), and only Parakeet and Sortformer use it. Someone on Whisper or Apple Speech should never get it.
+
+- **Build:** parakeet-rs without default features, with `load-dynamic` (plus `cpu`, `api-28`, `sortformer`), so `ort` loads `libonnxruntime.dylib` at runtime instead of linking it.
+- **Download:** the runtime is a download dependency of the models that need it. Downloading Parakeet or Sortformer fetches it first (once, shared) through the existing download manager: progress, cancel, retry, sha256, atomic move into the app data folder. The row shows one combined size.
+- **Version:** pinned to the ONNX Runtime release `ort` 2.0.0-rc.15 expects, from Microsoft's GitHub release for macOS arm64, sha256 in the catalog.
+- **Load:** `ort::init_from(path)` once, before the first Parakeet or Sortformer session. Missing or broken runtime is a clear error on the model row ("Runtime missing, Download again"), never a crash.
+- **Delete:** the runtime goes when the last model that needs it is deleted.
+- **Signing:** a downloaded dylib loaded into a hardened, notarized app needs library validation off (`com.apple.security.cs.disable-library-validation`) or Microsoft's signature to pass. Check this before story 14 signs the app.
+
+Done when: a build without Parakeet has no ONNX Runtime in it (binary about 12 MiB smaller); downloading Parakeet fetches the runtime and dictation works; Whisper-only use never downloads it; command-layer test with a fake download covers "first ONNX model fetches the runtime, second doesn't, deleting the last one removes it".
+
