@@ -285,6 +285,9 @@ fn update_restart(app: AppHandle, d: tauri::State<Data>) -> Result<(), String> {
 /// Automatic checks: at launch and every 24 h, unless Update mode is Off. Wakes hourly, so a Mac that
 /// slept through the 24 h checks soon after it wakes.
 fn watch_updates(app: AppHandle) {
+    if cfg!(debug_assertions) {
+        return; // a dev run would quietly download the latest release; the button still checks
+    }
     std::thread::spawn(move || loop {
         let last = *app.state::<update::Updates>().last.lock().unwrap();
         let prefs = update::get(&app.state::<Data>().db.lock().unwrap(), prerelease(&app));
