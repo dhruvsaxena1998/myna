@@ -53,21 +53,33 @@ pub trait World: Send + Sync + 'static {
 
 type Loaded = Option<(String, Box<dyn Transcriber>)>;
 
+/// The recording in progress, and the token its level loop holds: the loop runs while the token is
+/// still the one in the slot, so it stops when this recording ends, even if a new one starts at once.
+struct Active {
+    rec: Box<dyn Recording>,
+    token: Arc<()>,
+}
+
 pub struct Session {
     world: Box<dyn World>,
     db: Arc<Mutex<Connection>>,
     models_dir: PathBuf,
     macos: u32,
-    recording: Mutex<Option<Box<dyn Recording>>>,
+    recording: Mutex<Option<Active>>,
     /// The loaded speech-to-text model and its id, kept between dictations (loading takes seconds).
     transcriber: Mutex<Loaded>,
-    /// Bumped on every dictation, so an unload timer knows the model was used after it started.
-    used: AtomicU64,
+    /// Bumped by every dictation and every new unload timer; a timer frees the model only if it's still the latest.
+    unload_gen: AtomicU64,
+    /// Tap mode stops by itself after this long.
+    tap_limit: Duration,
+    /// How long one second of the "unload after" setting lasts: a second in the app, a millisecond in tests.
+    second: Duration,
 }
 
 impl Session {
-    pub fn new(world: Box<dyn World>, db: Arc<Mutex<Connection>>, models_dir: PathBuf, macos: u32) -> Arc<Self> {
-        Arc::new(Session { world, db, models_dir, macos, recording: Default::default(), transcriber: Default::default(), used: Default::default() })
+    pub fn new(world: Box<dyn World>, db: Arc<Mutex<Connection>>, models_dir: PathBuf, macos: u32, tap_limit: Duration, second: Duration) -> Arc<Self> {
+        let (recording, transcriber, unload_gen) = Default::default();
+        Arc::new(Session { world, db, models_dir, macos, recording, transcriber, unload_gen, tap_limit, second })
     }
 
     /// The global shortcut went down (`pressed`) or up. Hold mode starts on press and stops on release;
@@ -76,7 +88,7 @@ impl Session {
         let tap = voice::get(&self.db.lock().unwrap()).is_ok_and(|v| v.mode == "tap");
         match (pressed, tap) {
             (true, false) => self.start(true),
-            (false, false) => self.stop(),
+            (false, false) => self.stop(None),
             (false, true) => self.toggle(),
             (true, true) => {}
         }
@@ -85,7 +97,7 @@ impl Session {
     /// The menu item, or a tap of the shortcut: start, or stop if already listening.
     pub fn toggle(self: &Arc<Self>) {
         if self.recording.lock().unwrap().is_some() {
-            self.stop();
+            self.stop(None);
         } else {
             self.start(false);
         }
@@ -99,15 +111,16 @@ impl Session {
 
     /// Frees the speech-to-text model once it has sat unused for the chosen time.
     pub fn schedule_unload(self: &Arc<Self>) {
-        let mine = self.used.fetch_add(1, Ordering::SeqCst) + 1;
+        let mine = self.unload_gen.fetch_add(1, Ordering::SeqCst) + 1;
         let secs = models::unload_after(&self.db.lock().unwrap()).unwrap_or(-1);
         if secs < 0 {
             return;
         }
         let s = self.clone();
         std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_secs(secs as u64));
-            if s.used.load(Ordering::SeqCst) == mine && s.recording.lock().unwrap().is_none() {
+            std::thread::sleep(s.second * secs as u32);
+            // Never mid-dictation: a recording bumps the generation, and a timer set during one finds it here.
+            if s.unload_gen.load(Ordering::SeqCst) == mine && s.recording.lock().unwrap().is_none() {
                 *s.transcriber.lock().unwrap() = None;
             }
         });
@@ -162,10 +175,11 @@ impl Session {
         if let Some((title, hint)) = missing {
             return self.world.show(Pill::Error { title: title.into(), hint });
         }
-        *rec = Some(self.world.record());
+        let token = Arc::new(());
+        *rec = Some(Active { rec: self.world.record(), token: token.clone() });
         drop(rec);
-        let mine = self.used.fetch_add(1, Ordering::SeqCst) + 1; // a pending unload must not fire mid-dictation
-        self.world.show(Pill::Listening { hold, key: v.key, limit: voice::TAP_LIMIT_SECS });
+        self.unload_gen.fetch_add(1, Ordering::SeqCst); // a pending unload must not fire mid-dictation
+        self.world.show(Pill::Listening { hold, key: v.key, limit: self.tap_limit.as_secs() });
         let s = self.clone();
         std::thread::spawn(move || {
             // Load the model while the user talks; a failure shows when they let go.
@@ -175,22 +189,29 @@ impl Session {
         std::thread::spawn(move || {
             let started = std::time::Instant::now();
             // Level bars, until this recording ends.
-            while s.used.load(Ordering::SeqCst) == mine {
-                if !hold && started.elapsed().as_secs() >= voice::TAP_LIMIT_SECS {
-                    s.stop();
+            loop {
+                let slot = s.recording.lock().unwrap();
+                let Some(a) = slot.as_ref().filter(|a| Arc::ptr_eq(&a.token, &token)) else { break };
+                if !hold && started.elapsed() >= s.tap_limit {
+                    drop(slot);
+                    s.stop(Some(&token));
                     break;
                 }
-                match s.recording.lock().unwrap().as_ref() {
-                    Some(r) => s.world.level(r.level()),
-                    None => break,
-                }
+                s.world.level(a.rec.level());
+                drop(slot);
                 std::thread::sleep(Duration::from_millis(50));
             }
         });
     }
 
-    fn stop(self: &Arc<Self>) {
-        let Some(rec) = self.recording.lock().unwrap().take() else { return };
+    /// Stops the recording and turns it into text. `only`: unless a newer recording took its place.
+        fn stop(self: &Arc<Self>, only: Option<&Arc<()>>) {
+        let mut slot = self.recording.lock().unwrap();
+        if only.is_some_and(|t| slot.as_ref().is_none_or(|a| !Arc::ptr_eq(&a.token, t))) {
+            return;
+        }
+        let Some(Active { rec, .. }) = slot.take() else { return };
+        drop(slot);
         let s = self.clone();
         std::thread::spawn(move || {
             let run = || -> Result<Pill, String> {
@@ -299,6 +320,7 @@ mod tests {
         recorded: usize,
         loaded: Vec<String>,
         freed: Vec<String>,
+        levels: usize,
         shown: Vec<Pill>,
         pasted: Vec<String>,
     }
@@ -366,7 +388,9 @@ mod tests {
         fn show(&self, p: Pill) {
             self.0.lock().unwrap().shown.push(p);
         }
-        fn level(&self, _: f32) {}
+        fn level(&self, _: f32) {
+            self.0.lock().unwrap().levels += 1;
+        }
         fn place(&self, _: String) {}
         fn transcriber(&self, id: &str, _: &Path) -> Result<Box<dyn Transcriber>, String> {
             let mut l = self.0.lock().unwrap();
@@ -394,6 +418,11 @@ mod tests {
 
     /// A session on a Mac that allows everything and has Apple Speech, with a fresh database.
     fn session(mode: &str) -> (Arc<Session>, FakeMac, tempfile::TempDir) {
+        session_timed(mode, Duration::from_secs(voice::TAP_LIMIT_SECS), Duration::from_secs(1))
+    }
+
+    /// `second`: how long a second of the "unload after" setting lasts.
+    fn session_timed(mode: &str, tap_limit: Duration, second: Duration) -> (Arc<Session>, FakeMac, tempfile::TempDir) {
         let tmp = tempfile::tempdir().unwrap();
         let db = crate::storage::open(tmp.path()).unwrap();
         let mut v = voice::get(&db).unwrap();
@@ -406,7 +435,7 @@ mod tests {
             l.speech = System { language: Some("English".into()), installed: true };
             l.words = vec![" Hello", "there. "];
         }
-        let s = Session::new(Box::new(mac.clone()), Arc::new(Mutex::new(db)), tmp.path().join("models"), 26);
+        let s = Session::new(Box::new(mac.clone()), Arc::new(Mutex::new(db)), tmp.path().join("models"), 26, tap_limit, second);
         (s, mac, tmp)
     }
 
@@ -572,5 +601,97 @@ mod tests {
         assert_eq!(dictate(&s, &mac, false), [Pill::Writing, Pill::Added]);
         let l = mac.0.lock().unwrap();
         assert_eq!((l.loaded.as_slice(), l.freed.as_slice()), (&["apple-speech".to_string(), "whisper-large-v3-turbo".into()][..], &["apple-speech".to_string()][..]));
+    }
+
+    fn unload_after(s: &Session, secs: i64) {
+        models::set_unload_after(&s.db.lock().unwrap(), secs).unwrap();
+    }
+
+    fn freed(mac: &FakeMac) -> usize {
+        mac.0.lock().unwrap().freed.len()
+    }
+
+    #[test]
+    fn the_model_is_freed_after_the_idle_time_unless_never() {
+        // A minute of idle time is 60 ms here.
+        let (s, mac, _tmp) = session_timed("hold", Duration::from_secs(300), Duration::from_millis(1));
+        unload_after(&s, 60);
+        dictate(&s, &mac, false);
+        assert_eq!(freed(&mac), 0, "not before the time");
+        mac.wait(|l| l.freed == ["apple-speech"]);
+
+        unload_after(&s, -1);
+        dictate(&s, &mac, false);
+        std::thread::sleep(Duration::from_millis(150));
+        assert_eq!(freed(&mac), 1, "never");
+    }
+
+    #[test]
+    fn right_after_use_frees_the_model_once_the_dictation_ends() {
+        let (s, mac, _tmp) = session("hold");
+        unload_after(&s, 0);
+        dictate(&s, &mac, false);
+        mac.wait(|l| l.freed == ["apple-speech"]);
+    }
+
+    #[test]
+    fn the_model_is_never_freed_mid_dictation() {
+        let (s, mac, _tmp) = session_timed("hold", Duration::from_secs(300), Duration::from_millis(1));
+        unload_after(&s, 60);
+        dictate(&s, &mac, false); // its timer would run out during the next dictation
+        s.key(true);
+        s.schedule_unload(); // the idle time changed on AI & privacy mid-dictation
+        std::thread::sleep(Duration::from_millis(150));
+        assert_eq!(freed(&mac), 0);
+        s.key(false);
+        mac.wait(|l| l.pasted.len() == 2);
+        assert_eq!(mac.0.lock().unwrap().loaded.len(), 1, "same model, still loaded");
+        mac.wait(|l| l.freed.len() == 1); // and freed once idle again
+    }
+
+    #[test]
+    fn a_dictation_during_the_idle_time_restarts_the_wait() {
+        // A minute of idle time is 300 ms here.
+        let (s, mac, _tmp) = session_timed("hold", Duration::from_secs(300), Duration::from_millis(5));
+        unload_after(&s, 60);
+        dictate(&s, &mac, false);
+        std::thread::sleep(Duration::from_millis(200));
+        dictate(&s, &mac, false);
+        std::thread::sleep(Duration::from_millis(200)); // the first wait has run out
+        assert_eq!(freed(&mac), 0);
+        mac.wait(|l| l.freed.len() == 1);
+    }
+
+    #[test]
+    fn tap_mode_stops_and_pastes_on_its_own_at_the_limit() {
+        let (s, mac, _tmp) = session_timed("tap", Duration::from_millis(100), Duration::from_secs(1));
+        s.key(false);
+        std::thread::sleep(Duration::from_millis(40));
+        assert!(mac.0.lock().unwrap().pasted.is_empty(), "not before the limit");
+        mac.wait(|l| l.pasted == ["Hello there."]);
+        assert_eq!(mac.shown()[1..], [Pill::Writing, Pill::Added]);
+    }
+
+    #[test]
+    fn level_bars_stop_when_the_recording_ends() {
+        let levels = |mac: &FakeMac| mac.0.lock().unwrap().levels;
+        let stays = |mac: &FakeMac| {
+            let n = levels(mac);
+            std::thread::sleep(Duration::from_millis(150));
+            assert_eq!(levels(mac), n);
+        };
+        let (s, mac, _tmp) = session_timed("tap", Duration::from_millis(100), Duration::from_secs(1));
+        s.key(false);
+        mac.wait(|l| l.pasted.len() == 1); // at the limit
+        assert!(levels(&mac) > 0);
+        stays(&mac);
+        for mode in ["hold", "tap"] {
+            let (s, mac, _tmp) = session(mode);
+            s.key(mode == "hold");
+            mac.wait(|l| l.levels > 0);
+            s.key(false);
+            mac.wait(|l| l.pasted.len() == 1);
+            stays(&mac);
+        }
     }
 }

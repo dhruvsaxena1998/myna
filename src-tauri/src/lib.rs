@@ -339,7 +339,9 @@ pub fn run() {
                 Ok(db) => {
                     let db = Arc::new(Mutex::new(db));
                     let world = Box::new(session::Mac(app.handle().clone()));
-                    app.manage(Session::new(world, db.clone(), dir.join("models"), models::macos_major()));
+                    let tap_limit = std::time::Duration::from_secs(voice::TAP_LIMIT_SECS);
+                    let second = std::time::Duration::from_secs(1);
+                    app.manage(Session::new(world, db.clone(), dir.join("models"), models::macos_major(), tap_limit, second));
                     app.manage(Data {
                         db,
                         models_dir: dir.join("models"),
