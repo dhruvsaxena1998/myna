@@ -26,8 +26,8 @@ test("the Version row shows each update state without moving", async ({ page }) 
   const states: [object, string][] = [
     [{ state: "checking" }, "Checking…"],
     [{ state: "available", version: "0.0.2-beta.2", notes: "" }, "Update available · 0.0.2-beta.2"],
-    [{ state: "downloading", pct: 42 }, "Downloading 42%"],
-    [{ state: "downloaded" }, "Restart to update"],
+    [{ state: "downloading", version: "0.0.2-beta.2", notes: "", pct: 42 }, "Downloading 42%"],
+    [{ state: "downloaded", version: "0.0.2-beta.2", notes: "" }, "Restart to update"],
     [{ state: "error", kind: "check", message: "Couldn’t reach GitHub. Check your connection." }, "Update failedTry again"],
     [{ state: "uptodate" }, "Check for updates"],
   ];
@@ -48,11 +48,14 @@ test("Check for updates and Try again check; an error shows its message", async 
   expect(await calls(page, "update_check")).toBe(2);
 });
 
-test("Restart to update says why it can't while dictating", async ({ page }) => {
-  await open(page, `update_restart: () => { throw "Finish recording first"; }`);
-  await emit(page, { state: "downloaded" });
+test("Update available and Restart to update open the update pop-up", async ({ page }) => {
+  await open(page, `update_open: () => null`);
+  await emit(page, { state: "available", version: "0.0.2-beta.2", notes: "" });
+  await page.getByRole("button", { name: "Update available · 0.0.2-beta.2" }).click();
+  await emit(page, { state: "downloaded", version: "0.0.2-beta.2", notes: "" });
   await page.getByRole("button", { name: "Restart to update" }).click();
-  await expect(page.getByText("Finish recording first")).toBeVisible();
+  expect(await calls(page, "update_open")).toBe(2);
+  expect(await calls(page, "update_download") + (await calls(page, "update_restart"))).toBe(0);
 });
 
 test("Update mode and Channel show their hints and persist across a restart", async ({ page }) => {

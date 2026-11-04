@@ -37,6 +37,31 @@
         }
       },
       {
+        "label": "update",
+        "title": "Software update",
+        "url": "/update",
+        "width": 480,
+        "height": 400,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "visible": false,
+        "center": true,
+        "transparent": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 20,
+          "y": 24
+        },
+        "windowEffects": {
+          "effects": [
+            "sidebar"
+          ],
+          "state": "followsWindowActiveState"
+        }
+      },
+      {
         "label": "pill",
         "title": "Voice typing",
         "url": "/pill",
