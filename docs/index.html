@@ -480,6 +480,20 @@ body { background:
 .dt-split { position: relative; display: flex; flex: none; gap: 4px; }
 .dt-menu { position: absolute; top: calc(100% + 6px); right: 0; width: 270px; padding: 5px; border-radius: 14px; color: var(--text); background: var(--glass-strong);
   -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); box-shadow: inset 0 0 0 .5px var(--glass-edge), var(--menu-shadow); }
+/* app update: pop-up (own small window), notification body, About state slot */
+.upd-scrim { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; background: rgba(0,0,0,.25); }
+html body .win.win-upd { width: min(480px, calc(100vw - 24px)); height: min(400px, calc(100vh - 24px)); min-height: 0; }
+.win-upd .ob h1 { font-size: 18px; line-height: 24px; }
+.win-upd .ob-foot { box-sizing: border-box; height: 56px; padding: 0 var(--s5); }
+.upd-body { display: flex; flex-direction: column; min-height: 0; padding: var(--s4) var(--s5) 0; }
+.upd-notes { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin-top: var(--s3); padding-bottom: var(--s4); border-top: 1px solid var(--line); }
+.upd-notes h2 { margin: var(--s3) 0 0; font-size: var(--fs-xs); font-weight: 600; color: var(--text-3); }
+.upd-notes h3 { margin: var(--s3) 0 var(--s1); font-size: var(--fs-body); font-weight: 600; }
+.upd-notes ul { list-style: disc; padding-left: 20px; }
+.upd-notes a { color: var(--accent-text); }
+.upd-bar { flex: 1; width: auto; }
+.upd-st { display: flex; min-height: 30px; align-items: center; justify-content: flex-end; gap: var(--s2); width: 240px; font-variant-numeric: tabular-nums; }
+.dt-open { flex: 1; min-width: 0; padding: 0; border: 0; background: none; text-align: left; cursor: pointer; }
 @media (max-width: 520px) { .dtoast { flex-wrap: wrap; } .dt-split { width: 100%; } .dt-split .primary { flex: 1; justify-content: center; } }
 
 .hk { display: flex; align-items: center; gap: var(--s2); }
@@ -821,9 +835,12 @@ const S = {
 S.set = { modules:S.modules, hotkey:'fn', mode:'hold', paste:'clipboard', pillStyle:'capsule', pillPlace:'bottom', dict:['Myna','Parakeet','Desert Ant','Drove → Dhruv'], lang:'en', rules:true,
   capture:'shots', interval:'15', apps:{ meet:false, teams:false, zoom:false, slack:false }, ext:false, retention:'30', folder:true, dataPath:'~/Library/Application Support/Myna', dataMoved:false,
   meetKey:'ctrl-opt-m', appearance:'auto', accent:'blue', glass:'clear', liquid:false, expOn:false, detect:true,
-  diar:'who', decision:'fast', decKey:'', upd:'',
+  diar:'who', decision:'fast', decKey:'', updMode:'auto', channel:'beta',
   exp:{ diarOn:false, uhmD:false, uhmM:false, llmD:false, llmM:false, triage:false, relevance:false, shotsAI:false } };
 S.mb = { open:false };
+const UPD_CUR = '0.0.1-beta.2', UPD_NEXT = '0.0.2-beta.1';
+// state: idle | checking | available | downloading | downloaded | restarting | error | uptodate
+S.u = { state:'idle', ver:UPD_CUR, open:false, pct:0, err:'', bad:false, toast:null, seen:{}, busy:false, timer:0 };
 S.dictS = { state:null };
 S.rec = { state:null };
 S.detect = { state:null, menu:false, ignored:false };
@@ -1397,13 +1414,95 @@ function settingsPage() {
         ]));
     }
     case 'about': return sgroup('Myna', [
-        srow('Version', '0.1.0 (prototype)', { '':`<button class="btn" data-act="upd">Check for updates</button>`, checking:`<span class="pill status" role="status">Checking…</span>`, ok:`<span class="pill ok">${icon('check','ic-s')}Up to date</span>` }[x.upd]),
+        srow('Version', S.u.ver, updSlot()),
+        srow('Update mode', UPD_MODES[x.updMode][1], sel('updMode', Object.entries(UPD_MODES).map(([v, [l]]) => [v, l]), 'Update mode')),
+        srow('Channel', 'Beta also gets newer stable releases. Switching to stable keeps your current version until stable passes it.', segc('channel', [['stable', 'Stable'], ['beta', 'Beta']], 'Channel')),
         srow('Where your data lives', `<span class="path">${esc(x.dataPath)}</span><br>${x.dataMoved ? 'Moved. Everything now lives in this folder.' : 'Your meetings, AI models and settings are all in one folder. Copy it to back everything up.'}`,
           `<div class="popwrap" data-pop><button class="btn" id="data-btn" data-act="pop" data-p="data" aria-haspopup="menu" aria-expanded="${S.pop === 'data'}">Change…</button>${S.pop === 'data' ? `<div class="pop menu" role="menu" aria-label="Where your data lives">${DATA_PLACES.map(([l, v]) => `<button class="mitem" role="menuitemradio" aria-checked="${x.dataPath === v}" data-act="data-path" data-v="${esc(v)}"><span class="od-truncate">${l}</span>${x.dataPath === v ? `<span class="mkey">${icon('check','ic-s')}</span>` : ''}</button>`).join('')}</div>` : ''}</div>`),
         srow('License', 'Free and open source (MIT license).' + (desertAnt().length ? `<br><span class="attrib">Powered by Desert Ant Labs · ${desertAnt().join(' and ')}</span>` : ''), ''),
         srow('Setup guide', 'Go through the first-time setup again. Your meetings and settings stay as they are.', `<button class="btn" data-act="restart">Start setup again</button>`)
-      ]);
+      ]) + sgroup('Prototype controls', [
+        ...[['found', 'update found', 'Follows the Update mode above.'], ['error', 'error', 'Like a manual check that failed.'], ['badsig', 'bad signature', 'Always shown, even in the automatic modes.'], ['uptodate', 'up to date', 'Like a manual check with nothing new.']]
+          .map(([k, l, h]) => srow('Simulate: ' + l, h, `<button class="btn" data-act="upd-sim" data-k="${k}">Simulate: ${l}</button>`)),
+        srow('Simulate: recording in progress', 'Turns “Restart now” off. Myna never restarts during dictation or a recording.', `<button class="btn" data-act="upd-sim" data-k="recording" aria-pressed="${S.u.busy}">${S.u.busy ? 'Stop simulating' : 'Simulate: recording in progress'}</button>`)
+      ], '<p class="help">Prototype only. Not part of the app.</p>');
   }
+}
+
+/* ---------- app updates ---------- */
+const UPD_MODES = { auto:['Check and download', 'Checks on its own, downloads in the background, then asks you to restart.'], check:['Check only', 'Checks on its own and tells you when there’s an update. You choose when to download.'], off:['Off', 'Never checks on its own. Use Check for updates when you want to.'] };
+const UPD_NOTES = `<h2>What’s new</h2>
+  <h3>Dictation</h3><ul><li>Your words now appear faster after you let go of the key.</li><li>Fixed the pill covering the Dock on some displays.</li></ul>
+  <h3>Meetings</h3><ul><li>Notes keep the speaker names you fix in the transcript.</li><li>Zoom detection works again after Zoom updates.</li></ul>
+  <h3>Fixes</h3><ul><li>Settings no longer jump when a model finishes downloading.</li></ul>
+  <p style="margin-top:var(--s3)"><a href="https://github.com/dhruvsaxena1998/myna/releases" target="_blank" rel="noopener">Full changelog on GitHub</a> · <span class="help">Sample data</span></p>`;
+const updBusy = () => S.u.busy || S.rec.state === 'rec' || S.dictS.state === 'rec';
+const updPaint = () => render();
+function updSlot() {
+  const U = S.u, st = U.state;
+  return `<div class="upd-st">${{
+    checking:`<span class="pill status" role="status">Checking…</span>`,
+    available:`<button class="btn" id="upd-row" data-act="upd-open">Update available · ${UPD_NEXT}</button>`,
+    downloading:`<span class="pill status" role="status">Downloading ${U.pct}%</span>`,
+    downloaded:`<button class="btn" id="upd-row" data-act="upd-open">Restart to update</button>`,
+    restarting:`<span class="pill status" role="status">Restarting…</span>`,
+    error:`<span class="pill alert">Update failed</span><button class="btn" id="upd-row" data-act="upd-check">Try again</button>`
+  }[st] || `<button class="btn" id="upd-row" data-act="upd-check">Check for updates</button>`}</div>`;
+}
+function updCheck() {   // manual check: opens the pop-up straight away with the result
+  const U = S.u; U.state = 'checking'; U.open = false; updPaint();
+  setTimeout(() => { if (U.state !== 'checking') return; U.state = U.ver === UPD_NEXT ? 'uptodate' : 'available'; U.open = true; updPaint(); $('#upd-primary')?.focus(); }, 900);
+}
+function updNotify(kind) {   // one notification per version
+  if (S.u.seen[UPD_NEXT]) return;
+  S.u.seen[UPD_NEXT] = true; S.u.toast = kind;
+}
+function updDownload(quiet) {
+  const U = S.u; clearInterval(U.timer); U.state = 'downloading'; U.pct = 0; updPaint();
+  U.timer = setInterval(() => {
+    U.pct = Math.min(100, U.pct + 7);
+    if (U.pct < 100) return updPaint();
+    clearInterval(U.timer);
+    if (quiet) { U.state = 'downloaded'; updNotify('ready'); }
+    else if (updBusy()) U.state = 'downloaded';
+    else return updRestart();
+    updPaint();
+  }, 150);
+}
+function updRestart() {
+  const U = S.u; U.state = 'restarting'; U.toast = null; U.open = true; updPaint();
+  setTimeout(() => { U.ver = UPD_NEXT; U.state = 'idle'; U.open = false; updPaint(); $('#upd-row')?.focus(); }, 1500);
+}
+function updClose() {
+  const U = S.u; U.open = false; if (U.state === 'uptodate') U.state = 'idle';
+  updPaint(); $('#upd-row')?.focus();
+}
+function updSim(k) {
+  const U = S.u;
+  if (k === 'recording') { U.busy = !U.busy; return updPaint(); }
+  if (k === 'found' && S.set.updMode === 'off') return;
+  clearInterval(U.timer); Object.assign(U, { state:'idle', open:false, pct:0, toast:null, bad:false, err:'' });
+  if (k === 'found') { U.ver = UPD_CUR; U.seen = {}; S.set.updMode === 'check' ? (U.state = 'available', updNotify('avail')) : updDownload(true); }
+  if (k === 'error') Object.assign(U, { state:'error', open:true, err:'Couldn’t reach GitHub. Check your connection.' });
+  if (k === 'badsig') Object.assign(U, { state:'error', open:true, bad:true, err:'This update failed its security check and wasn’t installed.' });
+  if (k === 'uptodate') Object.assign(U, { state:'uptodate', open:true, ver:UPD_CUR });
+  updPaint(); if (U.open) $('#upd-primary, #upd-later')?.focus();
+}
+function updPopup() {
+  const U = S.u, st = U.state, busy = updBusy();
+  const ok = st === 'uptodate', err = st === 'error', dl = st === 'downloading', rs = st === 'restarting';
+  const title = ok ? 'Myna is up to date' : err ? (U.bad ? 'Update not installed' : 'Couldn’t check for updates') : `Myna ${UPD_NEXT} is available`;
+  const sub = ok ? `You’re on the latest version (${U.ver})` : err ? `<span style="color:var(--alert)">${U.err}</span>` : `You have ${U.ver} · ${S.set.channel === 'beta' ? 'Beta' : 'Stable'}`;
+  const later = (l = 'Later') => `<button class="btn" id="upd-later" data-act="upd-close">${l}</button>`;
+  const foot = rs ? `<span class="help" role="status">Restarting…</span>`
+    : dl ? `<div class="bar upd-bar" role="progressbar" aria-label="Downloading update" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${U.pct}"><b style="transform:scaleX(${U.pct / 100})"></b></div><span class="help od-nowrap" style="min-width:4ch;text-align:right;font-variant-numeric:tabular-nums">${U.pct}%</span><button class="btn" id="upd-primary" data-act="upd-cancel">Cancel</button>`
+    : `<span class="od-fill">${st === 'downloaded' && busy ? `<span class="help" id="upd-busy">Finish recording first</span>` : ''}</span>` + (ok ? `<button class="btn primary" id="upd-primary" data-act="upd-close">OK</button>`
+      : err ? later('Close') + (U.bad ? '' : `<button class="btn primary" id="upd-primary" data-act="upd-check">Try again</button>`)
+      : later() + (st === 'downloaded' ? `<button class="btn primary" id="upd-primary" data-act="upd-restart" ${busy ? 'disabled title="Finish recording first" aria-describedby="upd-busy"' : ''}>Restart now</button>` : `<button class="btn primary" id="upd-primary" data-act="upd-dl">Download and restart</button>`));
+  return `<div class="upd-scrim"><div class="win win-sm win-upd" role="dialog" aria-modal="true" aria-labelledby="upd-h">
+    <div class="titlebar"><div class="lights" aria-hidden="true"><i></i><i></i><i></i></div><div class="wt">Software update</div></div>
+    <div class="ob"><div class="upd-body"><h1 id="upd-h">${title}</h1><p class="lead" style="margin-top:var(--s1)">${sub}</p>${ok || err ? '' : `<div class="upd-notes" tabindex="0" aria-label="What’s new">${UPD_NOTES}</div>`}</div>
+      <div class="ob-foot">${foot}</div></div></div></div>`;
 }
 
 /* ---------- menubar, dictation pill, meeting pill ---------- */
@@ -1428,7 +1527,9 @@ function overlay() {
     <span class="mb-clock">${now()}</span></header>`;
   if (S.mb.open) {
     const mk = MEET_KEYS[S.set.meetKey];
+    const us = S.u.state, ui = ['available', 'downloading', 'downloaded'].includes(us);
     h += `<div class="mbpop" role="menu" aria-label="Myna">
+      ${ui ? `<button class="mitem" role="menuitem" data-act="upd-open">${us === 'downloaded' ? 'Restart to update' : 'Update available…'}</button><div class="msep"></div>` : ''}
       <div class="mlabel">Meeting notes</div>
       ${rec ? `<button class="mitem" role="menuitem" data-act="rec-stop">Stop recording<span class="mkey" data-rec-time>${fmtDur(Date.now() - r.start)}</span></button>
               <button class="mitem" role="menuitem" data-act="rec-mute">${r.muted ? 'Unmute mic' : 'Mute mic'}</button>
@@ -1461,6 +1562,12 @@ function overlay() {
         </div>` : ''}
       </div>
     </section>`;
+  if (S.u.toast) h += `<section class="dtoast" ${S.detect.state === 'shown' ? 'style="top:calc(var(--mb-h) + 96px)"' : ''} role="alertdialog" aria-labelledby="upd-t" aria-describedby="upd-d">
+      <button class="dt-x" id="upd-x" data-act="upd-toast-x" aria-label="Dismiss">${icon('x','ic-s')}</button>
+      <span class="dt-app" aria-hidden="true">${icon('wave')}</span>
+      <button class="dt-open" data-act="upd-open"><span class="dt-t" id="upd-t" style="display:block">Myna ${UPD_NEXT} is ${S.u.toast === 'ready' ? 'ready' : 'available'}</span><span class="dt-sub" id="upd-d">${S.u.toast === 'ready' ? 'Restart to finish updating.' : 'Click to see what’s new.'}</span></button>
+    </section>`;
+  if (S.u.open) h += updPopup();
   const d = S.dictS;
   if (d.state === 'rec') h += `<div class="hud dpill" role="status" aria-label="Voice typing: listening"><span class="lvl" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><span>Listening</span>${d.hold ? '<span class="sub">Release to paste</span>' : '<button class="hud-btn" id="dict-done" data-act="dict-stop">Done</button>'}</div>`;
   if (d.state === 'proc') h += `<div class="hud dpill" role="status"><span>Writing…</span></div>`;
@@ -1653,7 +1760,14 @@ document.addEventListener('click', e => {
     case 'spage': S.setPage = el.dataset.p; render(); $('#spage').scrollTop = 0; $(`[data-act=spage][data-p=${S.setPage}]`).focus(); break;
     case 'dict-rm': S.set.dict = S.set.dict.filter(w => w !== el.dataset.w); render(); $('#dict-in').focus(); break;
     case 'ext': S.set.ext = !S.set.ext; render(); $('[data-act=ext]').focus(); break;
-    case 'upd': S.set.upd = 'checking'; render(); setTimeout(() => { S.set.upd = 'ok'; if (S.view === 'settings') render(); }, 1200); break;
+    case 'upd-check': updCheck(); break;
+    case 'upd-sim': updSim(el.dataset.k); break;
+    case 'upd-open': S.mb.open = false; S.u.toast = null; S.u.open = true; updPaint(); $('#upd-primary')?.focus(); break;
+    case 'upd-toast-x': S.u.toast = null; renderOverlay(); break;
+    case 'upd-close': updClose(); break;
+    case 'upd-dl': updDownload(false); break;
+    case 'upd-cancel': clearInterval(S.u.timer); S.u.state = 'available'; S.u.pct = 0; updPaint(); $('#upd-primary')?.focus(); break;
+    case 'upd-restart': if (!updBusy()) updRestart(); break;
     case 'new-chat': S.global.msgs = []; S.tokensSent.global = 0; render(); break;
     case 'untag': { const m = byId(id); m.tags = m.tags.filter(t => t !== el.dataset.tag); render(); $('#newtag').focus(); break; }
     case 'tpl-saving': S.regen.saving = true; render(); $('#tplname').focus(); break;
@@ -1758,6 +1872,7 @@ document.addEventListener('keydown', e => {
   if (e.metaKey && e.key === ',' && S.view !== 'onboarding') { e.preventDefault(); go('settings'); return; }
   if (e.key === 'Enter' && !e.shiftKey && e.target.matches('.composer textarea')) { e.preventDefault(); e.target.form.requestSubmit(); }
   if (e.key === 'Escape') {
+    if (S.u.open) { updClose(); return; }
     if (S.mb.open) { S.mb.open = false; renderOverlay(); $('#mb-btn').focus(); return; }
     if (S.detect.menu) { S.detect.menu = false; renderOverlay(); $('#det-more')?.focus(); return; }
     if (S.dictS.state === 'rec') { S.dictS = { state:null }; renderOverlay(); return; }
@@ -1791,6 +1906,7 @@ document.addEventListener('keyup', e => {
   if (v === 'detected') setTimeout(() => { S.detect.state = 'shown'; renderOverlay(); }, 0);
   if (v === 'menu') setTimeout(() => { S.mb.open = true; renderOverlay(); }, 0);
   if (v === 'voice') setTimeout(() => startDict(false), 0);
+  if (v === 'update') { S.view = 'settings'; S.setPage = 'about'; setTimeout(() => updSim(a), 0); }   // #update/found | error | badsig | uptodate | recording
 })();
 render();
 </script>

@@ -78,3 +78,27 @@ _Avoid_: mode, tone, preset
 **Off-device**:
 True when a request goes to a host other than this Mac's loopback address, including another machine on the LAN. Off-device features carry the "sends text off this Mac" pill.
 _Avoid_: cloud, remote
+
+## Updates
+
+**Channel**:
+Which releases a Myna install is offered: stable gets stable releases only, beta gets betas and any newer stable release. A new install starts on the channel of the build it came from.
+_Avoid_: track, ring, pre-release mode
+
+**Update mode**:
+How much Myna does by itself about a new release: check only, check and download, or off (only the "Check for updates" button checks).
+_Avoid_: auto-update setting
+
+## Stats
+
+**Stats for nerds**:
+An Experimental page that shows, for each dictation, the text after every step of the dictation pipeline and how long each step took, plus per-model and per-rule numbers, so the user can judge which speech model and which cleanup rules serve them.
+_Avoid_: stats dashboard, analytics, debug page
+
+**Step**:
+One stage a dictation's text passes through on its way to being pasted: speech-to-text, rules cleanup, LLM cleanup or a Style. More steps can be added.
+_Avoid_: stage, pass, phase
+
+**Trace**:
+The record of one dictation that reached speech-to-text, whether or not it was pasted: the speech model, the app in front, the audio length, how it ended, and the text after each step with the time that step took. It keeps no audio. Voice typing history and Stats for nerds both read it; deleting a history entry deletes its trace.
+_Avoid_: log, event, debug info
