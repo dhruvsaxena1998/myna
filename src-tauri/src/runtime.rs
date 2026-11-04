@@ -36,16 +36,18 @@ pub trait Diarizer: Send {
     fn diarize(&mut self, audio: &[f32]) -> Result<Vec<Turn>, String>;
 }
 
-/// Loads the speech-to-text model `id` from its folder (`models/<id>/`).
-pub fn transcriber(id: &str, dir: &Path) -> Result<Box<dyn Transcriber>, String> {
+/// Loads the speech-to-text model `id` from `models_dir/<id>/`.
+pub fn transcriber(id: &str, models_dir: &Path) -> Result<Box<dyn Transcriber>, String> {
     let m = models::find(id).ok_or_else(|| format!("Unknown model {id}"))?;
+    let dir = models_dir.join(id);
     let err = |e: String| format!("Couldn't load {}: {e}", m.name);
     match id {
         "parakeet-tdt-v3" => {
-            Ok(Box::new(Parakeet(ParakeetTDT::from_pretrained(dir, Some(ort()?)).map_err(|e| err(e.to_string()))?)))
+            let cfg = ort(models_dir).map_err(err)?;
+            Ok(Box::new(Parakeet(ParakeetTDT::from_pretrained(&dir, Some(cfg)).map_err(|e| err(e.to_string()))?)))
         }
         "whisper-large-v3-turbo" => {
-            let ctx = WhisperContext::new_with_params(first_file(&m, dir), WhisperContextParameters::default())
+            let ctx = WhisperContext::new_with_params(first_file(&m, &dir), WhisperContextParameters::default())
                 .map_err(|e| err(e.to_string()))?;
             Ok(Box::new(Whisper(ctx.create_state().map_err(|e| err(e.to_string()))?, String::new())))
         }
@@ -55,14 +57,16 @@ pub fn transcriber(id: &str, dir: &Path) -> Result<Box<dyn Transcriber>, String>
 }
 
 #[cfg_attr(not(test), allow(dead_code))] // first caller is Meetings (story 05)
-/// Loads the diarization model `id` from its folder (`models/<id>/`).
-pub fn diarizer(id: &str, dir: &Path) -> Result<Box<dyn Diarizer>, String> {
+/// Loads the diarization model `id` from `models_dir/<id>/`.
+pub fn diarizer(id: &str, models_dir: &Path) -> Result<Box<dyn Diarizer>, String> {
     let m = models::find(id).ok_or_else(|| format!("Unknown model {id}"))?;
     match id {
-        "sortformer" => Ok(Box::new(Sort(
-            Sortformer::with_config(first_file(&m, dir), Some(ort()?), DiarizationConfig::default())
-                .map_err(|e| format!("Couldn't load {}: {e}", m.name))?,
-        ))),
+        "sortformer" => {
+            let err = |e: String| format!("Couldn't load {}: {e}", m.name);
+            let cfg = ort(models_dir).map_err(err)?;
+            let model = Sortformer::with_config(first_file(&m, &models_dir.join(id)), Some(cfg), DiarizationConfig::default());
+            Ok(Box::new(Sort(model.map_err(|e| err(e.to_string()))?)))
+        }
         _ => Err(format!("{} can't run in Myna yet", m.name)),
     }
 }
@@ -72,12 +76,19 @@ fn first_file(m: &models::Model, dir: &Path) -> PathBuf {
 }
 
 /// ONNX Runtime allows one environment per process; every model shares it.
+/// It loads the downloaded library first, and nothing may touch `ort` before that or it panics.
 // shortcut: CPU only, try the Core ML execution provider when speed on long meetings matters.
-fn ort() -> Result<ExecutionConfig, String> {
+fn ort(models_dir: &Path) -> Result<ExecutionConfig, String> {
     static ENV: Mutex<Option<parakeet_rs::ort::environment::Environment>> = Mutex::new(None);
     let mut env = ENV.lock().unwrap();
     if env.is_none() {
-        *env = Some(parakeet_rs::ort::init().with_name("myna").build().map_err(|e| format!("Couldn't start ONNX Runtime: {e}"))?);
+        let lib = models::runtime_dylib(models_dir);
+        if !lib.is_file() {
+            return Err("ONNX Runtime is missing. Download it again.".into());
+        }
+        let broken = |e: String| format!("ONNX Runtime didn't start ({e}). Download it again.");
+        let builder = parakeet_rs::ort::init_from(&lib).map_err(|e| broken(e.to_string()))?;
+        *env = Some(builder.with_name("myna").build().map_err(|e| broken(e.to_string()))?);
     }
     Ok(ExecutionConfig::new().with_environment(env.clone().unwrap()))
 }
@@ -177,6 +188,24 @@ mod tests {
     }
 
     #[test]
+    fn a_missing_or_corrupt_runtime_is_an_error_not_a_crash() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (parakeet, sortformer) = ("Couldn't load Parakeet TDT v3: ONNX Runtime", "Couldn't load Sortformer: ONNX Runtime");
+        let both = |dir: &Path| (transcriber("parakeet-tdt-v3", dir).err().unwrap(), diarizer("sortformer", dir).err().unwrap());
+
+        let (p, s) = both(tmp.path());
+        assert_eq!(p, format!("{parakeet} is missing. Download it again."));
+        assert_eq!(s, format!("{sortformer} is missing. Download it again."));
+
+        let lib = models::runtime_dylib(tmp.path());
+        std::fs::create_dir_all(lib.parent().unwrap()).unwrap();
+        std::fs::write(lib, b"not a dylib").unwrap();
+        let (p, s) = both(tmp.path());
+        assert!(p.starts_with(&format!("{parakeet} didn't start")) && p.ends_with("Download it again."), "{p}");
+        assert!(s.starts_with(&format!("{sortformer} didn't start")) && s.ends_with("Download it again."), "{s}");
+    }
+
+    #[test]
     fn fakes_return_their_script() {
         let seg = Segment { start: 0.0, end: 1.0, text: "hi".into() };
         let mut t: Box<dyn Transcriber> = Box::new(Fake(vec![seg.clone()]));
@@ -234,7 +263,7 @@ mod tests {
     }
 
     fn transcribes_the_fixture(id: &str) {
-        let mut t = transcriber(id, &models_dir().join(id)).unwrap();
+        let mut t = transcriber(id, &models_dir()).unwrap();
         let heard: Vec<_> = t.transcribe(&fixture()).unwrap().into_iter().map(|s| s.text).collect();
         let heard = heard.join(" ");
         assert!(wer(SAID, &heard) < 0.2, "{id} heard: {heard}");
@@ -261,7 +290,7 @@ mod tests {
     #[test]
     #[ignore = "slow: needs the downloaded Sortformer model"]
     fn sortformer_tells_the_two_voices_apart() {
-        let turns = diarizer("sortformer", &models_dir().join("sortformer")).unwrap().diarize(&fixture()).unwrap();
+        let turns = diarizer("sortformer", &models_dir()).unwrap().diarize(&fixture()).unwrap();
         let at = |t: f32| turns.iter().find(|s| s.start <= t && t <= s.end).map(|s| s.speaker);
         let (first, second) = (at(2.0), at(7.0));
         assert!(first.is_some() && second.is_some() && first != second, "{turns:?}");

@@ -84,9 +84,15 @@ fn model_download(app: AppHandle, d: tauri::State<Data>, id: String) -> Result<(
         return Err(format!("{}: {n}.", m.name));
     }
     let cancel = Arc::new(AtomicBool::new(false));
-    if d.downloads.lock().unwrap().insert(id.clone(), cancel.clone()).is_some() {
+    let mut downloads = d.downloads.lock().unwrap();
+    // Two models that need ONNX Runtime would fetch it at the same time and trip over each other's temp folder.
+    if let Some(o) = models::all().iter().find(|o| m.runtime && o.runtime && o.id != id && downloads.contains_key(&o.id)) {
+        return Err(format!("{} is downloading. Wait for it to finish.", o.name));
+    }
+    if downloads.insert(id.clone(), cancel.clone()).is_some() {
         return Err(format!("{} is already downloading.", m.name));
     }
+    drop(downloads);
     let dir = d.models_dir.clone();
     std::thread::spawn(move || {
         let mut last = u64::MAX;
@@ -100,7 +106,8 @@ fn model_download(app: AppHandle, d: tauri::State<Data>, id: String) -> Result<(
         let result = if m.system {
             apple::download(|done| progress((done.clamp(0.0, 1.0) * 100.0) as u64)).map(|()| true)
         } else {
-            download::fetch(download::HF, &m, &dir, &cancel, |done| progress(done * 100 / m.size))
+            let get = |x: &models::Model, p: &mut dyn FnMut(u64)| download::fetch(download::HF, x, &dir, &cancel, p);
+            download::install(&m, &dir, &get, &mut progress)
         };
         if cancel.load(Ordering::Relaxed) {
             return; // model_cancel already answered, and a retry may own the entry now
@@ -130,10 +137,8 @@ fn model_delete(d: tauri::State<Data>, id: String) -> Result<(), String> {
     if d.downloads.lock().unwrap().contains_key(&id) {
         return Err(format!("{} is downloading. Cancel it first.", m.name));
     }
-    match std::fs::remove_dir_all(d.models_dir.join(&m.id)) {
-        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(format!("Couldn't remove {}: {e}", m.name)),
-        _ => Ok(()),
-    }
+    let downloading: Vec<String> = d.downloads.lock().unwrap().keys().cloned().collect();
+    download::remove(&m, &d.models_dir, &downloading)
 }
 
 /// `MYNA_DEBUG=1` turns on debug aids in the UI (for now: the window size while resizing).
@@ -277,13 +282,13 @@ fn schedule_unload(app: &AppHandle) {
     });
 }
 
-/// The active speech-to-text model's id and folder, if it's downloaded.
-fn active_stt(d: &Data) -> Result<(String, PathBuf), String> {
+/// The active speech-to-text model's id, if it's downloaded.
+fn active_stt(d: &Data) -> Result<String, String> {
     let tasks = models::list(&d.db.lock().unwrap(), &d.models_dir, d.macos, &apple::status())?;
     let stt = tasks.into_iter().find(|t| t.id == "stt").ok_or("No speech-to-text task.")?;
     let id = stt.active.ok_or("No speech-to-text model runs on this Mac")?;
     match stt.models.iter().find(|m| m.id == id) {
-        Some(m) if m.installed => Ok((id.clone(), d.models_dir.join(&id))),
+        Some(m) if m.installed => Ok(id),
         Some(m) if m.system => Err(format!("Download {}’s language in Settings › AI & privacy", m.name)),
         Some(m) => Err(format!("Download {} in Settings › AI & privacy", m.name)),
         None => Err(format!("Unknown model {id}")),
@@ -292,10 +297,10 @@ fn active_stt(d: &Data) -> Result<(String, PathBuf), String> {
 
 /// Loads the active model into `slot` unless it's already there.
 fn load_transcriber(d: &Data, slot: &mut Loaded) -> Result<(), String> {
-    let (id, dir) = active_stt(d)?;
+    let id = active_stt(d)?;
     if slot.as_ref().is_none_or(|(loaded, _)| *loaded != id) {
         *slot = None; // free the old model before loading the new one
-        *slot = Some((id.clone(), runtime::transcriber(&id, &dir)?));
+        *slot = Some((id.clone(), runtime::transcriber(&id, &d.models_dir)?));
     }
     Ok(())
 }

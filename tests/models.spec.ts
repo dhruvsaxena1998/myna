@@ -3,7 +3,7 @@ import { fakeTauri } from "./tauri";
 
 const model = (id: string, extra = {}) => ({
   id, name: id, vendor: "Vendor", desc: `${id} description`, acc: 4, spd: 3, default: false,
-  size: 670_479_942, min_macos: 0, repo: "r", revision: "x".repeat(40), files: [{}], system: false, installed: false, needs: null, ...extra,
+  size: 670_479_942, min_macos: 0, repo: "r", revision: "x".repeat(40), files: [{}], system: false, runtime: false, installed: false, needs: null, ...extra,
 });
 
 // Fresh install on macOS 14: nothing installed, Desert Ant models blocked.
