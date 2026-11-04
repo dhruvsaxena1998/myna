@@ -8,6 +8,7 @@ mod pill;
 mod rules;
 mod runtime;
 mod storage;
+mod update;
 mod voice;
 
 use rusqlite::Connection;
@@ -236,6 +237,64 @@ fn voice_pause(app: AppHandle, d: tauri::State<Data>, paused: bool) -> Result<()
     sync_shortcut(&app)
 }
 
+fn prerelease(app: &AppHandle) -> bool {
+    !app.package_info().version.pre.is_empty()
+}
+
+#[tauri::command]
+fn updates_get(app: AppHandle, d: tauri::State<Data>) -> Result<update::Prefs, String> {
+    update::get(&d.db.lock().unwrap(), prerelease(&app))
+}
+
+#[tauri::command]
+fn updates_set(app: AppHandle, d: tauri::State<Data>, prefs: update::Prefs) -> Result<(), String> {
+    let was = update::get(&d.db.lock().unwrap(), prerelease(&app))?;
+    update::set(&d.db.lock().unwrap(), &prefs)?;
+    if was.channel != prefs.channel {
+        update::forget(&app);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn update_state(u: tauri::State<update::Updates>) -> update::State {
+    u.state.lock().unwrap().clone()
+}
+
+/// The Check for updates button. The error comes back here and in the update state.
+#[tauri::command]
+async fn update_check(app: AppHandle, d: tauri::State<'_, Data>) -> Result<(), String> {
+    let p = update::get(&d.db.lock().unwrap(), prerelease(&app))?;
+    update::check(&app, update::FEEDS, &p, true).await
+}
+
+#[tauri::command]
+async fn update_download(app: AppHandle) -> Result<(), String> {
+    update::download(&app, false).await
+}
+
+/// Restart now: installs the downloaded update and relaunches, unless a dictation is under way.
+#[tauri::command]
+fn update_restart(app: AppHandle, d: tauri::State<Data>) -> Result<(), String> {
+    // The transcriber stays locked after the key is let go, until the words are typed.
+    let busy = d.recording.lock().unwrap().is_some() || d.transcriber.try_lock().is_err();
+    update::install(&app, busy)?;
+    app.restart()
+}
+
+/// Automatic checks: at launch and every 24 h, unless Update mode is Off. Wakes hourly, so a Mac that
+/// slept through the 24 h checks soon after it wakes.
+fn watch_updates(app: AppHandle) {
+    std::thread::spawn(move || loop {
+        let last = *app.state::<update::Updates>().last.lock().unwrap();
+        let prefs = update::get(&app.state::<Data>().db.lock().unwrap(), prerelease(&app));
+        if let Some(p) = prefs.ok().filter(|p| update::due(&p.mode, last, std::time::SystemTime::now())) {
+            let _ = tauri::async_runtime::block_on(update::check(&app, update::FEEDS, &p, false));
+        }
+        std::thread::sleep(std::time::Duration::from_secs(3600));
+    });
+}
+
 /// Registers the saved shortcut while voice typing is on (and not paused), and drops it otherwise.
 /// The new one is taken before the old one goes, so a failure leaves the old one working.
 fn sync_shortcut(app: &AppHandle) -> Result<(), String> {
@@ -416,7 +475,9 @@ fn open_settings(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![debug_on, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, voice_pause])
+        .invoke_handler(tauri::generate_handler![debug_on, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, voice_pause, updates_get, updates_set, update_state, update_check, update_download, update_restart])
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(update::Updates::default())
         .setup(|app| {
             app.set_activation_policy(ActivationPolicy::Accessory);
 
@@ -487,6 +548,8 @@ pub fn run() {
             }
             if failed {
                 open_settings(app.handle()); // never fail silently: Settings shows the error
+            } else {
+                watch_updates(app.handle().clone());
             }
             Ok(())
         })

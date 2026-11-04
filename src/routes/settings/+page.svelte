@@ -1,6 +1,7 @@
 <script lang="ts">
   let { data } = $props();
   import { invoke } from "@tauri-apps/api/core";
+  import About from "$lib/About.svelte";
   import ErrorState from "$lib/ErrorState.svelte";
   import { glassOn } from "$lib/look";
   import ModelTask from "$lib/ModelTask.svelte";
@@ -94,11 +95,8 @@
           {/if}
         {/if}
       {:else if page.id === "about"}
-        <dl>
-          <dt>Version</dt><dd>{data.version}</dd>
-          <dt>Data folder</dt><dd class="mono">{data.storage.path}</dd>
-        </dl>
-        <!-- "Powered by Desert Ant Labs" appears here only while a Desert Ant model is enabled (story 03). -->
+        {#if data.updates?.ok}<About version={data.version} path={data.storage.path} prefs={data.updates.prefs} status={data.updates.status} />
+        {:else}<ErrorState title="Myna couldn't read the update settings" message={data.updates?.ok === false ? data.updates.error : ""} />{/if}
       {:else}
         <p class="soon">{page.soon}</p>
       {/if}
@@ -130,8 +128,4 @@
   .content { padding: 0 var(--sp-5) var(--sp-5); }
   .soon { margin: 0; color: var(--text-2); }
   .later { margin-top: var(--sp-5); }
-  dl { display: grid; grid-template-columns: max-content 1fr; gap: var(--sp-2) var(--sp-4); margin: 0; }
-  dt { color: var(--text-3); }
-  dd { margin: 0; user-select: text; }
-  .mono { font: 12px/var(--lh-body) var(--font-mono); overflow-wrap: anywhere; }
 </style>
