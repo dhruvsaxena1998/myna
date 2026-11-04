@@ -16,3 +16,6 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 test-results
 playwright-report
+
+# signing keys (story 14), never commit
+.secrets/
