@@ -4,6 +4,7 @@ import type { Task } from "$lib/models";
 import type { Perms } from "$lib/Permissions.svelte";
 import type { Look } from "$lib/Pill.svelte";
 import type { Voice } from "$lib/VoiceShortcut.svelte";
+import type { Prefs, UpdateState } from "$lib/updates.svelte";
 
 // Load before the first paint so nothing pops in after the window shows.
 export async function load() {
@@ -33,5 +34,11 @@ export async function load() {
         (err) => ({ ok: false as const, error: String(err) }),
       )
     : null;
-  return { storage, version, models, perms, look, voice };
+  const updates = storage.ok
+    ? await Promise.all([invoke<Prefs>("updates_get"), invoke<UpdateState>("update_state")]).then(
+        ([prefs, status]) => ({ ok: true as const, prefs, status }),
+        (err) => ({ ok: false as const, error: String(err) }),
+      )
+    : null;
+  return { storage, version, models, perms, look, voice, updates };
 }
