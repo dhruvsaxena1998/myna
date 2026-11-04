@@ -82,6 +82,37 @@ pub fn due(mode: &str, last: Option<SystemTime>, now: SystemTime) -> bool {
     mode != "off" && last.is_none_or(|t| !now.duration_since(t).is_ok_and(|d| d < DAY))
 }
 
+/// The notification for where a check left things, as (version, title, body): only at the state the mode
+/// stops at, and once per version. `seen`: the versions already told about, comma-separated.
+pub fn notice(mode: &str, s: &State, seen: &str) -> Option<(String, String, String)> {
+    let (version, what, body) = match s {
+        State::Available { version, .. } if mode == "check" => (version, "is available", "Click to see what’s new."),
+        State::Downloaded { version, .. } if mode == "auto" => (version, "is ready", "Restart to finish updating."),
+        _ => return None,
+    };
+    (!seen.split(',').any(|v| v == version)).then(|| (version.clone(), format!("Myna {version} {what}"), body.into()))
+}
+
+/// After a check: the notification to send as (title, body), if any, remembered across restarts.
+/// A manual check sends none, since its pop-up opened, but what it found counts as told.
+pub fn tell(conn: &Connection, mode: &str, s: &State, manual: bool) -> Result<Option<(String, String)>, String> {
+    let seen = read(conn, "update_seen")?.unwrap_or_default();
+    // A manual check always stops at Available, which Check only's notice matches.
+    let Some((version, title, body)) = notice(if manual { "check" } else { mode }, s, &seen) else { return Ok(None) };
+    conn.execute("INSERT INTO setting(key, value) VALUES ('update_seen', ?1) ON CONFLICT(key) DO UPDATE SET value = ?1", [format!("{seen},{version}")])
+        .map_err(|e| format!("Couldn't save the update settings: {e}"))?;
+    Ok((!manual).then_some((title, body)))
+}
+
+/// The menubar item's label for `s`; None hides it.
+pub fn menu_label(s: &State) -> Option<&'static str> {
+    match s {
+        State::Available { .. } | State::Downloading { .. } => Some("Update available…"),
+        State::Downloaded { .. } => Some("Restart to update"),
+        _ => None,
+    }
+}
+
 pub fn can_install(busy: bool, s: &State) -> Result<(), String> {
     if busy {
         return Err(BUSY.into());
@@ -396,6 +427,38 @@ mod tests {
         cancel(a.handle());
         assert_eq!(dl.join().unwrap(), Ok(()));
         assert_eq!(*a.state::<Updates>().state.lock().unwrap(), avail("0.0.3-stall.1"));
+    }
+
+    #[test]
+    fn a_notification_comes_once_per_version_only_from_automatic_checks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = crate::storage::open(tmp.path()).unwrap();
+        let ready = |v: &str| State::Downloaded { version: v.into(), notes: "".into() };
+        let ready_msg = |v: &str| Some((format!("Myna {v} is ready"), "Restart to finish updating.".into()));
+        assert_eq!(tell(&conn, "off", &ready("0.0.3"), false), Ok(None));
+        assert_eq!(tell(&conn, "off", &avail("0.0.3"), false), Ok(None));
+        assert_eq!(tell(&conn, "auto", &avail("0.0.3"), false), Ok(None), "Check and download waits for the download");
+        assert_eq!(tell(&conn, "auto", &ready("0.0.3"), false), Ok(ready_msg("0.0.3")));
+        assert_eq!(tell(&conn, "auto", &ready("0.0.3"), false), Ok(None), "once per version");
+        drop(conn);
+        let conn = crate::storage::open(tmp.path()).unwrap();
+        assert_eq!(tell(&conn, "auto", &ready("0.0.3"), false), Ok(None), "not again after a restart");
+        assert_eq!(tell(&conn, "check", &avail("0.0.4"), false), Ok(Some(("Myna 0.0.4 is available".into(), "Click to see what’s new.".into()))));
+        assert_eq!(tell(&conn, "check", &avail("0.0.5"), true), Ok(None), "a manual check opened the pop-up");
+        assert_eq!(tell(&conn, "check", &avail("0.0.5"), false), Ok(None), "and counts as told");
+        assert_eq!(tell(&conn, "off", &avail("0.0.6"), true), Ok(None));
+        assert_eq!(tell(&conn, "auto", &ready("0.0.7"), false), Ok(ready_msg("0.0.7")));
+    }
+
+    #[test]
+    fn the_menubar_item_shows_while_an_update_is_on_its_way() {
+        let downloading = State::Downloading { version: "0.0.3".into(), notes: "".into(), pct: 40 };
+        assert_eq!(menu_label(&avail("0.0.3")), Some("Update available…"));
+        assert_eq!(menu_label(&downloading), Some("Update available…"));
+        assert_eq!(menu_label(&State::Downloaded { version: "0.0.3".into(), notes: "".into() }), Some("Restart to update"));
+        for s in [State::Idle, State::Checking, State::Uptodate, State::Error { kind: "check".into(), message: "".into() }] {
+            assert_eq!(menu_label(&s), None, "{s:?}");
+        }
     }
 
     #[test]

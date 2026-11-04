@@ -3,6 +3,7 @@ mod dictation;
 mod download;
 mod look;
 mod models;
+mod notify;
 mod permissions;
 mod pill;
 mod rules;
@@ -18,9 +19,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tauri::image::Image;
-use tauri::menu::{MenuBuilder, MenuItem, MenuItemBuilder};
+use tauri::menu::{MenuBuilder, MenuItem, MenuItemBuilder, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{ActivationPolicy, AppHandle, Emitter, Manager, WindowEvent, Wry};
+use tauri::{ActivationPolicy, AppHandle, Emitter, Listener, Manager, WindowEvent, Wry};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 /// Result of creating the data folder and database: the folder path, or the error to show.
@@ -267,6 +268,7 @@ fn update_state(u: tauri::State<update::Updates>) -> update::State {
 async fn update_check(app: AppHandle, d: tauri::State<'_, Data>) -> Result<(), String> {
     let p = update::get(&d.db.lock().unwrap(), prerelease(&app))?;
     let r = update::check(&app, update::FEEDS, &p, true).await;
+    tell_update(&app, &p.mode, true);
     open_update(&app);
     r
 }
@@ -315,9 +317,18 @@ fn watch_updates(app: AppHandle) {
         let prefs = update::get(&app.state::<Data>().db.lock().unwrap(), prerelease(&app));
         if let Some(p) = prefs.ok().filter(|p| update::due(&p.mode, last, std::time::SystemTime::now())) {
             let _ = tauri::async_runtime::block_on(update::check(&app, update::FEEDS, &p, false));
+            tell_update(&app, &p.mode, false);
         }
         std::thread::sleep(std::time::Duration::from_secs(3600));
     });
+}
+
+/// Sends the notification a check earned, if any.
+fn tell_update(app: &AppHandle, mode: &str, manual: bool) {
+    let s = app.state::<update::Updates>().state.lock().unwrap().clone();
+    if let Ok(Some((title, body))) = update::tell(&app.state::<Data>().db.lock().unwrap(), mode, &s, manual) {
+        notify::send(&title, &body);
+    }
 }
 
 /// Registers the saved shortcut while voice typing is on (and not paused), and drops it otherwise.
@@ -497,7 +508,7 @@ fn open_window(app: &AppHandle, label: &str) {
     }
 }
 
-/// The update pop-up, from About and the manual check (and, in 14.5, the notification and the menubar item).
+/// The update pop-up, from About, the manual check, the notification and the menubar item.
 /// Never on its own from an automatic check.
 fn open_update(app: &AppHandle) {
     open_window(app, "update");
@@ -562,6 +573,27 @@ pub fn run() {
             let voice_item = MenuItemBuilder::with_id("dictate", "Start voice typing").enabled(false).build(app)?;
             let menu = MenuBuilder::new(app).item(&voice_item).separator().item(&settings_item).separator().item(&quit_item).build()?;
             app.manage(VoiceItem(voice_item));
+            // Tauri menus can't hide an item, so the update item and its separator go in and out at the top.
+            let (update_item, update_sep) = (MenuItemBuilder::with_id("update", "").build(app)?, PredefinedMenuItem::separator(app)?);
+            let (h, m) = (app.handle().clone(), menu.clone());
+            app.listen_any("update-state", move |_| {
+                // Read first: the menu calls wait on the main thread, which mustn't wait on this lock.
+                let label = update::menu_label(&h.state::<update::Updates>().state.lock().unwrap());
+                match label {
+                    Some(label) => {
+                        let _ = update_item.set_text(label);
+                        if m.get("update").is_none() {
+                            let _ = m.insert_items(&[&update_item, &update_sep], 0);
+                        }
+                    }
+                    None => {
+                        let _ = m.remove(&update_item);
+                        let _ = m.remove(&update_sep);
+                    }
+                }
+            });
+            let h = app.handle().clone();
+            notify::setup(move || open_update(&h));
             TrayIconBuilder::with_id("myna")
                 .icon(Image::from_bytes(include_bytes!("../icons/tray.png"))?)
                 .icon_as_template(true)
@@ -570,6 +602,7 @@ pub fn run() {
                 .on_menu_event(|app, e| match e.id().as_ref() {
                     "dictate" => dictate_toggle(app),
                     "settings" => open_window(app, "settings"),
+                    "update" => open_update(app),
                     "quit" => app.exit(0),
                     _ => {}
                 })
