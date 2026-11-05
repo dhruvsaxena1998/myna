@@ -6,6 +6,7 @@
   import { glassOn } from "$lib/look";
   import ModelTask from "$lib/ModelTask.svelte";
   import Permissions from "$lib/Permissions.svelte";
+  import PasteMethod from "$lib/PasteMethod.svelte";
   import UnloadAfter from "$lib/UnloadAfter.svelte";
   import Experimental from "$lib/Experimental.svelte";
   import Look from "$lib/Look.svelte";
@@ -91,6 +92,7 @@
           {#if voice.on}
             {#if data.look?.ok}<PillLook initial={data.look.look} listening={{ state: "listening", hold: voice.mode === "hold", key: voice.key }} />
             {:else}<ErrorState title="Myna couldn't read the pill's look" message={data.look?.error ?? ""} />{/if}
+            <PasteMethod bind:voice />
             <Permissions initial={data.perms} />
           {/if}
         {/if}
