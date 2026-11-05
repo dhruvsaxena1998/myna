@@ -1,14 +1,14 @@
 <!-- The dictation pill, in one of four styles. Draws only; the pill window and the Settings preview feed it. -->
 <script lang="ts" module>
   export type Style = "capsule" | "orb" | "wave" | "card";
-  export type Place = "bottom" | "top" | "bottom-right" | "top-right";
+  export type Place = "bottom" | "top" | "bottom-right" | "top-right" | "caret";
   export type Look = { style: Style; place: Place };
   export type Shown =
     | { state: "listening"; hold: boolean; key: string; limit?: number }
     | { state: "writing" | "added" }
     | { state: "error"; title: string; hint: string };
   export const STYLES: [Style, string][] = [["capsule", "Capsule"], ["orb", "Orb"], ["wave", "Waveform"], ["card", "Card"]];
-  export const PLACES: [Place, string][] = [["bottom", "Bottom centre"], ["top", "Top centre"], ["bottom-right", "Bottom right"], ["top-right", "Top right"]];
+  export const PLACES: [Place, string][] = [["bottom", "Bottom centre"], ["top", "Top centre"], ["bottom-right", "Bottom right"], ["top-right", "Top right"], ["caret", "Under the text cursor"]];
   /** Bars in the waveform; the pill window keeps this many recent levels. */
   export const WAVE = 48;
 </script>

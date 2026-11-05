@@ -30,6 +30,16 @@ test("saves a new choice and the preview follows, without moving the rows below"
   expect(await below.boundingBox()).toEqual(before);
 });
 
+test("Under the text cursor: the preview shows the pill just below a text cursor", async ({ page }) => {
+  await open(page);
+  await page.getByLabel("Position").selectOption("caret");
+  await expect(page.getByRole("img", { name: "Preview: Orb pill, Under the text cursor" })).toBeVisible();
+  const cursor = (await page.locator(".stage .cursor").boundingBox())!;
+  const pill = (await page.locator(".stage .hud").boundingBox())!;
+  expect(pill.y - (cursor.y + cursor.height)).toBe(10);
+  expect(cursor.x - pill.x).toBe(6);
+});
+
 test("a failed save puts the old choice back and says why", async ({ page }) => {
   await open(page, true);
   await page.getByLabel("Style").selectOption("wave");

@@ -8,7 +8,7 @@ async function open(page: Page, look = { style: "capsule", place: "bottom" }) {
   await fakeTauri(page, `{ pill_look_get: () => (${JSON.stringify(look)}) }`);
   await page.clock.install();
   await page.goto("/pill");
-  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(5); // the layout's and the page's "look" too
+  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(6); // the layout's and the page's "look" too
 }
 const emit = (page: Page, event: string, payload: unknown) => page.evaluate(([e, p]) => (window as any).__emit(e, p), [event, payload] as const);
 const say = (page: Page, state: string, hold = true) => emit(page, "dictation", state === "listening" ? { state, hold, key: "Alt+Space", limit: 300 } : { state });
@@ -118,6 +118,26 @@ test("sits against the edges of its position, and moves when the setting changes
   await expect(page.locator(".hud.card")).toBeVisible();
 });
 
+test("under the text cursor: where the backend says, kept inside the window, else bottom centre", async ({ page }) => {
+  await page.setViewportSize({ width: 720, height: 100 }); // the pill window's size
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await open(page, { style: "capsule", place: "caret" });
+  const at = async () => (await page.locator(".hud").boundingBox())!;
+  await emit(page, "pill-caret", { x: 200, above: false });
+  await say(page, "listening");
+  expect(await at()).toMatchObject({ x: 200, y: 12 });
+  await emit(page, "pill-caret", { x: 200, above: true });
+  const b = await at();
+  expect(100 - b.y - b.height).toBe(12);
+  await emit(page, "pill-caret", { x: 704, above: false }); // the cursor at the screen's right edge
+  const r = await at();
+  expect(720 - r.x - r.width).toBe(12);
+  await emit(page, "pill-caret", null); // the app reported no cursor
+  const c = await at();
+  expect(100 - c.y - c.height).toBe(24);
+  expect(Math.abs(c.x + c.width / 2 - 360)).toBeLessThan(1);
+});
+
 test("tap mode: Press again to paste, and the shortcut on the card", async ({ page }) => {
   await open(page, { style: "card", place: "bottom" });
   await say(page, "listening", false);
@@ -150,7 +170,7 @@ async function openGlass(page: Page, look: object) {
   await fakeTauri(page, `{ look_get: () => (${JSON.stringify({ theme: "auto", accent: "green", glass: "clear", liquid: true, experimental: true, ...look })}) }`);
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/pill");
-  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(5);
+  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(6);
 }
 const lastGlass = (page: Page) => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "glass_set").at(-1)?.[1].glass?.[0] ?? null);
 
