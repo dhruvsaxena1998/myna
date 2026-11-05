@@ -3,6 +3,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import type { Task } from "$lib/models";
 import type { Perms } from "$lib/Permissions.svelte";
 import type { Look } from "$lib/Pill.svelte";
+import type { Row } from "$lib/trace";
 import type { Rules } from "$lib/Words.svelte";
 import type { Voice } from "$lib/VoiceShortcut.svelte";
 import type { Prefs, UpdateState } from "$lib/updates.svelte";
@@ -48,5 +49,11 @@ export async function load() {
         (err) => ({ ok: false as const, error: String(err) }),
       )
     : null;
-  return { storage, version, models, perms, globe, look, voice, rules, updates };
+  const traces = storage.ok
+    ? await invoke<Row[]>("traces_list").then(
+        (rows) => ({ ok: true as const, rows }),
+        (err) => ({ ok: false as const, error: String(err) }),
+      )
+    : null;
+  return { storage, version, models, perms, globe, look, voice, rules, updates, traces };
 }

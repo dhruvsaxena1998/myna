@@ -10,20 +10,24 @@
   import UnloadAfter from "$lib/UnloadAfter.svelte";
   import Experimental from "$lib/Experimental.svelte";
   import Look from "$lib/Look.svelte";
+  import Traces from "$lib/Traces.svelte";
   import PillLook from "$lib/PillLook.svelte";
   import Words from "$lib/Words.svelte";
   import VoiceShortcut from "$lib/VoiceShortcut.svelte";
 
   // Every page is listed from day one; unbuilt ones say what will live there.
   // Same pages and names as the prototype (docs/index.html, SET_PAGES).
-  const pages = [
+  const all = [
     { id: "look", title: "Look & appearance", soon: "Light or dark, highlight colour, see-through panels." },
     { id: "dictation", title: "Voice typing", soon: "Turn voice typing on, pick its shortcut, and words to remember." },
     { id: "meetings", title: "Meeting notes", soon: "Turn meeting notes on, notice calls, pictures of the call, keep your voice when muted." },
     { id: "ai", title: "AI & privacy", soon: "Speech-to-text and voice models, AI providers for summaries and chat, and quick decisions." },
     { id: "experimental", title: "Experimental features", soon: "New things we're still working on. Off until you turn them on." },
+    { id: "nerds", title: "Stats for nerds", soon: "" },
     { id: "about", title: "About", soon: "" },
   ];
+  // Stats for nerds is an experimental feature: its entry shows only while Experimental features is on.
+  const pages = $derived(all.filter((p) => p.id !== "nerds" || look?.experimental));
   let current = $state("look");
   const page = $derived(pages.find((p) => p.id === current)!);
   // Shared by the shortcut rows and the pill preview, which shows the same hint as the real pill.
@@ -75,6 +79,9 @@
       {:else if page.id === "experimental"}
         {#if look}<Experimental bind:look />
         {:else}<ErrorState title="Myna couldn't read experimental features" message={data.appearance.ok ? "" : data.appearance.error} />{/if}
+      {:else if page.id === "nerds"}
+        {#if data.traces?.ok}<Traces initial={data.traces.rows} />
+        {:else}<ErrorState title="Myna couldn't read your dictations" message={data.traces?.ok === false ? data.traces.error : ""} />{/if}
       {:else if page.id === "ai"}
         {#if !data.models?.ok}
           <ErrorState title="Myna couldn't list its models" message={data.models?.error ?? ""} />

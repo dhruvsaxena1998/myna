@@ -54,3 +54,72 @@ pub fn save(conn: &Connection, t: &Trace) -> Result<(), String> {
     }
     tx.commit().map_err(err)
 }
+
+/// One row of Stats for nerds' list, newest first. `heard` is what speech-to-text wrote, cut short: the row's title.
+#[derive(serde::Serialize)]
+pub struct Row {
+    pub id: i64,
+    pub started: i64,
+    pub app: Option<String>,
+    pub outcome: String,
+    pub heard: Option<String>,
+}
+
+pub fn list(conn: &Connection) -> Result<Vec<Row>, String> {
+    let err = |e: rusqlite::Error| format!("Couldn't read the dictation traces: {e}");
+    let mut q = conn
+        .prepare("SELECT id, started, app, outcome, (SELECT substr(text, 1, 80) FROM step WHERE trace = trace.id AND kind = 'speech-to-text') FROM trace ORDER BY started DESC, id DESC LIMIT 200")
+        .map_err(err)?;
+    let rows = q.query_map([], |r| Ok(Row { id: r.get(0)?, started: r.get(1)?, app: r.get(2)?, outcome: r.get(3)?, heard: r.get(4)? })).map_err(err)?;
+    rows.collect::<Result<_, _>>().map_err(err)
+}
+
+/// One trace with its steps, for the opened view. The model shows by name; a model no longer in the catalog keeps its id.
+pub fn get(conn: &Connection, id: i64) -> Result<serde_json::Value, String> {
+    let err = |e: rusqlite::Error| format!("Couldn't read the dictation trace: {e}");
+    let json = |s: Option<String>| s.and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+    let mut t = conn
+        .query_row("SELECT started, mode, app, model, audio_ms, outcome, reason, load_ms, paste_ms FROM trace WHERE id = ?1", [id], |r| {
+            let model: Option<String> = r.get(3)?;
+            Ok(serde_json::json!({
+                "id": id, "started": r.get::<_, i64>(0)?, "mode": r.get::<_, String>(1)?, "app": r.get::<_, Option<String>>(2)?,
+                "model": model.map(|m| crate::models::find(&m).map_or(m, |m| m.name)),
+                "audio_ms": r.get::<_, i64>(4)?, "outcome": r.get::<_, String>(5)?, "reason": r.get::<_, Option<String>>(6)?,
+                "load_ms": r.get::<_, Option<f64>>(7)?, "paste_ms": r.get::<_, Option<f64>>(8)?,
+            }))
+        })
+        .map_err(err)?;
+    let mut q = conn.prepare("SELECT kind, text, ms, settings, edits FROM step WHERE trace = ?1 ORDER BY rowid").map_err(err)?;
+    let steps = q
+        .query_map([id], |r| {
+            Ok(serde_json::json!({ "kind": r.get::<_, String>(0)?, "text": r.get::<_, String>(1)?, "ms": r.get::<_, f64>(2)?,
+                "settings": json(r.get(3)?), "edits": json(r.get(4)?) }))
+        })
+        .map_err(err)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(err)?;
+    t["steps"] = steps.into();
+    Ok(t)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn saved_traces_list_newest_first_and_open_with_their_steps() {
+        let conn = crate::storage::open(&std::env::temp_dir().join(format!("myna-trace-{}", std::process::id()))).unwrap();
+        let step = |kind, text: &str, edits| Step { kind, text: text.into(), ms: 1.5, settings: None, edits };
+        for (started, heard) in [(1, "old one"), (2, "Um hello")] {
+            let steps = vec![step("speech-to-text", heard, None), step("rules", "hello", Some(r#"[{"kind":"filler","start":0,"end":3,"to":""}]"#.into()))];
+            save(&conn, &Trace { started, mode: "hold", app: Some("Mail".into()), model: Some("gone".into()), outcome: "pasted", steps, ..Default::default() }).unwrap();
+        }
+        let rows = list(&conn).unwrap();
+        assert_eq!(rows.iter().map(|r| r.started).collect::<Vec<_>>(), [2, 1]);
+        assert_eq!(rows[0].heard.as_deref(), Some("Um hello"));
+        let t = get(&conn, rows[0].id).unwrap();
+        assert_eq!(t["model"], "gone");
+        assert_eq!(t["steps"][1]["edits"][0]["kind"], "filler");
+        assert!(get(&conn, 99).is_err());
+    }
+}
