@@ -4,12 +4,13 @@
 use crate::models::{self, System};
 use crate::permissions::Mic;
 use crate::runtime::{self, Transcriber};
+use crate::trace::{self, Step, Trace};
 use crate::{dictation, pill, rules, voice};
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime};
 use tauri::AppHandle;
 
 /// What the pill shows.
@@ -48,6 +49,8 @@ pub trait World: Send + Sync + 'static {
     fn level(&self, level: f32);
     /// Moves the pill to "bottom", "top-right", ... on the screen the user is typing on.
     fn place(&self, place: String);
+    /// The app in front: its name and bundle id.
+    fn front(&self) -> (Option<String>, Option<String>);
     fn transcriber(&self, id: &str, models_dir: &Path) -> Result<Box<dyn Transcriber>, String>;
 }
 
@@ -58,6 +61,8 @@ type Loaded = Option<(String, Box<dyn Transcriber>)>;
 struct Active {
     rec: Box<dyn Recording>,
     token: Arc<()>,
+    /// What its trace starts with: the start time, hold or tap, the app in front.
+    trace: Trace,
 }
 
 pub struct Session {
@@ -139,12 +144,11 @@ impl Session {
         }
     }
 
-    /// Loads the active model into `slot` unless it's already there.
-    fn load(&self, slot: &mut Loaded) -> Result<(), String> {
-        let id = self.active_stt()?;
-        if slot.as_ref().is_none_or(|(loaded, _)| *loaded != id) {
+    /// Loads model `id` into `slot` unless it's already there.
+    fn load(&self, slot: &mut Loaded, id: &str) -> Result<(), String> {
+        if slot.as_ref().is_none_or(|(loaded, _)| loaded != id) {
             *slot = None; // free the old model before loading the new one
-            *slot = Some((id.clone(), self.world.transcriber(&id, &self.models_dir)?));
+            *slot = Some((id.into(), self.world.transcriber(id, &self.models_dir)?));
         }
         Ok(())
     }
@@ -176,18 +180,21 @@ impl Session {
             return self.world.show(Pill::Error { title: title.into(), hint });
         }
         let token = Arc::new(());
-        *rec = Some(Active { rec: self.world.record(), token: token.clone() });
+        let (app, bundle) = self.world.front();
+        let started = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
+        let trace = Trace { started, mode: if hold { "hold" } else { "tap" }, app, bundle, ..Default::default() };
+        *rec = Some(Active { rec: self.world.record(), token: token.clone(), trace });
         drop(rec);
         self.unload_gen.fetch_add(1, Ordering::SeqCst); // a pending unload must not fire mid-dictation
         self.world.show(Pill::Listening { hold, key: v.key, limit: self.tap_limit.as_secs() });
         let s = self.clone();
         std::thread::spawn(move || {
             // Load the model while the user talks; a failure shows when they let go.
-            let _ = s.load(&mut s.transcriber.lock().unwrap());
+            let _ = s.active_stt().and_then(|id| s.load(&mut s.transcriber.lock().unwrap(), &id));
         });
         let s = self.clone();
         std::thread::spawn(move || {
-            let started = std::time::Instant::now();
+            let started = Instant::now();
             // Level bars, until this recording ends.
             loop {
                 let slot = s.recording.lock().unwrap();
@@ -210,33 +217,60 @@ impl Session {
         if only.is_some_and(|t| slot.as_ref().is_none_or(|a| !Arc::ptr_eq(&a.token, t))) {
             return;
         }
-        let Some(Active { rec, .. }) = slot.take() else { return };
+        let Some(Active { rec, trace: t, .. }) = slot.take() else { return };
         drop(slot);
+        let released = Instant::now();
         let s = self.clone();
         std::thread::spawn(move || {
+            // The trace, once the dictation reaches speech-to-text.
+            let mut trace = None;
             let run = || -> Result<Pill, String> {
                 let audio = rec.finish()?;
                 if audio.len() < runtime::RATE as usize / 4 {
                     return Ok(Pill::Idle); // a tap, not speech
                 }
+                let audio_ms = audio.len() as i64 * 1000 / runtime::RATE as i64;
+                let t = trace.insert(Trace { audio_ms, outcome: "failed", ..t });
                 s.world.show(Pill::Writing);
-                let mut slot = s.transcriber.lock().unwrap();
-                s.load(&mut slot)?;
+                let id = s.active_stt()?;
+                t.model = Some(id.clone());
+                let wait = Instant::now();
+                let mut slot = s.transcriber.lock().unwrap(); // held by the load started on press, if still loading
+                let loaded = s.load(&mut slot, &id);
+                t.load_ms = Some(ms(wait.elapsed()));
+                loaded?;
                 let voice = voice::get(&s.db.lock().unwrap())?;
                 let words = rules::load(&s.db.lock().unwrap())?;
                 let model = slot.as_mut().unwrap().1.as_mut();
                 model.bias(&rules::prompt(&words));
-                let text = dictation::text(model, &audio, &words)?;
+                let at = Instant::now();
+                let heard = dictation::text(model, &audio)?;
                 drop(slot);
+                t.steps.push(Step { kind: "speech-to-text", text: heard.clone(), ms: ms(at.elapsed()), settings: None, edits: None });
+                let at = Instant::now();
+                let (text, edits) = rules::edits(&heard, &words);
+                let settings = serde_json::json!({ "language": words.language, "tidy": words.tidy }).to_string();
+                let edits = serde_json::to_string(&edits).ok();
+                t.steps.push(Step { kind: "rules", text: text.clone(), ms: ms(at.elapsed()), settings: Some(settings), edits });
                 if text.is_empty() {
+                    t.outcome = "nothing_heard";
                     let tap = voice.mode == "tap";
                     let hint = if tap { "Press the keys, talk, then press them again" } else { "Hold the keys while you talk" };
                     return Ok(Pill::Error { title: "Didn’t hear anything".into(), hint: hint.into() });
                 }
+                t.outcome = "not_pasted";
                 s.world.paste(&text, voice.paste == "type")?;
+                (t.outcome, t.paste_ms) = ("pasted", Some(ms(released.elapsed())));
                 Ok(Pill::Added)
             };
-            s.world.show(match run() {
+            let result = run();
+            if let Some(mut t) = trace {
+                t.reason = result.as_ref().err().cloned();
+                if let Err(e) = trace::save(&s.db.lock().unwrap(), &t) {
+                    eprintln!("{e}");
+                }
+            }
+            s.world.show(match result {
                 Ok(p) => p,
                 Err(e) if e == dictation::NO_AX => Pill::Error { title: "Needs Accessibility".into(), hint: pill::ALLOW.into() },
                 Err(e) => Pill::Error { title: "Couldn’t add your words".into(), hint: e },
@@ -244,6 +278,10 @@ impl Session {
             s.schedule_unload();
         });
     }
+}
+
+fn ms(d: Duration) -> f64 {
+    d.as_secs_f64() * 1000.0
 }
 
 /// The real Mac: permissions, the mic, the clipboard, the pill window and the model runtimes.
@@ -291,6 +329,10 @@ impl World for Mac {
     }
     fn place(&self, place: String) {
         pill::place(&self.0, place)
+    }
+    fn front(&self) -> (Option<String>, Option<String>) {
+        let Some(app) = objc2_app_kit::NSWorkspace::sharedWorkspace().frontmostApplication() else { return (None, None) };
+        (app.localizedName().map(|n| n.to_string()), app.bundleIdentifier().map(|b| b.to_string()))
     }
     fn transcriber(&self, id: &str, models_dir: &Path) -> Result<Box<dyn Transcriber>, String> {
         runtime::transcriber(id, models_dir)
@@ -395,6 +437,9 @@ mod tests {
             self.0.lock().unwrap().levels += 1;
         }
         fn place(&self, _: String) {}
+        fn front(&self) -> (Option<String>, Option<String>) {
+            (Some("Notes".into()), Some("com.apple.Notes".into()))
+        }
         fn transcriber(&self, id: &str, _: &Path) -> Result<Box<dyn Transcriber>, String> {
             let mut l = self.0.lock().unwrap();
             if let Some(e) = l.load_fails {
@@ -450,6 +495,25 @@ mod tests {
         Pill::Error { title: title.into(), hint: hint.into() }
     }
 
+    /// Each saved trace: how it ended, why, the model and each step's text.
+    fn traces(s: &Session) -> Vec<serde_json::Value> {
+        let db = s.db.lock().unwrap();
+        let mut q = db.prepare("SELECT id, outcome, reason, model FROM trace ORDER BY id").unwrap();
+        let rows = q.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?, r.get::<_, Option<String>>(3)?)));
+        let rows: Vec<_> = rows.unwrap().map(Result::unwrap).collect();
+        let mut q = db.prepare("SELECT kind, text FROM step WHERE trace = ?1 ORDER BY rowid").unwrap();
+        rows.into_iter()
+            .map(|(id, outcome, reason, model)| {
+                let steps: Vec<(String, String)> = q.query_map([id], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+                serde_json::json!({ "outcome": outcome, "reason": reason, "model": model, "steps": steps })
+            })
+            .collect()
+    }
+
+    fn traced(outcome: &str, reason: Option<&str>, steps: &[(&str, &str)]) -> serde_json::Value {
+        serde_json::json!({ "outcome": outcome, "reason": reason, "model": "apple-speech", "steps": steps })
+    }
+
     #[test]
     fn hold_press_talk_and_let_go_pastes_the_words() {
         let (s, mac, _tmp) = session("hold");
@@ -458,6 +522,38 @@ mod tests {
         mac.wait(|l| l.shown.len() == 3);
         assert_eq!(mac.shown(), [listening(true), Pill::Writing, Pill::Added]);
         assert_eq!(mac.0.lock().unwrap().pasted, ["Hello there."]);
+    }
+
+    #[test]
+    fn a_pasted_dictation_saves_its_trace() {
+        let (s, mac, _tmp) = session("hold");
+        mac.0.lock().unwrap().words = vec!["Uh, hello", "there."];
+        let before = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as i64;
+        assert_eq!(dictate(&s, &mac, false), [Pill::Writing, Pill::Added]);
+        let steps = [("speech-to-text", "Uh, hello there."), ("rules", "Hello there.")];
+        assert_eq!(traces(&s), [traced("pasted", None, &steps)]);
+
+        let db = s.db.lock().unwrap();
+        let q = "SELECT started, mode, app, bundle, audio_ms, load_ms, paste_ms FROM trace";
+        let (started, mode, app, bundle, audio_ms, load_ms, paste_ms): (i64, String, String, String, i64, f64, f64) =
+            db.query_row(q, [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?))).unwrap();
+        assert!(started >= before && started - before < 1000);
+        assert_eq!((mode.as_str(), app.as_str(), bundle.as_str(), audio_ms), ("hold", "Notes", "com.apple.Notes", 1000));
+        assert!(0.0 <= load_ms && load_ms <= paste_ms, "{load_ms} {paste_ms}");
+        let q = "SELECT settings, edits FROM step WHERE kind = 'rules'";
+        let (settings, edits): (String, String) = db.query_row(q, [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!(settings, r#"{"language":"en","tidy":true}"#);
+        assert_eq!(edits, r#"[{"kind":"filler","start":0,"end":4,"to":""}]"#);
+        let q = "SELECT count(*) FROM step WHERE settings IS NULL AND edits IS NULL AND kind = 'speech-to-text'";
+        assert_eq!(db.query_row(q, [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+    }
+
+    #[test]
+    fn a_tap_mode_dictation_says_so_in_its_trace() {
+        let (s, mac, _tmp) = session("tap");
+        dictate(&s, &mac, true);
+        let mode: String = s.db.lock().unwrap().query_row("SELECT mode FROM trace", [], |r| r.get(0)).unwrap();
+        assert_eq!(mode, "tap");
     }
 
     #[test]
@@ -483,7 +579,7 @@ mod tests {
         assert_eq!(mac.shown(), [listening(false)]);
         s.key(true);
         s.key(false);
-        mac.wait(|l| l.pasted.len() == 1);
+        mac.wait(|l| l.shown.len() == 3); // Added: the dictation is over
 
         s.toggle();
         s.toggle();
@@ -499,7 +595,7 @@ mod tests {
         s.key(true); // key repeat
         s.key(true);
         s.key(false);
-        mac.wait(|l| l.pasted.len() == 1);
+        mac.wait(|l| l.shown.len() == 3);
         assert_eq!(mac.0.lock().unwrap().recorded, 1);
         assert_eq!(mac.shown(), [listening(true), Pill::Writing, Pill::Added]);
     }
@@ -528,6 +624,7 @@ mod tests {
         assert_eq!(press(&|l| l.mic = Some(Mic::Allowed)), [error("Needs Accessibility", pill::ALLOW)]);
         assert_eq!(press(&|l| l.ax = true), [error("No speech model", no_model)]);
         assert_eq!(mac.0.lock().unwrap().recorded, 0);
+        assert!(traces(&s).is_empty(), "blocked before recording: no trace");
     }
 
     #[test]
@@ -564,6 +661,7 @@ mod tests {
         mac.0.lock().unwrap().audio = Some(vec![0.1; runtime::RATE as usize / 4 - 1]);
         assert_eq!(dictate(&s, &mac, false), [Pill::Idle]);
         assert!(mac.0.lock().unwrap().pasted.is_empty());
+        assert!(traces(&s).is_empty(), "a tap: no trace");
     }
 
     #[test]
@@ -571,6 +669,7 @@ mod tests {
         let (s, mac, _tmp) = session("hold");
         mac.0.lock().unwrap().words = vec!["Um,", " uh."]; // all filler: nothing left after rules cleanup
         assert_eq!(dictate(&s, &mac, false), [Pill::Writing, error("Didn’t hear anything", "Hold the keys while you talk")]);
+        assert_eq!(traces(&s), [traced("nothing_heard", None, &[("speech-to-text", "Um, uh."), ("rules", "")])]);
         let (s, mac, _tmp) = session("tap");
         mac.0.lock().unwrap().words = vec![];
         assert_eq!(dictate(&s, &mac, true), [Pill::Writing, error("Didn’t hear anything", "Press the keys, talk, then press them again")]);
@@ -586,6 +685,8 @@ mod tests {
         mac.wait(|l| l.shown.len() == 3);
         assert_eq!(mac.shown()[1..], [Pill::Writing, error("Needs Accessibility", pill::ALLOW)]);
         assert!(mac.0.lock().unwrap().pasted.is_empty());
+        let steps = [("speech-to-text", "Hello there."), ("rules", "Hello there.")];
+        assert_eq!(traces(&s), [traced("not_pasted", Some(dictation::NO_AX), &steps)], "the text is kept");
     }
 
     #[test]
@@ -603,6 +704,9 @@ mod tests {
         drop(l);
         assert_eq!(dictate(&s, &mac, false), [fails("The microphone stopped unexpectedly.")]);
         assert!(mac.0.lock().unwrap().pasted.is_empty());
+        // The mic failing never reached speech-to-text: no trace.
+        let failed = |why| traced("failed", Some(why), &[]);
+        assert_eq!(traces(&s), [failed("Couldn't load Apple Speech: broken"), failed("The model choked.")]);
     }
 
     #[test]
@@ -685,7 +789,8 @@ mod tests {
         s.key(false);
         std::thread::sleep(Duration::from_millis(40));
         assert!(mac.0.lock().unwrap().pasted.is_empty(), "not before the limit");
-        mac.wait(|l| l.pasted == ["Hello there."]);
+        mac.wait(|l| l.shown.len() == 3);
+        assert_eq!(mac.0.lock().unwrap().pasted, ["Hello there."]);
         assert_eq!(mac.shown()[1..], [Pill::Writing, Pill::Added]);
     }
 

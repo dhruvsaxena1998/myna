@@ -11,6 +11,7 @@ mod rules;
 mod runtime;
 mod session;
 mod storage;
+mod trace;
 mod update;
 mod voice;
 

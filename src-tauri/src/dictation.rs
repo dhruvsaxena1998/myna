@@ -94,12 +94,12 @@ pub fn to_16k_mono(input: &[f32], rate: u32, channels: u16) -> Vec<f32> {
         .collect()
 }
 
-/// What gets pasted for this 16 kHz mono audio: the model's segments joined into one line.
-/// Rules cleanup runs on the joined text; an empty result means nothing was heard.
-pub fn text(t: &mut dyn Transcriber, audio: &[f32], settings: &crate::rules::Settings) -> Result<String, String> {
+/// The speech-to-text step's text for this 16 kHz mono audio: the model's segments joined into one line.
+/// Rules cleanup runs on it next; an empty result after that means nothing was heard.
+pub fn text(t: &mut dyn Transcriber, audio: &[f32]) -> Result<String, String> {
     let segs = t.transcribe(audio)?;
     let words: Vec<_> = segs.iter().map(|s| s.text.trim()).filter(|s| !s.is_empty()).collect();
-    Ok(crate::rules::clean(&words.join(" "), settings))
+    Ok(words.join(" "))
 }
 
 /// What `paste` fails with when Accessibility is off.
@@ -255,7 +255,7 @@ mod tests {
         let samples: Vec<f32> = r.into_samples::<i16>().map(|s| s.unwrap() as f32 / 32768.0).collect();
         let seg = |text: &str| Segment { start: 0.0, end: 1.0, text: text.into() };
         let mut t = Fake(segs.iter().map(|s| seg(s)).collect());
-        text(&mut t, &to_16k_mono(&samples, rate, ch), settings).unwrap()
+        crate::rules::clean(&text(&mut t, &to_16k_mono(&samples, rate, ch)).unwrap(), settings)
     }
 
     #[test]

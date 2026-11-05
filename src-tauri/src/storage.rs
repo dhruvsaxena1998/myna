@@ -8,6 +8,10 @@ const MIGRATIONS: &[&str] = &[
     "CREATE TABLE active_model(task TEXT PRIMARY KEY, model_id TEXT NOT NULL);",
     "CREATE TABLE setting(key TEXT PRIMARY KEY, value TEXT NOT NULL);",
     "CREATE TABLE word(id INTEGER PRIMARY KEY, spelling TEXT NOT NULL, heard TEXT);",
+    "CREATE TABLE trace(id INTEGER PRIMARY KEY, started INTEGER NOT NULL, mode TEXT NOT NULL, app TEXT, bundle TEXT, model TEXT,
+        audio_ms INTEGER NOT NULL, outcome TEXT NOT NULL, reason TEXT, load_ms REAL, paste_ms REAL);
+     CREATE TABLE step(trace INTEGER NOT NULL REFERENCES trace(id), kind TEXT NOT NULL, text TEXT NOT NULL, ms REAL NOT NULL,
+        settings TEXT, edits TEXT);",
 ];
 const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
 
