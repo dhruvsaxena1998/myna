@@ -1,4 +1,4 @@
-<!-- Experimental features: the master switch, then each feature (for now Liquid Glass, macOS 26 or later). -->
+<!-- Experimental features: the master switch, then each feature (Liquid Glass on macOS 26 or later, Stats for nerds). -->
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { applyLook, type Look } from "./look";
@@ -38,6 +38,17 @@
       <li class="row">
         <span><label class="name" for="liquid">Liquid Glass</label><span class="desc" id="liquid-d">Uses macOS’s own glass for the pill and the Settings window. Still being tested.</span></span>
         <input type="checkbox" role="switch" class="switch" id="liquid" aria-describedby="liquid-d" checked={look.liquid === true} onchange={(e) => save({ liquid: e.currentTarget.checked })} />
+      </li>
+    </ul>
+  </section>
+{/if}
+{#if look.experimental}
+  <section class="group" aria-labelledby="exp-dict-h">
+    <h2 id="exp-dict-h">Voice typing</h2>
+    <ul class="list">
+      <li class="row">
+        <span><label class="name" for="nerds">Stats for nerds</label><span class="desc" id="nerds-d">Each dictation, opened up: where the time went and what Myna changed.</span></span>
+        <input type="checkbox" role="switch" class="switch" id="nerds" aria-describedby="nerds-d" checked={look.nerds} onchange={(e) => save({ nerds: e.currentTarget.checked })} />
       </li>
     </ul>
   </section>
