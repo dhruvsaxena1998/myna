@@ -8,13 +8,14 @@ import type { Prefs, UpdateState } from "$lib/updates.svelte";
 
 // Load before the first paint so nothing pops in after the window shows.
 export async function load() {
-  const [storage, version, perms] = await Promise.all([
+  const [storage, version, perms, globe] = await Promise.all([
     invoke<string>("storage_status").then(
       (path) => ({ ok: true as const, path }),
       (err) => ({ ok: false as const, error: String(err) }),
     ),
     getVersion(),
     invoke<Perms>("permissions_state"),
+    invoke<boolean>("globe_ok"),
   ]);
   const models = storage.ok
     ? await Promise.all([invoke<Task[]>("models_list"), invoke<number>("stt_unload_get")]).then(
@@ -40,5 +41,5 @@ export async function load() {
         (err) => ({ ok: false as const, error: String(err) }),
       )
     : null;
-  return { storage, version, models, perms, look, voice, updates };
+  return { storage, version, models, perms, globe, look, voice, updates };
 }

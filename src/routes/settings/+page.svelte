@@ -87,7 +87,7 @@
         {#if !voice}
           <ErrorState title="Myna couldn't read voice typing's settings" message={data.voice?.ok === false ? data.voice.error : ""} />
         {:else}
-          <VoiceShortcut bind:voice />
+          <VoiceShortcut bind:voice globe={data.globe} />
           {#if voice.on}
             {#if data.look?.ok}<PillLook initial={data.look.look} listening={{ state: "listening", hold: voice.mode === "hold", key: voice.key }} />
             {:else}<ErrorState title="Myna couldn't read the pill's look" message={data.look?.error ?? ""} />{/if}

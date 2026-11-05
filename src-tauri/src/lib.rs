@@ -1,6 +1,7 @@
 mod apple;
 mod dictation;
 mod download;
+mod fnkey;
 mod look;
 mod models;
 mod notify;
@@ -232,6 +233,17 @@ fn voice_pause(app: AppHandle, d: tauri::State<Data>, paused: bool) -> Result<()
     sync_shortcut(&app)
 }
 
+/// Whether the 🌐 key is set to Do Nothing, so fn only starts voice typing.
+#[tauri::command]
+fn globe_ok() -> bool {
+    fnkey::globe_ok()
+}
+
+#[tauri::command]
+fn globe_open() {
+    fnkey::open_keyboard_settings();
+}
+
 fn prerelease(app: &AppHandle) -> bool {
     !app.package_info().version.pre.is_empty()
 }
@@ -332,22 +344,41 @@ fn sync_shortcut(app: &AppHandle) -> Result<(), String> {
     let mut have = d.shortcut.lock().unwrap();
     if *have != want {
         let gs = app.global_shortcut();
-        if let Some(k) = &want {
-            gs.register(k.as_str()).map_err(|e| {
+        if let Some(k) = want.as_deref().filter(|k| *k != voice::FN) {
+            gs.register(k).map_err(|e| {
                 eprintln!("dictation: couldn't use {k}: {e}");
                 "Another app is using that shortcut. Pick a different one.".to_string()
             })?;
         }
-        if let Some(k) = have.take() {
+        if let Some(k) = have.take().filter(|k| k != voice::FN) {
             let _ = gs.unregister(k.as_str());
         }
         *have = want;
     }
+    // The recorder hears fn from the tap too, so it watches while paused.
+    if v.on && (v.key == voice::FN || d.paused.load(Ordering::SeqCst)) {
+        let app = app.clone();
+        fnkey::watch(move |down| on_fn(&app, down));
+    }
     if let Some(item) = app.try_state::<VoiceItem>() {
-        let _ = item.0.set_accelerator(Some(v.key.as_str()));
+        // A menu can't show fn alone as its shortcut.
+        let _ = item.0.set_accelerator((v.key != voice::FN).then_some(v.key.as_str()));
         let _ = item.0.set_enabled(v.on);
     }
     Ok(())
+}
+
+/// fn went down or up: voice typing's key if fn is the shortcut, the recorder's pick while Settings records one.
+fn on_fn(app: &AppHandle, down: bool) {
+    let d = app.state::<Data>();
+    if d.paused.load(Ordering::SeqCst) {
+        // On release, so the release of this press doesn't reach the new shortcut.
+        if !down {
+            let _ = app.emit_to("settings", "voice-fn", ());
+        }
+    } else if d.shortcut.lock().unwrap().as_deref() == Some(voice::FN) {
+        app.state::<Arc<Session>>().key(down);
+    }
 }
 
 fn open_window(app: &AppHandle, label: &str) {
@@ -368,7 +399,7 @@ fn open_update(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![debug_on, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, voice_pause, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
+        .invoke_handler(tauri::generate_handler![debug_on, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, voice_pause, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::Updates::default())
         .setup(|app| {
