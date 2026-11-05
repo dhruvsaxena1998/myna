@@ -29,7 +29,7 @@ const SAMPLES = `(() => {
 async function open(page: Page, experimental = true) {
   await fakeTauri(page, `{
     storage_status: () => "/tmp/Myna", models_list: () => [],
-    look_get: () => ({ theme: "auto", accent: "blue", glass: "clear", liquid: null, experimental: ${experimental} }),
+    look_get: () => ({ theme: "auto", accent: "blue", glass: "clear", liquid: null, experimental: ${experimental}, nerds: true }),
     look_set: () => {},
     rules_get: () => ({ settings: { language: "en", tidy: true, words: [{ spelling: "Postgres", heard: null }, { spelling: "Dhruv", heard: "Drove" }, { spelling: "Kubernetes", heard: null }, { spelling: "Desert Ant", heard: null }] }, languages: [["en", "English"], ["de", "German"]] }),
     traces_list: () => ${SAMPLES}.map((t) => ({ id: t.id, started: t.started, app: t.app, outcome: t.outcome, heard: t.steps[0]?.text ?? null })),
@@ -42,7 +42,21 @@ const go = async (page: Page, n: number) => {
   await page.getByRole("list", { name: "Dictations" }).getByRole("button").nth(n).click(); // the list is newest first: 0 is trace 1
 };
 
-test("Stats for nerds is in the sidebar only while Experimental features is on", async ({ page }) => {
+test("Stats for nerds is in the sidebar only while its own switch and Experimental features are on", async ({ page }) => {
+  await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", models_list: () => [], look_set: () => {}, traces_list: () => [],
+    look_get: () => ({ theme: "auto", accent: "blue", glass: "clear", liquid: null, experimental: false, nerds: false }) }`);
+  await page.goto("/settings");
+  await expect(page.getByRole("option", { name: "Stats for nerds" })).toHaveCount(0);
+  await page.getByRole("option", { name: "Experimental features" }).click();
+  await page.getByLabel("Use experimental features").check();
+  await expect(page.getByRole("option", { name: "Stats for nerds" })).toHaveCount(0);
+  await page.getByRole("switch", { name: "Stats for nerds" }).check();
+  await expect(page.getByRole("option", { name: "Stats for nerds" })).toBeVisible();
+  await page.getByRole("switch", { name: "Stats for nerds" }).uncheck();
+  await expect(page.getByRole("option", { name: "Stats for nerds" })).toHaveCount(0);
+});
+
+test("the master switch hides Stats for nerds and keeps its own switch", async ({ page }) => {
   await open(page, false);
   await expect(page.getByRole("option", { name: "Stats for nerds" })).toHaveCount(0);
   await page.getByRole("option", { name: "Experimental features" }).click();
@@ -67,7 +81,7 @@ test("lists traces newest first with title, app, time and outcome", async ({ pag
 });
 
 test("an empty list says so", async ({ page }) => {
-  await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", models_list: () => [], look_get: () => ({ theme: "auto", accent: "blue", glass: "clear", liquid: null, experimental: true }), traces_list: () => [] }`);
+  await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", models_list: () => [], look_get: () => ({ theme: "auto", accent: "blue", glass: "clear", liquid: null, experimental: true, nerds: true }), traces_list: () => [] }`);
   await page.goto("/settings");
   await page.getByRole("option", { name: "Stats for nerds" }).click();
   await expect(page.getByText("No dictations yet")).toBeVisible();

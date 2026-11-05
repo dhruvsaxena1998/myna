@@ -23,8 +23,10 @@ pub struct Look {
     /// None below macOS 26, where there's no Liquid Glass and the switch isn't shown.
     pub liquid: Option<bool>,
     /// Experimental features' master switch: off turns every experimental feature off, keeping their own switches.
-    // shortcut: it travels with the look because Liquid Glass is the only experimental feature so far; give it its own module when a second one lands.
+    // shortcut: experimental switches travel with the look; give them their own module when the main window lands and Stats for nerds moves there.
     pub experimental: bool,
+    /// Stats for nerds' own switch, off by default; its page shows only while this and the master switch are on.
+    pub nerds: bool,
 }
 
 /// Liquid Glass shows only while both it and experimental features are on.
@@ -64,6 +66,7 @@ pub fn get(conn: &Connection, macos: u32) -> Result<Look, String> {
         glass: read(conn, "look_glass", &GLASSES)?,
         liquid: liquid_ok(macos).then(|| read(conn, "look_liquid", &["off", "on"])).transpose()?.map(|v| v == "on"),
         experimental: read(conn, "experimental", &["off", "on"])? == "on",
+        nerds: read(conn, "exp_nerds", &["off", "on"])? == "on",
     })
 }
 
@@ -75,8 +78,8 @@ pub fn set(conn: &Connection, l: &Look, macos: u32) -> Result<(), String> {
         return Err("Liquid Glass needs macOS 26 or later.".into());
     }
     let onoff = |on: bool| if on { "on" } else { "off" }.to_string();
-    let (liquid, exp) = (l.liquid.map(onoff), onoff(l.experimental));
-    let saved = [("look_theme", &l.theme), ("look_accent", &l.accent), ("look_glass", &l.glass), ("experimental", &exp)];
+    let (liquid, exp, nerds) = (l.liquid.map(onoff), onoff(l.experimental), onoff(l.nerds));
+    let saved = [("look_theme", &l.theme), ("look_accent", &l.accent), ("look_glass", &l.glass), ("experimental", &exp), ("exp_nerds", &nerds)];
     for (k, v) in saved.into_iter().chain(liquid.as_ref().map(|v| ("look_liquid", v))) {
         conn.execute("INSERT INTO setting(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2", [k, v])
             .map_err(|e| format!("Couldn't save Myna's look: {e}"))?;
@@ -173,7 +176,7 @@ mod tests {
     use super::*;
 
     fn is(t: &str, a: &str, g: &str) -> Look {
-        Look { theme: t.into(), accent: a.into(), glass: g.into(), liquid: None, experimental: false }
+        Look { theme: t.into(), accent: a.into(), glass: g.into(), liquid: None, experimental: false, nerds: false }
     }
 
     #[test]
@@ -233,5 +236,14 @@ mod tests {
         let l = get(&conn, 26).unwrap();
         assert!(!glass_on(&l) && l.liquid == Some(true), "off keeps Liquid Glass's own switch for next time");
         assert!(!glass_on(&Look { experimental: true, ..get(&conn, 15).unwrap() }), "never below macOS 26");
+    }
+
+    #[test]
+    fn stats_for_nerds_has_its_own_switch_off_by_default() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = crate::storage::open(tmp.path()).unwrap();
+        assert!(!get(&conn, 15).unwrap().nerds);
+        set(&conn, &Look { nerds: true, ..is("auto", "blue", "clear") }, 15).unwrap();
+        assert!(get(&conn, 15).unwrap().nerds);
     }
 }

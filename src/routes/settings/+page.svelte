@@ -26,8 +26,8 @@
     { id: "nerds", title: "Stats for nerds", soon: "" },
     { id: "about", title: "About", soon: "" },
   ];
-  // Stats for nerds is an experimental feature: its entry shows only while Experimental features is on.
-  const pages = $derived(all.filter((p) => p.id !== "nerds" || look?.experimental));
+  // Stats for nerds is an experimental feature: its entry shows only while it and Experimental features are on.
+  const pages = $derived(all.filter((p) => p.id !== "nerds" || (look?.experimental && look.nerds)));
   let current = $state("look");
   const page = $derived(pages.find((p) => p.id === current)!);
   // Shared by the shortcut rows and the pill preview, which shows the same hint as the real pill.
