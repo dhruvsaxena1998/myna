@@ -5,12 +5,13 @@
 use rusqlite::{Connection, OptionalExtension};
 
 /// A name or special word the user lists, with the wrong form the model tends to write (heard as), if any.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Word {
     pub spelling: String,
     pub heard: Option<String>,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Settings {
     /// The Dictation language, as a code like "en".
     pub language: String,
@@ -286,6 +287,17 @@ fn remember(toks: &mut Vec<Tok>, words: &[Word]) {
     }
 }
 
+/// The languages Dictation offers. No speech model lists its languages in the catalog, so this is Myna's own list.
+pub const LANGUAGES: [(&str, &str); 7] =
+    [("en", "English"), ("de", "German"), ("fr", "French"), ("es", "Spanish"), ("it", "Italian"), ("nl", "Dutch"), ("pt", "Portuguese")];
+
+/// The Mac's first language if Dictation offers it, else English.
+fn mac_language() -> String {
+    let first = objc2_foundation::NSLocale::preferredLanguages().firstObject().map(|l| l.to_string()).unwrap_or_default();
+    let code = first.split('-').next().unwrap_or("");
+    LANGUAGES.iter().find(|l| l.0 == code).map_or("en", |l| l.0).into()
+}
+
 fn read(conn: &Connection, key: &str) -> Result<Option<String>, String> {
     conn.query_row("SELECT value FROM setting WHERE key = ?1", [key], |r| r.get(0))
         .optional()
@@ -297,15 +309,13 @@ pub fn load(conn: &Connection) -> Result<Settings, String> {
     let mut q = conn.prepare("SELECT spelling, heard FROM word ORDER BY id").map_err(err)?;
     let words = q.query_map([], |r| Ok(Word { spelling: r.get(0)?, heard: r.get(1)? })).map_err(err)?;
     Ok(Settings {
-        language: read(conn, "dictation_language")?.unwrap_or("en".into()),
+        language: read(conn, "dictation_language")?.unwrap_or_else(mac_language),
         tidy: read(conn, "dictation_tidy")?.is_none_or(|v| v == "1"),
         words: words.collect::<Result<_, _>>().map_err(err)?,
     })
 }
 
 /// Replaces the saved settings; `words` keep their order, oldest first.
-// The settings page (ticket 04.10) is the first caller.
-#[cfg_attr(not(test), allow(dead_code))]
 pub fn save(conn: &Connection, s: &Settings) -> Result<(), String> {
     let err = |e: rusqlite::Error| format!("Couldn't save your words: {e}");
     let tx = conn.unchecked_transaction().map_err(err)?;
@@ -405,6 +415,17 @@ mod tests {
         for (input, want, why) in rows {
             assert_eq!(clean(input, &Settings::default()), want, "{why}: {input}");
         }
+    }
+
+    #[test]
+    fn an_alias_and_the_switches_round_trip_through_the_database() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = crate::storage::open(tmp.path()).unwrap();
+        let s = Settings { language: "de".into(), tidy: false, words: vec![word("Postgres", None), word("Dhruv", Some("Drove"))] };
+        save(&conn, &s).unwrap();
+        let back = load(&conn).unwrap();
+        assert_eq!((back.language.as_str(), back.tidy, back.words), ("de", false, s.words));
+        assert!(LANGUAGES.iter().any(|l| l.0 == mac_language()), "an unsaved language is one we offer");
     }
 
     fn with_words(language: &str, tidy: bool) -> Settings {
