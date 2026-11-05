@@ -114,6 +114,14 @@ pub fn paste(text: &str, typed: bool) -> Result<(), String> {
     if typed { type_out(text) } else { via_clipboard(text) }
 }
 
+/// Copy again, from Voice typing history: `text` on the clipboard, in place of what was there.
+pub fn copy(text: &str) {
+    use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
+    let pb = NSPasteboard::generalPasteboard();
+    pb.clearContents();
+    pb.setString_forType(&objc2_foundation::NSString::from_str(text), unsafe { NSPasteboardTypeString });
+}
+
 /// Puts `text` on the clipboard, sends Cmd-V, then puts back whatever was on it.
 fn via_clipboard(text: &str) -> Result<(), String> {
     use objc2::rc::Retained;

@@ -13,6 +13,30 @@
     "macOSPrivateApi": true,
     "windows": [
       {
+        "label": "main",
+        "title": "Myna",
+        "url": "/main",
+        "width": 1000,
+        "height": 640,
+        "minWidth": 720,
+        "minHeight": 420,
+        "visible": false,
+        "center": true,
+        "transparent": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 20,
+          "y": 24
+        },
+        "windowEffects": {
+          "effects": [
+            "sidebar"
+          ],
+          "state": "followsWindowActiveState"
+        }
+      },
+      {
         "label": "settings",
         "title": "Settings",
         "url": "/settings",

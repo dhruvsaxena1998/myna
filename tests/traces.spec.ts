@@ -35,40 +35,43 @@ async function open(page: Page, experimental = true) {
     traces_list: () => ${SAMPLES}.map((t) => ({ id: t.id, started: t.started, app: t.app, outcome: t.outcome, heard: t.steps[0]?.text ?? null })),
     trace_get: ({ id }) => ${SAMPLES}.find((t) => t.id === id),
   }`);
-  await page.goto("/settings");
+  await page.goto("/main");
+  await expect(page.getByRole("heading", { name: "Voice typing history" })).toBeVisible(); // mounted: events land
 }
+const nerdsNav = (page: Page) => page.getByRole("navigation", { name: "Sidebar" }).getByRole("button", { name: "Stats for nerds" });
 const go = async (page: Page, n: number) => {
-  await page.getByRole("option", { name: "Stats for nerds" }).click();
+  await nerdsNav(page).click();
   await page.getByRole("list", { name: "Dictations" }).getByRole("button").nth(n).click(); // the list is newest first: 0 is trace 1
 };
 
-test("Stats for nerds is in the sidebar only while its own switch and Experimental features are on", async ({ page }) => {
-  await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", models_list: () => [], look_set: () => {}, traces_list: () => [],
-    look_get: () => ({ theme: "auto", accent: "blue", glass: "clear", liquid: null, experimental: false, nerds: false }) }`);
+test("Stats for nerds leaves the Settings sidebar; its switch stays in Experimental features", async ({ page }) => {
+  await open(page);
   await page.goto("/settings");
   await expect(page.getByRole("option", { name: "Stats for nerds" })).toHaveCount(0);
   await page.getByRole("option", { name: "Experimental features" }).click();
-  await page.getByLabel("Use experimental features").check();
-  await expect(page.getByRole("option", { name: "Stats for nerds" })).toHaveCount(0);
-  await page.getByRole("switch", { name: "Stats for nerds" }).check();
-  await expect(page.getByRole("option", { name: "Stats for nerds" })).toBeVisible();
-  await page.getByRole("switch", { name: "Stats for nerds" }).uncheck();
-  await expect(page.getByRole("option", { name: "Stats for nerds" })).toHaveCount(0);
+  await expect(page.getByRole("switch", { name: "Stats for nerds" })).toBeChecked();
 });
 
-test("the master switch hides Stats for nerds and keeps its own switch", async ({ page }) => {
+test("the main window shows Stats for nerds only while its switch and Experimental features are on", async ({ page }) => {
   await open(page, false);
-  await expect(page.getByRole("option", { name: "Stats for nerds" })).toHaveCount(0);
-  await page.getByRole("option", { name: "Experimental features" }).click();
-  await page.getByLabel("Use experimental features").check();
-  await expect(page.getByRole("option", { name: "Stats for nerds" })).toBeVisible();
-  await page.getByLabel("Use experimental features").uncheck();
-  await expect(page.getByRole("option", { name: "Stats for nerds" })).toHaveCount(0);
+  const look = (experimental: boolean, nerds: boolean) =>
+    page.evaluate(([experimental, nerds]) => (window as any).__emit("look", { theme: "auto", accent: "blue", glass: "clear", liquid: null, experimental, nerds }), [experimental, nerds]);
+  await expect(nerdsNav(page)).toHaveCount(0);
+  await look(true, true);
+  await nerdsNav(page).click();
+  await expect(page.getByRole("heading", { name: "Stats for nerds" })).toBeVisible();
+  await look(true, false);
+  await expect(nerdsNav(page)).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Voice typing history" })).toBeVisible(); // back to history, not a blank page
+  await look(true, true);
+  await expect(nerdsNav(page)).toBeVisible();
+  await look(false, true);
+  await expect(nerdsNav(page)).toHaveCount(0);
 });
 
 test("lists traces newest first with title, app, time and outcome", async ({ page }) => {
   await open(page);
-  await page.getByRole("option", { name: "Stats for nerds" }).click();
+  await nerdsNav(page).click();
   const rows = page.getByRole("list", { name: "Dictations" }).getByRole("button");
   await expect(rows).toHaveCount(6);
   await expect(rows.nth(0)).toContainText("Um, so I I think we");
@@ -82,8 +85,8 @@ test("lists traces newest first with title, app, time and outcome", async ({ pag
 
 test("an empty list says so", async ({ page }) => {
   await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", models_list: () => [], look_get: () => ({ theme: "auto", accent: "blue", glass: "clear", liquid: null, experimental: true, nerds: true }), traces_list: () => [] }`);
-  await page.goto("/settings");
-  await page.getByRole("option", { name: "Stats for nerds" }).click();
+  await page.goto("/main");
+  await nerdsNav(page).click();
   await expect(page.getByText("No dictations yet")).toBeVisible();
 });
 

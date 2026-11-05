@@ -7,7 +7,8 @@ export type Trace = {
   id: number; started: number; mode: "hold" | "tap"; app: string | null; model: string | null; audio_ms: number;
   outcome: string; reason: string | null; load_ms: number | null; paste_ms: number | null; steps: Step[];
 };
-export type Row = { id: number; started: number; app: string | null; outcome: string; heard: string | null };
+/** `heard`: what speech-to-text wrote. `text`: what the last step left, which is what was pasted. */
+export type Row = { id: number; started: number; app: string | null; outcome: string; heard: string | null; text: string | null };
 
 export const KINDS = { filler: "Filler words", repeat: "Repeats", cutoff: "Cut-off words", number: "Numbers", word: "Words to remember" } as const;
 export const KIND_ONE = { filler: "Filler word", repeat: "Repeat", cutoff: "Cut-off word", number: "Number", word: "Word to remember" } as const;

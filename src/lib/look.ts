@@ -1,3 +1,5 @@
+import { invoke } from "@tauri-apps/api/core";
+
 /** `liquid`: Liquid Glass's own switch; null below macOS 26, where there's none.
  *  `experimental`: Experimental features' master switch (travels with the look for now, see look.rs).
  *  `nerds`: Stats for nerds' own switch. */
@@ -12,4 +14,10 @@ export function applyLook(l: Look) {
   const { theme, accent, glass } = l;
   Object.assign(document.documentElement.dataset, { theme, accent, glass });
   document.documentElement.toggleAttribute("data-liquid", glassOn(l));
+}
+
+/** Liquid Glass: one sheet of macOS's glass for the whole window in place of its vibrancy; the panels
+ *  turn into light frosted fills on it (tokens.css). The backend pins it to the window, so a live resize follows. */
+export function syncGlass(l: Look | null) {
+  invoke("glass_set", { glass: l && glassOn(l) ? [{ x: 0, y: 0, w: innerWidth, h: innerHeight, radius: 0, shown: true, grow: true }] : [] });
 }
