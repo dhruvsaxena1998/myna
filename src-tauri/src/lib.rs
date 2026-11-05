@@ -231,6 +231,24 @@ fn trace_get(d: tauri::State<Data>, id: i64) -> Result<serde_json::Value, String
     trace::get(&d.db.lock().unwrap(), id)
 }
 
+/// Delete in Voice typing history.
+#[tauri::command]
+fn trace_delete(d: tauri::State<Data>, id: i64) -> Result<(), String> {
+    trace::delete(&d.db.lock().unwrap(), id)
+}
+
+/// Copy again and Copy what I said, in Voice typing history.
+#[tauri::command]
+fn text_copy(text: String) {
+    dictation::copy(&text);
+}
+
+/// The main window's Settings entry and its ⌘,.
+#[tauri::command]
+fn settings_open(app: AppHandle) {
+    open_window(&app, "settings");
+}
+
 #[tauri::command]
 fn voice_get(d: tauri::State<Data>) -> Result<voice::Voice, String> {
     voice::get(&d.db.lock().unwrap())
@@ -414,6 +432,12 @@ fn open_window(app: &AppHandle, label: &str) {
     }
 }
 
+/// The main window, from "Open Myna" and the Dock. Myna sits in the Dock only while it's open.
+fn open_main(app: &AppHandle) {
+    let _ = app.set_activation_policy(ActivationPolicy::Regular);
+    open_window(app, "main");
+}
+
 /// The update pop-up, from About, the manual check, the notification and the menubar item.
 /// Never on its own from an automatic check.
 fn open_update(app: &AppHandle) {
@@ -424,7 +448,7 @@ fn open_update(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![debug_on, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, traces_list, trace_get, voice_pause, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
+        .invoke_handler(tauri::generate_handler![debug_on, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, traces_list, trace_get, trace_delete, text_copy, settings_open, voice_pause, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::Updates::default())
         .setup(|app| {
@@ -466,11 +490,12 @@ pub fn run() {
 
             // A real NSMenu on both clicks: native look, highlight, keyboard and accessibility for free.
             // shortcut: Tauri menus have no section headers or badges; stories 04/05 build the NSMenu via objc2.
+            let open_item = MenuItemBuilder::with_id("open", "Open Myna").build(app)?;
             let settings_item = MenuItemBuilder::with_id("settings", "Settings…").accelerator("Cmd+,").build(app)?;
             let quit_item = MenuItemBuilder::with_id("quit", "Quit Myna").accelerator("Cmd+Q").build(app)?;
             // The shortcut and enabled state are set by sync_shortcut below.
             let voice_item = MenuItemBuilder::with_id("dictate", "Start voice typing").enabled(false).build(app)?;
-            let menu = MenuBuilder::new(app).item(&voice_item).separator().item(&settings_item).separator().item(&quit_item).build()?;
+            let menu = MenuBuilder::new(app).item(&voice_item).separator().item(&open_item).item(&settings_item).separator().item(&quit_item).build()?;
             app.manage(VoiceItem(voice_item));
             // Tauri menus can't hide an item, so the update item and its separator go in and out at the top.
             let (update_item, update_sep) = (MenuItemBuilder::with_id("update", "").build(app)?, PredefinedMenuItem::separator(app)?);
@@ -500,6 +525,7 @@ pub fn run() {
                 .menu(&menu)
                 .on_menu_event(|app, e| match e.id().as_ref() {
                     "dictate" => app.state::<Arc<Session>>().toggle(),
+                    "open" => open_main(app),
                     "settings" => open_window(app, "settings"),
                     "update" => open_update(app),
                     "quit" => app.exit(0),
@@ -518,12 +544,21 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|w, e| {
-            // Closing Settings or the update pop-up hides it; the app lives on in the menubar.
-            if let (WindowEvent::CloseRequested { api, .. }, "settings" | "update") = (e, w.label()) {
+            // Closing a window hides it; the app lives on in the menubar, and leaves the Dock with the main window.
+            if let (WindowEvent::CloseRequested { api, .. }, "main" | "settings" | "update") = (e, w.label()) {
                 api.prevent_close();
                 let _ = w.hide();
+                if w.label() == "main" {
+                    let _ = w.app_handle().set_activation_policy(ActivationPolicy::Accessory);
+                }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Myna");
+        .build(tauri::generate_context!())
+        .expect("error while running Myna")
+        // Clicking Myna in the Dock, or opening it again from Finder, while it runs.
+        .run(|app, e| {
+            if let tauri::RunEvent::Reopen { .. } = e {
+                open_main(app);
+            }
+        });
 }

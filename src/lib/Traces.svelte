@@ -13,7 +13,7 @@
   let off = $state<Record<string, boolean>>({});
   let tip = $state<{ e: Edit; raw: string; x: number; y: number } | null>(null);
 
-  // Settings stays on top of a stale list: a dictation since it opened shows up here.
+  // The window stays open on a stale list: a dictation since it opened shows up here.
   $effect(() => {
     invoke<Row[]>("traces_list").then((r) => (rows = r), () => {});
   });

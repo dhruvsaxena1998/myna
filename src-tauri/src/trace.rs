@@ -55,7 +55,8 @@ pub fn save(conn: &Connection, t: &Trace) -> Result<(), String> {
     tx.commit().map_err(err)
 }
 
-/// One row of Stats for nerds' list, newest first. `heard` is what speech-to-text wrote, cut short: the row's title.
+/// One row of Voice typing history and Stats for nerds' list, newest first. `heard` is what speech-to-text wrote;
+/// `text` is what the last step left, which is what was pasted (or would have been).
 #[derive(serde::Serialize)]
 pub struct Row {
     pub id: i64,
@@ -63,15 +64,31 @@ pub struct Row {
     pub app: Option<String>,
     pub outcome: String,
     pub heard: Option<String>,
+    pub text: Option<String>,
 }
 
 pub fn list(conn: &Connection) -> Result<Vec<Row>, String> {
     let err = |e: rusqlite::Error| format!("Couldn't read the dictation traces: {e}");
     let mut q = conn
-        .prepare("SELECT id, started, app, outcome, (SELECT substr(text, 1, 80) FROM step WHERE trace = trace.id AND kind = 'speech-to-text') FROM trace ORDER BY started DESC, id DESC LIMIT 200")
+        // shortcut: loads every trace at once; page it if history grows past a few thousand.
+        .prepare(
+            "SELECT id, started, app, outcome, (SELECT text FROM step WHERE trace = trace.id AND kind = 'speech-to-text'),
+                (SELECT text FROM step WHERE trace = trace.id ORDER BY rowid DESC LIMIT 1) FROM trace ORDER BY started DESC, id DESC",
+        )
         .map_err(err)?;
-    let rows = q.query_map([], |r| Ok(Row { id: r.get(0)?, started: r.get(1)?, app: r.get(2)?, outcome: r.get(3)?, heard: r.get(4)? })).map_err(err)?;
+    let rows = q
+        .query_map([], |r| Ok(Row { id: r.get(0)?, started: r.get(1)?, app: r.get(2)?, outcome: r.get(3)?, heard: r.get(4)?, text: r.get(5)? }))
+        .map_err(err)?;
     rows.collect::<Result<_, _>>().map_err(err)
+}
+
+/// Delete from Voice typing history: the trace and its steps go together.
+pub fn delete(conn: &Connection, id: i64) -> Result<(), String> {
+    let err = |e: rusqlite::Error| format!("Couldn't delete the dictation: {e}");
+    let tx = conn.unchecked_transaction().map_err(err)?;
+    tx.execute("DELETE FROM step WHERE trace = ?1", [id]).map_err(err)?;
+    tx.execute("DELETE FROM trace WHERE id = ?1", [id]).map_err(err)?;
+    tx.commit().map_err(err)
 }
 
 /// One trace with its steps, for the opened view. The model shows by name; a model no longer in the catalog keeps its id.
@@ -120,6 +137,23 @@ mod tests {
         let t = get(&conn, rows[0].id).unwrap();
         assert_eq!(t["model"], "gone");
         assert_eq!(t["steps"][1]["edits"][0]["kind"], "filler");
+        assert_eq!(rows[0].text.as_deref(), Some("hello"));
         assert!(get(&conn, 99).is_err());
+    }
+
+    #[test]
+    fn deleting_a_trace_takes_its_steps_and_leaves_the_others() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = crate::storage::open(tmp.path()).unwrap();
+        for started in [1, 2] {
+            let steps = vec![Step { kind: "speech-to-text", text: "hi".into(), ms: 1.0, settings: None, edits: None }];
+            save(&conn, &Trace { started, mode: "hold", outcome: "pasted", steps, ..Default::default() }).unwrap();
+        }
+        let gone = list(&conn).unwrap()[0].id;
+        delete(&conn, gone).unwrap();
+        assert_eq!(list(&conn).unwrap().iter().map(|r| r.started).collect::<Vec<_>>(), [1]);
+        let steps: i64 = conn.query_row("SELECT count(*) FROM step WHERE trace = ?1", [gone], |r| r.get(0)).unwrap();
+        let left: i64 = conn.query_row("SELECT count(*) FROM step", [], |r| r.get(0)).unwrap();
+        assert_eq!((steps, left), (0, 1));
     }
 }
