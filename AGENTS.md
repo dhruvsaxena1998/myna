@@ -13,3 +13,7 @@ Default five-role vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `
 ### Domain docs
 
 Single-context: root `GLOSSARY.md` + `docs/adr/`. See `docs/agents/domain.md`.
+
+### Worktrees
+
+After creating a git worktree, run `scripts/worktree-setup.sh` in it: copies the gitignored local files (`.env.local`, `.scratch/`, `.impeccable/`), pins cmake for mise, runs `pnpm install`.

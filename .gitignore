@@ -19,3 +19,4 @@ playwright-report
 
 # signing keys (story 14), never commit
 .secrets/
+mise.local.toml
