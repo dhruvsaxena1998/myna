@@ -27,6 +27,13 @@ pub struct Look {
     pub experimental: bool,
     /// Stats for nerds' own switch, off by default; its page shows only while this and the master switch are on.
     pub nerds: bool,
+    /// Liquid Glass opacity: how strongly the CSS fill frosts the glass, 0 clear to 100 most frosted.
+    #[serde(default = "default_frost")]
+    pub frost: u8,
+}
+
+fn default_frost() -> u8 {
+    50
 }
 
 /// Liquid Glass shows only while both it and experimental features are on.
@@ -59,6 +66,14 @@ fn read(conn: &Connection, key: &str, choices: &[&str]) -> Result<String, String
     Ok(saved.filter(|v| choices.contains(&v.as_str())).unwrap_or(choices[0].into()))
 }
 
+fn saved_frost(conn: &Connection) -> Result<u8, String> {
+    let saved: Option<String> = conn
+        .query_row("SELECT value FROM setting WHERE key = 'look_frost'", [], |r| r.get(0))
+        .optional()
+        .map_err(|e| format!("Couldn't read Myna's look: {e}"))?;
+    Ok(saved.and_then(|v| v.parse().ok()).filter(|v| *v <= 100).unwrap_or_else(default_frost))
+}
+
 pub fn get(conn: &Connection, macos: u32) -> Result<Look, String> {
     Ok(Look {
         theme: read(conn, "look_theme", &THEMES)?,
@@ -67,6 +82,7 @@ pub fn get(conn: &Connection, macos: u32) -> Result<Look, String> {
         liquid: liquid_ok(macos).then(|| read(conn, "look_liquid", &["off", "on"])).transpose()?.map(|v| v == "on"),
         experimental: read(conn, "experimental", &["off", "on"])? == "on",
         nerds: read(conn, "exp_nerds", &["off", "on"])? == "on",
+        frost: saved_frost(conn)?,
     })
 }
 
@@ -74,12 +90,15 @@ pub fn set(conn: &Connection, l: &Look, macos: u32) -> Result<(), String> {
     if !THEMES.contains(&l.theme.as_str()) || !ACCENTS.contains(&l.accent.as_str()) || !GLASSES.contains(&l.glass.as_str()) {
         return Err(format!("{} {} {} isn't one of the choices.", l.theme, l.accent, l.glass));
     }
+    if l.frost > 100 {
+        return Err("Opacity must be between 0 and 100.".into());
+    }
     if l.liquid == Some(true) && !liquid_ok(macos) {
         return Err("Liquid Glass needs macOS 26 or later.".into());
     }
     let onoff = |on: bool| if on { "on" } else { "off" }.to_string();
-    let (liquid, exp, nerds) = (l.liquid.map(onoff), onoff(l.experimental), onoff(l.nerds));
-    let saved = [("look_theme", &l.theme), ("look_accent", &l.accent), ("look_glass", &l.glass), ("experimental", &exp), ("exp_nerds", &nerds)];
+    let (liquid, exp, nerds, frost) = (l.liquid.map(onoff), onoff(l.experimental), onoff(l.nerds), l.frost.to_string());
+    let saved = [("look_theme", &l.theme), ("look_accent", &l.accent), ("look_glass", &l.glass), ("experimental", &exp), ("exp_nerds", &nerds), ("look_frost", &frost)];
     for (k, v) in saved.into_iter().chain(liquid.as_ref().map(|v| ("look_liquid", v))) {
         conn.execute("INSERT INTO setting(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2", [k, v])
             .map_err(|e| format!("Couldn't save Myna's look: {e}"))?;
@@ -176,7 +195,7 @@ mod tests {
     use super::*;
 
     fn is(t: &str, a: &str, g: &str) -> Look {
-        Look { theme: t.into(), accent: a.into(), glass: g.into(), liquid: None, experimental: false, nerds: false }
+        Look { theme: t.into(), accent: a.into(), glass: g.into(), liquid: None, experimental: false, nerds: false, frost: 50 }
     }
 
     #[test]
@@ -198,6 +217,18 @@ mod tests {
         let conn = crate::storage::open(tmp.path()).unwrap();
         conn.execute_batch("INSERT INTO setting VALUES ('look_theme', 'dim'), ('look_accent', 'teal'), ('look_glass', 'tinted')").unwrap();
         assert_eq!(get(&conn, 15), Ok(is("auto", "blue", "tinted")));
+    }
+
+    #[test]
+    fn frost_defaults_to_50_saves_and_rejects_over_100() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = crate::storage::open(tmp.path()).unwrap();
+        assert_eq!(get(&conn, 15).unwrap().frost, 50);
+        set(&conn, &Look { frost: 80, ..is("auto", "blue", "clear") }, 15).unwrap();
+        assert_eq!(get(&conn, 15).unwrap().frost, 80);
+        conn.execute("UPDATE setting SET value = '300' WHERE key = 'look_frost'", []).unwrap();
+        assert_eq!(get(&conn, 15).unwrap().frost, 50);
+        assert!(set(&conn, &Look { frost: 101, ..is("auto", "blue", "clear") }, 15).is_err());
     }
 
     #[test]

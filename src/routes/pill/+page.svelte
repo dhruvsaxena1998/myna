@@ -76,5 +76,6 @@
   .bottom-right, .top-right { right: var(--sp-5); }
   /* Liquid Glass: only the native glass shows, and the pill fades in place so the glass stays behind it. */
   :global(html[data-liquid]) .spot { translate: none; }
-  :global(html[data-liquid]) .spot :global(.hud) { background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: none; }
+  /* Opacity slider: clear (default .5) shows only the glass; Tinted darkens the pill behind its words. */
+  :global(html[data-liquid]) .spot :global(.hud) { background: rgba(28,28,30, calc(max(0, var(--frost, .5) - .5) * .9)); -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: none; }
 </style>

@@ -98,9 +98,7 @@
   .btn { display: inline-flex; align-items: center; height: var(--h-ctl); padding: 0 14px; border: 0; border-radius: var(--r-full);
     background: var(--fill-control); color: var(--text); font: inherit; box-shadow: inset 0 0 0 .5px var(--line-strong), var(--shadow-control); white-space: nowrap; }
   .btn:hover { background: color-mix(in srgb, var(--fill-control) 85%, var(--text)); }
-  .select { height: var(--h-ctl); padding: 0 var(--sp-2); border: 0; border-radius: var(--r-md); background: var(--fill-control); color: var(--text); font: inherit;
-    box-shadow: inset 0 0 0 .5px var(--line-strong), var(--shadow-control); }
-  .btn:focus-visible, .select:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+  .btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   /* Segmented control: a capsule track with a raised thumb (as in Look & appearance). */
   .seg { display: inline-flex; gap: 2px; margin: 0; padding: 3px; border: 0; border-radius: var(--r-full); background: var(--fill-field); }
   .seg label { position: relative; }

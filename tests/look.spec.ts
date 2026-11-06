@@ -159,3 +159,17 @@ test("Liquid Glass on Settings: one sheet of glass for the whole window, frosted
   await expect.poll(last).toEqual([]);
   await expect(page.locator("main")).toHaveCSS("background-color", "rgb(29, 29, 31)"); // today's opaque page
 });
+
+test("Liquid Glass Opacity: a slider that previews live, saves the new frost, and is disabled while Liquid Glass is off", async ({ page }) => {
+  await open(page, false, true);
+  await page.getByRole("option", { name: "Experimental features" }).click();
+  const slider = page.getByRole("slider", { name: "Opacity" });
+  await expect(slider).toBeEnabled();
+  await slider.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(slider).toHaveValue("51");
+  expect(await page.evaluate(() => document.documentElement.style.getPropertyValue("--frost"))).toBe("0.51");
+  expect((await sets(page)).at(-1)).toMatchObject({ liquid: true, frost: 51 });
+  await page.getByRole("switch", { name: "Liquid Glass" }).click();
+  await expect(slider).toBeDisabled();
+});

@@ -38,9 +38,6 @@
     border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); }
   .label { display: block; font-weight: var(--fw-semibold); }
   .hint { display: block; margin-top: 2px; color: var(--text-2); }
-  .select { height: var(--h-ctl); padding: 0 var(--sp-2); border: 0; border-radius: var(--r-md); background: var(--fill-control); color: var(--text); font: inherit;
-    box-shadow: inset 0 0 0 .5px var(--line-strong), var(--shadow-control); }
-  .select:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   /* Reserved line so an error never shifts the page. */
   .err { margin: var(--sp-1) 0 0; min-height: var(--lh-footnote); color: var(--danger-text); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
 </style>

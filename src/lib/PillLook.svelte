@@ -55,9 +55,6 @@
   .row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-3); align-items: center; padding: var(--sp-3) var(--sp-4); }
   .name { display: block; font-weight: var(--fw-semibold); }
   .desc { display: block; margin-top: 2px; color: var(--text-2); }
-  .select { height: var(--h-ctl); padding: 0 var(--sp-2); border: 0; border-radius: var(--r-md); background: var(--fill-control); color: var(--text); font: inherit;
-    box-shadow: inset 0 0 0 .5px var(--line-strong), var(--shadow-control); }
-  .select:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   /* The preview screen: a desktop-ish wash so the dark pill reads in both themes. */
   .stage { position: relative; height: 150px; display: flex; background: linear-gradient(160deg, #5b7aa6, #b08a6a); }
   .pill { position: absolute; }
