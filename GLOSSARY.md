@@ -72,7 +72,7 @@ A name or special word the user lists so dictation spells it their way, optional
 _Avoid_: dictionary, personal dictionary, vocabulary, custom words
 
 **LLM cleanup**:
-The optional pass after rules cleanup that has a model fix punctuation, capitals and slips in dictation or in a meeting transcript, without changing what was said.
+The optional pass after rules cleanup that has a model fix punctuation, capitals and slips in dictation or in a meeting transcript, without changing what was said. In dictation it runs only from the Dictate with cleanup shortcut, never the plain Dictate one.
 _Avoid_: polish, rewrite, AI cleanup
 
 **Style**:
