@@ -73,13 +73,14 @@
       "id": "voz",
       "name": "Desert Ant Voz",
       "vendor": "Desert Ant Labs",
-      "desc": "Parakeet on the Neural Engine. Quicker and easier on the battery.",
+      "desc": "Parakeet on the Neural Engine. Quicker and easier on the battery. Checks its license with Desert Ant when it loads; no audio or text is sent.",
       "acc": 5,
       "spd": 5,
-      "size": 337000000,
+      "size": 336665673,
       "min_macos": 15,
+      "sdk": true,
       "repo": "desert-ant-labs/voz",
-      "revision": "4eb6031cc91a71aa7ae6edb0fa518dc8c12f565f",
+      "revision": "12802bf4e2b5e97e1289b723bc6283b6f1a1ace5",
       "files": []
     },
     {

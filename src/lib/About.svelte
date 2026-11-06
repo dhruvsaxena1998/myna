@@ -77,10 +77,13 @@
     <li class="row">
       <span><span class="name">Where your data lives</span><span class="desc"><span class="mono">{path}</span><br />Your meetings, AI models and settings are all in one folder. Copy it to back everything up.</span></span>
     </li>
+    <li class="row">
+      <!-- Desert Ant's license asks for this credit; their SDK ships in every build, so it always shows. -->
+      <span><span class="name">License</span><span class="desc">Free and open source (MIT license).<br /><span class="attrib">Voz speech-to-text <a href="https://desertant.com" onclick={(e) => { e.preventDefault(); invoke("open_link", { url: "https://desertant.com" }); }}>powered by Desert Ant Labs</a></span></span></span>
+    </li>
   </ul>
   <p class="err" role="status">{shown}</p>
 </section>
-<!-- "Powered by Desert Ant Labs" appears here only while a Desert Ant model is enabled (story 03). -->
 
 <style>
   h2 { margin: 0 0 var(--sp-3); font-size: var(--fs-title3); line-height: var(--lh-title3); font-weight: var(--fw-semibold); }
@@ -89,6 +92,8 @@
   .row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-3); align-items: center; padding: var(--sp-3) var(--sp-4); }
   .name { display: block; font-weight: var(--fw-semibold); }
   .desc { display: block; margin-top: 2px; color: var(--text-2); user-select: text; }
+  .attrib { color: var(--text-3); }
+  .attrib a { color: inherit; }
   .mono { font: 12px/var(--lh-body) var(--font-mono); overflow-wrap: anywhere; }
   .slot { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); width: 240px; height: var(--h-ctl); font-variant-numeric: tabular-nums; }
   /* Status pill (DESIGN.md); the alert kind uses the danger colours. */
