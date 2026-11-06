@@ -1,5 +1,5 @@
-# Manual fallback only. Releases run on CircleCI (.circleci/config.yml), because GitHub's macOS runners
-# often never got assigned. Run this from the Actions tab on a tag ("Use workflow from": the tag) if CircleCI is down.
+# Manual fallback only. Releases are built on the developer's Mac (scripts/release.sh): GitHub's macOS runners
+# often never got assigned. Run this from the Actions tab with the tag as the ref if you ever need a hosted build.
 name: Release
 
 on:
