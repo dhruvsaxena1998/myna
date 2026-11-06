@@ -2,6 +2,8 @@
 
 Myna can send Summary, Chat, transcript cleanup and Decision tasks to a coding agent the user already has installed and signed in to (Claude Code, Codex, OpenCode, Pi), so the work runs on their existing plan instead of an API key. Myna spawns each agent's own headless mode with every tool, MCP server and slash command off, in an empty app-owned directory, following T3 Code's text-generation jobs. We rejected ACP: permission requests in ACP are advisory, so a client can't guarantee that a hostile transcript won't make the agent read files or run commands. Each agent's own flags can guarantee it.
 
+**Deferred 2026-11-06:** Agents are out of the first build of story 10 and return later as an Experimental feature, with Cursor as a fifth agent (priority Claude Code, Codex, OpenCode, Cursor, Pi). Research note 37 (`.scratch/local-ai/research/37-t3code-providers-and-acp.md`) corrects this ADR: the Pi flags, the reason ACP was rejected, and OpenCode `serve`. Open proposals live in `.scratch/agents-provider/map.md`; settle them there and amend this ADR before building.
+
 Amended by [ADR 0003](0003-agents-under-seatbelt.md): runs are sandboxed with Seatbelt, and Chat gets Myna's MCP server as its only tool source.
 
 ## Consequences
