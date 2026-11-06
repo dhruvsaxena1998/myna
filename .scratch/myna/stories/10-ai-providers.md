@@ -33,6 +33,16 @@ Where Myna sends text for an LLM to answer, and which model each feature uses. M
 
 Later, not in this story's build: direct Jev and OpenAI Decisions (the "Decision API" kind), models.dev details, streaming (story 17), Agents ([deferred map](../../agents-provider/map.md)).
 
+## Built app vs. the design (fix while building)
+Ticket 1's mockup (`docs/index.html`, PR #107) is the target; approved 2026-11-06. Where the app or the older mockup parts differ:
+- **Settings pages.** The app has one "AI & privacy" page (id `ai`, `src/routes/settings/+page.svelte`) holding speech-to-text, Unload after, telling voices apart and a "will live here too" note. The design splits it: **Speech models** (id `models`: speech-to-text, telling voices apart), **AI provider** (id `ai`), **Decision provider** (id `decide`), in that order after Meeting notes. Ticket 2 renames the page and adds AI provider; ticket 3 adds Decision provider. Drop the "will live here too" note. Keep the page comment that says the pages match `SET_PAGES`.
+- **Unload after** is in the app but not in the mockup. Keep it on Speech models; the mockup is behind here.
+- **Caution colour.** The mockup draws "Sends text off this Mac", "Not set" and the delete notice with its old `--alert` (red-ish). Build them with `--caution`, `--caution-text`, `--caution-soft` from `design/tokens.css` (amber), per DESIGN.md.
+- **"Stays on this Mac" pill** for loopback providers is new in the design; build it as the status pill.
+- **Onboarding.** The mockup's onboarding still has a "Summaries and answers" step (local Qwen/Llama download, OpenAI/OpenRouter key). The app doesn't, and shouldn't: a fresh install has no providers (ADR 0001). The mockup is stale there.
+- **Feature surfaces in the mockup** (Summary line, Chat footer and cost, folder suggestion, Experimental "Tidy up with AI" and the picture rows) still read the old local-or-online setting and say "Sends your words online". None are built yet. When each feature's ticket builds them (04 ticket 7, stories 16, 17), route through Main or Fast and use "Sends text off this Mac".
+- **Experimental "Decide on muted speech"** now says it uses the Decision provider (was "quick decisions (in AI & privacy)").
+
 ## Done when
 - [ ] Fresh install: no providers, Main and Fast "Not set", AI features off
 - [ ] Add an Ollama Endpoint and an OpenRouter Endpoint (key in Keychain); pick Main and Fast from live lists; Test shows reply, time and cost
