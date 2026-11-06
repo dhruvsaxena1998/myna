@@ -45,11 +45,14 @@ pub struct Model {
     pub repo: String,
     #[serde(default)]
     pub revision: String,
-    /// Empty for Desert Ant models (their SDK fetches and verifies its own weights, ticket 03.4) and Apple Speech.
+    /// Empty for `sdk` models (their SDK fetches and verifies its own weights) and Apple Speech.
     pub files: Vec<File>,
     /// Built into macOS (Apple Speech): macOS downloads and owns its model.
     #[serde(default)]
     pub system: bool,
+    /// Its SDK downloads and verifies its own weights into `models/<id>/` (Desert Ant Voz).
+    #[serde(default)]
+    pub sdk: bool,
     /// Runs on ONNX Runtime, which is downloaded with it and shared with the other models that need it.
     #[serde(default)]
     pub runtime: bool,
@@ -139,7 +142,11 @@ pub fn list(conn: &Connection, models_dir: &Path, macos: u32, sys: &System) -> R
         .map(|id| {
             let mut models = task_models(id).unwrap();
             for m in &mut models {
-                m.installed = if m.system { sys.installed } else { is_installed(m, models_dir) && (rt_there || !m.runtime) };
+                m.installed = if m.system {
+                    sys.installed
+                } else if m.sdk {
+                    crate::voz::installed(&models_dir.join(&m.id))
+                } else { is_installed(m, models_dir) && (rt_there || !m.runtime) };
                 if m.runtime && !rt_there {
                     m.size += rt.size; // one combined size
                 }

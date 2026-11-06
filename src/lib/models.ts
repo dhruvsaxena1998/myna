@@ -2,7 +2,7 @@
 export type Model = {
   id: string; name: string; vendor: string; desc: string;
   acc: number; spd: number; default: boolean; size: number; min_macos: number;
-  repo: string; revision: string; files: unknown[]; system: boolean; runtime: boolean; installed: boolean; needs: string | null;
+  repo: string; revision: string; files: unknown[]; system: boolean; sdk?: boolean; runtime: boolean; installed: boolean; needs: string | null;
 };
 export type Task = { id: "stt" | "diar"; models: Model[]; active: string | null };
 

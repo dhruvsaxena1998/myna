@@ -58,6 +58,7 @@ pub fn transcriber(id: &str, models_dir: &Path) -> Result<Box<dyn Transcriber>, 
             Ok(Box::new(Whisper(ctx.create_state().map_err(|e| err(e.to_string()))?, String::new())))
         }
         "apple-speech" => Ok(Box::new(AppleSpeech)),
+        "voz" => Ok(Box::new(crate::voz::Voz::load(&dir).map_err(err)?)),
         _ => Err(format!("{} can't run in Myna yet", m.name)),
     }
 }
@@ -189,7 +190,7 @@ mod tests {
             assert!(err.starts_with("Couldn't load"), "{id}: {err}");
         }
         assert!(diarizer("sortformer", empty.path()).err().unwrap().starts_with("Couldn't load Sortformer"));
-        assert_eq!(transcriber("voz", empty.path()).err().unwrap(), "Desert Ant Voz can't run in Myna yet");
+        assert_eq!(transcriber("voz", empty.path()).err().unwrap(), "Couldn't load Desert Ant Voz: Voz is missing. Download it again.");
         assert_eq!(diarizer("nope", empty.path()).err().unwrap(), "Unknown model nope");
     }
 
@@ -288,6 +289,13 @@ mod tests {
         for id in ["whisper-small", "whisper-medium", "whisper-large-v3-turbo", "whisper-large-v3"] {
             transcribes_the_fixture(id);
         }
+    }
+
+    #[test]
+    #[ignore = "slow: downloads Voz through its SDK (macOS 15+)"]
+    fn voz_transcribes() {
+        crate::voz::download(&models_dir().join("voz"), |_| {}).unwrap();
+        transcribes_the_fixture("voz");
     }
 
     #[test]

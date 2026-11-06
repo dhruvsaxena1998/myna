@@ -80,20 +80,20 @@
         <span class="rates">{@render rating("Accuracy", m.acc, ACC)}{@render rating("Speed", m.spd, SPD)}</span>
         <!-- Fixed width so the state can change (Download → progress → Installed) without moving the row. -->
         <div class="dl">
-          <!-- Apple Speech: macOS owns the model, so no size, no Cancel (Apple's download can't stop), no Remove. -->
+          <!-- Apple Speech: macOS owns the model, so no size, no Cancel (Apple's download can't stop), no Remove. SDK models (Voz) can't cancel either. -->
           {#if blocked}
             {#if !m.system}<span class="size">{fmtSize(m.size)}</span>{/if}<span class="pill">{m.needs}</span>
           {:else if m.id in dl.pct}
             <span class="bar" role="progressbar" aria-label="Downloading {m.name}" aria-valuenow={dl.pct[m.id]} aria-valuemin="0" aria-valuemax="100"><b style:transform="scaleX({dl.pct[m.id] / 100})"></b></span>
             <span class="size">{dl.pct[m.id]}%</span>
-            {#if !m.system}<button class="btn" onclick={() => cancel(m.id)}>Cancel</button>{/if}
+            {#if !m.system && !m.sdk}<button class="btn" onclick={() => cancel(m.id)}>Cancel</button>{/if}
           {:else if installed(m)}
             <span class="ok"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>Installed</span>
             {#if !m.system}
               <span class="size">{fmtSize(m.size)}</span>
               <button class="btn quiet" aria-label="Remove {m.name}" onclick={() => remove(m.id)}>Remove</button>
             {/if}
-          {:else if m.files.length === 0 && !m.system}
+          {:else if m.files.length === 0 && !m.system && !m.sdk}
             <span class="size">{fmtSize(m.size)}</span><span class="pill">Coming soon</span>
           {:else}
             {#if !m.system}<span class="size">{fmtSize(m.size)}</span>{/if}

@@ -158,7 +158,7 @@ mod tests {
     fn model(body: &[u8], sha256: &str) -> Model {
         Model {
             id: "m".into(), name: "Test model".into(), vendor: String::new(), desc: String::new(), acc: 1, spd: 1, default: false,
-            size: body.len() as u64, min_macos: 0, repo: "o/r".into(), revision: "x".repeat(40), system: false, runtime: false, installed: false, needs: None,
+            size: body.len() as u64, min_macos: 0, repo: "o/r".into(), revision: "x".repeat(40), system: false, sdk: false, runtime: false, installed: false, needs: None,
             files: vec![File { path: "w.bin".into(), size: body.len() as u64, sha256: sha256.into(), archive: None }],
         }
     }

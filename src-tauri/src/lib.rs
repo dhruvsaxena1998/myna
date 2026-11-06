@@ -16,6 +16,7 @@ mod storage;
 mod trace;
 mod update;
 mod voice;
+mod voz;
 
 use rusqlite::Connection;
 use std::collections::HashMap;
@@ -85,7 +86,7 @@ fn model_event(app: &AppHandle, id: &str, state: &str, extra: serde_json::Value)
 #[tauri::command]
 fn model_download(app: AppHandle, d: tauri::State<Data>, id: String) -> Result<(), String> {
     let m = models::find(&id).ok_or_else(|| format!("Unknown model {id}"))?;
-    if m.files.is_empty() && !m.system {
+    if m.files.is_empty() && !m.system && !m.sdk {
         return Err(format!("{} can't be downloaded yet.", m.name));
     }
     if let Some(n) = models::needs(&m, d.macos, &apple::status()) {
@@ -113,6 +114,9 @@ fn model_download(app: AppHandle, d: tauri::State<Data>, id: String) -> Result<(
         // Apple's download can't be canceled; the row shows no Cancel for it.
         let result = if m.system {
             apple::download(|done| progress((done.clamp(0.0, 1.0) * 100.0) as u64)).map(|()| true)
+        } else if m.sdk {
+            // shortcut: the SDK's download can't be canceled, so the row shows no Cancel; add one if users ask.
+            voz::download(&dir.join(&m.id), |done| progress((done.clamp(0.0, 1.0) * 100.0) as u64)).map(|()| true)
         } else {
             let get = |x: &models::Model, p: &mut dyn FnMut(u64)| download::fetch(download::HF, x, &dir, &cancel, p);
             download::install(&m, &dir, &get, &mut progress)
