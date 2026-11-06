@@ -5,7 +5,7 @@ import type { Perms } from "$lib/Permissions.svelte";
 import type { Look } from "$lib/Pill.svelte";
 import type { Rules } from "$lib/Words.svelte";
 import type { Voice } from "$lib/VoiceShortcut.svelte";
-import type { Cleanup } from "$lib/CleanupPrompt.svelte";
+import type { Cleanup } from "$lib/CleanupStyles.svelte";
 import type { Ai } from "$lib/AiProviders.svelte";
 import type { Prefs, UpdateState } from "$lib/updates.svelte";
 

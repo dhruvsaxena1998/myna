@@ -274,17 +274,23 @@ fn rules_set(d: tauri::State<Data>, rules: rules::Settings) -> Result<(), String
     rules::save(&d.db.lock().unwrap(), &rules)
 }
 
-/// The instruction Dictate with cleanup sends: the user's own or the default, and the default for Reset.
+/// Dictate with cleanup's styles, and the installed apps to bind them to.
 #[tauri::command]
 fn cleanup_get(d: tauri::State<Data>) -> Result<serde_json::Value, String> {
-    let text = cleanup::load(&d.db.lock().unwrap())?.unwrap_or_else(|| cleanup::DEFAULT.into());
-    Ok(serde_json::json!({ "text": text, "default": cleanup::DEFAULT }))
+    let styles = cleanup::styles(&d.db.lock().unwrap())?;
+    Ok(serde_json::json!({ "styles": styles, "apps": cleanup::installed_apps() }))
 }
 
-/// Takes effect on the next dictation, which reads it when cleanup starts.
+/// Takes effect on the next dictation, which reads the styles when cleanup starts. Returns them as saved.
 #[tauri::command]
-fn cleanup_set(d: tauri::State<Data>, text: String) -> Result<(), String> {
-    cleanup::save(&d.db.lock().unwrap(), &text)
+fn cleanup_set(d: tauri::State<Data>, styles: Vec<cleanup::Edit>) -> Result<Vec<cleanup::Style>, String> {
+    cleanup::save(&d.db.lock().unwrap(), styles)
+}
+
+/// The Words to remember line a style's editor says Myna adds.
+#[tauri::command]
+fn cleanup_spell(d: tauri::State<Data>) -> Result<String, String> {
+    Ok(rules::prompt(&rules::load(&d.db.lock().unwrap())?))
 }
 
 /// Stats for nerds: the stored dictation traces, newest first, and one of them opened.
@@ -565,7 +571,7 @@ fn open_update(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, traces_list, traces_all, trace_get, trace_delete, text_copy, settings_open, voice_pause, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
+        .invoke_handler(tauri::generate_handler![debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, text_copy, settings_open, voice_pause, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::Updates::default())
         .setup(|app| {

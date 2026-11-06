@@ -265,7 +265,7 @@ impl Session {
                 if clean && !text.is_empty() {
                     s.world.show(Pill::Cleaning);
                     let at = Instant::now();
-                    let (model, done) = s.cleanup(&text, &words);
+                    let (model, done) = s.cleanup(&text, &words, t.app.as_deref());
                     let settings = serde_json::json!({ "model": model, "cost": done.cost, "fallback": done.fallback.as_ref().map(|f| f.reason), "detail": done.fallback.as_ref().and_then(|f| f.detail.as_ref()) });
                     t.steps.push(Step { kind: "cleanup", text: done.text.clone(), ms: ms(at.elapsed()), settings: Some(settings.to_string()), edits: None });
                     (text, fallback) = (done.text, done.fallback.map(|f| f.reason));
@@ -300,7 +300,7 @@ impl Session {
 
 impl Session {
     /// Dictate with cleanup's step: the Fast model's cleanup of `text`, or `text` itself and why. Also the model's name.
-    fn cleanup(&self, text: &str, words: &rules::Settings) -> (Option<String>, cleanup::Outcome) {
+    fn cleanup(&self, text: &str, words: &rules::Settings, app: Option<&str>) -> (Option<String>, cleanup::Outcome) {
         let fail = |reason, detail: String| cleanup::Outcome { text: text.into(), cost: None, fallback: Some(cleanup::Fallback { reason, detail: Some(detail) }) };
         let db = self.db.lock().unwrap();
         let (record, model) = match ai::route(&db, "fast") {
@@ -308,7 +308,7 @@ impl Session {
             Err(e) => return (None, fail("No Fast model", e)),
         };
         let backend = ai::provider(&db, &*self.keys, record.id);
-        let instruction = cleanup::load(&db).ok().flatten().unwrap_or_else(|| cleanup::DEFAULT.into());
+        let instruction = cleanup::instruction(&db, app).unwrap_or_else(|_| cleanup::DEFAULT.into());
         drop(db);
         match backend {
             Ok(b) => (Some(model.clone()), cleanup::run(b, &model, &instruction, text, words, self.second * cleanup::BUDGET.as_secs() as u32)),

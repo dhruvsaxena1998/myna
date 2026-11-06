@@ -5,7 +5,7 @@
 use crate::ai::{Backend, Cost};
 use crate::rules;
 use rusqlite::{Connection, OptionalExtension};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -81,25 +81,136 @@ fn guard(text: &str, reply: &str, default: bool) -> Result<(), &'static str> {
 
 /// Asks `backend` to clean `text` (the rules output) within `budget`; on a timeout, an error or a failed guard
 /// the outcome is `text` itself. The call runs on its own thread, so nothing a backend does can hold the paste past the budget.
-/// The user's own instruction, or none while they're on the default.
-pub fn load(conn: &Connection) -> Result<Option<String>, String> {
-    conn.query_row("SELECT value FROM setting WHERE key = 'cleanup_instruction'", [], |r| r.get(0))
+/// What each shipped style adds to the default instruction, and the apps it starts with.
+const SHIPPED: [(&str, &str, &str, &[&str]); 4] = [
+    ("default", "Default", "", &[]),
+    ("code", "Code", " Keep code names, file names and commands exactly as I said them.", &["Xcode", "Visual Studio Code", "Cursor", "Terminal"]),
+    ("message", "Message", " Keep it casual. No full stop after a single short sentence.", &["Slack", "Messages", "WhatsApp"]),
+    ("email", "Email", " Use full sentences. Put a greeting or sign-off on its own line.", &["Mail", "Outlook"]),
+];
+
+fn shipped_text(id: &str) -> Option<String> {
+    SHIPPED.iter().find(|s| s.0 == id).map(|s| format!("{DEFAULT}{}", s.2))
+}
+
+/// A style as saved. `text` is only there once the user edited a shipped style (always for their own);
+/// `base` is the shipped text it was edited from, to tell when Myna ships a newer one.
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct Stored {
+    id: String,
+    name: String,
+    apps: Vec<String>,
+    text: Option<String>,
+    base: Option<String>,
+}
+
+/// A style as Settings shows it. `shipped` is the text Reset goes back to, none for the user's own styles.
+#[derive(serde::Serialize, Clone, Debug, PartialEq)]
+pub struct Style {
+    id: String,
+    name: String,
+    apps: Vec<String>,
+    text: String,
+    shipped: Option<String>,
+    newer: bool,
+}
+
+/// What Settings sends back for each style.
+#[derive(serde::Deserialize)]
+pub struct Edit {
+    id: String,
+    name: String,
+    apps: Vec<String>,
+    text: String,
+}
+
+fn stored(conn: &Connection) -> Result<Vec<Stored>, String> {
+    let json: Option<String> = conn
+        .query_row("SELECT value FROM setting WHERE key = 'cleanup_styles'", [], |r| r.get(0))
         .optional()
-        .map_err(|e| format!("Couldn't read the cleanup instructions: {e}"))
+        .map_err(|e| format!("Couldn't read the cleanup styles: {e}"))?;
+    match json {
+        Some(j) => serde_json::from_str(&j).map_err(|e| format!("Couldn't read the cleanup styles: {e}")),
+        None => Ok(SHIPPED.iter().map(|s| Stored { id: s.0.into(), name: s.1.into(), apps: s.3.iter().map(|a| a.to_string()).collect(), text: None, base: None }).collect()),
+    }
 }
 
-/// Saves the instruction. Blank, or the default itself, goes back to following the default.
-pub fn save(conn: &Connection, text: &str) -> Result<(), String> {
-    let text = text.trim();
-    let r = if text.is_empty() || text == DEFAULT {
-        conn.execute("DELETE FROM setting WHERE key = 'cleanup_instruction'", [])
-    } else {
-        conn.execute("INSERT INTO setting(key, value) VALUES ('cleanup_instruction', ?1) ON CONFLICT(key) DO UPDATE SET value = ?1", [text])
-    };
-    r.map(|_| ()).map_err(|e| format!("Couldn't save the cleanup instructions: {e}"))
+/// Every style, Default first, the way Settings lists them.
+pub fn styles(conn: &Connection) -> Result<Vec<Style>, String> {
+    Ok(stored(conn)?
+        .into_iter()
+        .map(|s| {
+            let shipped = shipped_text(&s.id);
+            let newer = s.text.is_some() && shipped.is_some() && s.base != shipped;
+            let text = s.text.or_else(|| shipped.clone()).unwrap_or_else(|| DEFAULT.into());
+            Style { id: s.id, name: s.name, apps: s.apps, text, shipped, newer }
+        })
+        .collect())
 }
 
-/// `instruction` is the default or the user's own; the length and new-word guards only run for the default.
+/// Replaces the styles. Blank text goes back to the shipped one, and so does text equal to it, so a newer
+/// default still reaches whoever never changed it.
+pub fn save(conn: &Connection, edits: Vec<Edit>) -> Result<Vec<Style>, String> {
+    let was = stored(conn)?;
+    let mut seen = HashSet::new();
+    let mut apps = HashMap::new();
+    let mut out = vec![];
+    for e in edits {
+        if !seen.insert(e.id.clone()) {
+            return Err("Two styles have the same id.".into());
+        }
+        let default = e.id == "default";
+        let (name, edit_apps) = if default { ("Default".to_string(), vec![]) } else { (e.name.trim().chars().take(32).collect::<String>(), e.apps) };
+        for a in &edit_apps {
+            if let Some(other) = apps.insert(a.clone(), name.clone()) {
+                return Err(format!("{a} is already in {other}. An app belongs to one style."));
+            }
+        }
+        let shipped = shipped_text(&e.id);
+        let text = e.text.trim();
+        let kept = was.iter().find(|w| w.id == e.id);
+        let (text, base) = match &shipped {
+            _ if text.is_empty() => (None, None),
+            Some(sh) if text == sh => (None, None),
+            Some(sh) => (Some(text.to_string()), kept.filter(|k| k.text.as_deref() == Some(text)).and_then(|k| k.base.clone()).or(Some(sh.clone()))),
+            None => (Some(text.to_string()), None),
+        };
+        out.push(Stored { id: e.id, name: if name.is_empty() { "Untitled".into() } else { name }, apps: edit_apps, text, base });
+    }
+    if let Some(s) = SHIPPED.iter().find(|s| !seen.contains(s.0)) {
+        return Err(format!("{} can't be deleted.", s.1));
+    }
+    let json = serde_json::to_string(&out).map_err(|e| e.to_string())?;
+    conn.execute("INSERT INTO setting(key, value) VALUES ('cleanup_styles', ?1) ON CONFLICT(key) DO UPDATE SET value = ?1", [json])
+        .map_err(|e| format!("Couldn't save the cleanup styles: {e}"))?;
+    styles(conn)
+}
+
+/// The instruction for a dictation made in `app`: its style's, or Default's. The app's name goes no further.
+pub fn instruction(conn: &Connection, app: Option<&str>) -> Result<String, String> {
+    let all = styles(conn)?;
+    let pick = app.and_then(|a| all.iter().find(|s| s.apps.iter().any(|x| x == a))).or_else(|| all.iter().find(|s| s.id == "default"));
+    Ok(pick.map_or_else(|| DEFAULT.into(), |s| s.text.clone()))
+}
+
+/// The apps installed here, for a style's "Add an app…".
+// shortcut: reads the app folders' names (what macOS calls an app almost always), not each app's Info.plist; read those if a name ever fails to match.
+pub fn installed_apps() -> Vec<String> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let mut names: Vec<String> = ["/Applications", "/Applications/Utilities", "/System/Applications", "/System/Applications/Utilities"]
+        .iter()
+        .map(|d| d.to_string())
+        .chain([format!("{home}/Applications")])
+        .filter_map(|d| std::fs::read_dir(d).ok())
+        .flatten()
+        .filter_map(|e| e.ok()?.path().file_name()?.to_str()?.strip_suffix(".app").map(String::from))
+        .collect();
+    names.sort_by_key(|n| n.to_lowercase());
+    names.dedup();
+    names
+}
+
+/// `instruction` is a shipped style's text or the user's own; the length and new-word guards only run for shipped text.
 pub fn run(backend: Box<dyn Backend>, model: &str, instruction: &str, text: &str, words: &rules::Settings, budget: Duration) -> Outcome {
     let back = |reason, detail, cost| Outcome { text: text.into(), cost, fallback: Some(Fallback { reason, detail }) };
     let (tx, rx) = mpsc::channel();
@@ -113,7 +224,7 @@ pub fn run(backend: Box<dyn Backend>, model: &str, instruction: &str, text: &str
         Err(_) => return back("AI took too long", None, None),
     };
     let cleaned = reply.text.trim().trim_start_matches("<dictated>").trim_end_matches("</dictated>").trim();
-    match guard(text, cleaned, instruction == DEFAULT) {
+    match guard(text, cleaned, SHIPPED.iter().any(|s| shipped_text(s.0).as_deref() == Some(instruction))) {
         Ok(()) => Outcome { text: cleaned.into(), cost: Some(reply.cost), fallback: None },
         Err(reason) => back(reason, Some(format!("it sent: {cleaned}")), Some(reply.cost)),
     }
@@ -173,24 +284,102 @@ mod tests {
         assert_eq!((seen[0].1.as_str(), seen[0].2), ("<dictated>Let's meet on Tuesday at five to talk about the budget.</dictated>", 3));
     }
 
+    fn edit(id: &str, name: &str, apps: &[&str], text: &str) -> Edit {
+        Edit { id: id.into(), name: name.into(), apps: apps.iter().map(|a| a.to_string()).collect(), text: text.into() }
+    }
+    /// What Settings would send back for the styles as they are.
+    fn same(conn: &Connection) -> Vec<Edit> {
+        styles(conn).unwrap().into_iter().map(|s| Edit { id: s.id, name: s.name, apps: s.apps, text: s.text }).collect()
+    }
+
     #[test]
-    fn your_instruction_is_saved_until_blank_or_the_default_and_is_what_the_model_gets() {
+    fn styles_start_as_the_four_shipped_ones_and_the_app_in_front_picks_one() {
         let tmp = tempfile::tempdir().unwrap();
         let conn = crate::storage::open(tmp.path()).unwrap();
-        assert_eq!(load(&conn), Ok(None));
-        save(&conn, "  Make it formal.  ").unwrap();
-        assert_eq!(load(&conn), Ok(Some("Make it formal.".into())));
-        save(&conn, "   ").unwrap();
-        assert_eq!(load(&conn), Ok(None));
-        save(&conn, "Make it formal.").unwrap();
-        save(&conn, DEFAULT).unwrap();
-        assert_eq!(load(&conn), Ok(None));
-        // Its own text goes to the model, and the guards that only suit the default stand down.
+        let all = styles(&conn).unwrap();
+        assert_eq!(all.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["Default", "Code", "Message", "Email"]);
+        assert!(all.iter().all(|s| !s.newer && Some(&s.text) == s.shipped.as_ref()));
+        assert_eq!(instruction(&conn, None), Ok(DEFAULT.into()));
+        assert_eq!(instruction(&conn, Some("Notes")), Ok(DEFAULT.into()));
+        assert!(instruction(&conn, Some("Slack")).unwrap().contains("Keep it casual"));
+        assert!(instruction(&conn, Some("Xcode")).unwrap().contains("Keep code names"));
+    }
+
+    #[test]
+    fn an_edited_style_is_kept_and_blank_or_the_shipped_text_goes_back_to_following_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = crate::storage::open(tmp.path()).unwrap();
+        let mut e = same(&conn);
+        e[2].text = "  Make it formal.  ".into();
+        e[2].apps.push("Notes".into());
+        e[2].apps.retain(|a| a != "Slack");
+        e.push(edit("mine", "Mine", &["Slack"], "Shout."));
+        let all = save(&conn, e).unwrap();
+        assert_eq!(all[2].text, "Make it formal.");
+        assert!(!all[2].newer);
+        assert_eq!(instruction(&conn, Some("Notes")), Ok("Make it formal.".into()));
+        assert_eq!(instruction(&conn, Some("Slack")), Ok("Shout.".into()));
+        // Blank, or the shipped text typed back, follows the shipped one again.
+        let mut e = same(&conn);
+        e[2].text = " ".into();
+        assert_eq!(save(&conn, e).unwrap()[2].text, shipped_text("message").unwrap());
+        let mut e = same(&conn);
+        e[2].text = "Make it formal.".into();
+        save(&conn, e).unwrap();
+        let mut e = same(&conn);
+        e[2].text = shipped_text("message").unwrap();
+        save(&conn, e).unwrap();
+        assert_eq!(stored(&conn).unwrap()[2].text, None);
+    }
+
+    #[test]
+    fn a_style_edited_before_a_newer_shipped_text_says_so_until_it_is_reset() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = crate::storage::open(tmp.path()).unwrap();
+        let mut e = same(&conn);
+        e[1].text = "Mine.".into();
+        save(&conn, e).unwrap();
+        assert!(!styles(&conn).unwrap()[1].newer);
+        // Myna ships a new Code text: the edit stays, with a note.
+        let mut s = stored(&conn).unwrap();
+        s[1].base = Some("an older shipped text".into());
+        conn.execute("UPDATE setting SET value = ?1 WHERE key = 'cleanup_styles'", [serde_json::to_string(&s).unwrap()]).unwrap();
+        let code = styles(&conn).unwrap()[1].clone();
+        assert!((code.text.as_str(), code.newer) == ("Mine.", true));
+        // Saving it unchanged keeps the note; using the new default clears it.
+        assert!(save(&conn, same(&conn)).unwrap()[1].newer);
+        let mut e = same(&conn);
+        e[1].text = code.shipped.unwrap();
+        assert!(!save(&conn, e).unwrap()[1].newer);
+    }
+
+    #[test]
+    fn styles_refuse_an_app_in_two_places_and_a_shipped_style_going_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = crate::storage::open(tmp.path()).unwrap();
+        let mut e = same(&conn);
+        e.push(edit("mine", "Mine", &["Mail"], "x"));
+        assert_eq!(save(&conn, e).err().as_deref(), Some("Mail is already in Email. An app belongs to one style."));
+        let mut e = same(&conn);
+        e.pop();
+        assert_eq!(save(&conn, e).err().as_deref(), Some("Email can't be deleted."));
+        // Default takes no apps and keeps its name.
+        let mut e = same(&conn);
+        e[0].apps = vec!["Notes".into()];
+        e[0].name = "Other".into();
+        let all = save(&conn, e).unwrap();
+        assert_eq!((all[0].name.as_str(), all[0].apps.len()), ("Default", 0));
+    }
+
+    #[test]
+    fn the_guards_stand_down_for_your_own_text() {
         let b = fake(Ok("Let's meet on Tuesday at 5 to talk about the budget and the hiring plan and then go for lunch together with the whole team."));
         let seen = b.seen.clone();
         let o = run(b, "m", "Make it formal.", TEXT, &settings(&[]), BUDGET);
         assert!(o.fallback.is_none());
         assert!(seen.lock().unwrap()[0].0.as_deref().unwrap().starts_with("Make it formal."));
+        let code = shipped_text("code").unwrap();
+        assert_eq!(run(fake(Ok("Let's meet.")), "m", &code, TEXT, &settings(&[]), BUDGET).fallback.unwrap().reason, "AI changed too much");
     }
 
     #[test]

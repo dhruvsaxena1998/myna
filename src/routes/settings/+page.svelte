@@ -13,7 +13,7 @@
   import PillLook from "$lib/PillLook.svelte";
   import Words from "$lib/Words.svelte";
   import VoiceShortcut from "$lib/VoiceShortcut.svelte";
-  import CleanupPrompt from "$lib/CleanupPrompt.svelte";
+  import CleanupStyles from "$lib/CleanupStyles.svelte";
 
   // Every page is listed from day one; unbuilt ones say what will live there.
   // Same pages and names as the prototype (docs/index.html, SET_PAGES).
@@ -98,13 +98,16 @@
         {:else}
           <VoiceShortcut bind:voice globe={data.globe} {ai} setup={() => show("ai")} />
           {#if voice.on}
-            {#if data.cleanup?.ok}<CleanupPrompt initial={data.cleanup.cleanup} />
-            {:else}<ErrorState title="Myna couldn't read the cleanup instructions" message={data.cleanup?.error ?? ""} />{/if}
             {#if data.look?.ok}<PillLook initial={data.look.look} listening={{ state: "listening", hold: voice.mode === "hold", key: voice.key }} />
             {:else}<ErrorState title="Myna couldn't read the pill's look" message={data.look?.error ?? ""} />{/if}
             <PasteMethod bind:voice />
             {#if data.rules?.ok}<Words initial={data.rules.rules} />
             {:else}<ErrorState title="Myna couldn't read your words" message={data.rules?.error ?? ""} />{/if}
+            <!-- Styles only matter once there's a Fast model to run them. -->
+            {#if ai?.fast && !ai.fast.gone}
+              {#if data.cleanup?.ok}<CleanupStyles initial={data.cleanup.cleanup} />
+              {:else}<ErrorState title="Myna couldn't read the cleanup styles" message={data.cleanup?.error ?? ""} />{/if}
+            {/if}
             <Permissions initial={data.perms} />
           {/if}
         {/if}
