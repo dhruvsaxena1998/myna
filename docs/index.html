@@ -1347,7 +1347,7 @@ function settingsPage() {
         srow('How it starts', x.mode === 'hold' ? 'Hold the key while you talk. Let go to add your words.' : 'Press once to start and again to stop.', segc('mode', [['hold','Hold to talk'],['toggle','Tap to start and stop']], 'How it starts'))
       ]) + sgroup('Pill', [
         srow('Style', 'How the pill looks while you talk. Settings shows a preview of it.', sel('pillStyle', [['capsule','Capsule'],['orb','Orb'],['wave','Waveform'],['card','Card']], 'Pill style')),
-        srow('Position', 'Where it shows, on the screen you’re typing on.', sel('pillPlace', [['bottom','Bottom centre'],['top','Top centre'],['bottom-right','Bottom right'],['top-right','Top right'],['caret','Under the text cursor']], 'Pill position'))
+        srow('Position', 'Where it shows, on the screen you’re typing on.', sel('pillPlace', [['bottom','Bottom centre'],['top','Top centre'],['bottom-right','Bottom right'],['top-right','Top right']], 'Pill position'))
       ]) + sgroup('Adding your words', [
         srow('How words are added', x.paste === 'clipboard' ? 'Fastest. Myna puts back whatever you had copied afterwards.' : 'Types each letter. Slower, but works in apps that block pasting.', segc('paste', [['clipboard','Paste'],['type','Type']], 'How words are added'))
       ]) + sgroup('Your words', [
