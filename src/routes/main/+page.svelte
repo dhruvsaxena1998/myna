@@ -8,12 +8,17 @@
   import History from "$lib/History.svelte";
   import Traces from "$lib/Traces.svelte";
   import { glassOn, syncGlass, type Look } from "$lib/look";
-  import type { Row } from "$lib/trace";
+  import type { Row, Trace } from "$lib/trace";
+  import type { Rules } from "$lib/Words.svelte";
 
   // svelte-ignore state_referenced_locally
   let look = $state<Look | null>(data.appearance.ok ? data.appearance.look : null);
   // svelte-ignore state_referenced_locally
   let rows = $state<Row[]>(data.traces?.ok ? data.traces.rows : []);
+  // svelte-ignore state_referenced_locally
+  let all = $state<Trace[]>(data.all?.ok ? data.all.traces : []);
+  // svelte-ignore state_referenced_locally
+  let words = $state(data.words);
   let current = $state<"history" | "nerds">("history");
   // Stats for nerds is experimental: its entry shows only while it and Experimental features are on.
   const nerds = $derived(!!look?.experimental && look.nerds);
@@ -34,7 +39,10 @@
   // The window stays loaded while hidden: coming back to it picks up dictations made since.
   $effect(() => {
     const off = getCurrentWindow().onFocusChanged(({ payload }) => {
-      if (payload && data.traces?.ok) invoke<Row[]>("traces_list").then((r) => (rows = r), () => {});
+      if (!payload) return;
+      if (data.traces?.ok) invoke<Row[]>("traces_list").then((r) => (rows = r), () => {});
+      if (data.all?.ok) invoke<Trace[]>("traces_all").then((r) => (all = r), () => {});
+      invoke<Rules>("rules_get").then((r) => (words = r.settings.words), () => {});
     });
     return () => void off.then((f) => f());
   });
@@ -73,12 +81,12 @@
     {#if !data.storage.ok}
       <header data-tauri-drag-region><h1>Myna</h1></header>
       <div class="content"><ErrorState title="Myna couldn't open its data folder" message={data.storage.error} /></div>
-    {:else if !data.traces?.ok}
+    {:else if !data.traces?.ok || (view === "nerds" && !data.all?.ok)}
+      {@const failed = !data.traces?.ok ? data.traces : data.all}
       <header data-tauri-drag-region><h1>{view === "nerds" ? "Stats for nerds" : "Voice typing history"}</h1></header>
-      <div class="content"><ErrorState title="Myna couldn't read your dictations" message={data.traces?.ok === false ? data.traces.error : ""} /></div>
+      <div class="content"><ErrorState title="Myna couldn't read your dictations" message={failed?.ok === false ? failed.error : ""} /></div>
     {:else if view === "nerds"}
-      <header data-tauri-drag-region><h1>Stats for nerds</h1></header>
-      <div class="content"><Traces initial={rows} /></div>
+      <Traces bind:traces={all} {words} />
     {:else}
       <History bind:rows {said} />
     {/if}

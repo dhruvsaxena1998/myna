@@ -28,6 +28,7 @@ export async function fakeTauri(page: Page, handlers: string) {
         if (cmd === "rules_get" && !(cmd in h)) return { settings: { language: "en", tidy: true, words: [] }, languages: [["en", "English"], ["de", "German"]] };
         if (cmd === "rules_set" && !(cmd in h)) return;
         if (cmd === "traces_list" && !(cmd in h)) return [];
+        if (cmd === "traces_all" && !(cmd in h)) return [];
         if (cmd === "updates_get" && !(cmd in h)) return { mode: "auto", channel: "beta" };
         if (cmd === "update_state" && !(cmd in h)) return { state: "idle" };
         if (!(cmd in h)) throw `no fake for ${cmd}`;

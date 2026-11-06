@@ -1,22 +1,35 @@
-<!-- Stats for nerds (experimental): the stored dictation traces, newest first, and one opened:
-     where the time went, and what the rules step changed. -->
+<!-- Stats for nerds (experimental): the Overview over the stored dictation traces, the dictations, newest first,
+     and one opened: where the time went, and what the rules step changed. -->
+<script module lang="ts">
+  import type { Pick, Period } from "./stats";
+  // Period, filters and the picked row last as long as the window is open. They aren't saved.
+  const f = $state({ period: "7" as Period, model: "all", app: "all", pick: null as Pick });
+</script>
+
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import type { Rules } from "./Words.svelte";
-  import { dur, KIND_ONE, KINDS, OUTCOME, outermost, title, when, type Edit, type Row, type Trace } from "./trace";
+  import Overview from "./Overview.svelte";
+  import { edits as editsOf, overview, picks, PERIODS } from "./stats";
+  import type { Rules, Word } from "./Words.svelte";
+  import { dur, KIND_ONE, KINDS, OUTCOME, outermost, title, when, type Edit, type Trace } from "./trace";
 
-  let { initial }: { initial: Row[] } = $props();
-  // svelte-ignore state_referenced_locally
-  let rows = $state(initial);
+  let { traces = $bindable(), words }: { traces: Trace[]; words: Word[] } = $props();
   let open = $state<{ t: Trace; rules: Rules } | null>(null);
   let error = $state("");
   let off = $state<Record<string, boolean>>({});
   let tip = $state<{ e: Edit; raw: string; x: number; y: number } | null>(null);
 
-  // The window stays open on a stale list: a dictation since it opened shows up here.
+  // The window stays open on stale traces: a dictation since it opened shows up here.
   $effect(() => {
-    invoke<Row[]>("traces_list").then((r) => (rows = r), () => {});
+    invoke<Trace[]>("traces_all").then((r) => (traces = r), () => {});
   });
+
+  const ov = $derived(overview(traces, { ...f, now: Date.now(), words }));
+  const list = $derived(ov.traces.filter((t) => picks(t, f.pick)));
+  const models = $derived([...new Set(traces.map((t) => t.model ?? ""))]);
+  const apps = $derived([...new Set(traces.map((t) => t.app ?? ""))].sort((a, b) => a.localeCompare(b)));
+  const onpick = (p: NonNullable<Pick>) => (f.pick = f.pick?.kind === p.kind && f.pick.v === p.v ? null : p);
+  const picked = $derived(f.pick?.kind === "rule" ? KINDS[f.pick.v as keyof typeof KINDS] : f.pick?.v);
 
   async function show(id: number) {
     error = "";
@@ -79,6 +92,27 @@
   }
 </script>
 
+<header data-tauri-drag-region>
+  <h1>Stats for nerds</h1>
+  {#if !open}
+    <span class="grow" data-tauri-drag-region></span>
+    <fieldset class="seg" aria-label="Period">
+      {#each PERIODS as [v, label]}
+        <label><input type="radio" name="period" value={v} bind:group={f.period} /><span data-l={label}>{label}</span></label>
+      {/each}
+    </fieldset>
+    <select class="select" aria-label="Model" bind:value={f.model}>
+      <option value="all">All models</option>
+      {#each models as m}<option value={m}>{m}</option>{/each}
+    </select>
+    <select class="select" aria-label="App" bind:value={f.app}>
+      <option value="all">All apps</option>
+      {#each apps as a}<option value={a}>{a}</option>{/each}
+    </select>
+  {/if}
+</header>
+
+<div class="content">
 {#if open}
   {@const t = open.t}
   <div class="top">
@@ -136,36 +170,78 @@
     </div>
   {/if}
 {:else}
-  <ul class="list" aria-label="Dictations">
-    {#each rows as r (r.id)}
-      <li>
-        <button class="row" onclick={() => show(r.id)}>
-          <span class="t"><span class="name">{title(r.heard)}</span><span class="meta">{[r.app, when(r.started)].filter(Boolean).join(" · ")}</span></span>
-          <span class="badge" class:bad={bad(r.outcome)}>{OUTCOME[r.outcome] ?? r.outcome}</span>
-        </button>
-      </li>
-    {:else}
-      <li class="empty">No dictations yet. Each one you make with voice typing shows up here.</li>
-    {/each}
-  </ul>
-  <p class="err" role="status">{error}</p>
+  <div class="overview">
+    <Overview {ov} pick={f.pick} {onpick} />
+    <section aria-labelledby="list-h">
+      <div class="lhead">
+        <h2 id="list-h">Dictations <span class="n">{list.length}</span></h2>
+        <span class="chipslot">{#if f.pick}<span class="only">Only {picked}<button aria-label="Show all dictations" onclick={() => (f.pick = null)}>×</button></span>{/if}</span>
+      </div>
+      {#if list.length}
+        <ul class="list" aria-label="Dictations">
+          {#each list as t (t.id)}
+            {@const n = editsOf(t).length}
+            <li>
+              <button class="row" onclick={() => show(t.id)}>
+                <span class="t"><span class="name">{title(t.steps.find((s) => s.kind === "speech-to-text")?.text ?? null)}</span><span class="meta">{[t.app, when(t.started), t.mode === "hold" ? "Hold" : "Tap"].join(" · ")}</span></span>
+                <span class="nums">{t.outcome === "pasted" ? `${dur(t.paste_ms ?? 0)} · ${n} edit${n === 1 ? "" : "s"}` : ""}</span>
+                <span class="badge" class:bad={bad(t.outcome)}>{OUTCOME[t.outcome] ?? t.outcome}</span>
+              </button>
+            </li>
+          {/each}
+        </ul>
+      {:else if !traces.length}
+        <div class="empty"><h3>No dictations yet</h3><p>Hold your voice typing key in any app and talk. Each dictation’s numbers show up here.</p></div>
+      {:else}
+        <div class="empty"><h3>No dictations in this period</h3><p>Pick a longer period to see older dictations.</p>
+          {#if f.period !== "all"}<button class="btn" onclick={() => (f.period = "all")}>Show all</button>{/if}</div>
+      {/if}
+    </section>
+    <p class="err" role="status">{error}</p>
+  </div>
 {/if}
+</div>
 
 <style>
-  /* Rule colours: the tokens have no categorical set yet, so these live here, light and dark. */
-  .head, .card, .tip { --k-filler: light-dark(#2B6CD8, #6AA8FF); --k-repeat: light-dark(#C26A00, #FFB04A); --k-cutoff: light-dark(#8A47C2, #C99BFF);
-    --k-number: light-dark(#0E8A7A, #4FD1BE); --k-word: light-dark(#C2306B, #FF7AA8);
-    --t-load: light-dark(#C77700, #E0A030); --t-stt: light-dark(#0A64D8, #3D8BFF); --t-rules: light-dark(#5E9BEA, #7FB0FF); --t-paste: light-dark(#A9C8F3, #3A5F96); }
+  .grow { flex: 1; align-self: stretch; }
+  /* Toolbar controls: 30px and centred with the title. The segmented control is a capsule track with a raised thumb. */
+  .seg { display: inline-flex; gap: 2px; margin: 0; padding: 2px; border: 0; border-radius: var(--r-full); background: var(--fill-field); }
+  .seg label { position: relative; }
+  .seg input { position: absolute; inset: 0; margin: 0; opacity: 0; }
+  .seg span { display: grid; align-content: center; justify-items: center; height: 26px; padding: 0 12px; border-radius: var(--r-full); color: var(--text-2); white-space: nowrap; }
+  /* Room for the bold label, so choosing never widens the control. */
+  .seg span::after { content: attr(data-l); height: 0; overflow: hidden; visibility: hidden; font-weight: var(--fw-medium); }
+  .seg input:checked + span { background: var(--fill-control-on); color: var(--text); font-weight: var(--fw-medium); box-shadow: 0 0 0 .5px var(--line-strong), 0 1px 2px rgba(0, 0, 0, .1); }
+  .seg input:focus-visible + span { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+  .select { height: var(--h-ctl); max-width: 200px; padding: 0 var(--sp-2); border: 0; border-radius: var(--r-md); background: var(--fill-control); color: var(--text); font: inherit;
+    box-shadow: inset 0 0 0 .5px var(--line-strong), var(--shadow-control); }
+  .select:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+  .overview { display: grid; gap: var(--sp-3); align-content: start; max-width: 1000px; margin: 0 auto; }
+  .lhead { display: flex; align-items: center; gap: var(--sp-3); height: 32px; margin: var(--sp-3) 0 var(--sp-1); }
+  .lhead h2 { margin: 0; }
+  .n { font-weight: var(--fw-regular); color: var(--text-3); font-variant-numeric: tabular-nums; margin-left: 4px; }
+  /* The chip's space is always kept, so picking a row never moves the list. */
+  .chipslot { min-height: 24px; display: inline-flex; }
+  .only { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 3px 0 10px; border-radius: var(--r-full); background: var(--accent-soft); color: var(--accent-text); font-size: var(--fs-footnote); font-weight: var(--fw-medium); }
+  .only button { display: grid; place-items: center; width: 18px; height: 18px; border: 0; border-radius: 50%; background: none; color: inherit; font: inherit; font-size: 14px; line-height: 1; padding: 0; }
+  .only button:hover { background: var(--accent-soft-strong); }
+  .only button:focus-visible, .btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+  .nums { color: var(--text-2); font-size: var(--fs-footnote); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .empty { padding: var(--sp-6) var(--sp-4); text-align: center; border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); }
+  .empty h3 { margin: 0 0 var(--sp-1); font-size: var(--fs-title3); line-height: var(--lh-title3); font-weight: var(--fw-semibold); }
+  .empty p { margin: 0; color: var(--text-2); }
+  .empty .btn { margin-top: var(--sp-3); }
+  .btn { display: inline-flex; align-items: center; height: var(--h-ctl); padding: 0 14px; border: 0; border-radius: var(--r-full); background: var(--fill-control); color: var(--text); font: inherit;
+    box-shadow: inset 0 0 0 .5px var(--line-strong), var(--shadow-control); }
   [data-k="filler"] { --kc: var(--k-filler); } [data-k="repeat"] { --kc: var(--k-repeat); } [data-k="cutoff"] { --kc: var(--k-cutoff); }
   [data-k="number"] { --kc: var(--k-number); } [data-k="word"] { --kc: var(--k-word); }
   .meta { color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); font-weight: var(--fw-regular, 400); }
   .list { list-style: none; margin: 0; padding: 0; border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); }
   .list li + li { box-shadow: 0 -.5px 0 var(--line); }
-  .row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-3); align-items: center; width: 100%; padding: var(--sp-3) var(--sp-4); border: 0; background: none; color: inherit; font: inherit; text-align: left; border-radius: var(--r-xl); }
+  .row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: var(--sp-3); align-items: center; width: 100%; padding: var(--sp-3) var(--sp-4); border: 0; background: none; color: inherit; font: inherit; text-align: left; border-radius: var(--r-xl); }
   .row:hover { background: var(--fill-hover); }
   .row:focus-visible, .back:focus-visible, .chip:focus-visible, .e:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   .t { display: grid; min-width: 0; } .name { font-weight: var(--fw-semibold); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .empty { padding: var(--sp-4); color: var(--text-2); }
   .badge { font-size: var(--fs-caption); border-radius: var(--r-full); padding: 0 8px; height: 20px; display: inline-flex; align-items: center; background: var(--fill-hover); color: var(--text-2); font-weight: 500; white-space: nowrap; }
   .badge.bad { background: var(--caution-soft); color: var(--caution-text); }
   .top { margin-bottom: var(--sp-2); }

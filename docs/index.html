@@ -652,6 +652,87 @@ body { letter-spacing: -.005em; text-rendering: optimizeLegibility; }
 .mrow .sugg { grid-column: 1 / -1; display: flex; width: auto; margin-top: 0; padding: 6px 6px 6px 12px; }
 .attrib { color: var(--text-3); }
 .wfoot { display: none; }
+/* Stats for nerds (#74). Outcome colours are fixed, not the accent: a red accent would read as "failed". Validated with dataviz validate_palette (the grey is a deliberate neutral). */
+:root { --o-pasted:#0A64D8; --o-none:#8A8A92; --o-failed:#B3261E; --t-load:#C77700; --t-stt:#0A64D8; --t-rules:#5E9BEA; --t-paste:#A9C8F3;
+  --k-filler:#2B6CD8; --k-repeat:#C26A00; --k-cutoff:#8A47C2; --k-number:#0E8A7A; --k-word:#C2306B; }
+:root[data-theme="dark"] { --o-pasted:#3D8BFF; --o-none:#8E8E96; --o-failed:#E0443C; --t-load:#E0A030; --t-stt:#3D8BFF; --t-rules:#7FB0FF; --t-paste:#3A5F96;
+  --k-filler:#6AA8FF; --k-repeat:#FFB04A; --k-cutoff:#C99BFF; --k-number:#4FD1BE; --k-word:#FF7AA8; }
+@media (prefers-color-scheme: dark) { :root[data-theme="auto"] { --o-pasted:#3D8BFF; --o-none:#8E8E96; --o-failed:#E0443C; --t-load:#E0A030; --t-stt:#3D8BFF; --t-rules:#7FB0FF; --t-paste:#3A5F96;
+  --k-filler:#6AA8FF; --k-repeat:#FFB04A; --k-cutoff:#C99BFF; --k-number:#4FD1BE; --k-word:#FF7AA8; } }
+/* Toolbar segmented control: centred and 30px, the same as the dropdowns beside it. */
+.toolbar .seg { align-self: center; padding: 2px; }
+.toolbar .seg span { height: 26px; }
+.nerds { padding: 0 var(--s4) var(--s7); display: grid; gap: var(--s3); align-content: start; }
+.nerds > * { width: 100%; max-width: 1000px; margin: 0 auto; }
+.nd-proto { display: flex; align-items: center; gap: var(--s2); padding: 6px 10px; border: 1px dashed var(--line-strong); border-radius: var(--r-ctl); color: var(--text-3); font-size: var(--fs-s); }
+.nd-overview { display: grid; gap: var(--s3); transition: opacity var(--dur) var(--ease-out); }
+.nd-busy { opacity: .45; pointer-events: none; }
+.nd-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s3); }
+@media (max-width: 900px) { .nd-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.nd-tile, .nd-card { background: var(--inset); border-radius: 14px; box-shadow: inset 0 0 0 .5px var(--line); padding: var(--s3) var(--s4); }
+.nd-tile { display: grid; grid-template-rows: 16px 32px 46px; gap: 2px; }
+.nd-label, .nd-sub { color: var(--text-3); font-size: var(--fs-s); line-height: 16px; }
+.nd-sub { display: block; }
+.nd-sub .nd-thin { margin: 4px 0 6px; }
+.nd-big { font-size: 24px; line-height: 32px; font-weight: 600; }
+.nd-split { display: block; font-variant-numeric: tabular-nums; }
+.nd-gap { color: var(--text-3); cursor: help; }
+.nd-thin { display: flex; gap: 2px; height: 8px; border-radius: 4px; overflow: hidden; background: var(--hover); min-width: 60px; }
+.nd-thin i { display: block; height: 100%; }
+.nd-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--s1) var(--s4); justify-content: space-between; margin-bottom: var(--s2); }
+.nd-head h3, .nd-lhead h3 { font-size: 15px; line-height: 20px; font-weight: 600; margin: 0; }
+.nd-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: var(--fs-s); color: var(--text-2); }
+.nd-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.nd-legend span::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--c); }
+.nd-chart { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: var(--s2); height: 132px; }
+.nd-y { display: flex; flex-direction: column; justify-content: space-between; text-align: right; font-size: var(--fs-xs); color: var(--text-3); font-variant-numeric: tabular-nums; margin: -7px 0; }
+.nd-plot { position: relative; display: flex; align-items: flex-end; gap: 2px; border-bottom: 1px solid var(--line-strong);
+  background: linear-gradient(var(--line) 1px, transparent 1px) 0 0 / 100% 50%; }
+.nd-col { position: relative; flex: 1; height: 100%; display: flex; align-items: flex-end; justify-content: center; outline: 0; }
+.nd-col:hover, .nd-col:focus-visible { background: var(--hover); border-radius: 4px 4px 0 0; }
+.nd-col:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+.nd-stack { width: 100%; max-width: 24px; display: flex; flex-direction: column; gap: 2px; border-radius: 4px 4px 0 0; overflow: hidden; }
+.nd-stack i { display: block; min-height: 2px; }
+.nd-ctip { display: none; position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); z-index: 5; white-space: nowrap; background: var(--raised); box-shadow: var(--menu-shadow); border-radius: 8px; padding: 6px 9px; font-size: var(--fs-s); line-height: 16px; font-variant-numeric: tabular-nums; pointer-events: none; }
+.nd-col:hover .nd-ctip, .nd-col:focus-visible .nd-ctip { display: block; }
+.nd-col:first-child .nd-ctip { left: 0; transform: none; } .nd-col:last-child .nd-ctip { left: auto; right: 0; transform: none; }
+.nd-none { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; color: var(--text-3); font-size: var(--fs-s); }
+.nd-x { display: flex; justify-content: space-between; margin: 4px 0 0 32px; font-size: var(--fs-xs); color: var(--text-3); }
+.nd-tcard { padding-bottom: var(--s2); }
+.nd-table { width: 100%; border-collapse: collapse; font-size: var(--fs-ui); }
+.nd-table th, .nd-table td { height: 32px; padding: 0 var(--s2); text-align: left; font-weight: 400; white-space: nowrap; border-top: .5px solid var(--line); }
+.nd-table thead th { height: 24px; border-top: 0; color: var(--text-3); font-size: var(--fs-s); }
+.nd-table thead th[title] { cursor: help; text-decoration: underline dotted var(--line-strong); text-underline-offset: 3px; }
+.nd-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.nd-table td.num:last-child .nd-thin { margin-left: auto; width: 120px; }
+.nd-table tbody tr[data-act] { cursor: pointer; }
+.nd-table tbody tr[data-act]:hover { background: var(--hover); }
+.nd-table tbody tr[data-act]:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.nd-table tbody tr[aria-selected="true"] { background: var(--accent-soft); }
+.nd-table tbody tr[aria-selected="true"] th { font-weight: 600; }
+.nd-table tbody th { font-weight: 500; overflow: hidden; text-overflow: ellipsis; max-width: 240px; }
+.nd-other th { color: var(--text-2); }
+.nd-empty-row { color: var(--text-3); text-align: center !important; }
+.nd-mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }
+.nd-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; background: var(--kc); vertical-align: 1px; }
+[data-k="filler"] { --kc: var(--k-filler); } [data-k="repeat"] { --kc: var(--k-repeat); } [data-k="cutoff"] { --kc: var(--k-cutoff); } [data-k="number"] { --kc: var(--k-number); } [data-k="word"] { --kc: var(--k-word); }
+.nd-under { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: var(--s5); border-top: .5px solid var(--line); padding: var(--s3) var(--s2) var(--s2); }
+.nd-under h4 { font-size: var(--fs-s); font-weight: 600; color: var(--text-2); margin: 0 0 var(--s1); }
+.nd-under .nd-never { margin-top: var(--s3); }
+.nd-kv { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; font-size: var(--fs-s); }
+.nd-kv li { display: flex; justify-content: space-between; gap: var(--s3); }
+.nd-kv b { font-weight: 400; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.nd-lhead { display: flex; align-items: center; gap: var(--s3); height: 32px; margin: var(--s3) 0 var(--s1); }
+.nd-n { font-weight: 400; font-variant-numeric: tabular-nums; margin-left: 4px; }
+.nd-chipslot { min-height: 24px; display: inline-flex; }
+.nd-chip { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 4px 0 10px; border-radius: 12px; background: var(--accent-soft); color: var(--accent-text); font-size: var(--fs-s); font-weight: 500; }
+.nd-chip button { display: grid; place-items: center; width: 18px; height: 18px; border: 0; border-radius: 50%; background: none; color: inherit; cursor: pointer; padding: 0; }
+.nd-chip button:hover { background: var(--accent-soft-strong); }
+.nd-rows { list-style: none; margin: 0; padding: 0; }
+.nd-row { display: flex; align-items: center; gap: var(--s3); min-height: 52px; padding: 0 var(--s2); border-bottom: .5px solid var(--line); }
+.nd-row:last-child { border-bottom: 0; }
+.nd-t { font-weight: 500; }
+.nd-nums { color: var(--text-2); font-size: var(--fs-s); font-variant-numeric: tabular-nums; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -684,6 +765,7 @@ body { letter-spacing: -.005em; text-rendering: optimizeLegibility; }
   <symbol id="i-minimize" viewBox="0 0 24 24"><path d="M6 12h12"/></symbol>
   <symbol id="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/></symbol>
   <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5.5A1.5 1.5 0 0 0 14.5 4h-9A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16H8"/></symbol>
+  <symbol id="i-bars" viewBox="0 0 24 24"><path d="M5 20V11M12 20V5M19 20v-6"/></symbol>
   <symbol id="i-clip" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="16" rx="2"/><path d="M9 5V3.5h6V5M9 11h6M9 15h4"/></symbol>
   <symbol id="i-more" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="18" cy="12" r="1.4" fill="currentColor"/></symbol>
 </svg>
@@ -836,7 +918,8 @@ S.set = { modules:S.modules, hotkey:'fn', mode:'hold', paste:'clipboard', pillSt
   capture:'shots', interval:'15', apps:{ meet:false, teams:false, zoom:false, slack:false }, ext:false, retention:'30', folder:true, dataPath:'~/Library/Application Support/Myna', dataMoved:false,
   meetKey:'ctrl-opt-m', appearance:'auto', accent:'blue', glass:'clear', liquid:false, expOn:false, detect:true,
   diar:'who', decision:'fast', decKey:'', updMode:'auto', channel:'beta',
-  exp:{ diarOn:false, uhmD:false, uhmM:false, llmD:false, llmM:false, triage:false, relevance:false, shotsAI:false } };
+  exp:{ diarOn:false, uhmD:false, uhmM:false, llmD:false, llmM:false, triage:false, relevance:false, shotsAI:false, nerds:false },
+  nerds:{ period:'7', model:'all', app:'all', sample:'full', pick:null } };
 S.mb = { open:false };
 const UPD_CUR = '0.0.1-beta.2', UPD_NEXT = '0.0.2-beta.1';
 // state: idle | checking | available | downloading | downloaded | restarting | error | uptodate
@@ -1027,7 +1110,7 @@ function obDone() {
 /* ---------- app ---------- */
 function app() {
   const v = S.view;
-  const main = v === 'detail' ? detail() : v === 'chat' ? appChat() : v === 'clips' ? clipsView() : v === 'settings' ? settings() : meetingsList();
+  const main = v === 'detail' ? detail() : v === 'chat' ? appChat() : v === 'clips' ? clipsView() : v === 'nerds' ? nerdsView() : v === 'settings' ? settings() : meetingsList();
   return `<div class="win"><div class="titlebar"><div class="lights" aria-hidden="true"><i></i><i></i><i></i></div><div class="wt">Myna</div></div>
     <div class="app ${S.drawer ? 'drawer' : ''}">${sidebar()}<button class="scrim" data-act="drawer" aria-label="Close sidebar" tabindex="-1"></button><main class="main">${main}</main></div></div>`;
 }
@@ -1047,6 +1130,7 @@ function sidebar() {
     ${nav('filter','data-type="all"', icon('list'), 'All meetings', MEETINGS.length, inList && f.type === 'all')}
     ${nav('go-chat','', icon('chat'), 'Chat', null, S.view === 'chat')}
     ${nav('go-clips','', icon('clip'), 'Voice typing history', S.clips.length, S.view === 'clips')}
+    ${S.set.expOn && S.set.exp.nerds ? nav('go-nerds','', icon('bars'), 'Stats for nerds', null, S.view === 'nerds') : ''}
     <h2>Folders</h2>
     ${S.folders.map(name => item('folder', name, nav('filter', `data-type="folder" data-v="${esc(name)}"`, icon(fIcon(name)), name, MEETINGS.filter(m => m.folder === name).length, inList && f.type === 'folder' && f.v === name))).join('')}
     ${S.addingFolder ? `<form class="newfolder" data-form="folder"><label class="sr-only" for="nf">Folder name</label><input class="input" id="nf" maxlength="32" placeholder="Folder name" required></form>`
@@ -1115,6 +1199,170 @@ function clipsView() {
             <span class="help">${esc(c.src)} · ${esc(c.t)}${c.text.length > 140 ? ` · <button class="link" data-act="clip-more" data-id="${c.id}" aria-expanded="${!!S.clipOpen[c.id]}">${S.clipOpen[c.id] ? 'Show less' : 'Show more'}</button>` : ''}</span></div>
           <div class="clip-acts od-row od-fixed" style="--od-gap:2px">${c.raw && c.raw !== c.text ? `<button class="btn icon plain" data-act="clip-raw" data-id="${c.id}" aria-label="Copy what I said" title="Copy what I said">${icon('mic','ic-s')}</button>` : ''}<button class="btn icon plain" data-act="clip-copy" data-id="${c.id}" aria-label="Copy again" title="Copy again">${icon('copy','ic-s')}</button><button class="btn icon plain" data-act="clip-del" data-id="${c.id}" aria-label="Delete" title="Delete">${icon('x','ic-s')}</button></div></li>`).join('')}</ul>`
         : `<div class="empty"><h2>${q ? 'No matches' : 'Nothing here yet'}</h2><p>${q ? 'Try another word, or check the spelling.' : 'Hold your voice typing key in any app and talk. What you say shows up here too.'}</p>${q ? `<button class="btn" data-act="clipq-clear">Clear search</button>` : ''}</div>`}
+    </div>`;
+}
+
+/* ---------- Stats for nerds (#74): Overview above the dictation list. Numbers and rules from #73. ---------- */
+// shortcut: seeded synthetic traces pinned to the prototype's "today" (Wed 29 Oct); the app reads traces_list.
+const NERD_TODAY = new Date(2025, 9, 29);
+const NERD_RULES = [['filler','Filler words'],['repeat','Repeats'],['cutoff','Cut-off words'],['number','Numbers'],['word','Words to remember']];
+const NERD_MODELS = ['parakeet-tdt-0.6b-v3', 'whisper-large-v3-turbo', 'whisper-small (removed)'];
+const NERD_APPS = ['Slack','Mail','Linear','Notes','Safari','Code','Messages','Notion','Terminal','Figma','Unknown app'];
+const NERD_WORDS = [['Myna', null], ['Parakeet', null], ['Desert Ant', null], ['Dhruv', 'Drove'], ['Kubernetes', null]];
+const NERD_SAID = ['can we move the design review to Thursday', 'please add retry and checksum checks', 'thanks for the call today as promised', 'note to self ask Priya about the selector', 'monthly billing during the pilot then annual', 'ship it after the staging run is green', 'lunch at one works for me', 'the build failed on the ONNX download again', 'send Dhruv the pilot plan by Friday', 'reply that twenty five seats is fine'];
+const NERD_FILL = ['um','uh','like','you know','so'];
+function nerdTraces() {
+  let s = 74; const r = () => (s = (s * 16807) % 2147483647) / 2147483647, pick = a => a[Math.floor(r() * a.length)];
+  const out = [];
+  for (let d = 44; d >= 0; d--) {
+    const n = Math.floor(r() * (d % 7 === 3 || d % 7 === 4 ? 3 : 11)) + (d === 0 ? 6 : 1);
+    for (let i = 0; i < n; i++) {
+      const model = d > 30 ? NERD_MODELS[2] : r() < .7 ? NERD_MODELS[0] : NERD_MODELS[1], whisper = model !== NERD_MODELS[0];
+      const o = r(), outcome = o < .86 ? 'pasted' : o < .94 ? 'nothing_heard' : o < .98 ? 'failed' : 'not_pasted';
+      const audio = 1500 + r() * 14000, words = outcome === 'nothing_heard' ? 0 : Math.round(audio / 1000 * (2 + r()));
+      const cold = r() < .14, load = cold ? 900 + r() * 2200 : 0, stt = audio / (whisper ? 9 + r() * 6 : 30 + r() * 25), rules = 2 + r() * 6, paste = 40 + r() * 90;
+      const ed = { filler:0, repeat:0, cutoff:0, number:0, word:0 }, fill = {}, wd = [];
+      if (words) {
+        ed.filler = Math.floor(r() * words / 8); for (let k = 0; k < ed.filler; k++) { const f = pick(NERD_FILL); fill[f] = (fill[f] || 0) + 1; }
+        ed.repeat = r() < .2 ? 1 : 0; ed.cutoff = r() < .1 ? 1 : 0; ed.number = r() < .15 ? 1 + Math.floor(r() * 2) : 0;
+        if (r() < .3) { const w = NERD_WORDS[Math.floor(r() * 4)]; const fixed = r() < (w[1] ? .8 : .45); wd.push([w[0], fixed]); if (fixed) ed.word++; }
+      }
+      out.push({ id: out.length, day: d, hour: 8 + Math.floor(r() * 11), min: Math.floor(r() * 60), model, app: r() < .04 ? 'Unknown app' : pick(r() < .6 ? NERD_APPS.slice(0, 4) : NERD_APPS.slice(0, 10)),
+        mode: r() < .75 ? 'hold' : 'tap', outcome, audio, words, cold, load, stt, rules, paste, total: load + stt + rules + paste, ed, fill, wd, said: pick(NERD_SAID) });
+    }
+  }
+  return out.sort((a, b) => a.day - b.day || b.hour - a.hour || b.min - a.min);
+}
+const NERD_ALL = nerdTraces();
+const NERD_PERIODS = [['today','Today'],['7','7 days'],['30','30 days'],['all','All']];
+const nerdQ = (xs, q) => { if (!xs.length) return 0; const a = [...xs].sort((x, y) => x - y); return a[Math.min(a.length - 1, Math.ceil(q * a.length) - 1)]; };
+const nerdMs = n => n >= 1000 ? `${(n / 1000).toFixed(2)} s` : `${Math.round(n)} ms`;
+const nerdPct = (a, b) => `${Math.round(a / b * 100)}%`;
+// Medians, p90s and rates wait for 10 dictations; counts always show (#73).
+const gate = (n, v) => n >= 10 ? v : `<span class="nd-gap" title="${n} dictation${n === 1 ? '' : 's'}, needs 10">—</span>`;
+const edits = t => Object.values(t.ed).reduce((a, b) => a + b, 0);
+const OUTC = [['pasted','Pasted','--o-pasted'],['nothing_heard','Nothing heard','--o-none'],['failed','Failed','--o-failed']];
+const outc = t => t.outcome === 'not_pasted' ? 'failed' : t.outcome;   // the headline split counts "not pasted" as failed
+
+function nerdsData() {
+  const n = S.set.nerds, base = n.sample === 'none' ? [] : n.sample === 'few' ? NERD_ALL.filter(t => t.day === 0).slice(0, 6) : NERD_ALL;
+  const span = n.period === 'today' ? 1 : n.period === 'all' ? Infinity : +n.period;
+  return base.filter(t => t.day < span && (n.model === 'all' || t.model === n.model) && (n.app === 'all' || t.app === n.app));
+}
+function nerdsStats(ts) {
+  const pasted = ts.filter(t => t.outcome === 'pasted'), words = ts.reduce((a, t) => a + t.words, 0);
+  return { n: ts.length, pasted, words, cnt: Object.fromEntries(OUTC.map(([k]) => [k, ts.filter(t => outc(t) === k).length])),
+    med: nerdQ(pasted.map(t => t.total), .5), p90: nerdQ(pasted.map(t => t.total), .9),
+    cold: ts.filter(t => t.cold), edits: ts.reduce((a, t) => a + edits(t), 0) };
+}
+const thinBar = (parts, label) => { const all = parts.reduce((a, p) => a + p[1], 0) || 1;
+  return `<div class="nd-thin" role="img" aria-label="${esc(label)}">${parts.filter(p => p[1] > 0).map(p => `<i style="flex:${p[1] / all};background:var(${p[2]})" title="${esc(p[0])} ${p[3] ?? p[1]}"></i>`).join('')}</div>`; };
+const swatches = items => `<div class="nd-legend">${items.map(([l, c]) => `<span style="--c:var(${c})">${l}</span>`).join('')}</div>`;
+
+function nerdTiles(st) {
+  const tile = (label, value, sub) => `<div class="nd-tile"><span class="nd-label">${label}</span><span class="nd-big">${value}</span><span class="nd-sub">${sub}</span></div>`;
+  const coldMed = nerdQ(st.cold.map(t => t.load), .5);
+  return `<div class="nd-tiles">
+    ${tile('Dictations', st.n.toLocaleString('en'), `${thinBar(OUTC.map(([k, l, c]) => [l, st.cnt[k], c]), OUTC.map(([k, l]) => `${st.cnt[k]} ${l.toLowerCase()}`).join(', '))}
+      <span class="nd-split">${OUTC.map(([k, l]) => `${st.cnt[k]} ${l.toLowerCase()}`).join(' · ')}</span>`)}
+    ${tile('Let go → pasted', gate(st.pasted.length, nerdMs(st.med)), `median<br>p90 ${gate(st.pasted.length, nerdMs(st.p90))}`)}
+    ${tile('Cold starts', gate(st.n, st.n ? nerdPct(st.cold.length, st.n) : '0%'), `waited for the model<br>median wait ${gate(st.cold.length, nerdMs(coldMed))}`)}
+    ${tile('Edits per 100 words', gate(st.n, st.words ? (st.edits / st.words * 100).toFixed(1) : '0'), `${st.words.toLocaleString('en')} words heard, before cleanup`)}
+  </div>`;
+}
+
+function nerdChart(ts) {
+  const p = S.set.nerds.period, hourly = p === 'today';
+  const days = p === 'all' ? Math.max(7, ...ts.map(t => t.day + 1)) : hourly ? 0 : +p;
+  const keys = hourly ? Array.from({ length: 24 }, (_, h) => h) : Array.from({ length: days }, (_, i) => days - 1 - i);
+  const lab = k => { if (hourly) return `${String(k).padStart(2, '0')}:00`; const d = new Date(NERD_TODAY); d.setDate(d.getDate() - k); return k === 0 ? 'Today' : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }); };
+  const b = keys.map(k => { const g = ts.filter(t => hourly ? t.hour === k : t.day === k); return { k, n: g.length, c: Object.fromEntries(OUTC.map(([o]) => [o, g.filter(t => outc(t) === o).length])) }; });
+  const max = Math.max(...b.map(x => x.n), 0), top = max <= 4 ? 4 : Math.ceil(max / 4) * 4;
+  const cols = b.map(x => `<div class="nd-col" tabindex="0" aria-label="${lab(x.k)}: ${x.n} dictations${x.n ? ', ' + OUTC.map(([o, l]) => `${x.c[o]} ${l.toLowerCase()}`).join(', ') : ''}">
+      <div class="nd-stack" style="height:${x.n / top * 100}%">${[...OUTC].reverse().filter(([o]) => x.c[o]).map(([o, , c]) => `<i style="flex:${x.c[o]};background:var(${c})"></i>`).join('')}</div>
+      <div class="nd-ctip" role="presentation"><b>${lab(x.k)}</b><br>${x.n} dictation${x.n === 1 ? '' : 's'}${x.n ? '<br>' + OUTC.filter(([o]) => x.c[o]).map(([o, l]) => `${l} ${x.c[o]}`).join(' · ') : ''}</div></div>`).join('');
+  const xl = [keys[0], keys[Math.floor(keys.length / 2)], keys[keys.length - 1]];
+  return `<section class="nd-card" aria-labelledby="nd-ch"><div class="nd-head"><h3 id="nd-ch">Dictations ${hourly ? 'by hour' : 'per day'}</h3>${swatches(OUTC.map(([, l, c]) => [l, c]))}</div>
+    <div class="nd-chart"><div class="nd-y" aria-hidden="true"><span>${top}</span><span>${top / 2}</span><span>0</span></div>
+      <div class="nd-plot">${cols}${ts.length ? '' : `<p class="nd-none">No dictations in this period</p>`}</div></div>
+    <div class="nd-x" aria-hidden="true">${xl.map(k => `<span>${lab(k)}</span>`).join('')}</div></section>`;
+}
+
+// One table per breakdown; a row filters the dictation list below it.
+function nerdTable(kind, title, cols, rows, note = '') {
+  const pick = S.set.nerds.pick;
+  return `<section class="nd-card nd-tcard" aria-labelledby="nd-${kind}"><div class="nd-head"><h3 id="nd-${kind}">${title}</h3>${note}</div>
+    <table class="nd-table"><thead><tr>${cols.map(([l, h], i) => `<th scope="col" ${i ? 'class="num"' : ''} ${h ? `title="${esc(h)}"` : ''}>${l}</th>`).join('')}</tr></thead>
+    <tbody>${rows.length ? rows.map(r => { const on = pick && pick.kind === kind && pick.v === r.v;
+      return `<tr class="${r.v == null ? 'nd-other' : ''}" ${r.v == null ? '' : `data-act="nerd-pick" data-kind="${kind}" data-v="${esc(r.v)}" tabindex="0" aria-selected="${!!on}"`}>${r.cells.map((c, i) => i ? `<td class="num">${c}</td>` : `<th scope="row">${c}</th>`).join('')}</tr>`; }).join('')
+      : `<tr><td colspan="${cols.length}" class="nd-empty-row">No dictations in this period</td></tr>`}</tbody></table></section>`;
+}
+const STEPS_T = [['Model load wait','--t-load','load'],['Speech to text','--t-stt','stt'],['Rules','--t-rules','rules'],['Paste','--t-paste','paste']];
+function byModel(ts) {
+  const ms = [...new Set(ts.map(t => t.model))];
+  return nerdTable('model', 'By model', [['Model'], ['Dictations'], ['Speed', 'Seconds of audio per second of speech-to-text, pasted dictations only'], ['Let go → pasted', 'Median · p90, pasted dictations only'], ['Cold starts'], ['Nothing heard'], ['Failed'], ['Words', 'Median words per dictation'], ['Where the time goes', 'Median of each step, pasted dictations']],
+    ms.map(m => { const g = ts.filter(t => t.model === m), st = nerdsStats(g), p = st.pasted;
+      const speed = p.reduce((a, t) => a + t.audio, 0) / (p.reduce((a, t) => a + t.stt, 0) || 1);
+      const steps = STEPS_T.map(([l, c, k]) => [l, nerdQ(p.map(t => t[k]), .5), c]);
+      return { v: m, cells: [`<span class="nd-mono">${esc(m)}</span>`, g.length, gate(p.length, `${Math.round(speed)}×`), gate(p.length, `${nerdMs(st.med)} · ${nerdMs(st.p90)}`),
+        gate(g.length, nerdPct(st.cold.length, g.length)), gate(g.length, nerdPct(st.cnt.nothing_heard, g.length)), gate(g.length, nerdPct(st.cnt.failed, g.length)),
+        gate(g.length, nerdQ(g.map(t => t.words), .5)), p.length >= 10 ? thinBar(steps.map(s => [...s, nerdMs(s[1])]), steps.map(s => `${s[0]} ${nerdMs(s[1])}`).join(', ')) : gate(p.length, '')] }; }),
+    swatches(STEPS_T.map(([l, c]) => [l, c])));
+}
+function byRule(ts) {
+  const st = nerdsStats(ts), fills = {}, words = Object.fromEntries(NERD_WORDS.map(([w, h]) => [w, { h, fixed: 0, right: 0 }]));
+  ts.forEach(t => { Object.entries(t.fill).forEach(([f, c]) => fills[f] = (fills[f] || 0) + c); t.wd.forEach(([w, fixed]) => words[w][fixed ? 'fixed' : 'right']++); });
+  const table = nerdTable('rule', 'By rule', [['Rule'], ['Edits'], ['Per 100 words', 'Counts the words speech-to-text heard, before cleanup'], ['Dictations touched']],
+    NERD_RULES.map(([k, l]) => { const e = ts.reduce((a, t) => a + t.ed[k], 0), touched = ts.filter(t => t.ed[k] || (k === 'word' && t.wd.length)).length;
+      return { v: k, cells: [`<span class="nd-dot" data-k="${k}"></span>${l}`, e, gate(ts.length, st.words ? (e / st.words * 100).toFixed(1) : '0'), gate(ts.length, ts.length ? nerdPct(touched, ts.length) : '0%')] }; }));
+  const top = Object.entries(fills).sort((a, b) => b[1] - a[1]).slice(0, 5), heard = NERD_WORDS.filter(([w]) => words[w].fixed + words[w].right), never = NERD_WORDS.filter(([w]) => !(words[w].fixed + words[w].right));
+  const wname = ([w, h]) => `${h ? `${esc(h)} → ` : ''}${esc(w)}`;
+  return table.replace(/<\/section>$/, `<div class="nd-under">
+      <div><h4>Fillers removed most</h4>${top.length ? `<ul class="nd-kv">${top.map(([f, c]) => `<li><span>“${esc(f)}”</span><b>${c}</b></li>`).join('')}</ul>` : '<p class="help">None in this period</p>'}</div>
+      <div><h4>Words to remember</h4>${heard.length ? `<ul class="nd-kv">${heard.map(x => `<li><span>${wname(x)}</span><b>fixed ${words[x[0]].fixed} · already right ${words[x[0]].right}</b></li>`).join('')}</ul>` : '<p class="help">None heard in this period</p>'}
+        <h4 class="nd-never">Never heard</h4>${never.length ? `<p class="help">${never.map(wname).join(', ')}. Myna hasn’t heard these in this period. If you say them, check how speech to text writes them and add that as “heard as”.</p>` : '<p class="help">Every word on your list was heard.</p>'}</div>
+    </div></section>`);
+}
+function byApp(ts) {
+  const counts = {}; ts.forEach(t => counts[t.app] = (counts[t.app] || 0) + 1);
+  const apps = Object.keys(counts).sort((a, b) => counts[b] - counts[a]), top = apps.slice(0, 8), rest = apps.slice(8);
+  const row = (v, name, g) => { const st = nerdsStats(g);
+    return { v, cells: [name, g.length, gate(g.length, nerdPct(st.cnt.pasted, g.length)), gate(g.length, nerdPct(g.length - st.cnt.pasted - st.cnt.nothing_heard, g.length)), gate(st.pasted.length, nerdMs(st.med))] }; };
+  return nerdTable('app', 'By app', [['App'], ['Dictations'], ['Pasted'], ['Failed or not pasted'], ['Let go → pasted', 'Median, pasted dictations only']],
+    [...top.map(a => row(a, esc(a), ts.filter(t => t.app === a))), ...(rest.length ? [row(null, `Other <span class="help">(${rest.length} apps)</span>`, ts.filter(t => rest.includes(t.app)))] : [])]);
+}
+
+function nerdList(ts) {
+  const pk = S.set.nerds.pick, label = pk && (pk.kind === 'rule' ? NERD_RULES.find(r => r[0] === pk.v)[1] : pk.v);
+  const list = !pk ? ts : ts.filter(t => pk.kind === 'model' ? t.model === pk.v : pk.kind === 'app' ? t.app === pk.v : t.ed[pk.v] || (pk.v === 'word' && t.wd.length));
+  const whenT = t => { const d = new Date(NERD_TODAY); d.setDate(d.getDate() - t.day); const hm = `${String(t.hour).padStart(2, '0')}:${String(t.min).padStart(2, '0')}`;
+    return `${t.day === 0 ? 'Today' : t.day === 1 ? 'Yesterday' : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} ${hm}`; };
+  const OL = { pasted:'Pasted', nothing_heard:'Didn’t hear anything', failed:'Failed', not_pasted:'Not pasted' };
+  const shown = list.slice(0, 40);   // shortcut: the prototype caps the list; the app lists every trace
+  return `<section aria-labelledby="nd-list"><div class="nd-lhead"><h3 id="nd-list">Dictations <span class="help nd-n">${list.length}</span></h3>
+      <span class="nd-chipslot">${pk ? `<span class="nd-chip">Only ${esc(label)}<button data-act="nerd-unpick" aria-label="Show all dictations">${icon('x','ic-s')}</button></span>` : ''}</span></div>
+    ${list.length ? `<ul class="nd-rows">${shown.map(t => `<li class="nd-row"><span class="od-field od-fill"><span class="nd-t od-truncate">${t.words ? esc(t.said) + '…' : 'Nothing heard'}</span>
+        <span class="help">${esc(t.app)} · ${whenT(t)} · ${t.mode === 'hold' ? 'Hold' : 'Tap'}</span></span>
+        <span class="nd-nums">${t.outcome === 'pasted' ? `${nerdMs(t.total)} · ${edits(t)} edit${edits(t) === 1 ? '' : 's'}` : ''}</span>
+        <span class="pill ${t.outcome === 'pasted' ? '' : 'alert'}">${OL[t.outcome]}</span></li>`).join('')}
+      ${list.length > shown.length ? `<li class="nd-row help">and ${list.length - shown.length} more (the prototype stops at 40)</li>` : ''}</ul>`
+      : `<div class="empty"><h2>${S.set.nerds.sample === 'none' ? 'No dictations yet' : 'No dictations in this period'}</h2><p>${S.set.nerds.sample === 'none' ? 'Hold your voice typing key in any app and talk. Each dictation’s numbers show up here.' : 'Pick a longer period to see older dictations.'}</p>
+        ${S.set.nerds.sample === 'none' || S.set.nerds.period === 'all' ? '' : `<button class="btn" data-act="nerd-all">Show all</button>`}</div>`}</section>`;
+}
+
+function nerdsView() {
+  const n = S.set.nerds, ts = nerdsData(), st = nerdsStats(ts), menu = `<button class="btn icon plain menu-btn" data-act="drawer" aria-label="Show sidebar">${icon('sidebar')}</button>`;
+  const all = n.sample === 'none' ? [] : NERD_ALL;
+  return `<div class="toolbar">${menu}<h1>Stats for nerds</h1><span class="pill">Sample data</span><span class="grow"></span>
+      ${segc('nerds.period', NERD_PERIODS, 'Period')}
+      ${sel('nerds.model', [['all','All models'], ...[...new Set(all.map(t => t.model))].map(m => [m, m])], 'Model')}
+      ${sel('nerds.app', [['all','All apps'], ...[...new Set(all.map(t => t.app))].sort().map(a => [a, a])], 'App')}</div>
+    <div class="nerds od-scroll" id="nerds" ${n.sample === 'loading' ? 'aria-busy="true"' : ''}>
+      <div class="nd-proto"><span>Prototype only, sample state:</span>${segc('nerds.sample', [['full','Sample'],['few','Under 10'],['none','No dictations'],['loading','Period loading']], 'Sample state')}</div>
+      <div class="nd-overview ${n.sample === 'loading' ? 'nd-busy' : ''}">
+        ${nerdTiles(st)}${nerdChart(ts)}${byModel(ts)}${byRule(ts)}${byApp(ts)}
+      </div>
+      ${nerdList(ts)}
     </div>`;
 }
 
@@ -1402,6 +1650,7 @@ function settingsPage() {
           srow('Liquid Glass', 'Uses macOS’s own glass for the pill and the Settings window. Still being tested.', sw('liquid', 'Liquid Glass'))
         ])
         + sgroup('Voice typing', [
+          srow('Stats for nerds', 'Adds a page to the main window with the numbers behind each dictation: per speech model, rule and app. Reads what Myna already keeps on this Mac.', sw('exp.nerds', 'Stats for nerds')),
           row('Remove “um” and “uh”', 'Takes out filler words before your text is added. Stays on this Mac.', 'exp.uhmD'),
           row('Tidy up with AI', 'Fixes punctuation and wording.', 'exp.llmD', llmCloud() && offBadge())
         ]) + sgroup('Meeting notes', [
@@ -1650,10 +1899,11 @@ function stopRec() {
 /* ---------- render + events ---------- */
 function render() {
   applyTheme();
-  const st = $('#detail')?.scrollTop, sst = $('#spage')?.scrollTop;
+  const st = $('#detail')?.scrollTop, sst = $('#spage')?.scrollTop, nst = $('#nerds')?.scrollTop;
   $('#root').innerHTML = S.view === 'onboarding' ? onboarding() : app();
   if (st && $('#detail')) $('#detail').scrollTop = st;
   if (sst && $('#spage')) $('#spage').scrollTop = sst;
+  if (nst && $('#nerds')) $('#nerds').scrollTop = nst;
   renderOverlay();
 }
 const effDark = () => S.set.appearance === 'dark' || (S.set.appearance === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
@@ -1699,6 +1949,10 @@ document.addEventListener('click', e => {
     case 'back': go('meetings'); break;
     case 'go-chat': go('chat'); break;
     case 'go-clips': go('clips', { undoClip:null, clipConfirm:false }); break;
+    case 'go-nerds': go('nerds'); break;
+    case 'nerd-pick': { const n = S.set.nerds, v = el.dataset.v, k = el.dataset.kind; n.pick = n.pick && n.pick.kind === k && n.pick.v === v ? null : { kind:k, v }; render(); document.querySelector(`[data-act=nerd-pick][data-kind="${k}"][data-v="${CSS.escape(v)}"]`)?.focus(); break; }
+    case 'nerd-unpick': S.set.nerds.pick = null; render(); break;
+    case 'nerd-all': S.set.nerds.period = 'all'; render(); break;
     case 'rec-show': S.rec.open = true; renderOverlay(); $('#rec-hide')?.focus(); break;
     case 'pop': {
       const p = el.dataset.p; S.pop = S.pop === p ? null : p;
@@ -1838,6 +2092,7 @@ document.addEventListener('submit', e => {
   if (kind === 'chat') { const ta = f.querySelector('textarea'); send(f.dataset.key, ta.value); }
 });
 document.addEventListener('keydown', e => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches?.('tr[data-act]')) { e.preventDefault(); e.target.click(); return; }
   if (S.hkRec) {
     e.preventDefault(); e.stopPropagation();
     if (e.key === 'Escape') { S.hkRec = false; render(); $('#hk-btn')?.focus(); return; }
@@ -1899,7 +2154,8 @@ document.addEventListener('keyup', e => {
   const [v, a] = decodeURIComponent(location.hash.slice(1)).split('/'); if (!v) return;
   if (v === 'onboarding') { S.step = Math.max(0, STEPS.indexOf(a)); return; }
   Object.assign(S.perms, { mic:true, ax:true, screen:true });
-  S.view = ['meetings', 'detail', 'chat', 'clips', 'settings'].includes(v) ? v : 'meetings';
+  S.view = ['meetings', 'detail', 'chat', 'clips', 'settings', 'nerds'].includes(v) ? v : 'meetings';
+  if (v === 'nerds') { S.set.expOn = true; S.set.exp.nerds = true; }
   if (v === 'detail') { S.current = byId(a) ? a : MEETINGS[0].id; if (a === 'transcript' || a === 'chat') S.panel = a; }
   if (v === 'settings' && a) S.setPage = a;
   if (v === 'record') setTimeout(() => { startRec(); if (a === 'live') { S.rec.open = true; renderOverlay(); } }, 0);

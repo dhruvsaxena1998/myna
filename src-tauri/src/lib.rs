@@ -226,6 +226,12 @@ fn traces_list(d: tauri::State<Data>) -> Result<Vec<trace::Row>, String> {
     trace::list(&d.db.lock().unwrap())
 }
 
+/// Every trace with its steps, for Stats for nerds' Overview.
+#[tauri::command]
+fn traces_all(d: tauri::State<Data>) -> Result<Vec<serde_json::Value>, String> {
+    trace::all(&d.db.lock().unwrap())
+}
+
 #[tauri::command]
 fn trace_get(d: tauri::State<Data>, id: i64) -> Result<serde_json::Value, String> {
     trace::get(&d.db.lock().unwrap(), id)
@@ -448,7 +454,7 @@ fn open_update(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![debug_on, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, traces_list, trace_get, trace_delete, text_copy, settings_open, voice_pause, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
+        .invoke_handler(tauri::generate_handler![debug_on, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, traces_list, traces_all, trace_get, trace_delete, text_copy, settings_open, voice_pause, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::Updates::default())
         .setup(|app| {
