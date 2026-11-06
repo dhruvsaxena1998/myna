@@ -136,8 +136,8 @@
     {:else}
       {#if key}<span class="keys" aria-label="Current shortcut: {spoken(key)}">{#each keycaps(key) as k}<kbd>{k}</kbd>{/each}</span>
       {:else}<span class="desc none">Not set</span>{/if}
-      {#if key && which === "clean"}<button class="btn plain" onclick={() => save({ ...voice, clean: null })} aria-label="Remove the Dictate with cleanup shortcut">Remove</button>{/if}
       <button class="btn" bind:this={btns[which]} onclick={() => record(which)}>{key ? "Change" : "Set"}</button>
+      {#if key && which === "clean"}<button class="btn plain icon" title="Remove" onclick={() => save({ ...voice, clean: null })} aria-label="Remove the Dictate with cleanup shortcut"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" /></svg></button>{/if}
     {/if}
   </span>
 {/snippet}
@@ -160,6 +160,8 @@
     border-radius: var(--r-md); background: var(--fill-field); box-shadow: inset 0 0 0 .5px var(--line-strong); font: inherit; }
   .btn { display: inline-flex; align-items: center; justify-content: center; height: var(--h-ctl); padding: 0 14px; border: 0; border-radius: var(--r-full);
     background: var(--fill-control); color: var(--text); font: inherit; box-shadow: inset 0 0 0 .5px var(--line-strong), var(--shadow-control); white-space: nowrap; }
+  .btn.icon { width: var(--h-ctl); padding: 0; }
+  .ic { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; }
   .btn.plain { background: none; box-shadow: none; color: var(--text-2); }
   .btn:hover { background: color-mix(in srgb, var(--fill-control) 85%, var(--text)); }
   .btn.live { min-width: 150px; color: var(--accent-text); box-shadow: inset 0 0 0 2px var(--accent); }
