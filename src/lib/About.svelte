@@ -37,7 +37,7 @@
   <h2 id="about-h">Myna</h2>
   <ul class="list">
     <li class="row">
-      <span><span class="name">Version</span><span class="desc">{version}</span></span>
+      <span><span class="name">Version</span><span class="desc">{version}{#if import.meta.env.VITE_BUILD} · {import.meta.env.VITE_BUILD}{/if}</span></span>
       <!-- Fixed size, so no state moves the row. -->
       <div class="slot">
         {#if upd.s.state === "checking"}<span class="pill" role="status">Checking…</span>

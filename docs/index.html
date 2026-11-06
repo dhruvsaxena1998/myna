@@ -935,7 +935,7 @@ function obPerms() {
                    : k === 'mic' ? `<button class="btn" data-act="grant" data-k="${k}" aria-label="Allow ${t}">Allow</button>`
                    : `<button class="btn" data-act="grant" data-k="${k}" aria-label="Open System Settings for ${t}">Open System Settings</button>`}
     </li>`).join('')}</ul>
-    <p class="help" style="margin-top:12px">Microphone shows a quick pop-up. For the other two, your Mac opens System Settings: switch Myna on there, then come back. You can skip these and do it later.</p>`;
+    <p class="help" style="margin-top:12px">Microphone shows a quick pop-up. For the other two, your Mac opens System Settings: switch Myna on there, then come back. Already on but Myna still asks? This happens after a reinstall: select Myna there, click −, and try again. You can skip these and do it later.</p>`;
 }
 function obModels() {
   const errs = S.obErrors.length ? `<div class="errsum" role="alert" tabindex="-1" id="errsum"><b>Fix ${S.obErrors.length === 1 ? 'this' : 'these'} to continue:</b><ul>${S.obErrors.map(e => `<li><a href="#${e.field}">${esc(e.msg)}</a></li>`).join('')}</ul></div>` : '';
