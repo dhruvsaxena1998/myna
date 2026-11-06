@@ -3,6 +3,11 @@ use std::path::Path;
 
 /// One step per schema version; `open` runs every step above the file's `user_version`.
 /// Version 1 is the empty base schema. Append, never edit, a step.
+///
+/// Every step only adds: new tables, new columns that are nullable or have a DEFAULT. Never drop, rename or
+/// reshape what an older Myna reads or writes, because a user's data file outlives the build that made it
+/// (they update, a dev build opens the same folder, they go back). `migrations_only_add` enforces this.
+/// To retire something, stop using it in one release and drop it, if ever, a release or two later.
 const MIGRATIONS: &[&str] = &[
     "",
     "CREATE TABLE active_model(task TEXT PRIMARY KEY, model_id TEXT NOT NULL);",
@@ -27,9 +32,8 @@ pub fn open(dir: &Path) -> Result<Connection, String> {
     let version: i64 = conn
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .map_err(|e| format!("Couldn't read {}: {e}", db.display()))?;
-    if version > SCHEMA_VERSION {
-        return Err(format!("{} was written by a newer Myna (schema {version}).", db.display()));
-    }
+    // A newer Myna only added to the schema (see MIGRATIONS), so this one reads and writes what it knows and
+    // leaves the rest, and leaves the version alone.
     for v in version..SCHEMA_VERSION {
         let step = format!("BEGIN; {} PRAGMA user_version = {}; COMMIT;", MIGRATIONS[v as usize], v + 1);
         conn.execute_batch(&step).map_err(|e| format!("Couldn't set up {}: {e}", db.display()))?;
@@ -60,11 +64,38 @@ mod tests {
     }
 
     #[test]
-    fn newer_schema_is_an_error_not_a_downgrade() {
+    fn a_newer_database_still_opens_and_is_left_as_it_was() {
         let tmp = tempfile::tempdir().unwrap();
-        open(tmp.path()).unwrap();
-        Connection::open(tmp.path().join("myna.sqlite")).unwrap().pragma_update(None, "user_version", 99).unwrap();
-        assert!(open(tmp.path()).unwrap_err().contains("newer Myna"));
+        let c = open(tmp.path()).unwrap();
+        c.execute("INSERT INTO setting VALUES ('voice_key', 'Alt+Space')", []).unwrap();
+        // What a later Myna adds: a table, and a column on an old table.
+        c.execute_batch("CREATE TABLE from_the_future(x); ALTER TABLE word ADD COLUMN note TEXT; PRAGMA user_version = 99;").unwrap();
+        drop(c);
+        let c = open(tmp.path()).unwrap();
+        assert_eq!(version(tmp.path()), 99, "never lowered");
+        let key: String = c.query_row("SELECT value FROM setting WHERE key = 'voice_key'", [], |r| r.get(0)).unwrap();
+        assert_eq!(key, "Alt+Space");
+        c.execute("INSERT INTO word(spelling, heard) VALUES ('Myna', NULL)", []).unwrap(); // an older Myna's insert still works
+    }
+
+    /// The rule at the top of MIGRATIONS, as a check: an older Myna must keep working on what a newer one wrote.
+    #[test]
+    fn migrations_only_add() {
+        // Step 7 rewrote values in a table beta.6 never had; allowed once, because no older build could read it.
+        const REWROTE_UNSEEN_DATA: &[usize] = &[6];
+        for (i, step) in MIGRATIONS.iter().enumerate() {
+            let sql = step.to_uppercase();
+            for bad in ["DROP ", " RENAME ", "DELETE FROM", "PRAGMA USER_VERSION"] {
+                assert!(!sql.contains(bad), "migration {} contains `{}`: add, never remove or reshape", i + 1, bad.trim());
+            }
+            if sql.contains("UPDATE ") {
+                assert!(REWROTE_UNSEEN_DATA.contains(&i), "migration {} rewrites existing rows: an older Myna still reads them", i + 1);
+            }
+            for part in sql.split("ADD COLUMN").skip(1) {
+                let def = part.split(';').next().unwrap_or("");
+                assert!(!def.contains("NOT NULL") || def.contains("DEFAULT"), "migration {} adds a NOT NULL column with no DEFAULT: an older Myna's inserts would fail", i + 1);
+            }
+        }
     }
 
     #[test]
