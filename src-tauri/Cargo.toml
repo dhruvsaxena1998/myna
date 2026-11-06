@@ -1,6 +1,6 @@
 [package]
 name = "myna"
-version = "0.0.2-beta.4"
+version = "0.0.2-beta.5"
 description = "Dictation and meeting notes for macOS, local by default"
 authors = ["Dhruv Saxena"]
 edition = "2024"
