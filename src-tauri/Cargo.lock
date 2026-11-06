@@ -2420,7 +2420,7 @@ dependencies = [
 
 [[package]]
 name = "myna"
-version = "0.0.2-beta.6"
+version = "0.0.2-beta.7"
 dependencies = [
  "block2",
  "core-foundation 0.10.1",

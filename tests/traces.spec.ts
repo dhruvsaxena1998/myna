@@ -23,6 +23,8 @@ const SAMPLES = `(() => {
     { ...base, id: 4, started: ago(90), app: "Safari", steps: step(r4, [E(r4, "word", "Myna", "Myna", 0, { matched: "spelling", spelling: "Myna", heard: null, unchanged: true })], "de") },
     { ...base, id: 5, started: ago(120), app: "Terminal", outcome: "nothing_heard", audio_ms: 900, paste_ms: null, steps: step("Um.", [E("Um.", "filler", "Um.", "")], "en", true, "") },
     { ...base, id: 6, started: ago(140), app: null, outcome: "failed", reason: "The speech model didn't load.", paste_ms: null, load_ms: 80, steps: [] },
+    { ...base, id: 7, started: ago(141), app: "Messages", paste_ms: 1310, steps: [...step("so um we meet tuesday at five", []), { kind: "cleanup", text: "So we meet Tuesday at 5.", ms: 920, edits: null, settings: { model: "openai/gpt-5-mini", cost: { kind: "usd", usd: 0.0003 }, fallback: null, detail: null } }] },
+    { ...base, id: 8, started: ago(142), app: "Mail", paste_ms: 4100, steps: [...step("send the deck to Priya", []), { kind: "cleanup", text: "send the deck to Priya", ms: 3004, edits: null, settings: { model: "qwen2.5:7b", cost: null, fallback: "AI took too long", detail: null } }] },
   ];
 })()`;
 
@@ -30,7 +32,7 @@ async function open(page: Page, experimental = true) {
   await fakeTauri(page, `{
     storage_status: () => "/tmp/Myna", models_list: () => [],
     look_get: () => ({ theme: "auto", accent: "blue", glass: "clear", liquid: null, experimental: ${experimental}, nerds: true }),
-    look_set: () => {},
+    look_set: () => {}, traces_clear: () => {},
     rules_get: () => ({ settings: { language: "en", tidy: true, words: [{ spelling: "Postgres", heard: null }, { spelling: "Dhruv", heard: "Drove" }, { spelling: "Kubernetes", heard: null }, { spelling: "Desert Ant", heard: null }] }, languages: [["en", "English"], ["de", "German"]] }),
     traces_list: () => ${SAMPLES}.map((t) => ({ id: t.id, started: t.started, app: t.app, outcome: t.outcome, heard: t.steps[0]?.text ?? null })),
     traces_all: () => ${SAMPLES}.map((t) => ({ ...t, app: t.app ?? "Unknown app" })),
@@ -74,7 +76,7 @@ test("lists traces newest first with title, app, time and outcome", async ({ pag
   await open(page);
   await nerdsNav(page).click();
   const rows = page.getByRole("list", { name: "Dictations" }).getByRole("button");
-  await expect(rows).toHaveCount(6);
+  await expect(rows).toHaveCount(8);
   await expect(rows.nth(0)).toContainText("Um, so I I think we");
   await expect(rows.nth(0)).toContainText("Slack · Today");
   await expect(rows.nth(0)).toContainText("Pasted");
@@ -188,4 +190,46 @@ test("rebuilding the cleaned text from raw + edits: outermost wins, spans count 
   expect(rebuild(raw, [um, filler, number])).toBe("I got 25 😀 pods");
   expect(rebuild(raw, [number, filler, um])).toBe("I got 25 😀 pods"); // order applied doesn't matter
   expect(rebuild(raw, [])).toBe(raw);
+});
+
+test("a dictation with cleanup shows its step: the text, the model, the cost, and a bar segment", async ({ page }) => {
+  await open(page);
+  await go(page, 6); // trace 7, the sixth by time
+  const card = page.getByRole("region", { name: "Cleanup" });
+  await expect(card).toContainText("openai/gpt-5-mini · < $0.01 · 920 ms");
+  await expect(card).toContainText("So we meet Tuesday at 5.");
+  await expect(card.getByRole("status")).toHaveText("");
+  await expect(page.getByLabel("Timing", { exact: true }).first()).toContainText("Cleanup 920 ms");
+  await expect(page.getByRole("region", { name: "What Myna changed" })).toBeVisible();
+});
+
+test("a cleanup that fell back says why", async ({ page }) => {
+  await open(page);
+  await go(page, 7); // trace 8
+  await expect(page.getByRole("region", { name: "Cleanup" })).toContainText("Added without cleanup: AI took too long");
+});
+
+test("a dictation without cleanup has no cleanup card or bar segment", async ({ page }) => {
+  await open(page);
+  await go(page, 1);
+  await expect(page.getByRole("region", { name: "Cleanup" })).toHaveCount(0);
+  await expect(page.getByLabel("Timing", { exact: true }).first()).not.toContainText("Cleanup");
+});
+
+test("Clear all in Stats for nerds asks first, then empties it and the history", async ({ page }) => {
+  await open(page);
+  await nerdsNav(page).click();
+  await page.getByRole("button", { name: "Clear all" }).click();
+  await page.getByRole("button", { name: "Delete all" }).click();
+  await expect(page.getByText("No dictations yet")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Clear all" })).toBeDisabled();
+  expect(await page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "traces_clear").length)).toBe(1);
+  await page.getByRole("navigation", { name: "Sidebar" }).getByRole("button", { name: /^Voice typing history/ }).click();
+  await expect(page.getByRole("heading", { name: "Nothing here yet" })).toBeVisible();
+});
+
+test("Clear all is not on an opened dictation", async ({ page }) => {
+  await open(page);
+  await go(page, 0);
+  await expect(page.getByRole("button", { name: "Clear all" })).toHaveCount(0);
 });

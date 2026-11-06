@@ -5,7 +5,9 @@
   export type Look = { style: Style; place: Place };
   export type Shown =
     | { state: "listening"; hold: boolean; key: string; limit?: number }
-    | { state: "writing" | "added" }
+    | { state: "writing" | "cleaning" | "added" }
+    /** Added as the rules left it: `reason` says why the cleanup didn't count. */
+    | { state: "fallback"; reason: string }
     | { state: "error"; title: string; hint: string };
   export const STYLES: [Style, string][] = [["capsule", "Capsule"], ["orb", "Orb"], ["wave", "Waveform"], ["card", "Card"]];
   export const PLACES: [Place, string][] = [["bottom", "Bottom centre"], ["top", "Top centre"], ["bottom-right", "Bottom right"], ["top-right", "Top right"]];
@@ -20,8 +22,10 @@
   let { style, pill, wave, secs, left = null }: { style: Style; pill: Shown; wave: number[]; secs: number; left?: number | null } = $props();
   const level = $derived(wave.at(-1) ?? 0);
   const WEIGHTS = [0.5, 0.8, 1, 0.75, 0.45]; // the middle bars move most
+  // What needs words even on the orb: an error, or a fallback.
+  const note = $derived(pill.state === "error" ? { title: pill.title, hint: pill.hint } : pill.state === "fallback" ? { title: "Added without cleanup", hint: pill.reason } : null);
   // Orb says nothing while things go well, so screen readers still get words.
-  const quiet = $derived(style === "orb" && pill.state !== "error");
+  const quiet = $derived(style === "orb" && !note);
   const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
   const clock = $derived(fmt(secs));
   const keys = $derived(pill.state === "listening" ? keycaps(pill.key) : []);
@@ -43,17 +47,18 @@
 <div class="hud {style}" class:quiet>
   {#if style === "card"}
     <span class="ring" class:live={pill.state === "listening"} style:--s={0.85 + 0.3 * level} style:--o={0.35 + 0.65 * level}>
-      {#if pill.state === "listening"}{@render icon("mic")}{:else if pill.state === "writing"}<span class="spin"></span>{:else if pill.state === "added"}{@render icon("check")}{:else}{@render icon("warn")}{/if}
+      {#if pill.state === "listening"}{@render icon("mic")}{:else if pill.state === "writing" || pill.state === "cleaning"}<span class="spin"></span>{:else if pill.state === "added"}{@render icon("check")}{:else}{@render icon("warn")}{/if}
     </span>
     <span class="lines">
       {#if pill.state === "listening"}<span class="t">Listening</span>
         <span class="sub">{#if left !== null}{hint}{:else}{pill.hold ? "Release" : "Press"} {#each keys as k}<kbd>{k}</kbd>{/each} {pill.hold ? "to paste" : "again to paste"}{/if}</span>
       {:else if pill.state === "writing"}<span class="t">Writing…</span><span class="sub">On this Mac</span>
+      {:else if pill.state === "cleaning"}<span class="t">Cleaning up…</span><span class="sub">With your Fast model</span>
       {:else if pill.state === "added"}<span class="t">Added</span><span class="sub">Where you were typing</span>
-      {:else if pill.state === "error"}<span class="t">{pill.title}</span><span class="sub">{pill.hint}</span>{/if}
+      {:else if note}<span class="t">{note.title}</span><span class="sub">{note.hint}</span>{/if}
     </span>
-  {:else if pill.state === "error"}
-    {@render icon("warn")}<span>{pill.title}</span><span class="sub">{pill.hint}</span>
+  {:else if note}
+    {@render icon("warn")}<span>{note.title}</span><span class="sub">{note.hint}</span>
   {:else if pill.state === "listening"}
     {#if style === "wave"}
       <span class="mic">{@render icon("mic")}</span>
@@ -64,8 +69,8 @@
       {#if quiet}<span class="sr">Listening</span>{#if left !== null}<span class="end" aria-label={hint}>{left}</span>{/if}
       {:else}<span>Listening</span><span class="sub" class:end={left !== null}>{hint}</span>{/if}
     {/if}
-  {:else if pill.state === "writing"}
-    {#if style !== "capsule"}<span class="spin" aria-hidden="true"></span>{/if}<span class:sr={quiet}>Writing…</span>
+  {:else if pill.state === "writing" || pill.state === "cleaning"}
+    {#if style !== "capsule"}<span class="spin" aria-hidden="true"></span>{/if}<span class:sr={quiet}>{pill.state === "writing" ? "Writing…" : "Cleaning up…"}</span>
   {:else}
     {@render icon("check")}<span class:sr={quiet}>Added where you were typing</span>
   {/if}

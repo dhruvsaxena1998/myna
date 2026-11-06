@@ -12,6 +12,7 @@ async function open(page: Page, look = { style: "capsule", place: "bottom" }) {
 }
 const emit = (page: Page, event: string, payload: unknown) => page.evaluate(([e, p]) => (window as any).__emit(e, p), [event, payload] as const);
 const say = (page: Page, state: string, hold = true) => emit(page, "dictation", state === "listening" ? { state, hold, key: "Alt+Space", limit: 300 } : { state });
+const fallback = (page: Page, reason: string) => emit(page, "dictation", { state: "fallback", reason });
 const fail = (page: Page, title: string, hint: string) => emit(page, "dictation", { state: "error", title, hint });
 
 test("hidden until dictation starts", async ({ page }) => {
@@ -54,6 +55,21 @@ for (const [title, hint] of [["No speech model", "Download Parakeet v3 in Settin
   });
 }
 
+test("Cleaning up…, then Added; a fallback says why and stays up longer than Added", async ({ page }) => {
+  await open(page);
+  const pill = page.getByRole("status");
+  await say(page, "cleaning");
+  await expect(pill).toHaveText("Cleaning up…");
+  await say(page, "added");
+  await expect(pill).toHaveText("Added where you were typing");
+  await fallback(page, "AI took too long");
+  await expect(pill).toHaveText("Added without cleanupAI took too long");
+  await page.clock.runFor(2500);
+  await expect(pill).toBeVisible();
+  await page.clock.runFor(200);
+  await expect(pill).toBeHidden();
+});
+
 test("a new dictation keeps the pill up past an earlier result's timer", async ({ page }) => {
   await open(page);
   await say(page, "added");
@@ -78,7 +94,7 @@ for (const style of STYLES) {
     await open(page, { style, place: "bottom" });
     const pill = page.getByRole("status");
     const heights = new Set<number>();
-    for (const [state, words] of [["listening", /Listening/], ["writing", /Writing…/], ["added", /Added/]] as const) {
+    for (const [state, words] of [["listening", /Listening/], ["writing", /Writing…/], ["cleaning", /Cleaning up…/], ["added", /Added/]] as const) {
       await say(page, state);
       await expect(pill).toContainText(words);
       heights.add((await pill.locator(".hud").boundingBox())!.height);
@@ -86,6 +102,9 @@ for (const style of STYLES) {
     await fail(page, "Needs Accessibility", "Allow it in Settings › Voice typing");
     await expect(pill).toContainText("Needs AccessibilityAllow it in Settings › Voice typing");
     if (style !== "orb") heights.add((await pill.locator(".hud").boundingBox())!.height); // Orb grows into a capsule to say it
+    await fallback(page, "AI took too long");
+    await expect(pill).toContainText("Added without cleanupAI took too long");
+    if (style !== "orb") heights.add((await pill.locator(".hud").boundingBox())!.height);
     expect([...heights]).toEqual([{ capsule: 40, orb: 32, wave: 44, card: 56 }[style]]);
   });
 }

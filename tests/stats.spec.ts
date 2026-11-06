@@ -42,9 +42,15 @@ test("speed is audio over speech-to-text time, pasted dictations only", () => {
 });
 
 test("step medians: paste is what's left of let go → pasted after the other three", () => {
-  expect(steps(T({ load_ms: 50, stt: 100, rules: 10, paste_ms: 200 }))).toEqual([50, 100, 10, 40]);
+  expect(steps(T({ load_ms: 50, stt: 100, rules: 10, paste_ms: 200 }))).toEqual([50, 100, 10, 0, 40]);
   const ts = [...many(6, { stt: 100, paste_ms: 200 }), ...many(5, { stt: 300, paste_ms: 400 }), T({ outcome: "nothing_heard", stt: 999, paste_ms: null })];
-  expect(overview(ts, O()).models[0].steps.v).toEqual([0, 100, 10, 90]);
+  expect(overview(ts, O()).models[0].steps.v).toEqual([0, 100, 10, 0, 90]);
+});
+
+test("cleanup time is its own step, and zero for a dictation without cleanup", () => {
+  const withCleanup = T({ paste_ms: 1200 });
+  withCleanup.steps.push({ kind: "cleanup", text: "x", ms: 900, settings: { model: "m", cost: null, fallback: null, detail: null }, edits: null });
+  expect(steps(withCleanup)).toEqual([0, 100, 10, 900, 190]);
 });
 
 test("medians and p90 are nearest rank", () => {

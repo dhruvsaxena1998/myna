@@ -85,8 +85,8 @@ pub trait Backend: Send {
     fn models(&self) -> Result<Vec<Model>, String>;
     /// USD used and limit of the key, for a service that reports them (OpenRouter); None for the rest.
     fn key_usage(&self) -> Result<Option<(f64, Option<f64>)>, String>;
-    #[cfg_attr(not(test), allow(dead_code))] // first caller is a feature (stories 16, 17)
-    fn chat(&self, model: &str, prompt: &str) -> Result<Reply, String>;
+    /// One user message, after an optional system message, answered within `secs` seconds.
+    fn chat(&self, model: &str, system: Option<&str>, prompt: &str, secs: u64) -> Result<Reply, String>;
 }
 
 /// Where API keys live. The real one is the Keychain; tests use memory.
@@ -185,7 +185,6 @@ fn per_m(v: &Value) -> Option<f64> {
     v.as_str()?.parse::<f64>().ok().filter(|p| *p >= 0.0).map(|p| p * 1e6)
 }
 
-#[cfg_attr(not(test), allow(dead_code))] // first caller is a feature (stories 16, 17)
 /// First match wins: the reply's own cost, price x tokens, loopback is free, else unknown.
 fn cost_of(reported: Option<f64>, price: Option<(f64, f64)>, tokens: Option<(u64, u64)>, loopback: bool) -> Cost {
     if let Some(usd) = reported {
@@ -229,10 +228,10 @@ impl Backend for OpenAi {
         Ok(Some((used, d["limit"].as_f64())))
     }
 
-    #[cfg_attr(not(test), allow(dead_code))] // first caller is a feature (stories 16, 17)
-    fn chat(&self, model: &str, prompt: &str) -> Result<Reply, String> {
-        let body = json!({"model": model, "messages": [{"role": "user", "content": prompt}]}).to_string();
-        let json = self.send("/chat/completions", Some(body), 60)?;
+    fn chat(&self, model: &str, system: Option<&str>, prompt: &str, secs: u64) -> Result<Reply, String> {
+        let messages: Vec<Value> = system.map(|s| json!({"role": "system", "content": s})).into_iter().chain([json!({"role": "user", "content": prompt})]).collect();
+        let body = json!({"model": model, "messages": messages}).to_string();
+        let json = self.send("/chat/completions", Some(body), secs)?;
         let text = json["choices"][0]["message"]["content"].as_str().ok_or_else(|| format!("{} sent no reply", self.url))?.to_string();
         let tokens = json["usage"]["prompt_tokens"].as_u64().zip(json["usage"]["completion_tokens"].as_u64());
         let reported = json["usage"]["cost"].as_f64();
@@ -332,7 +331,6 @@ pub fn set(db: &Connection, slot: &str, provider: i64, model: &str) -> Result<()
 }
 
 /// The provider and model a feature should use for `slot` ("main" or "fast"), or a "Not set" error.
-#[cfg_attr(not(test), allow(dead_code))] // first caller is a feature (stories 16, 17)
 pub fn route(db: &Connection, slot: &str) -> Result<(Record, String), String> {
     let label = if slot == "main" { "Main model" } else { "Fast model" };
     let not_set = || format!("{label}: Not set");
@@ -393,14 +391,14 @@ pub fn test(db: &Mutex<Connection>, id: i64, p: &dyn Backend) -> Result<Check, S
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::collections::HashMap;
     use std::io::{Read, Write};
     use std::net::TcpListener;
 
     #[derive(Default)]
-    struct Memory(Mutex<HashMap<i64, String>>);
+    pub(crate) struct Memory(Mutex<HashMap<i64, String>>);
     impl Keys for Memory {
         fn get(&self, id: i64) -> Result<Option<String>, String> { Ok(self.0.lock().unwrap().get(&id).cloned()) }
         fn set(&self, id: i64, key: &str) -> Result<(), String> { self.0.lock().unwrap().insert(id, key.into()); Ok(()) }
@@ -411,7 +409,7 @@ mod tests {
     impl Backend for Fake {
         fn models(&self) -> Result<Vec<Model>, String> { Ok(vec![Model { id: "fake-1".into(), ..Default::default() }]) }
         fn key_usage(&self) -> Result<Option<(f64, Option<f64>)>, String> { Ok(None) }
-        fn chat(&self, model: &str, _: &str) -> Result<Reply, String> {
+        fn chat(&self, model: &str, _: Option<&str>, _: &str, _: u64) -> Result<Reply, String> {
             Ok(Reply { text: format!("hi from {model}"), tokens: Some((3, 4)), cost: Cost::Free })
         }
     }
@@ -524,7 +522,7 @@ mod tests {
     }
 
     /// Serves each `(path, status, body)` and records nothing; unknown paths get 404.
-    fn stub(routes: Vec<(&'static str, u16, &'static str)>) -> String {
+    pub(crate) fn stub(routes: Vec<(&'static str, u16, &'static str)>) -> String {
         let l = TcpListener::bind("127.0.0.1:0").unwrap();
         let base = format!("http://{}", l.local_addr().unwrap());
         std::thread::spawn(move || {
@@ -564,7 +562,7 @@ mod tests {
         ]);
         let p = adapter(format!("{base}/v1"), false);
         assert_eq!(p.models().unwrap(), vec![Model { id: "llama3".into(), ..Default::default() }, Model { id: "qwen".into(), ..Default::default() }]);
-        let r = p.chat("llama3", "hi").unwrap();
+        let r = p.chat("llama3", None, "hi", 60).unwrap();
         assert_eq!((r.text.as_str(), r.tokens, r.cost), ("Hello there my good friend", Some((5, 6)), Cost::Free));
     }
 
@@ -582,7 +580,7 @@ mod tests {
         assert_eq!((m[0].input_per_m.map(|x| x.round()), m[0].output_per_m.map(|x| x.round()), m[0].context, m[0].images), (Some(3.0), Some(15.0), Some(128000), Some(true)));
         assert_eq!((m[1].input_per_m, m[1].images), (Some(0.0), Some(false)));
         assert_eq!((m[2].input_per_m, m[2].context, m[2].images), (None, None, None));
-        assert_eq!(p.chat("a/vision", "hi").unwrap().cost, Cost::Usd { usd: 0.0042 });
+        assert_eq!(p.chat("a/vision", None, "hi", 60).unwrap().cost, Cost::Usd { usd: 0.0042 });
     }
 
     #[test]
@@ -591,7 +589,7 @@ mod tests {
             ("/models", 200, r#"{"data":[{"id":"a/m","pricing":{"prompt":"0.000001","completion":"0.000002"}}]}"#),
             ("/chat/completions", 200, r#"{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":1000000,"completion_tokens":500000}}"#),
         ]);
-        let Cost::Usd { usd } = adapter(base, true).chat("a/m", "hi").unwrap().cost else { panic!("not priced") };
+        let Cost::Usd { usd } = adapter(base, true).chat("a/m", None, "hi", 60).unwrap().cost else { panic!("not priced") };
         assert!((usd - 2.0).abs() < 1e-9, "{usd}");
     }
 
@@ -602,7 +600,7 @@ mod tests {
         let e = p.models().unwrap_err();
         assert!(e.ends_with("refused the key (HTTP 401)"), "{e}");
         assert!(adapter(base.clone(), true).key_usage().unwrap_err().ends_with("refused the key (HTTP 403)"));
-        assert!(p.chat("m", "hi").unwrap_err().ends_with("HTTP 500"));
+        assert!(p.chat("m", None, "hi", 60).unwrap_err().ends_with("HTTP 500"));
         let dead = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap(); // closed again at once
         assert!(adapter(format!("http://{dead}"), false).models().unwrap_err().starts_with("Couldn't reach"));
     }

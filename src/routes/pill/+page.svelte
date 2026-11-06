@@ -30,8 +30,9 @@
         if (payload.state === "idle") return;
         if (payload.state === "listening") (wave = Array(WAVE).fill(0)), (started = Date.now()), (secs = 0);
         pill = payload;
-        // Results go away by themselves: long enough to read, errors longer.
+        // Results go away by themselves: long enough to read, a fallback and its reason longer, errors longest.
         if (payload.state === "added") hide = setTimeout(() => (on = false), 1600);
+        if (payload.state === "fallback") hide = setTimeout(() => (on = false), 2600);
         if (payload.state === "error") hide = setTimeout(() => (on = false), 4000);
       }),
       listen<number>("dictation-level", ({ payload }) => (wave = [...wave.slice(1), payload])),

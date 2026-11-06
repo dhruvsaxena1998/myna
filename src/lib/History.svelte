@@ -1,10 +1,11 @@
 <!-- Voice typing history (docs/index.html `clipsView()`): what was said with voice typing, newest first, from the stored traces. -->
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import ClearAll from "./ClearAll.svelte";
   import { when, type Row } from "./trace";
 
   // `rows`: every trace, so deleting one also leaves Stats for nerds. `said`: those that left text, the ones listed here.
-  let { rows = $bindable(), said }: { rows: Row[]; said: Row[] } = $props();
+  let { rows = $bindable(), said, onclear }: { rows: Row[]; said: Row[]; onclear: () => void } = $props();
   let q = $state("");
   let more = $state<Record<number, boolean>>({});
   let copied = $state<string | null>(null);
@@ -63,6 +64,7 @@
       onkeydown={(e) => { if (e.key === "Escape" && q) { e.preventDefault(); q = ""; } }} />
     <kbd aria-hidden="true">/</kbd>
   </label>
+  <ClearAll count={rows.length} onclear={() => { rows = []; onclear(); }} />
 </header>
 <div class="content">
   <p class="note">Everything you’ve said with voice typing, kept on this Mac. Newest first.</p>

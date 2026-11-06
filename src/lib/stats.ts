@@ -30,19 +30,20 @@ const share = (part: number, n: number): Cell => ({ n, v: n ? part / n : 0 });
 export const outcome = (t: Trace): Outcome => (t.outcome === "pasted" || t.outcome === "nothing_heard" ? t.outcome : "failed");
 const stt = (t: Trace) => t.steps.find((s) => s.kind === "speech-to-text");
 const rules = (t: Trace) => t.steps.find((s) => s.kind === "rules");
+const cleanup = (t: Trace) => t.steps.find((s) => s.kind === "cleanup");
 /** Words speech to text heard, before cleanup. */
 export const words = (t: Trace) => (stt(t)?.text ?? "").split(/\s+/).filter(Boolean).length;
 /** An already-right word to remember isn't an edit. */
 const isEdit = (e: Edit) => !(e.kind === "word" && e.unchanged);
 export const edits = (t: Trace) => (rules(t)?.edits ?? []).filter(isEdit);
 const cold = (t: Trace) => (t.load_ms ?? 0) >= 1;
-/** Model load wait, speech to text, rules, and paste as what's left of let go → pasted (as the opened trace's strip). */
+/** Model load wait, speech to text, rules, cleanup, and paste as what's left of let go → pasted (as the opened trace's strip). */
 export function steps(t: Trace) {
-  const parts = [t.load_ms ?? 0, stt(t)?.ms ?? 0, rules(t)?.ms ?? 0];
+  const parts = [t.load_ms ?? 0, stt(t)?.ms ?? 0, rules(t)?.ms ?? 0, cleanup(t)?.ms ?? 0];
   const sum = parts.reduce((a, b) => a + b, 0);
   return [...parts, (t.paste_ms ?? sum) - sum];
 }
-export const STEPS: [string, string][] = [["Model load wait", "--t-load"], ["Speech to text", "--t-stt"], ["Rules", "--t-rules"], ["Paste", "--t-paste"]];
+export const STEPS: [string, string][] = [["Model load wait", "--t-load"], ["Speech to text", "--t-stt"], ["Rules", "--t-rules"], ["Cleanup", "--t-clean"], ["Paste", "--t-paste"]];
 
 const midnight = (ms: number) => { const d = new Date(ms); d.setHours(0, 0, 0, 0); return d; };
 /** Local calendar days back from today: 0 is today. */

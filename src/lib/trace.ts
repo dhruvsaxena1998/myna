@@ -2,7 +2,9 @@
 export type Edit =
   | { kind: "filler" | "repeat" | "cutoff" | "number"; start: number; end: number; to: string }
   | { kind: "word"; start: number; end: number; to: string; matched: "spelling" | "heard"; spelling: string; heard: string | null; unchanged: boolean };
-export type Step = { kind: "speech-to-text" | "rules"; text: string; ms: number; settings: { language: string; tidy: boolean } | null; edits: Edit[] | null };
+/** The cleanup step's settings: the Fast model (none if it wasn't set), what the call cost, and why the rules text was pasted instead. */
+export type Cleanup = { model: string | null; cost: { kind: "usd"; usd: number } | { kind: "free" | "unknown" } | null; fallback: string | null; detail: string | null };
+export type Step = { kind: "speech-to-text" | "rules" | "cleanup"; text: string; ms: number; settings: { language: string; tidy: boolean } | Cleanup | null; edits: Edit[] | null };
 export type Trace = {
   id: number; started: number; mode: "hold" | "tap"; app: string | null; model: string | null; audio_ms: number;
   outcome: string; reason: string | null; load_ms: number | null; paste_ms: number | null; steps: Step[];

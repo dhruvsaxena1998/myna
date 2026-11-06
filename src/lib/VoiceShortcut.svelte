@@ -1,6 +1,8 @@
-<!-- Voice typing's switch, its shortcut recorder, and how it starts (prototype: the dictation page and `hotkeyRec`). -->
+<!-- Voice typing's switch, its two shortcut recorders (Dictate, Dictate with cleanup), and how they start (prototype: the dictation page, `hotkeyRec` and `cleanRowHelp`). -->
 <script lang="ts" module>
-  export type Voice = { on: boolean; key: string; mode: "hold" | "tap"; paste: "clipboard" | "type" };
+  export type Voice = { on: boolean; key: string; clean: string | null; mode: "hold" | "tap"; paste: "clipboard" | "type" };
+  /** Which shortcut the recorder is changing. */
+  type Which = "key" | "clean";
 </script>
 
 <script lang="ts">
@@ -8,10 +10,15 @@
   import { listen } from "@tauri-apps/api/event";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { onMount, tick } from "svelte";
+  import HostPill from "./HostPill.svelte";
+  import type { Ai } from "./AiProviders.svelte";
   import { fromKey, keycaps, spoken } from "./shortcut";
 
   // `globe`: the 🌐 key is set to Do Nothing, so fn only starts voice typing.
-  let { voice = $bindable(), globe: initial }: { voice: Voice; globe: boolean } = $props();
+  // `ai`: the providers and the Fast model, which Dictate with cleanup needs; `setup` opens the AI provider page.
+  let { voice = $bindable(), globe: initial, ai, setup }: { voice: Voice; globe: boolean; ai: Ai | null; setup: () => void } = $props();
+  const fast = $derived(ai?.fast && !ai.fast.gone ? { route: ai.fast, provider: ai.providers.find((p) => p.id === ai.fast!.provider) } : null);
+  const LABEL: Record<Which, string> = { key: "Dictate", clean: "Dictate with cleanup" };
   let globe = $derived(initial); // assignable: refreshed on focus
   onMount(() => {
     // The browser never sees fn; the backend tells us when it’s let go while recording.
@@ -20,9 +27,9 @@
     const offFocus = getCurrentWindow().onFocusChanged(async ({ payload }) => payload && (globe = await invoke<boolean>("globe_ok")));
     return () => [offFn, offFocus].forEach((off) => void off.then((f) => f()));
   });
-  let recording = $state(false);
+  let recording = $state<Which | null>(null);
   let error = $state("");
-  let btn = $state<HTMLButtonElement>();
+  const btns = $state<Partial<Record<Which, HTMLButtonElement>>>({});
 
   async function save(next: Voice) {
     const was = voice;
@@ -36,20 +43,21 @@
     }
   }
 
-  async function record(on: boolean) {
-    if (recording === on) return;
-    recording = on;
+  async function record(which: Which | null) {
+    if (recording === which) return;
+    const was = recording;
+    recording = which;
     error = "";
     await tick();
-    btn?.focus();
-    // While recording, the old shortcut must reach this page instead of starting voice typing.
-    await invoke("voice_pause", { paused: on }).catch((err) => (error = String(err)));
+    btns[which ?? was!]?.focus();
+    // While recording, the old shortcuts must reach this page instead of starting voice typing.
+    if ((was === null) !== (which === null)) await invoke("voice_pause", { paused: which !== null }).catch((err) => (error = String(err)));
   }
 
   function onkeydown(e: KeyboardEvent) {
     if (!recording) return;
     e.preventDefault();
-    if (e.key === "Escape") return void record(false);
+    if (e.key === "Escape") return void record(null);
     const key = fromKey(e);
     if (key === null) return;
     if (typeof key === "object") return void (error = key.error);
@@ -57,13 +65,20 @@
   }
 
   function pick(key: string) {
-    recording = false;
-    save({ ...voice, key }).then(() => btn?.focus());
+    const which = recording!;
+    recording = null;
+    const other = which === "key" ? voice.clean : voice.key;
+    if (key === other) {
+      error = `${spoken(key)} is already the ${LABEL[which === "key" ? "clean" : "key"]} shortcut. Pick another key.`;
+      invoke("voice_pause", { paused: false }).catch(() => {});
+      return void tick().then(() => btns[which]?.focus());
+    }
+    save({ ...voice, [which]: key }).then(() => btns[which]?.focus());
   }
 </script>
 
 <!-- Leaving the window ends recording, so the shortcut never stays switched off. -->
-<svelte:window {onkeydown} onblur={() => record(false)} />
+<svelte:window {onkeydown} onblur={() => record(null)} />
 
 <section class="group" aria-labelledby="voice-h">
   <h2 id="voice-h" class="sr">Voice typing</h2>
@@ -78,28 +93,29 @@
 
 {#if voice.on}
   <section class="group" aria-labelledby="hk-h">
-    <h2 id="hk-h">Shortcut</h2>
+    <h2 id="hk-h">Shortcuts</h2>
     <ul class="list">
       <li class="row">
-        <span><span class="name">Shortcut key</span><span class="desc">{recording ? "Press the key or keys you want to use. Esc cancels." : "Works in any app."}</span></span>
-        <!-- Same width either way, so the row doesn't move when recording starts. -->
-        <span class="hk">
-          {#if recording}
-            <button class="btn live" bind:this={btn} aria-live="polite" onclick={() => record(false)}>Press a key…</button>
-          {:else}
-            <span class="keys" aria-label="Current shortcut: {spoken(voice.key)}">{#each keycaps(voice.key) as k}<kbd>{k}</kbd>{/each}</span>
-            <button class="btn" bind:this={btn} onclick={() => record(true)}>Change</button>
-          {/if}
-        </span>
+        <span><span class="name">Dictate</span><span class="desc">{recording === "key" ? "Press the key or keys you want to use. Esc cancels." : "Adds what you said. Works in any app."}</span></span>
+        {@render recorder("key")}
       </li>
-      {#if voice.key === "Fn" && !globe}
+      <li class="row">
+        <span><span class="name">Dictate with cleanup</span>
+          <span class="desc">
+            {#if recording === "clean"}Press the key or keys you want to use. Esc cancels.
+            {:else if !fast}Fixes punctuation, grammar slips and self-corrections with AI before adding your words.<br /><span class="need">Needs an Endpoint</span> Set a Fast model on AI provider first.
+            {:else}Fixes punctuation, grammar slips and self-corrections with your Fast model, {fast.provider?.name ?? "Unknown provider"} · {fast.route.model}, before adding your words. If that takes over 3 seconds, Myna adds them as they are.<br /><HostPill off={fast.provider?.off_device ?? true} />{/if}
+          </span></span>
+        {#if fast}{@render recorder("clean")}{:else}<button class="btn" onclick={setup}>Set up</button>{/if}
+      </li>
+      {#if (voice.key === "Fn" || voice.clean === "Fn") && !globe}
         <li class="row">
           <span><span class="name">Set the 🌐 key to Do Nothing</span><span class="desc">Otherwise fn also does what your Mac set it to, like showing emoji. In Keyboard settings, choose Do Nothing for “Press 🌐 key to” (on some keyboards, “Press fn key to”).</span></span>
           <button class="btn" onclick={() => invoke("globe_open")}>Open Keyboard Settings</button>
         </li>
       {/if}
       <li class="row">
-        <span><span class="name" id="mode-l">How it starts</span><span class="desc">{voice.mode === "hold" ? "Hold the key while you talk. Let go to add your words." : "Press once to start and again to stop. Stops by itself after 5 minutes."}</span></span>
+        <span><span class="name" id="mode-l">How it starts</span><span class="desc">{voice.mode === "hold" ? "Hold the key while you talk. Let go to add your words." : "Press once to start and again to stop. Stops by itself after 5 minutes."} Same for both shortcuts.</span></span>
         <fieldset class="seg" aria-labelledby="mode-l">
           {#each [["hold", "Hold to talk"], ["tap", "Tap to start and stop"]] as [v, label]}
             <label><input type="radio" name="mode" value={v} checked={voice.mode === v} onchange={() => save({ ...voice, mode: v as Voice["mode"] })} /><span>{label}</span></label>
@@ -110,6 +126,21 @@
     <p class="err" role="status">{error}</p>
   </section>
 {/if}
+
+<!-- Same width either way, so the row doesn't move when recording starts. -->
+{#snippet recorder(which: Which)}
+  {@const key = voice[which]}
+  <span class="hk">
+    {#if recording === which}
+      <button class="btn live" bind:this={btns[which]} aria-live="polite" onclick={() => record(null)}>Press a key…</button>
+    {:else}
+      {#if key}<span class="keys" aria-label="Current shortcut: {spoken(key)}">{#each keycaps(key) as k}<kbd>{k}</kbd>{/each}</span>
+      {:else}<span class="desc none">Not set</span>{/if}
+      <button class="btn" bind:this={btns[which]} onclick={() => record(which)}>{key ? "Change" : "Set"}</button>
+      {#if key && which === "clean"}<button class="btn plain icon" title="Remove" onclick={() => save({ ...voice, clean: null })} aria-label="Remove the Dictate with cleanup shortcut"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" /></svg></button>{/if}
+    {/if}
+  </span>
+{/snippet}
 
 <style>
   .group { margin-bottom: var(--sp-5); }
@@ -122,10 +153,16 @@
   .desc { display: block; margin-top: 2px; color: var(--text-2); }
   .hk { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); min-width: 180px; }
   .keys { display: inline-flex; gap: var(--sp-1); }
+  .none { margin: 0; }
+  .need { display: inline-flex; align-items: center; height: 20px; margin-top: var(--sp-1); padding: 0 var(--sp-2); border-radius: var(--r-full); background: var(--fill-hover); color: var(--text-2); font-size: var(--fs-caption); font-weight: var(--fw-medium); }
+  .desc :global(.pill) { margin-top: var(--sp-1); }
   kbd { min-width: 26px; height: 26px; padding: 0 var(--sp-2); box-sizing: border-box; display: inline-grid; place-items: center;
     border-radius: var(--r-md); background: var(--fill-field); box-shadow: inset 0 0 0 .5px var(--line-strong); font: inherit; }
   .btn { display: inline-flex; align-items: center; justify-content: center; height: var(--h-ctl); padding: 0 14px; border: 0; border-radius: var(--r-full);
     background: var(--fill-control); color: var(--text); font: inherit; box-shadow: inset 0 0 0 .5px var(--line-strong), var(--shadow-control); white-space: nowrap; }
+  .btn.icon { width: var(--h-ctl); padding: 0; }
+  .ic { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; }
+  .btn.plain { background: none; box-shadow: none; color: var(--text-2); }
   .btn:hover { background: color-mix(in srgb, var(--fill-control) 85%, var(--text)); }
   .btn.live { min-width: 150px; color: var(--accent-text); box-shadow: inset 0 0 0 2px var(--accent); }
   .btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }

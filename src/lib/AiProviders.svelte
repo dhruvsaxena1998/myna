@@ -30,6 +30,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { tick } from "svelte";
+  import HostPill from "./HostPill.svelte";
 
   let { initial }: { initial: Ai } = $props();
   let providers = $derived(initial.providers); // assignable: add and remove update them
@@ -197,13 +198,7 @@
 
 <svelte:window onpointerdown={outside} />
 
-{#snippet pill(off: boolean)}
-  {#if off}
-    <span class="pill caution"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18h10a4 4 0 0 0 .6-7.95A5.5 5.5 0 0 0 7 8.5 4.8 4.8 0 0 0 7 18z" /></svg>Sends text off this Mac</span>
-  {:else}
-    <span class="pill status"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="11" rx="2" /><path d="M9 20h6M12 16v4" /></svg>Stays on this Mac</span>
-  {/if}
-{/snippet}
+{#snippet pill(off: boolean)}<HostPill {off} />{/snippet}
 
 {#if notice}
   <div class="notice" role="status">
@@ -361,7 +356,7 @@
   .caution-i { color: var(--caution-text); }
   .notset { display: block; margin-top: var(--sp-1); color: var(--caution-text); }
   .srow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-3); align-items: center; padding: var(--sp-3) var(--sp-4); }
-  .srow .pill { margin-top: var(--sp-1); }
+  .srow :global(.pill) { margin-top: var(--sp-1); }
   .form { margin-top: var(--sp-3); padding: var(--sp-3) var(--sp-4); display: grid; gap: var(--sp-2); }
   .two { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
   .field { display: grid; gap: var(--sp-1); align-content: start; }
@@ -376,9 +371,6 @@
   /* Reserved line so an error never shifts the form. */
   .err { margin: 0; min-height: var(--lh-footnote); color: var(--danger-text); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
   .actions { display: flex; justify-content: flex-end; gap: var(--sp-2); }
-  .pill { display: inline-flex; align-items: center; gap: var(--sp-1); height: 20px; padding: 0 var(--sp-2); border-radius: var(--r-full); font-size: var(--fs-caption); font-weight: var(--fw-medium); white-space: nowrap; flex: none; }
-  .pill.status { background: var(--accent-soft); color: var(--accent-text); }
-  .pill.caution { background: var(--caution-soft); color: var(--caution-text); }
   .ic { width: 14px; height: 14px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   .btn { display: inline-flex; align-items: center; gap: var(--sp-1h); height: var(--h-ctl); padding: 0 14px; border: 0; border-radius: var(--r-full);
     background: var(--fill-control); color: var(--text); font: inherit; box-shadow: inset 0 0 0 .5px var(--line-strong), var(--shadow-control); white-space: nowrap; }
