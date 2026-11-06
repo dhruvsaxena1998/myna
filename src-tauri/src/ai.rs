@@ -3,16 +3,15 @@
 //! Every call goes through the `Provider` trait, like `runtime::Transcriber`; one adapter, OpenAI-compatible chat.
 
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::net::IpAddr;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-const KINDS: [&str; 5] = ["ollama", "lmstudio", "omlx", "openrouter", "custom"];
+const KINDS: [&str; 2] = ["openai", "openrouter"];
 const SLOTS: [&str; 2] = ["main", "fast"];
 const SERVICE: &str = "com.dhruvsaxena.myna.ai-provider";
-const TEST_PROMPT: &str = "Say hello in five words.";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Record {
@@ -45,7 +44,7 @@ pub struct State {
     fast: Option<Route>,
 }
 
-#[derive(Debug, Serialize, Clone, PartialEq, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
 pub struct Model {
     pub id: String,
     pub input_per_m: Option<f64>,
@@ -54,6 +53,7 @@ pub struct Model {
     pub images: Option<bool>,
 }
 
+#[cfg_attr(not(test), allow(dead_code))] // first caller is a feature (stories 16, 17)
 #[derive(Debug, Serialize, Clone, PartialEq)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Cost {
@@ -70,16 +70,20 @@ pub struct Reply {
     pub cost: Cost,
 }
 
-#[derive(Debug, Serialize)]
-pub struct TestResult {
-    model: String,
-    reply: String,
+/// What Test found: `models` for an OpenAI-compatible server, `used` and `limit` (USD) for an OpenRouter key.
+#[derive(Debug, Serialize, PartialEq)]
+pub struct Check {
     ms: u64,
-    cost: Cost,
+    models: Option<usize>,
+    used: Option<f64>,
+    limit: Option<f64>,
 }
 
 pub trait Backend: Send {
     fn models(&self) -> Result<Vec<Model>, String>;
+    /// USD used and limit of the key, for a service that reports them (OpenRouter); None for the rest.
+    fn key_usage(&self) -> Result<Option<(f64, Option<f64>)>, String>;
+    #[cfg_attr(not(test), allow(dead_code))] // first caller is a feature (stories 16, 17)
     fn chat(&self, model: &str, prompt: &str) -> Result<Reply, String>;
 }
 
@@ -160,6 +164,9 @@ impl OpenAi {
         let status = res.status().as_u16();
         let text = res.body_mut().read_to_string().map_err(|e| unreachable(e.to_string()))?;
         let json: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+        if status == 401 || status == 403 {
+            return Err(format!("{} refused the key (HTTP {status})", self.url));
+        }
         if status >= 400 {
             let why = json["error"]["message"].as_str().map(str::to_string).unwrap_or_else(|| format!("HTTP {status}"));
             return Err(unreachable(why));
@@ -176,6 +183,7 @@ fn per_m(v: &Value) -> Option<f64> {
     v.as_str()?.parse::<f64>().ok().filter(|p| *p >= 0.0).map(|p| p * 1e6)
 }
 
+#[cfg_attr(not(test), allow(dead_code))] // first caller is a feature (stories 16, 17)
 /// First match wins: the reply's own cost, price x tokens, loopback is free, else unknown.
 fn cost_of(reported: Option<f64>, price: Option<(f64, f64)>, tokens: Option<(u64, u64)>, loopback: bool) -> Cost {
     if let Some(usd) = reported {
@@ -188,7 +196,6 @@ fn cost_of(reported: Option<f64>, price: Option<(f64, f64)>, tokens: Option<(u64
 }
 
 impl Backend for OpenAi {
-    // shortcut: fetched live on every picker open with no disk cache, so an offline Endpoint shows an error instead of its last list; add the cache when a feature needs lists offline.
     fn models(&self) -> Result<Vec<Model>, String> {
         let json = self.send("/models", None, 15)?;
         let list = json["data"].as_array().ok_or_else(|| format!("Couldn't read the model list from {}", self.url))?;
@@ -211,6 +218,16 @@ impl Backend for OpenAi {
             .collect())
     }
 
+    fn key_usage(&self) -> Result<Option<(f64, Option<f64>)>, String> {
+        if !self.rich {
+            return Ok(None);
+        }
+        let d = &self.send("/key", None, 15)?["data"];
+        let used = d["usage"].as_f64().ok_or_else(|| format!("Couldn't read the key's usage from {}", self.url))?;
+        Ok(Some((used, d["limit"].as_f64())))
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))] // first caller is a feature (stories 16, 17)
     fn chat(&self, model: &str, prompt: &str) -> Result<Reply, String> {
         let body = json!({"model": model, "messages": [{"role": "user", "content": prompt}]}).to_string();
         let json = self.send("/chat/completions", Some(body), 60)?;
@@ -290,6 +307,7 @@ pub fn remove(db: &mut Connection, keys: &dyn Keys, id: i64) -> Result<Vec<Strin
         q.query_map([id], |r| r.get(0)).map_err(|e| e.to_string())?.collect::<Result<Vec<String>, _>>().map_err(|e| e.to_string())?
     };
     tx.execute("DELETE FROM route WHERE provider_id = ?1", [id]).map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM model_list WHERE provider_id = ?1", [id]).map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM provider WHERE id = ?1", [id]).map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
     keys.delete(id)?;
@@ -323,19 +341,46 @@ pub fn provider(db: &Connection, keys: &dyn Keys, id: i64) -> Result<Box<dyn Bac
     Ok(Box::new(OpenAi { key: keys.get(id)?, rich: r.kind == "openrouter", url: r.url }))
 }
 
-/// A short fixed prompt to the model routed to `id` as Main or Fast, else the first in its live list.
-pub fn test(db: &Mutex<Connection>, id: i64, p: &dyn Backend) -> Result<TestResult, String> {
-    let routed = {
-        let db = db.lock().unwrap();
-        SLOTS.iter().find_map(|s| get_route(&db, s).ok().flatten().filter(|r| r.provider == id)).map(|r| r.model)
-    };
-    let model = match routed {
-        Some(m) => m,
-        None => p.models()?.into_iter().next().ok_or("That provider lists no models")?.id,
-    };
+fn cached(db: &Connection, id: i64) -> Option<Vec<Model>> {
+    let json: String = db.query_row("SELECT json FROM model_list WHERE provider_id = ?1", [id], |r| r.get(0)).optional().ok()??;
+    serde_json::from_str(&json).ok()
+}
+
+fn store(db: &Connection, id: i64, list: &[Model]) -> Result<(), String> {
+    let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+    // The WHERE keeps a list from outliving a provider removed while it was being fetched.
+    db.execute(
+        "INSERT OR REPLACE INTO model_list(provider_id, json, fetched) SELECT id, ?2, ?3 FROM provider WHERE id = ?1",
+        params![id, serde_json::to_string(list).map_err(|e| e.to_string())?, at],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// The model list of provider `id`: the cached one unless `fresh`, else fetched and cached. A failed fetch leaves the cache alone.
+pub fn models(db: &Mutex<Connection>, keys: &dyn Keys, id: i64, fresh: bool) -> Result<Vec<Model>, String> {
+    if !fresh && let Some(l) = cached(&db.lock().unwrap(), id) {
+        return Ok(l);
+    }
+    let p = provider(&db.lock().unwrap(), keys, id)?; // the lock is not held while waiting on the network
+    let list = p.models()?;
+    store(&db.lock().unwrap(), id, &list)?;
+    Ok(list)
+}
+
+/// Checks the address and key without spending tokens: OpenRouter's key endpoint, else the model list (cached on the way).
+pub fn test(db: &Mutex<Connection>, id: i64, p: &dyn Backend) -> Result<Check, String> {
     let start = Instant::now();
-    let r = p.chat(&model, TEST_PROMPT)?;
-    Ok(TestResult { model, reply: r.text, ms: start.elapsed().as_millis() as u64, cost: r.cost })
+    let (mut count, mut used, mut limit) = (None, None, None);
+    match p.key_usage()? {
+        Some((u, l)) => (used, limit) = (Some(u), l),
+        None => {
+            let list = p.models()?;
+            store(&db.lock().unwrap(), id, &list)?;
+            count = Some(list.len());
+        }
+    }
+    Ok(Check { ms: start.elapsed().as_millis() as u64, models: count, used, limit })
 }
 
 #[cfg(test)]
@@ -356,6 +401,7 @@ mod tests {
     struct Fake;
     impl Backend for Fake {
         fn models(&self) -> Result<Vec<Model>, String> { Ok(vec![Model { id: "fake-1".into(), ..Default::default() }]) }
+        fn key_usage(&self) -> Result<Option<(f64, Option<f64>)>, String> { Ok(None) }
         fn chat(&self, model: &str, _: &str) -> Result<Reply, String> {
             Ok(Reply { text: format!("hi from {model}"), tokens: Some((3, 4)), cost: Cost::Free })
         }
@@ -375,7 +421,7 @@ mod tests {
     fn add_list_remove_and_key_stays_out_of_the_db() {
         let (_t, mut c) = db();
         let keys = Memory::default();
-        let a = add_ok(&c, &keys, "ollama", " Ollama ", "http://localhost:11434/v1/", "");
+        let a = add_ok(&c, &keys, "openai", " Ollama ", "http://localhost:11434/v1/", "");
         let b = add_ok(&c, &keys, "openrouter", "OpenRouter", "https://openrouter.ai/api/v1", "sk-or-secret");
         assert_eq!((a.name.as_str(), a.url.as_str(), a.has_key, a.off_device), ("Ollama", "http://localhost:11434/v1", false, false));
         assert!(b.has_key && b.off_device);
@@ -392,13 +438,13 @@ mod tests {
     fn bad_input_is_refused_in_plain_words() {
         let (_t, c) = db();
         let keys = Memory::default();
-        add_ok(&c, &keys, "custom", "Mine", "http://10.0.0.5:8080/v1", "");
+        add_ok(&c, &keys, "openai", "Mine", "http://10.0.0.5:8080/v1", "");
         let err = |kind, name: &str, url, key| add(&c, &keys, kind, name, url, key).unwrap_err();
-        assert!(err("custom", "mine", "http://x.test", "").contains("already a provider"));
-        assert!(err("custom", "  ", "http://x.test", "").contains("name"));
-        assert!(err("custom", &"x".repeat(41), "http://x.test", "").contains("40"));
-        assert!(err("custom", "A", "ftp://x.test", "").contains("http"));
-        assert!(err("custom", "A", "not a url", "").contains("http"));
+        assert!(err("openai", "mine", "http://x.test", "").contains("already a provider"));
+        assert!(err("openai", "  ", "http://x.test", "").contains("name"));
+        assert!(err("openai", &"x".repeat(41), "http://x.test", "").contains("40"));
+        assert!(err("openai", "A", "ftp://x.test", "").contains("http"));
+        assert!(err("openai", "A", "not a url", "").contains("http"));
         assert!(err("openrouter", "A", "https://openrouter.ai/api/v1", "sk-wrong").contains("sk-or-"));
         assert!(err("nope", "A", "http://x.test", "").contains("kind"));
         assert_eq!(get(&c, &keys).unwrap().providers.len(), 1);
@@ -425,8 +471,8 @@ mod tests {
         let (_t, mut c) = db();
         let keys = Memory::default();
         assert_eq!(tidy(&c).unwrap_err(), "Fast model: Not set");
-        let a = add_ok(&c, &keys, "ollama", "Ollama", "http://localhost:11434/v1", "");
-        let b = add_ok(&c, &keys, "custom", "Other", "http://10.0.0.5/v1", "");
+        let a = add_ok(&c, &keys, "openai", "Ollama", "http://localhost:11434/v1", "");
+        let b = add_ok(&c, &keys, "openai", "Other", "http://10.0.0.5/v1", "");
         set(&c, "fast", a.id, "llama3").unwrap();
         set(&c, "main", a.id, "qwen").unwrap();
         assert_eq!(tidy(&c).unwrap(), ("Ollama".into(), "llama3".into()));
@@ -439,18 +485,6 @@ mod tests {
         assert!(s.main.is_none() && s.fast.is_none());
         assert!(set(&c, "main", a.id, "x").is_err() && set(&c, "huge", b.id, "x").is_err());
         assert!(remove(&mut c, &keys, b.id).unwrap().is_empty());
-    }
-
-    #[test]
-    fn test_uses_the_routed_model_else_the_first_listed() {
-        let (_t, c) = db();
-        let keys = Memory::default();
-        let a = add_ok(&c, &keys, "ollama", "Ollama", "http://localhost:11434/v1", "");
-        let db = Mutex::new(c);
-        assert_eq!(test(&db, a.id, &Fake).unwrap().reply, "hi from fake-1");
-        set(&db.lock().unwrap(), "fast", a.id, "routed").unwrap();
-        let t = test(&db, a.id, &Fake).unwrap();
-        assert_eq!((t.model.as_str(), t.reply.as_str(), t.cost.clone()), ("routed", "hi from routed", Cost::Free));
     }
 
     #[test]
@@ -537,12 +571,84 @@ mod tests {
 
     #[test]
     fn errors_read_as_plain_sentences() {
-        let base = stub(vec![("/models", 401, r#"{"error":{"message":"Invalid API key"}}"#), ("/chat/completions", 500, "oops")]);
+        let base = stub(vec![("/models", 401, r#"{"error":{"message":"Invalid API key"}}"#), ("/key", 403, "{}"), ("/chat/completions", 500, "oops")]);
         let p = adapter(base.clone(), false);
         let e = p.models().unwrap_err();
-        assert!(e.starts_with("Couldn't reach http://") && e.ends_with("Invalid API key"), "{e}");
+        assert!(e.ends_with("refused the key (HTTP 401)"), "{e}");
+        assert!(adapter(base.clone(), true).key_usage().unwrap_err().ends_with("refused the key (HTTP 403)"));
         assert!(p.chat("m", "hi").unwrap_err().ends_with("HTTP 500"));
         let dead = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap(); // closed again at once
         assert!(adapter(format!("http://{dead}"), false).models().unwrap_err().starts_with("Couldn't reach"));
+    }
+
+    fn db_with(url: String, kind: &str) -> (tempfile::TempDir, Mutex<Connection>, Memory, i64) {
+        let (tmp, c) = db();
+        let keys = Memory::default();
+        let id = add_ok(&c, &keys, kind, "P", &url, if kind == "openrouter" { "sk-or-x" } else { "" }).id;
+        (tmp, Mutex::new(c), keys, id)
+    }
+
+    const LIST: &str = r#"{"data":[{"id":"a"},{"id":"b"}]}"#;
+
+    #[test]
+    fn models_are_cached_until_a_fresh_fetch_replaces_them() {
+        let base = stub(vec![("/v1/models", 200, LIST)]);
+        let (_t, db, keys, id) = db_with(format!("{base}/v1"), "openai");
+        let ids = |l: Vec<Model>| l.into_iter().map(|m| m.id).collect::<Vec<_>>();
+        assert!(cached(&db.lock().unwrap(), id).is_none());
+        assert_eq!(ids(models(&db, &keys, id, false).unwrap()), ["a", "b"]); // miss: fetched and stored
+        db.lock().unwrap().execute("UPDATE model_list SET json = '[{\"id\":\"old\"}]'", []).unwrap();
+        assert_eq!(ids(models(&db, &keys, id, false).unwrap()), ["old"]); // hit: no fetch
+        assert_eq!(ids(models(&db, &keys, id, true).unwrap()), ["a", "b"]); // fresh: fetched and replaced
+        assert_eq!(ids(cached(&db.lock().unwrap(), id).unwrap()), ["a", "b"]);
+    }
+
+    #[test]
+    fn a_failed_fresh_fetch_keeps_the_cache() {
+        let (_t, db, keys, id) = db_with(format!("{}/v1", stub(vec![])), "openai"); // every path 404s
+        store(&db.lock().unwrap(), id, &[Model { id: "kept".into(), ..Default::default() }]).unwrap();
+        assert!(models(&db, &keys, id, true).unwrap_err().starts_with("Couldn't reach"));
+        assert_eq!(models(&db, &keys, id, false).unwrap()[0].id, "kept");
+    }
+
+    #[test]
+    fn remove_deletes_the_cache() {
+        let base = stub(vec![("/models", 200, LIST)]);
+        let (_t, db, keys, id) = db_with(base, "openai");
+        models(&db, &keys, id, false).unwrap();
+        remove(&mut db.lock().unwrap(), &keys, id).unwrap();
+        let n: i64 = db.lock().unwrap().query_row("SELECT count(*) FROM model_list", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 0);
+        assert!(store(&db.lock().unwrap(), id, &[]).is_ok() && cached(&db.lock().unwrap(), id).is_none()); // a late fetch can't resurrect it
+    }
+
+    #[test]
+    fn test_counts_models_and_caches_them() {
+        let base = stub(vec![("/models", 200, LIST)]);
+        let (_t, db, _k, id) = db_with(base.clone(), "openai");
+        let c = test(&db, id, &adapter(base, false)).unwrap();
+        assert_eq!((c.models, c.used, c.limit), (Some(2), None, None));
+        assert_eq!(cached(&db.lock().unwrap(), id).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_reads_the_openrouter_key_usage_and_limit() {
+        let base = stub(vec![("/key", 200, r#"{"data":{"usage":0.12,"limit":5,"limit_remaining":4.88}}"#)]);
+        let (_t, db, _k, id) = db_with(base.clone(), "openrouter");
+        let c = test(&db, id, &adapter(base.clone(), true)).unwrap();
+        assert_eq!((c.models, c.used, c.limit), (None, Some(0.12), Some(5.0)));
+        let base = stub(vec![("/key", 200, r#"{"data":{"usage":0,"limit":null}}"#)]);
+        let c = test(&db, id, &adapter(base, true)).unwrap();
+        assert_eq!((c.used, c.limit), (Some(0.0), None));
+        assert!(cached(&db.lock().unwrap(), id).is_none()); // OpenRouter's Test doesn't fetch the list
+    }
+
+    #[test]
+    fn test_failures_read_plainly() {
+        let base = stub(vec![("/key", 401, "{}")]);
+        let (_t, db, _k, id) = db_with(base.clone(), "openrouter");
+        assert!(test(&db, id, &adapter(base, true)).unwrap_err().contains("refused the key"));
+        let dead = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+        assert!(test(&db, id, &adapter(format!("http://{dead}"), false)).unwrap_err().starts_with("Couldn't reach"));
     }
 }

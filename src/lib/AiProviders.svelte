@@ -1,20 +1,16 @@
 <!-- Settings › AI provider: providers, Main and Fast models (docs/index.html, aiPage). -->
 <script lang="ts" module>
-  export type Provider = { id: number; kind: "ollama" | "lmstudio" | "omlx" | "openrouter" | "custom"; name: string; url: string; has_key: boolean; off_device: boolean };
+  export type Provider = { id: number; kind: "openai" | "openrouter"; name: string; url: string; has_key: boolean; off_device: boolean };
   export type Route = { provider: number; model: string } | null;
   export type Ai = { providers: Provider[]; main: Route; fast: Route };
   type Model = { id: string; input_per_m: number | null; output_per_m: number | null; context: number | null; images: boolean | null };
-  type Cost = { kind: "usd"; usd: number } | { kind: "free" } | { kind: "unknown" };
-  type Test = { st: "run"; model: string } | { st: "err"; msg: string } | { st: "ok"; reply: string; ms: number; cost: Cost };
+  type Test = { st: "run" } | { st: "err"; msg: string } | { st: "ok"; ms: number; models: number | null; used: number | null; limit: number | null };
   type Slot = "main" | "fast";
 
-  // local servers first; oMLX's port is its default and the user can change it
-  const PRESETS: [Provider["kind"], string, string][] = [
-    ["ollama", "Ollama on this Mac", "http://localhost:11434/v1"],
-    ["lmstudio", "LM Studio on this Mac", "http://localhost:1234/v1"],
-    ["omlx", "oMLX on this Mac", "http://localhost:8000/v1"],
-    ["openrouter", "OpenRouter", "https://openrouter.ai/api/v1"],
-    ["custom", "Other (OpenAI-compatible)", "https://"],
+  // [kind, label, name, address, what to type in the empty fields]
+  const PRESETS: [Provider["kind"], string, string, string][] = [
+    ["openai", "OpenAI-compatible", "", ""],
+    ["openrouter", "OpenRouter", "OpenRouter", "https://openrouter.ai/api/v1"],
   ];
   const SLOTS: [Slot, string, string][] = [
     ["main", "Main model", "Writes summaries and answers your questions."],
@@ -22,9 +18,13 @@
   ];
   const hostOf = (u: string) => { try { return new URL(u).hostname.replace(/^\[|\]$/g, ""); } catch { return ""; } };
   const loopback = (u: string) => /^(localhost|127(\.\d{1,3}){3}|::1)$/.test(hostOf(u));
-  const usd = (n: number) => "$" + (n >= 0.01 ? n.toFixed(2) : n.toPrecision(2));
+  const usd = (n: number) => "$" + (n >= 0.01 || n === 0 ? n.toFixed(2) : n.toPrecision(2));
   const ctx = (n: number) => (n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : `${Math.round(n / 1000)}K`);
-  const costText = (c: Cost) => (c.kind === "usd" ? usd(c.usd) : c.kind === "free" ? "Free · runs on your server" : "cost unknown");
+  const testText = (t: Extract<Test, { st: "ok" }>) => {
+    const s = `${(t.ms / 1000).toFixed(1)} s`;
+    if (t.models != null) return `Connected · ${t.models} model${t.models === 1 ? "" : "s"} · ${s}`;
+    return `Key works · ${usd(t.used ?? 0)} used${t.limit != null ? ` of ${usd(t.limit)}` : ""} · ${s}`;
+  };
 </script>
 
 <script lang="ts">
@@ -39,13 +39,13 @@
   let error = $state("");
   let confirm = $state<number | null>(null);
   let adding = $state(false);
-  let draft = $state({ kind: "ollama" as Provider["kind"], name: "Ollama on this Mac", url: "http://localhost:11434/v1", key: "" });
+  let draft = $state({ kind: "openai" as Provider["kind"], name: "", url: "", key: "" });
   let errs = $state<{ name?: string; url?: string; key?: string }>({});
   let addError = $state("");
   let busy = $state(false);
   let open = $state<Slot | null>(null);
   let q = $state("");
-  let lists = $state<Record<number, { st: "load" | "ok" | "err"; models: Model[]; msg: string }>>({});
+  let lists = $state<Record<number, { st: "load" | "ok" | "err"; models: Model[]; msg: string; stale: string }>>({});
   let search = $state<HTMLInputElement>();
   const triggers: Partial<Record<Slot, HTMLButtonElement>> = {};
 
@@ -58,8 +58,8 @@
   // --- Add form
   function pickKind(e: Event) {
     const kind = (e.currentTarget as HTMLSelectElement).value as Provider["kind"];
-    const [, name, url] = PRESETS.find((p) => p[0] === kind)!;
-    draft = { ...draft, kind, name: kind === "custom" ? "" : name, url };
+    const [, , name, url] = PRESETS.find((p) => p[0] === kind)!;
+    draft = { ...draft, kind, name, url };
     errs = {};
   }
   function validate() {
@@ -84,6 +84,7 @@
     try {
       const p = await invoke<Provider>("ai_add", { kind: draft.kind, name: draft.name.trim(), url: draft.url.trim(), key: draft.key.trim() });
       providers = [...providers, p];
+      invoke("ai_models", { id: p.id, fresh: true }).catch(() => {}); // warm the cache so the first picker open is instant
       adding = false;
       notice = "";
     } catch (err) {
@@ -93,7 +94,7 @@
     }
   }
   function startAdd() {
-    draft = { kind: "ollama", name: "Ollama on this Mac", url: "http://localhost:11434/v1", key: "" };
+    draft = { kind: "openai", name: "", url: "", key: "" };
     errs = {}; addError = ""; adding = true;
   }
 
@@ -116,11 +117,10 @@
 
   // --- Test
   async function test(p: Provider) {
-    const r = [routes.main, routes.fast].find((r) => r?.provider === p.id);
-    tests[p.id] = { st: "run", model: r?.model ?? "the provider" };
+    tests[p.id] = { st: "run" };
     try {
-      const t = await invoke<{ model: string; reply: string; ms: number; cost: Cost }>("ai_test", { id: p.id });
-      if (prov(p.id)) tests[p.id] = { st: "ok", reply: t.reply, ms: t.ms, cost: t.cost };
+      const t = await invoke<{ ms: number; models: number | null; used: number | null; limit: number | null }>("ai_test", { id: p.id });
+      if (prov(p.id)) tests[p.id] = { st: "ok", ...t };
     } catch (err) {
       if (prov(p.id)) tests[p.id] = { st: "err", msg: String(err) };
     }
@@ -131,10 +131,17 @@
     if (open === slot) return close();
     open = slot; q = "";
     for (const p of providers) {
-      lists[p.id] = { st: "load", models: [], msg: "" };
-      invoke<Model[]>("ai_models", { id: p.id }).then(
-        (models) => { lists[p.id] = { st: "ok", models, msg: "" }; },
-        (err) => { lists[p.id] = { st: "err", models: [], msg: String(err) }; },
+      if (lists[p.id]?.st !== "ok") lists[p.id] = { st: "load", models: [], msg: "", stale: "" }; // a list already shown stays put
+      // the saved list first, then the live one swaps in; a failed refresh keeps what is shown
+      invoke<Model[]>("ai_models", { id: p.id, fresh: false }).then(
+        (models) => {
+          lists[p.id] = { st: "ok", models, msg: "", stale: lists[p.id]?.stale ?? "" };
+          invoke<Model[]>("ai_models", { id: p.id, fresh: true }).then(
+            (models) => { lists[p.id] = { st: "ok", models, msg: "", stale: "" }; },
+            (err) => { lists[p.id].stale = String(err); },
+          );
+        },
+        (err) => { lists[p.id] = { st: "err", models: [], msg: String(err), stale: "" }; },
       );
     }
     await tick();
@@ -233,10 +240,10 @@
                 <button type="button" class="btn icon quiet" id="rm-{p.id}" aria-label="Remove {p.name}" onclick={() => (confirm = p.id)}><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" /></svg></button>
               </div>
               <div class="tline" aria-live="polite">
-                {#if !t}<span class="help">Not tested yet. Test sends a short prompt and shows the reply.</span>
-                {:else if t.st === "run"}<span class="help">Asking {t.model}…</span>
-                {:else if t.st === "err"}<span class="terr">Couldn’t get a reply: {t.msg}</span><button type="button" class="btn quiet sm" onclick={() => test(p)}>Retry</button>
-                {:else}<span class="help trunc">“{t.reply}” · {(t.ms / 1000).toFixed(1)} s · {costText(t.cost)}</span>{/if}
+                {#if !t}<span class="help">Not tested yet. Test checks the address and key; it spends nothing.</span>
+                {:else if t.st === "run"}<span class="help">Checking…</span>
+                {:else if t.st === "err"}<span class="terr">{t.msg}</span><button type="button" class="btn quiet sm" onclick={() => test(p)}>Retry</button>
+                {:else}<span class="help trunc">{testText(t)}</span>{/if}
               </div>
             {/if}
           </li>
@@ -249,17 +256,17 @@
         <div class="two">
           <div class="field"><label for="add-kind">Kind</label>
             <select id="add-kind" class="input" value={draft.kind} onchange={pickKind}>{#each PRESETS as [v, l]}<option value={v}>{l}</option>{/each}</select>
-            <span class="help">Any server that speaks the OpenAI API works.</span></div>
+            <span class="help kind-h">{draft.kind === "openrouter" ? "One key for models from many companies." : "Ollama, LM Studio, oMLX or any server that speaks the OpenAI API."}</span></div>
           <div class="field"><label for="add-name">Name</label>
-            <input id="add-name" class="input" bind:value={draft.name} maxlength="40" autocomplete="off" spellcheck="false" aria-invalid={!!errs.name} aria-describedby="add-name-h add-name-e" />
+            <input id="add-name" class="input" bind:value={draft.name} maxlength="40" placeholder={draft.kind === "openai" ? "Ollama on this Mac" : ""} autocomplete="off" spellcheck="false" aria-invalid={!!errs.name} aria-describedby="add-name-h add-name-e" />
             <span class="help" id="add-name-h">Shown when you pick a model.</span><span class="err" id="add-name-e" role="status">{errs.name ?? ""}</span></div>
         </div>
         <div class="field"><label for="add-url">Address</label>
-          <input id="add-url" class="input mono" type="url" bind:value={draft.url} autocomplete="off" spellcheck="false" aria-invalid={!!errs.url} aria-describedby="add-url-h add-url-e" />
+          <input id="add-url" class="input mono" type="url" bind:value={draft.url} placeholder={draft.kind === "openai" ? "http://localhost:11434/v1" : ""} autocomplete="off" spellcheck="false" aria-invalid={!!errs.url} aria-describedby="add-url-h add-url-e" />
           <span class="help" id="add-url-h">{@render pill(!loopback(draft.url))}</span><span class="err" id="add-url-e" role="status">{errs.url ?? ""}</span></div>
         <div class="field"><label for="add-key">{draft.kind === "openrouter" ? "Key" : "Key (optional)"}</label>
           <input id="add-key" class="input mono" type="password" bind:value={draft.key} autocomplete="off" spellcheck="false" placeholder={draft.kind === "openrouter" ? "sk-or-…" : ""} aria-invalid={!!errs.key} aria-describedby="add-key-h add-key-e" />
-          <span class="help" id="add-key-h">{draft.kind === "openrouter" ? "Find it at openrouter.ai/keys." : draft.kind === "custom" ? "If the service needs one." : "Only if your server asks for one."} Myna keeps it in your Mac’s Keychain.</span>
+          <span class="help" id="add-key-h">{draft.kind === "openrouter" ? "Find it at openrouter.ai/keys." : "Only if your server asks for one."} Myna keeps it in your Mac’s Keychain.</span>
           <span class="err" id="add-key-e" role="status">{errs.key ?? ""}</span></div>
         <p class="err" role="status">{addError}</p>
         <div class="actions"><button type="button" class="btn" onclick={() => (adding = false)}>Cancel</button><button class="btn primary" disabled={busy}>Add</button></div>
@@ -305,6 +312,7 @@
                         <span class="pk-m">{meta(p, m)}</span>
                       </button>
                     {/each}
+                    {#if l.stale}<p class="pk-note">Couldn’t refresh: {l.stale}</p>{/if}
                   {/if}
                 {/each}
                 {#if q.trim() && providers.every((p) => lists[p.id]?.st !== "load" && !lists[p.id]?.models.some((m) => matches(p, m)) && lists[p.id]?.st !== "err")}
@@ -356,6 +364,7 @@
   .field { display: grid; gap: var(--sp-1); align-content: start; }
   .field label { font-weight: var(--fw-semibold); }
   .field .help { margin: 0; min-height: var(--lh-footnote); }
+  .field .kind-h { min-height: calc(var(--lh-footnote) * 2); } /* both kinds' help fit, so switching never moves the form */
   .input { height: var(--h-ctl); box-sizing: border-box; width: 100%; padding: 0 var(--sp-3); border: 0; border-radius: var(--r-md); background: var(--fill-field); color: var(--text); font: inherit;
     box-shadow: inset 0 0 0 .5px var(--line-strong); }
   .input:focus-visible { outline: none; box-shadow: inset 0 0 0 1.5px var(--accent); }

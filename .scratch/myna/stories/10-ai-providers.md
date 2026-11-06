@@ -9,7 +9,7 @@ Where Myna sends text for an LLM to answer, and which model each feature uses. M
 > Amended 2026-11-06: **Agents are deferred** out of this story. They come back later as an Experimental feature, as their own effort: [Agents as an AI provider (deferred)](../../agents-provider/map.md). Direct Jev and OpenAI Decisions also wait; OpenRouter's decision models cover the Decision provider for now.
 
 ## Stories
-- As a user, I want to add AI providers once: an **Endpoint** (OpenRouter preset, or any OpenAI-compatible URL such as Ollama, LM Studio or oMLX, local ones listed first), with keys in the Keychain.
+- As a user, I want to add AI providers once: an **Endpoint** (two kinds: OpenRouter, or OpenAI-compatible for any server such as Ollama, LM Studio or oMLX), with keys in the Keychain.
 - As a user, I want a **Main model** and a **Fast model** (provider plus model each) that every feature inherits, with a per-feature override under Customize.
 - As a user, I want to pick models from live lists with price, context window and image support shown, never typed by me.
 - As a user, I want one **Decision provider** for Decision tasks, falling back to the Fast model.
@@ -27,7 +27,7 @@ Where Myna sends text for an LLM to answer, and which model each feature uses. M
 
 ## Tickets
 1. **Design.** Update `docs/index.html` to match this story: the AI provider page (provider list, add an Endpoint, Main and Fast, off-device pill, Test) and the Decision provider page. Built with the prototype skill; reviewed before ticket 2 starts.
-2. **Endpoints.** Add Ollama and OpenRouter Endpoints (any OpenAI-compatible URL, local ones listed first), key in the Keychain, all calls from Rust. Models picked from the live `/v1/models` list, with OpenRouter's price, window and image support. Set Main and Fast. **Test** button per Endpoint: a short prompt, showing the reply, time taken and cost. Deleting a provider turns Main/Fast routed to it "Not set" with a notice. Fake provider plus a local HTTP stub for tests; a routing-lookup unit test with a fake feature.
+2. **Endpoints.** Add OpenRouter and OpenAI-compatible Endpoints (two kinds; Ollama, LM Studio and oMLX are just OpenAI-compatible addresses), key in the Keychain, all calls from Rust. Models picked from each provider's `/v1/models` list, with OpenRouter's price, window and image support; the last list is kept and shown at once, then refreshed in the background. Set Main and Fast. **Test** button per Endpoint: checks the address and key (OpenRouter: key, usage and limit; others: model count) and the time taken, no tokens spent. Deleting a provider turns Main/Fast routed to it "Not set" with a notice. Fake provider plus a local HTTP stub for tests; a routing-lookup unit test with a fake feature.
 3. **Decision provider on OpenRouter.** OpenRouter's decision models through `/api/alpha/decisions` (Jev shape), using the OpenRouter Endpoint's key. With no Decision provider set, falls back to a JSON-schema call on the Fast model's Endpoint. **Test** button: a fixed sample question with 5 options, showing the pick, confidence, time taken and cost. Failed calls skip with Retry.
 4. **Fresh-install check (human).** Real OpenRouter key and a local Ollama, on the real app from a fresh install.
 
@@ -45,7 +45,7 @@ Ticket 1's mockup (`docs/index.html`, PR #107) is the target; approved 2026-11-0
 
 ## Done when
 - [ ] Fresh install: no providers, Main and Fast "Not set", AI features off
-- [ ] Add an Ollama Endpoint and an OpenRouter Endpoint (key in Keychain); pick Main and Fast from live lists; Test shows reply, time and cost
+- [ ] Add an OpenAI-compatible (Ollama) Endpoint and an OpenRouter Endpoint (key in Keychain); pick Main and Fast from live lists; Test checks the address and key (OpenRouter: key, usage and limit; others: model count) and the time taken, no tokens spent
 - [ ] Decision provider Test returns a pick with confidence through OpenRouter; with none set, the same Test runs on the Fast model
 - [ ] Deleting a provider turns Main, Fast and the Decision provider routed to it "Not set" with a notice naming them
 - [ ] Off-device pill matches routing (tested against a local HTTP stub)

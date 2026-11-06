@@ -170,15 +170,15 @@ fn ai_set(d: tauri::State<Data>, slot: String, provider: i64, model: String) -> 
 
 // The two below call out over the network, so they run off the main thread and never hold the database lock while waiting.
 #[tauri::command]
-async fn ai_models(d: tauri::State<'_, Data>, id: i64) -> Result<Vec<ai::Model>, String> {
+async fn ai_models(d: tauri::State<'_, Data>, id: i64, fresh: bool) -> Result<Vec<ai::Model>, String> {
     let (db, keys) = (d.db.clone(), d.keys.clone());
-    tauri::async_runtime::spawn_blocking(move || ai::provider(&db.lock().unwrap(), &*keys, id)?.models())
+    tauri::async_runtime::spawn_blocking(move || ai::models(&db, &*keys, id, fresh))
         .await
         .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-async fn ai_test(d: tauri::State<'_, Data>, id: i64) -> Result<ai::TestResult, String> {
+async fn ai_test(d: tauri::State<'_, Data>, id: i64) -> Result<ai::Check, String> {
     let (db, keys) = (d.db.clone(), d.keys.clone());
     tauri::async_runtime::spawn_blocking(move || {
         let p = ai::provider(&db.lock().unwrap(), &*keys, id)?;
