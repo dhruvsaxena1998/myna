@@ -1,5 +1,6 @@
 mod ai;
 mod apple;
+mod cleanup;
 mod dictation;
 mod download;
 mod fnkey;
@@ -23,11 +24,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tauri::image::Image;
-use tauri::menu::{MenuBuilder, MenuItem, MenuItemBuilder, PredefinedMenuItem};
+use tauri::menu::{Menu, MenuBuilder, MenuItem, MenuItemBuilder, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{ActivationPolicy, AppHandle, Emitter, Listener, Manager, WindowEvent, Wry};
 use session::Session;
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 /// Result of creating the data folder and database: the folder path, or the error to show.
 struct Storage(Result<String, String>);
@@ -39,8 +40,8 @@ struct Data {
     macos: u32,
     /// Model id -> cancel flag, for each download in progress.
     downloads: Mutex<HashMap<String, Arc<AtomicBool>>>,
-    /// The shortcut registered with macOS right now, if any.
-    shortcut: Mutex<Option<String>>,
+    /// The shortcuts registered with macOS right now: Dictate, and Dictate with cleanup if it's set.
+    shortcut: Mutex<Vec<String>>,
     /// Set while Settings records a new shortcut, so pressing the old one types into the recorder.
     paused: AtomicBool,
     /// API keys for AI providers: the Keychain.
@@ -49,6 +50,12 @@ struct Data {
 
 /// "Start voice typing" in the menubar menu, which shows the shortcut.
 struct VoiceItem(MenuItem<Wry>);
+
+/// "Start voice typing with cleanup": in the menu only while a Fast model is set (`sync_clean_item`).
+struct CleanItem {
+    item: MenuItem<Wry>,
+    menu: Menu<Wry>,
+}
 
 #[tauri::command]
 fn storage_status(storage: tauri::State<Storage>) -> Result<String, String> {
@@ -159,13 +166,17 @@ fn ai_add(d: tauri::State<Data>, kind: String, name: String, url: String, key: S
 }
 
 #[tauri::command]
-fn ai_remove(d: tauri::State<Data>, id: i64) -> Result<Vec<String>, String> {
-    ai::remove(&mut d.db.lock().unwrap(), &*d.keys, id)
+fn ai_remove(app: AppHandle, d: tauri::State<Data>, id: i64) -> Result<Vec<String>, String> {
+    let slots = ai::remove(&mut d.db.lock().unwrap(), &*d.keys, id)?;
+    sync_clean_item(&app);
+    Ok(slots)
 }
 
 #[tauri::command]
-fn ai_set(d: tauri::State<Data>, slot: String, provider: i64, model: String) -> Result<(), String> {
-    ai::set(&d.db.lock().unwrap(), &slot, provider, &model)
+fn ai_set(app: AppHandle, d: tauri::State<Data>, slot: String, provider: i64, model: String) -> Result<(), String> {
+    ai::set(&d.db.lock().unwrap(), &slot, provider, &model)?;
+    sync_clean_item(&app);
+    Ok(())
 }
 
 // The two below call out over the network, so they run off the main thread and never hold the database lock while waiting.
@@ -442,28 +453,32 @@ fn tell_update(app: &AppHandle, mode: &str, manual: bool) {
     }
 }
 
-/// Registers the saved shortcut while voice typing is on (and not paused), and drops it otherwise.
-/// The new one is taken before the old one goes, so a failure leaves the old one working.
+/// Registers the saved shortcuts while voice typing is on (and not paused), and drops them otherwise.
+/// The new ones are taken before the old ones go, so a failure leaves the old ones working.
 fn sync_shortcut(app: &AppHandle) -> Result<(), String> {
     let d = app.state::<Data>();
     let v = voice::get(&d.db.lock().unwrap())?;
-    let want = (v.on && !d.paused.load(Ordering::SeqCst)).then(|| v.key.clone());
+    let want: Vec<String> = if v.on && !d.paused.load(Ordering::SeqCst) { [Some(v.key.clone()), v.clean.clone()].into_iter().flatten().collect() } else { vec![] };
     let mut have = d.shortcut.lock().unwrap();
     if *have != want {
         let gs = app.global_shortcut();
-        if let Some(k) = want.as_deref().filter(|k| *k != voice::FN) {
-            gs.register(k).map_err(|e| {
+        let mut taken = vec![];
+        for k in want.iter().filter(|k| *k != voice::FN && !have.contains(k)) {
+            if let Err(e) = gs.register(k.as_str()) {
                 eprintln!("dictation: couldn't use {k}: {e}");
-                "Another app is using that shortcut. Pick a different one.".to_string()
-            })?;
+                taken.iter().for_each(|k: &&String| drop(gs.unregister(k.as_str())));
+                return Err("Another app is using that shortcut. Pick a different one.".into());
+            }
+            taken.push(k);
         }
-        if let Some(k) = have.take().filter(|k| k != voice::FN) {
+        for k in have.iter().filter(|k| *k != voice::FN && !want.contains(k)) {
             let _ = gs.unregister(k.as_str());
         }
         *have = want;
     }
+    drop(have);
     // The recorder hears fn from the tap too, so it watches while paused.
-    if v.on && (v.key == voice::FN || d.paused.load(Ordering::SeqCst)) {
+    if v.on && (v.key == voice::FN || v.clean.as_deref() == Some(voice::FN) || d.paused.load(Ordering::SeqCst)) {
         let app = app.clone();
         fnkey::watch(move |down| on_fn(&app, down));
     }
@@ -472,10 +487,33 @@ fn sync_shortcut(app: &AppHandle) -> Result<(), String> {
         let _ = item.0.set_accelerator((v.key != voice::FN).then_some(v.key.as_str()));
         let _ = item.0.set_enabled(v.on);
     }
+    sync_clean_item(app);
     Ok(())
 }
 
-/// fn went down or up: voice typing's key if fn is the shortcut, the recorder's pick while Settings records one.
+/// Puts "Start voice typing with cleanup" in the menu under "Start voice typing" while a Fast model is set, and takes it out when not.
+/// Tauri menus can't hide an item, so it goes in and out like the update item.
+fn sync_clean_item(app: &AppHandle) {
+    let (Some(c), Some(d)) = (app.try_state::<CleanItem>(), app.try_state::<Data>()) else { return };
+    // Read first: the menu calls wait on the main thread, which mustn't wait on this lock.
+    let (fast, v) = {
+        let db = d.db.lock().unwrap();
+        (ai::route(&db, "fast").is_ok(), voice::get(&db).ok())
+    };
+    let shown = c.menu.get("dictate-clean").is_some();
+    if fast && !shown {
+        let after = c.menu.items().ok().and_then(|i| i.iter().position(|x| x.id().as_ref() == "dictate")).map_or(0, |i| i + 1);
+        let _ = c.menu.insert(&c.item, after);
+    } else if !fast && shown {
+        let _ = c.menu.remove(&c.item);
+    }
+    if let Some(v) = v {
+        let _ = c.item.set_accelerator(v.clean.as_deref().filter(|k| *k != voice::FN));
+        let _ = c.item.set_enabled(v.on);
+    }
+}
+
+/// fn went down or up: a voice typing key if fn is one of the shortcuts, the recorder's pick while Settings records one.
 fn on_fn(app: &AppHandle, down: bool) {
     let d = app.state::<Data>();
     if d.paused.load(Ordering::SeqCst) {
@@ -483,8 +521,10 @@ fn on_fn(app: &AppHandle, down: bool) {
         if !down {
             let _ = app.emit_to("settings", "voice-fn", ());
         }
-    } else if d.shortcut.lock().unwrap().as_deref() == Some(voice::FN) {
-        app.state::<Arc<Session>>().key(down);
+    } else if d.shortcut.lock().unwrap().iter().any(|k| k == voice::FN) {
+        // fn is Dictate's key, or else it's the cleanup one.
+        let plain = voice::get(&d.db.lock().unwrap()).is_ok_and(|v| v.key == voice::FN);
+        app.state::<Arc<Session>>().key(down, !plain);
     }
 }
 
@@ -525,7 +565,8 @@ pub fn run() {
                     let world = Box::new(session::Mac(app.handle().clone()));
                     let tap_limit = std::time::Duration::from_secs(voice::TAP_LIMIT_SECS);
                     let second = std::time::Duration::from_secs(1);
-                    app.manage(Session::new(world, db.clone(), dir.join("models"), models::macos_major(), tap_limit, second));
+                    let keys: Arc<dyn ai::Keys> = Arc::new(ai::Keychain);
+                    app.manage(Session::new(world, db.clone(), keys.clone(), dir.join("models"), models::macos_major(), tap_limit, second));
                     app.manage(Data {
                         db,
                         models_dir: dir.join("models"),
@@ -533,11 +574,15 @@ pub fn run() {
                         downloads: Default::default(),
                         shortcut: Default::default(),
                         paused: Default::default(),
-                        keys: Arc::new(ai::Keychain),
+                        keys,
                     });
                     app.handle().plugin(
                         tauri_plugin_global_shortcut::Builder::new()
-                            .with_handler(|app, _, e| app.state::<Arc<Session>>().key(e.state() == ShortcutState::Pressed))
+                            .with_handler(|app, shortcut, e| {
+                                let clean = voice::get(&app.state::<Data>().db.lock().unwrap())
+                                    .is_ok_and(|v| v.clean.and_then(|k| k.parse::<Shortcut>().ok()).as_ref() == Some(shortcut));
+                                app.state::<Arc<Session>>().key(e.state() == ShortcutState::Pressed, clean)
+                            })
                             .build(),
                     )?;
                     if let Some(w) = app.get_webview_window("pill") {
@@ -562,6 +607,9 @@ pub fn run() {
             let voice_item = MenuItemBuilder::with_id("dictate", "Start voice typing").enabled(false).build(app)?;
             let menu = MenuBuilder::new(app).item(&voice_item).separator().item(&open_item).item(&settings_item).separator().item(&quit_item).build()?;
             app.manage(VoiceItem(voice_item));
+            // Not in the menu until a Fast model is set; sync_clean_item adds it.
+            let clean_item = MenuItemBuilder::with_id("dictate-clean", "Start voice typing with cleanup").enabled(false).build(app)?;
+            app.manage(CleanItem { item: clean_item, menu: menu.clone() });
             // Tauri menus can't hide an item, so the update item and its separator go in and out at the top.
             let (update_item, update_sep) = (MenuItemBuilder::with_id("update", "").build(app)?, PredefinedMenuItem::separator(app)?);
             let (h, m) = (app.handle().clone(), menu.clone());
@@ -589,7 +637,8 @@ pub fn run() {
                 .tooltip("Myna")
                 .menu(&menu)
                 .on_menu_event(|app, e| match e.id().as_ref() {
-                    "dictate" => app.state::<Arc<Session>>().toggle(),
+                    "dictate" => app.state::<Arc<Session>>().toggle(false),
+                    "dictate-clean" => app.state::<Arc<Session>>().toggle(true),
                     "open" => open_main(app),
                     "settings" => open_window(app, "settings"),
                     "update" => open_update(app),

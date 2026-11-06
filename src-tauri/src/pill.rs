@@ -72,9 +72,14 @@ pub fn place(app: &AppHandle, place: String) {
     });
 }
 
-/// Shows "writing", "added" or "idle" (nothing) on the pill.
+/// Shows "writing", "cleaning", "added" or "idle" (nothing) on the pill.
 pub fn show(app: &AppHandle, state: &str) {
     let _ = app.emit_to("pill", "dictation", serde_json::json!({ "state": state }));
+}
+
+/// Shows "Added without cleanup": the words went in as the rules left them, and `reason` says why.
+pub fn fallback(app: &AppHandle, reason: &str) {
+    let _ = app.emit_to("pill", "dictation", serde_json::json!({ "state": "fallback", "reason": reason }));
 }
 
 /// Shows "listening": `hold` says let go of `key` to paste; otherwise press it again, before `limit` seconds run out.

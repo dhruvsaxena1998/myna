@@ -1,4 +1,4 @@
-//! Voice typing's own settings: on or off, its shortcut, and whether you hold the shortcut or tap it.
+//! Voice typing's own settings: on or off, its two shortcuts (Dictate, and Dictate with cleanup), and whether you hold or tap them.
 
 use rusqlite::{Connection, OptionalExtension};
 use tauri_plugin_global_shortcut::Shortcut;
@@ -20,6 +20,8 @@ pub struct Voice {
     pub on: bool,
     /// An accelerator like "Alt+Space", the form both the global shortcut and the menu read, or `FN`.
     pub key: String,
+    /// The Dictate with cleanup shortcut, in the same form; none until the user sets one.
+    pub clean: Option<String>,
     pub mode: String,
     pub paste: String,
 }
@@ -34,6 +36,7 @@ pub fn get(conn: &Connection) -> Result<Voice, String> {
     Ok(Voice {
         on: read(conn, "voice_on")?.is_none_or(|v| v == "1"),
         key: read(conn, "voice_key")?.filter(|k| valid(k)).unwrap_or("Alt+Space".into()),
+        clean: read(conn, "voice_key_clean")?.filter(|k| valid(k)),
         mode: read(conn, "voice_mode")?.filter(|m| MODES.contains(&m.as_str())).unwrap_or(MODES[0].into()),
         paste: read(conn, "voice_paste")?.filter(|m| PASTES.contains(&m.as_str())).unwrap_or(PASTES[0].into()),
     })
@@ -49,8 +52,14 @@ pub fn set(conn: &Connection, v: &Voice) -> Result<(), String> {
     if !valid(&v.key) {
         return Err(format!("{} can't be a shortcut.", v.key));
     }
+    if let Some(c) = v.clean.as_deref().filter(|c| !valid(c)) {
+        return Err(format!("{c} can't be a shortcut."));
+    }
+    if v.clean.as_deref() == Some(&v.key) {
+        return Err(format!("{} is already the Dictate shortcut. Pick another key.", v.key));
+    }
     let on = if v.on { "1" } else { "0" };
-    for (k, val) in [("voice_on", on), ("voice_key", &v.key), ("voice_mode", &v.mode), ("voice_paste", &v.paste)] {
+    for (k, val) in [("voice_on", on), ("voice_key", &v.key), ("voice_key_clean", v.clean.as_deref().unwrap_or("")), ("voice_mode", &v.mode), ("voice_paste", &v.paste)] {
         conn.execute("INSERT INTO setting(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2", [k, val])
             .map_err(|e| format!("Couldn't save voice typing's settings: {e}"))?;
     }
@@ -65,7 +74,7 @@ mod tests {
     fn defaults_to_on_holding_option_space_and_saves_only_valid_choices() {
         let tmp = tempfile::tempdir().unwrap();
         let conn = crate::storage::open(tmp.path()).unwrap();
-        let v = |on, key: &str, mode: &str| Voice { on, key: key.into(), mode: mode.into(), paste: "clipboard".into() };
+        let v = |on, key: &str, mode: &str| Voice { on, key: key.into(), clean: None, mode: mode.into(), paste: "clipboard".into() };
         assert_eq!(get(&conn), Ok(v(true, "Alt+Space", "hold")));
         set(&conn, &v(false, "Ctrl+Shift+KeyD", "tap")).unwrap();
         assert_eq!(get(&conn), Ok(v(false, "Ctrl+Shift+KeyD", "tap")));
@@ -80,10 +89,26 @@ mod tests {
     }
 
     #[test]
+    fn the_cleanup_shortcut_starts_unassigned_and_never_equals_the_other() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = crate::storage::open(tmp.path()).unwrap();
+        let v = get(&conn).unwrap();
+        assert_eq!(v.clean, None);
+        let with = |c: Option<&str>| Voice { clean: c.map(Into::into), ..v.clone() };
+        set(&conn, &with(Some("Alt+Shift+Space"))).unwrap();
+        assert_eq!(get(&conn).unwrap().clean.as_deref(), Some("Alt+Shift+Space"));
+        assert!(set(&conn, &with(Some("Alt+Space"))).unwrap_err().contains("already the Dictate shortcut"));
+        assert!(set(&conn, &with(Some("Alt+Nope"))).is_err());
+        assert_eq!(get(&conn).unwrap().clean.as_deref(), Some("Alt+Shift+Space"), "a refused save changes nothing");
+        set(&conn, &with(None)).unwrap();
+        assert_eq!(get(&conn).unwrap().clean, None);
+    }
+
+    #[test]
     fn fn_alone_is_a_shortcut() {
         let tmp = tempfile::tempdir().unwrap();
         let conn = crate::storage::open(tmp.path()).unwrap();
-        let fn_key = Voice { on: true, key: "Fn".into(), mode: "tap".into(), paste: "clipboard".into() };
+        let fn_key = Voice { on: true, key: "Fn".into(), clean: None, mode: "tap".into(), paste: "clipboard".into() };
         set(&conn, &fn_key).unwrap();
         assert_eq!(get(&conn), Ok(fn_key));
     }

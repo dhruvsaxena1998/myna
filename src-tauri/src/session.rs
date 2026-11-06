@@ -1,11 +1,12 @@
 //! The Dictation session: one dictation from shortcut to paste, and the speech model kept between dictations.
 //! It reaches the Mac only through `World`, so tests drive it with a fake.
 
+use crate::ai;
 use crate::models::{self, System};
 use crate::permissions::Mic;
 use crate::runtime::{self, Transcriber};
 use crate::trace::{self, Step, Trace};
-use crate::{dictation, pill, rules, voice};
+use crate::{cleanup, dictation, pill, rules, voice};
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -19,7 +20,11 @@ pub enum Pill {
     /// `hold`: let go of `key` to paste; otherwise press it again, before `limit` seconds run out.
     Listening { hold: bool, key: String, limit: u64 },
     Writing,
+    /// The LLM cleanup is running, after Writing.
+    Cleaning,
     Added,
+    /// Added, but as the rules left it: `reason` says why the cleanup didn't count.
+    Fallback { reason: String },
     /// Nothing.
     Idle,
     Error { title: String, hint: String },
@@ -63,11 +68,15 @@ struct Active {
     token: Arc<()>,
     /// What its trace starts with: the start time, hold or tap, the app in front.
     trace: Trace,
+    /// Started by Dictate with cleanup.
+    clean: bool,
 }
 
 pub struct Session {
     world: Box<dyn World>,
     db: Arc<Mutex<Connection>>,
+    /// API keys for the AI provider behind the Fast model.
+    keys: Arc<dyn ai::Keys>,
     models_dir: PathBuf,
     macos: u32,
     recording: Mutex<Option<Active>>,
@@ -82,29 +91,29 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn new(world: Box<dyn World>, db: Arc<Mutex<Connection>>, models_dir: PathBuf, macos: u32, tap_limit: Duration, second: Duration) -> Arc<Self> {
+    pub fn new(world: Box<dyn World>, db: Arc<Mutex<Connection>>, keys: Arc<dyn ai::Keys>, models_dir: PathBuf, macos: u32, tap_limit: Duration, second: Duration) -> Arc<Self> {
         let (recording, transcriber, unload_gen) = Default::default();
-        Arc::new(Session { world, db, models_dir, macos, recording, transcriber, unload_gen, tap_limit, second })
+        Arc::new(Session { world, db, keys, models_dir, macos, recording, transcriber, unload_gen, tap_limit, second })
     }
 
-    /// The global shortcut went down (`pressed`) or up. Hold mode starts on press and stops on release;
-    /// tap mode toggles on release, since a press may repeat while the key is down and a release comes once.
-    pub fn key(self: &Arc<Self>, pressed: bool) {
+    /// A global shortcut went down (`pressed`) or up; `clean`: it's the Dictate with cleanup one. Hold mode starts on
+    /// press and stops on release; tap mode toggles on release, since a press may repeat while the key is down and a release comes once.
+    pub fn key(self: &Arc<Self>, pressed: bool, clean: bool) {
         let tap = voice::get(&self.db.lock().unwrap()).is_ok_and(|v| v.mode == "tap");
         match (pressed, tap) {
-            (true, false) => self.start(true),
+            (true, false) => self.start(true, clean),
             (false, false) => self.stop(None),
-            (false, true) => self.toggle(),
+            (false, true) => self.toggle(clean),
             (true, true) => {}
         }
     }
 
     /// The menu item, or a tap of the shortcut: start, or stop if already listening.
-    pub fn toggle(self: &Arc<Self>) {
+    pub fn toggle(self: &Arc<Self>, clean: bool) {
         if self.recording.lock().unwrap().is_some() {
             self.stop(None);
         } else {
-            self.start(false);
+            self.start(false, clean);
         }
     }
 
@@ -154,7 +163,7 @@ impl Session {
     }
 
     /// Starts recording. `hold`: it stops when the shortcut is let go; otherwise on the next tap, or at the time limit.
-    fn start(self: &Arc<Self>, hold: bool) {
+    fn start(self: &Arc<Self>, hold: bool, clean: bool) {
         let mut rec = self.recording.lock().unwrap();
         if rec.is_some() {
             return; // key repeat
@@ -183,7 +192,7 @@ impl Session {
         let (app, bundle) = self.world.front();
         let started = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
         let trace = Trace { started, mode: if hold { "hold" } else { "tap" }, app, bundle, ..Default::default() };
-        *rec = Some(Active { rec: self.world.record(), token: token.clone(), trace });
+        *rec = Some(Active { rec: self.world.record(), token: token.clone(), trace, clean });
         drop(rec);
         self.unload_gen.fetch_add(1, Ordering::SeqCst); // a pending unload must not fire mid-dictation
         self.world.show(Pill::Listening { hold, key: v.key, limit: self.tap_limit.as_secs() });
@@ -212,12 +221,12 @@ impl Session {
     }
 
     /// Stops the recording and turns it into text. `only`: unless a newer recording took its place.
-        fn stop(self: &Arc<Self>, only: Option<&Arc<()>>) {
+    fn stop(self: &Arc<Self>, only: Option<&Arc<()>>) {
         let mut slot = self.recording.lock().unwrap();
         if only.is_some_and(|t| slot.as_ref().is_none_or(|a| !Arc::ptr_eq(&a.token, t))) {
             return;
         }
-        let Some(Active { rec, trace: t, .. }) = slot.take() else { return };
+        let Some(Active { rec, trace: t, clean, .. }) = slot.take() else { return };
         drop(slot);
         let released = Instant::now();
         let s = self.clone();
@@ -248,10 +257,19 @@ impl Session {
                 drop(slot);
                 t.steps.push(Step { kind: "speech-to-text", text: heard.clone(), ms: ms(at.elapsed()), settings: None, edits: None });
                 let at = Instant::now();
-                let (text, edits) = rules::edits(&heard, &words);
+                let (mut text, edits) = rules::edits(&heard, &words);
                 let settings = serde_json::json!({ "language": words.language, "tidy": words.tidy }).to_string();
                 let edits = serde_json::to_string(&edits).ok();
                 t.steps.push(Step { kind: "rules", text: text.clone(), ms: ms(at.elapsed()), settings: Some(settings), edits });
+                let mut fallback = None;
+                if clean && !text.is_empty() {
+                    s.world.show(Pill::Cleaning);
+                    let at = Instant::now();
+                    let (model, done) = s.cleanup(&text, &words);
+                    let settings = serde_json::json!({ "model": model, "cost": done.cost, "fallback": done.fallback.as_ref().map(|f| f.reason), "detail": done.fallback.as_ref().and_then(|f| f.detail.as_ref()) });
+                    t.steps.push(Step { kind: "cleanup", text: done.text.clone(), ms: ms(at.elapsed()), settings: Some(settings.to_string()), edits: None });
+                    (text, fallback) = (done.text, done.fallback.map(|f| f.reason));
+                }
                 if text.is_empty() {
                     t.outcome = "nothing_heard";
                     let tap = voice.mode == "tap";
@@ -261,7 +279,7 @@ impl Session {
                 t.outcome = "not_pasted";
                 s.world.paste(&text, voice.paste == "type")?;
                 (t.outcome, t.paste_ms) = ("pasted", Some(ms(released.elapsed())));
-                Ok(Pill::Added)
+                Ok(fallback.map_or(Pill::Added, |reason| Pill::Fallback { reason: reason.into() }))
             };
             let result = run();
             if let Some(mut t) = trace {
@@ -277,6 +295,24 @@ impl Session {
             });
             s.schedule_unload();
         });
+    }
+}
+
+impl Session {
+    /// Dictate with cleanup's step: the Fast model's cleanup of `text`, or `text` itself and why. Also the model's name.
+    fn cleanup(&self, text: &str, words: &rules::Settings) -> (Option<String>, cleanup::Outcome) {
+        let fail = |reason, detail: String| cleanup::Outcome { text: text.into(), cost: None, fallback: Some(cleanup::Fallback { reason, detail: Some(detail) }) };
+        let db = self.db.lock().unwrap();
+        let (record, model) = match ai::route(&db, "fast") {
+            Ok(r) => r,
+            Err(e) => return (None, fail("No Fast model", e)),
+        };
+        let backend = ai::provider(&db, &*self.keys, record.id);
+        drop(db);
+        match backend {
+            Ok(b) => (Some(model.clone()), cleanup::run(b, &model, text, words, self.second * cleanup::BUDGET.as_secs() as u32)),
+            Err(e) => (Some(model), fail("AI didn’t answer", e)),
+        }
     }
 }
 
@@ -319,6 +355,8 @@ impl World for Mac {
         match p {
             Pill::Listening { hold, key, limit } => pill::listening(&self.0, hold, &key, limit),
             Pill::Writing => pill::show(&self.0, "writing"),
+            Pill::Cleaning => pill::show(&self.0, "cleaning"),
+            Pill::Fallback { reason } => pill::fallback(&self.0, &reason),
             Pill::Added => pill::show(&self.0, "added"),
             Pill::Idle => pill::show(&self.0, "idle"),
             Pill::Error { title, hint } => pill::error(&self.0, &title, &hint),
@@ -483,7 +521,7 @@ mod tests {
             l.speech = System { language: Some("English".into()), installed: true };
             l.words = vec![" Hello", "there. "];
         }
-        let s = Session::new(Box::new(mac.clone()), Arc::new(Mutex::new(db)), tmp.path().join("models"), 26, tap_limit, second);
+        let s = Session::new(Box::new(mac.clone()), Arc::new(Mutex::new(db)), Arc::new(crate::ai::tests::Memory::default()), tmp.path().join("models"), 26, tap_limit, second);
         (s, mac, tmp)
     }
 
@@ -517,8 +555,8 @@ mod tests {
     #[test]
     fn hold_press_talk_and_let_go_pastes_the_words() {
         let (s, mac, _tmp) = session("hold");
-        s.key(true);
-        s.key(false);
+        s.key(true, false);
+        s.key(false, false);
         mac.wait(|l| l.shown.len() == 3);
         assert_eq!(mac.shown(), [listening(true), Pill::Writing, Pill::Added]);
         assert_eq!(mac.0.lock().unwrap().pasted, ["Hello there."]);
@@ -563,8 +601,8 @@ mod tests {
             let mut v = voice::get(&s.db.lock().unwrap()).unwrap();
             v.paste = method.into();
             voice::set(&s.db.lock().unwrap(), &v).unwrap();
-            s.key(true);
-            s.key(false);
+            s.key(true, false);
+            s.key(false, false);
             mac.wait(|l| l.pasted.len() == n);
         }
         assert_eq!(mac.0.lock().unwrap().typed, [false, true]);
@@ -573,16 +611,16 @@ mod tests {
     #[test]
     fn tap_mode_and_the_menu_item_start_on_one_call_and_paste_on_the_next() {
         let (s, mac, _tmp) = session("tap");
-        s.key(true); // presses do nothing in tap mode
+        s.key(true, false); // presses do nothing in tap mode
         assert_eq!(mac.0.lock().unwrap().recorded, 0);
-        s.key(false);
+        s.key(false, false);
         assert_eq!(mac.shown(), [listening(false)]);
-        s.key(true);
-        s.key(false);
+        s.key(true, false);
+        s.key(false, false);
         mac.wait(|l| l.shown.len() == 3); // Added: the dictation is over
 
-        s.toggle();
-        s.toggle();
+        s.toggle(false);
+        s.toggle(false);
         mac.wait(|l| l.pasted.len() == 2);
         assert_eq!(mac.shown()[3], listening(false));
         assert_eq!(mac.0.lock().unwrap().recorded, 2);
@@ -591,10 +629,10 @@ mod tests {
     #[test]
     fn a_press_while_recording_is_ignored() {
         let (s, mac, _tmp) = session("hold");
-        s.key(true);
-        s.key(true); // key repeat
-        s.key(true);
-        s.key(false);
+        s.key(true, false);
+        s.key(true, false); // key repeat
+        s.key(true, false);
+        s.key(false, false);
         mac.wait(|l| l.shown.len() == 3);
         assert_eq!(mac.0.lock().unwrap().recorded, 1);
         assert_eq!(mac.shown(), [listening(true), Pill::Writing, Pill::Added]);
@@ -607,8 +645,8 @@ mod tests {
         let press = |set: &dyn Fn(&mut Log)| {
             set(&mut mac.0.lock().unwrap());
             mac.0.lock().unwrap().shown.clear();
-            s.key(true);
-            s.key(false);
+            s.key(true, false);
+            s.key(false, false);
             mac.shown()
         };
 
@@ -630,28 +668,33 @@ mod tests {
     #[test]
     fn the_model_loads_while_the_user_talks_and_stays_loaded() {
         let (s, mac, _tmp) = session("hold");
-        s.key(true);
+        s.key(true, false);
         mac.wait(|l| l.loaded.len() == 1); // before the key is let go
-        s.key(false);
+        s.key(false, false);
         mac.wait(|l| l.pasted.len() == 1);
-        s.key(true);
-        s.key(false);
+        s.key(true, false);
+        s.key(false, false);
         mac.wait(|l| l.pasted.len() == 2);
         assert_eq!(mac.0.lock().unwrap().loaded, ["apple-speech"]);
     }
 
     /// One whole dictation in `s`'s mode; returns what the pill showed after Listening.
     fn dictate(s: &Arc<Session>, mac: &FakeMac, tap: bool) -> Vec<Pill> {
+        press(s, mac, tap, false)
+    }
+
+    /// One dictation from the Dictate shortcut, or from Dictate with cleanup if `clean`.
+    fn press(s: &Arc<Session>, mac: &FakeMac, tap: bool, clean: bool) -> Vec<Pill> {
         mac.0.lock().unwrap().shown.clear();
         if tap {
-            s.toggle();
-            s.toggle();
+            s.toggle(clean);
+            s.toggle(clean);
         } else {
-            s.key(true);
-            s.key(false);
+            s.key(true, clean);
+            s.key(false, clean);
         }
-        // Ends on Added, Idle or an error.
-        mac.wait(|l| l.shown.last().is_some_and(|p| !matches!(p, Pill::Listening { .. } | Pill::Writing)));
+        // Ends on Added, a fallback, Idle or an error.
+        mac.wait(|l| l.shown.last().is_some_and(|p| !matches!(p, Pill::Listening { .. } | Pill::Writing | Pill::Cleaning)));
         mac.shown().into_iter().filter(|p| !matches!(p, Pill::Listening { .. })).collect()
     }
 
@@ -679,9 +722,9 @@ mod tests {
     #[test]
     fn accessibility_lost_mid_dictation_pastes_nothing() {
         let (s, mac, _tmp) = session("hold");
-        s.key(true);
+        s.key(true, false);
         mac.0.lock().unwrap().ax = false;
-        s.key(false);
+        s.key(false, false);
         mac.wait(|l| l.shown.len() == 3);
         assert_eq!(mac.shown()[1..], [Pill::Writing, error("Needs Accessibility", pill::ALLOW)]);
         assert!(mac.0.lock().unwrap().pasted.is_empty());
@@ -760,11 +803,11 @@ mod tests {
         let (s, mac, _tmp) = session_timed("hold", Duration::from_secs(300), Duration::from_millis(1));
         unload_after(&s, 60);
         dictate(&s, &mac, false); // its timer would run out during the next dictation
-        s.key(true);
+        s.key(true, false);
         s.schedule_unload(); // the idle time changed on Speech models mid-dictation
         std::thread::sleep(Duration::from_millis(150));
         assert_eq!(freed(&mac), 0);
-        s.key(false);
+        s.key(false, false);
         mac.wait(|l| l.pasted.len() == 2);
         assert_eq!(mac.0.lock().unwrap().loaded.len(), 1, "same model, still loaded");
         mac.wait(|l| l.freed.len() == 1); // and freed once idle again
@@ -786,7 +829,7 @@ mod tests {
     #[test]
     fn tap_mode_stops_and_pastes_on_its_own_at_the_limit() {
         let (s, mac, _tmp) = session_timed("tap", Duration::from_millis(100), Duration::from_secs(1));
-        s.key(false);
+        s.key(false, false);
         std::thread::sleep(Duration::from_millis(40));
         assert!(mac.0.lock().unwrap().pasted.is_empty(), "not before the limit");
         mac.wait(|l| l.shown.len() == 3);
@@ -803,17 +846,107 @@ mod tests {
             assert_eq!(levels(mac), n);
         };
         let (s, mac, _tmp) = session_timed("tap", Duration::from_millis(100), Duration::from_secs(1));
-        s.key(false);
+        s.key(false, false);
         mac.wait(|l| l.pasted.len() == 1); // at the limit
         assert!(levels(&mac) > 0);
         stays(&mac);
         for mode in ["hold", "tap"] {
             let (s, mac, _tmp) = session(mode);
-            s.key(mode == "hold");
+            s.key(mode == "hold", false);
             mac.wait(|l| l.levels > 0);
-            s.key(false);
+            s.key(false, false);
             mac.wait(|l| l.pasted.len() == 1);
             stays(&mac);
         }
+    }
+
+    /// Sets the Fast model to "m" on a local server at `base`.
+    fn fast_model(s: &Session, base: &str) {
+        let db = s.db.lock().unwrap();
+        ai::add(&db, &*s.keys, "openai", "Local", &format!("{base}/v1"), "").unwrap();
+        let id = db.query_row("SELECT id FROM provider", [], |r| r.get(0)).unwrap();
+        ai::set(&db, "fast", id, "m").unwrap();
+    }
+
+    fn answer(text: &str) -> &'static str {
+        Box::leak(format!(r#"{{"choices":[{{"message":{{"content":"{text}"}}}}],"usage":{{"prompt_tokens":5,"completion_tokens":2}}}}"#).into_boxed_str())
+    }
+
+    /// The saved cleanup step: its text and its settings JSON.
+    fn cleanup_step(s: &Session) -> Option<(String, serde_json::Value)> {
+        let q = "SELECT text, settings FROM step WHERE kind = 'cleanup'";
+        let (text, json): (String, String) = s.db.lock().unwrap().query_row(q, [], |r| Ok((r.get(0)?, r.get(1)?))).ok()?;
+        Some((text, serde_json::from_str(&json).unwrap()))
+    }
+
+    #[test]
+    fn dictate_with_cleanup_pastes_the_cleaned_text_and_traces_the_step() {
+        let (s, mac, _tmp) = session("hold");
+        fast_model(&s, &crate::ai::tests::stub(vec![("/v1/chat/completions", 200, answer("Hello there!"))]));
+        assert_eq!(press(&s, &mac, false, true), [Pill::Writing, Pill::Cleaning, Pill::Added]);
+        assert_eq!(mac.0.lock().unwrap().pasted, ["Hello there!"]);
+        let steps = [("speech-to-text", "Hello there."), ("rules", "Hello there."), ("cleanup", "Hello there!")];
+        assert_eq!(traces(&s), [traced("pasted", None, &steps)]);
+        let (_, settings) = cleanup_step(&s).unwrap();
+        assert_eq!((&settings["model"], &settings["cost"]["kind"], &settings["fallback"]), (&"m".into(), &"free".into(), &serde_json::Value::Null));
+    }
+
+    #[test]
+    fn the_plain_shortcut_never_runs_cleanup_even_with_a_fast_model() {
+        let (s, mac, _tmp) = session("hold");
+        fast_model(&s, &crate::ai::tests::stub(vec![("/v1/chat/completions", 200, answer("Hello there!"))]));
+        assert_eq!(dictate(&s, &mac, false), [Pill::Writing, Pill::Added]);
+        assert_eq!(mac.0.lock().unwrap().pasted, ["Hello there."]);
+        assert!(cleanup_step(&s).is_none());
+    }
+
+    #[test]
+    fn the_menu_item_and_tap_mode_can_start_cleanup_too() {
+        let (s, mac, _tmp) = session("tap");
+        fast_model(&s, &crate::ai::tests::stub(vec![("/v1/chat/completions", 200, answer("Hello there!"))]));
+        assert_eq!(press(&s, &mac, true, true), [Pill::Writing, Pill::Cleaning, Pill::Added]);
+        assert_eq!(mac.0.lock().unwrap().pasted, ["Hello there!"]);
+    }
+
+    #[test]
+    fn cleanup_that_fails_pastes_the_rules_text_and_says_why() {
+        for (name, base, reason) in [
+            ("an error", crate::ai::tests::stub(vec![("/v1/chat/completions", 500, "oops")]), "AI didn’t answer"),
+            ("a reply", crate::ai::tests::stub(vec![("/v1/chat/completions", 200, answer("Sure, here is Hello there."))]), "AI replied instead"),
+            ("a rewrite", crate::ai::tests::stub(vec![("/v1/chat/completions", 200, answer("Greetings to you, my dear friend, how are you doing today"))]), "AI changed too much"),
+        ] {
+            let (s, mac, _tmp) = session("hold");
+            fast_model(&s, &base);
+            assert_eq!(press(&s, &mac, false, true), [Pill::Writing, Pill::Cleaning, Pill::Fallback { reason: reason.into() }], "{name}");
+            assert_eq!(mac.0.lock().unwrap().pasted, ["Hello there."], "{name}");
+            let (text, settings) = cleanup_step(&s).unwrap();
+            assert_eq!((text.as_str(), &settings["fallback"]), ("Hello there.", &reason.into()), "{name}");
+            assert_eq!(traces(&s)[0]["outcome"], "pasted");
+        }
+    }
+
+    #[test]
+    fn cleanup_slower_than_its_budget_pastes_the_rules_text() {
+        // A server that takes the request and never answers; a "second" of 100 ms makes the 3 s budget 300 ms.
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", l.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let held: Vec<_> = l.incoming().flatten().collect();
+            std::thread::sleep(Duration::from_secs(10));
+            drop(held);
+        });
+        let (s, mac, _tmp) = session_timed("hold", Duration::from_secs(voice::TAP_LIMIT_SECS), Duration::from_millis(100));
+        fast_model(&s, &base);
+        assert_eq!(press(&s, &mac, false, true), [Pill::Writing, Pill::Cleaning, Pill::Fallback { reason: "AI took too long".into() }]);
+        assert_eq!(mac.0.lock().unwrap().pasted, ["Hello there."]);
+    }
+
+    #[test]
+    fn cleanup_without_a_fast_model_pastes_the_rules_text() {
+        let (s, mac, _tmp) = session("hold");
+        assert_eq!(press(&s, &mac, false, true), [Pill::Writing, Pill::Cleaning, Pill::Fallback { reason: "No Fast model".into() }]);
+        assert_eq!(mac.0.lock().unwrap().pasted, ["Hello there."]);
+        let (_, settings) = cleanup_step(&s).unwrap();
+        assert_eq!((&settings["model"], settings["detail"].as_str()), (&serde_json::Value::Null, Some("Fast model: Not set")));
     }
 }
