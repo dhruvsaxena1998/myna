@@ -207,3 +207,14 @@ test("a failed load shows the error, not a blank page", async ({ page }) => {
   await page.getByRole("option", { name: "AI provider" }).click();
   await expect(page.getByText("Couldn't read the AI providers: locked")).toBeVisible();
 });
+
+test("a chosen model missing from the provider's list shows as no longer offered", async ({ page }) => {
+  await open(page, { providers: [OLLAMA, OR], main: { provider: 2, model: "openai/retired", gone: false }, fast: { provider: 1, model: "old:1b", gone: true } });
+  await expect(page.getByText("No longer offered by Ollama on this Mac.")).toBeVisible();
+  await expect(page.getByText("No longer offered by OpenRouter.")).toHaveCount(0);
+  // Opening a picker brings OpenRouter's list, which no longer has the Main model.
+  await page.getByRole("button", { name: /OpenRouter · openai\/retired/ }).click();
+  await expect(page.getByText("No longer offered by OpenRouter.")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("button", { name: /Ollama on this Mac · old:1b/ })).toBeVisible(); // the choice is kept, never switched
+});

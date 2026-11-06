@@ -35,6 +35,8 @@ pub struct Provider {
 pub struct Route {
     provider: i64,
     model: String,
+    /// The provider's last good list no longer has this model; features treat the slot as Not set.
+    gone: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -260,8 +262,10 @@ fn view(r: Record, keys: &dyn Keys) -> Result<Provider, String> {
 }
 
 fn get_route(db: &Connection, slot: &str) -> Result<Option<Route>, String> {
-    db.query_row("SELECT provider_id, model FROM route WHERE slot = ?1", [slot], |r| Ok(Route { provider: r.get(0)?, model: r.get(1)? }))
-        .optional().map_err(|e| e.to_string())
+    let r = db.query_row("SELECT provider_id, model FROM route WHERE slot = ?1", [slot], |r| Ok((r.get(0)?, r.get::<_, String>(1)?)))
+        .optional().map_err(|e| e.to_string())?;
+    // No saved list means unknown, not gone: a failed fetch never marks a model as gone.
+    Ok(r.map(|(provider, model)| Route { gone: cached(db, provider).is_some_and(|l| !l.iter().any(|m| m.id == model)), provider, model }))
 }
 
 pub fn get(db: &Connection, keys: &dyn Keys) -> Result<State, String> {
@@ -330,9 +334,14 @@ pub fn set(db: &Connection, slot: &str, provider: i64, model: &str) -> Result<()
 /// The provider and model a feature should use for `slot` ("main" or "fast"), or a "Not set" error.
 #[cfg_attr(not(test), allow(dead_code))] // first caller is a feature (stories 16, 17)
 pub fn route(db: &Connection, slot: &str) -> Result<(Record, String), String> {
-    let not_set = || format!("{} model: Not set", if slot == "main" { "Main" } else { "Fast" });
+    let label = if slot == "main" { "Main model" } else { "Fast model" };
+    let not_set = || format!("{label}: Not set");
     let r = get_route(db, slot)?.ok_or_else(not_set)?;
-    Ok((find(db, r.provider).map_err(|_| not_set())?, r.model))
+    let p = find(db, r.provider).map_err(|_| not_set())?;
+    if r.gone {
+        return Err(format!("{label}: {} is no longer offered by {}", r.model, p.name));
+    }
+    Ok((p, r.model))
 }
 
 /// The adapter for provider `id`, holding its key.
@@ -485,6 +494,23 @@ mod tests {
         assert!(s.main.is_none() && s.fast.is_none());
         assert!(set(&c, "main", a.id, "x").is_err() && set(&c, "huge", b.id, "x").is_err());
         assert!(remove(&mut c, &keys, b.id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_model_missing_from_the_saved_list_is_gone_and_never_used() {
+        let (_t, c) = db();
+        let keys = Memory::default();
+        let a = add_ok(&c, &keys, "openai", "Ollama", "http://localhost:11434/v1", "");
+        set(&c, "fast", a.id, "llama3").unwrap();
+        assert!(!get(&c, &keys).unwrap().fast.unwrap().gone, "no saved list: unknown, not gone");
+        let m = |id: &str| Model { id: id.into(), ..Default::default() };
+        store(&c, a.id, &[m("llama3"), m("qwen")]).unwrap();
+        assert!(!get(&c, &keys).unwrap().fast.unwrap().gone);
+        store(&c, a.id, &[m("qwen")]).unwrap();
+        assert!(get(&c, &keys).unwrap().fast.unwrap().gone);
+        assert_eq!(tidy(&c).unwrap_err(), "Fast model: llama3 is no longer offered by Ollama");
+        set(&c, "fast", a.id, "qwen").unwrap();
+        assert_eq!(tidy(&c).unwrap().1, "qwen");
     }
 
     #[test]

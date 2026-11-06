@@ -1,7 +1,7 @@
 <!-- Settings › AI provider: providers, Main and Fast models (docs/index.html, aiPage). -->
 <script lang="ts" module>
   export type Provider = { id: number; kind: "openai" | "openrouter"; name: string; url: string; has_key: boolean; off_device: boolean };
-  export type Route = { provider: number; model: string } | null;
+  export type Route = { provider: number; model: string; gone: boolean } | null;
   export type Ai = { providers: Provider[]; main: Route; fast: Route };
   type Model = { id: string; input_per_m: number | null; output_per_m: number | null; context: number | null; images: boolean | null };
   type Test = { st: "run" } | { st: "err"; msg: string } | { st: "ok"; ms: number; models: number | null; used: number | null; limit: number | null };
@@ -50,6 +50,8 @@
   const triggers: Partial<Record<Slot, HTMLButtonElement>> = {};
 
   const prov = (id: number) => providers.find((p) => p.id === id);
+  // A list fetched while Settings is open beats the backend's flag from the saved list.
+  const gone = (r: Route) => !!r && (lists[r.provider]?.st === "ok" ? !lists[r.provider].models.some((m) => m.id === r.model) : r.gone);
   const routeName = (r: Route) => (r ? `${prov(r.provider)?.name ?? "Unknown provider"} · ${r.model}` : "Not set");
   const none = $derived(!providers.length);
 
@@ -285,7 +287,8 @@
       {@const r = routes[slot]}
       <li class="srow">
         <span><span class="name">{title}</span><span class="desc">{help}</span>
-          {#if r && prov(r.provider)}{@render pill(prov(r.provider)!.off_device)}
+          {#if r && gone(r)}<span class="notset">No longer offered by {prov(r.provider)?.name}. What uses it stays off until you pick another.</span>
+          {:else if r && prov(r.provider)}{@render pill(prov(r.provider)!.off_device)}
           {:else}<span class="notset">Not set{none ? ". Add a provider first." : ". What uses it stays off until you pick one."}</span>{/if}</span>
         <div class="pop-wrap" data-pop>
           <button type="button" class="btn pk-btn" bind:this={() => triggers[slot], (n) => { triggers[slot] = n!; }} disabled={none} aria-haspopup="dialog" aria-expanded={open === slot} onclick={() => openPicker(slot)}>
