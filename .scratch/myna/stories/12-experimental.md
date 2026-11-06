@@ -14,7 +14,7 @@ Off-by-default extras that are not reliable enough to be normal settings: Uhm fi
 
 ## Decisions (detail in the linked tickets)
 - Muted-segment triage and screenshot relevance are Decision tasks with their own toggles and per-task override; triage includes only at p ≥ 0.8 from a Decision API, marks "included by triage" with one-click undo, and when routed off-device the toggle reads "Sends possibly-muted speech off this Mac": [Decision provider shape](../../local-ai/issues/08-decision-provider-shape.md).
-- Screenshot relevance is offered only when the routed model reads images (Agents included where their model does); manual captures skip it: [Screenshots in AI](../../local-ai/issues/32-screenshots-in-ai.md), [Image input through Agent CLIs](../../local-ai/issues/19-agent-image-input.md).
+- Screenshot relevance is offered only when the routed model reads images (Agents deferred: [agents map](../../agents-provider/map.md)); manual captures skip it: [Screenshots in AI](../../local-ai/issues/32-screenshots-in-ai.md), [Image input through Agent CLIs](../../local-ai/issues/19-agent-image-input.md).
 - Uhm needs macOS 15+ and publishes no accuracy numbers, so it stays here: [Uhm, Voz and cloud STT endpoints](../../local-ai/issues/05-stt-models-and-endpoints.md).
 - Laya is not in Phase 1.
 

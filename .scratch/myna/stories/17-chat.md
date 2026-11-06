@@ -23,7 +23,7 @@ One chat per meeting. The model looks things up in the meeting through transcrip
 - [ ] Requests never contain the whole transcript or collapsed segments (tested against a stub)
 - [ ] After 10 exchanges a digest row exists and the next request sends it in place of those exchanges; originals stay visible
 - [ ] Switching model shows the resend estimate before the first send; each reply is labelled with its model
-- [ ] Works through an Endpoint with tools, a local model without tools (FTS5 fallback), and an Agent under Seatbelt
+- [ ] Works through an Endpoint with tools, a local model without tools (FTS5 fallback), (Agents deferred: [agents map](../../agents-provider/map.md))
 - [ ] Checked on the real app from a fresh install
 
 ## Open questions for you

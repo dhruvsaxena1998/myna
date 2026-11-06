@@ -120,7 +120,7 @@ Speech-to-text, diarization and filler detection run on the Mac by default; meet
 - Diarization default: Desert Ant Who via the Swift bridge. Open fallback: NVIDIA Sortformer via parakeet-rs. The mic track is always the known "me" speaker; diarization only runs on the system track.
 - Filler detection: Desert Ant Uhm via the Swift bridge, experimental only. Rules always run regardless.
 - Desert Ant policy: their models are used only through their Swift SDK, never by loading their ONNX from Rust. Every Desert Ant slot has an open fallback. Open backends are built first. The "Powered by Desert Ant Labs" attribution appears in Settings only while at least one Desert Ant model is enabled. Model weights are downloaded at runtime and never committed to the repo.
-- Myna runs no LLM ([ADR 0001](../../docs/adr/0001-no-bundled-llm-phase-1.md)). AI providers are Endpoints (any OpenAI-compatible URL: local servers such as Ollama, LM Studio, oMLX listed first; OpenRouter is the one cloud preset), Agents (the user's signed-in Claude Code, Codex, OpenCode or Pi, run headless under Seatbelt with Myna's MCP relay as the only tool source; [ADR 0002](../../docs/adr/0002-agents-as-ai-provider.md), [ADR 0003](../../docs/adr/0003-agents-under-seatbelt.md)) and Decision APIs (Jev, OpenAI Decisions). Story 10.
+- Myna runs no LLM ([ADR 0001](../../docs/adr/0001-no-bundled-llm-phase-1.md)). AI providers are Endpoints (any OpenAI-compatible URL: local servers such as Ollama, LM Studio, oMLX listed first; OpenRouter is the one cloud preset) and, for decisions, OpenRouter's decision models (direct Jev and OpenAI Decisions later). Story 10. Agents (the user's signed-in coding-agent CLIs) are deferred to a later Experimental effort: [agents map](../agents-provider/map.md), [ADR 0002](../../docs/adr/0002-agents-as-ai-provider.md).
 - Decision provider has two wire adapters: Jev shape (direct Jev, and every OpenRouter decision model through `/api/alpha/decisions`) and OpenAI Decisions shape. Laya is not in Phase 1.
 - Meeting speech-to-text can run on an Endpoint after the meeting (Groq, Together, or any that passes a word-timestamp test); Dictation never does. Story 03.
 
@@ -178,7 +178,7 @@ Speech-to-text, diarization and filler detection run on the Mac by default; meet
 - Model backends are tested behind a `Transcriber`/`Diarizer` fake that returns scripted output, so pipeline tests run in milliseconds without model downloads. One slow integration test per real backend runs the smallest model on a 10-second fixture and asserts a loose word-error threshold.
 - Rules cleanup, mute-state assignment, caption-overlap naming, perceptual-hash dedupe, and token/cost estimation are pure functions and get table-driven unit tests.
 - Providers (text, decision, speech-to-text) are tested against a local HTTP stub that records requests; one test asserts the off-device pill state matches whether any request would leave the machine.
-- Agent adapters are tested against each real CLI with the Seatbelt harness in `.scratch/local-ai/live/27/` (fake app socket plus relay), rerun after CLI updates; the tools-loaded check is unit-tested on recorded event streams.
+- (Deferred with Agents) Agent adapters are tested against each real CLI with the Seatbelt harness in `.scratch/local-ai/live/27/` (fake app socket plus relay), rerun after CLI updates; the tools-loaded check is unit-tested on recorded event streams.
 - Paste, hotkey, Core Audio taps, ScreenCaptureKit, and the Swift bridge are verified by a manual checklist per release, not automated.
 - No prior art: greenfield repo.
 
@@ -194,6 +194,7 @@ Speech-to-text, diarization and filler detection run on the Mac by default; meet
 - A bundled or Myna-run LLM ([ADR 0001](../../docs/adr/0001-no-bundled-llm-phase-1.md)); Laya.
 - Live or realtime cloud speech-to-text.
 - Chat across all meetings.
+- Agents as an AI provider: deferred to a later Experimental effort ([agents map](../agents-provider/map.md)).
 - VM isolation for Agents (shuru "Strict mode") and a host allow-list proxy for Agent runs.
 - Nested folders.
 - Mac App Store distribution. Intel Macs. Windows, Linux.
