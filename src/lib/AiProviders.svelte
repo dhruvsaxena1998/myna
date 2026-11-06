@@ -372,7 +372,6 @@
     box-shadow: inset 0 0 0 .5px var(--line-strong); }
   .input:focus-visible { outline: none; box-shadow: inset 0 0 0 1.5px var(--accent); }
   .input[aria-invalid="true"] { box-shadow: inset 0 0 0 1.5px var(--danger); }
-  select.input { padding: 0 var(--sp-2); }
   .mono { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
   /* Reserved line so an error never shifts the form. */
   .err { margin: 0; min-height: var(--lh-footnote); color: var(--danger-text); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
