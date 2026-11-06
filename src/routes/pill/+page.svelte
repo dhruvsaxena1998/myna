@@ -7,9 +7,6 @@
   let { data } = $props();
 
   let look = $state<Look>({ style: "capsule", place: "bottom" });
-  // Under the text cursor: where the backend put the pill in the window, or null for bottom centre (no cursor reported).
-  let caret = $state<{ x: number; above: boolean } | null>(null);
-  const place = $derived(look.place !== "caret" ? look.place : caret ? `caret${caret.above ? " above" : ""}` : "bottom");
   // Liquid Glass and what tints it; the layout already loaded them before first paint.
   let appearance = $derived<Appearance | null>(data.appearance.ok ? data.appearance.look : null); // assignable: the "look" event updates it
   let spot: HTMLElement;
@@ -39,7 +36,6 @@
       }),
       listen<number>("dictation-level", ({ payload }) => (wave = [...wave.slice(1), payload])),
       listen<Look>("pill-look", ({ payload }) => (look = payload)),
-      listen<typeof caret>("pill-caret", ({ payload }) => (caret = payload)), // comes before the "listening" that shows the pill
       listen<Appearance>("look", ({ payload }) => (appearance = payload)),
     ];
     return () => (clearInterval(tick), un.forEach((p) => p.then((f) => f())));
@@ -53,7 +49,7 @@
     invoke("glass_set", { glass: [{ x: r.x, y: r.y, w: r.width, h: r.height, radius: Math.min(parseFloat(css.borderTopLeftRadius), r.height / 2), shown: on }] });
   }
   $effect(() => {
-    void [appearance && glassOn(appearance), appearance?.glass, appearance?.accent, look.style, place, on]; // any of these moves or restyles the glass (the backend picks the tint)
+    void [appearance && glassOn(appearance), appearance?.glass, appearance?.accent, look.style, look.place, on]; // any of these moves or restyles the glass (the backend picks the tint)
     syncGlass();
   });
   $effect(() => {
@@ -64,7 +60,7 @@
 </script>
 
 <!-- The window sits against the same screen edges (pill.rs `place`), so the pill keeps clear of the menubar and Dock. -->
-<div class="spot {place}" class:on role="status" bind:this={spot} style:--x={caret && `${caret.x}px`}>
+<div class="spot {look.place}" class:on role="status" bind:this={spot}>
   <Pill style={look.style} {pill} {wave} {secs} {left} />
 </div>
 
@@ -78,11 +74,6 @@
   .top, .top-right { translate: 0 -8px; }
   .bottom, .top { left: 0; right: 0; justify-content: center; }
   .bottom-right, .top-right { right: var(--sp-5); }
-  /* Under the text cursor: the window is already there; a spacer puts the pill at --x, and shrinks so the pill never leaves the window. */
-  .caret { top: var(--sp-3); left: 0; right: var(--sp-3); }
-  .caret.above { top: auto; bottom: var(--sp-3); }
-  .caret::before { content: ""; flex: 0 1 var(--x); }
-  .caret > :global(*) { flex: none; }
   /* Liquid Glass: only the native glass shows, and the pill fades in place so the glass stays behind it. */
   :global(html[data-liquid]) .spot { translate: none; }
   :global(html[data-liquid]) .spot :global(.hud) { background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: none; }

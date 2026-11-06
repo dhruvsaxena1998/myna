@@ -40,13 +40,7 @@
     </li>
     <!-- A small screen with the pill where it will show; fixed height so switching styles never moves the page. -->
     <li class="stage {look.place}" aria-label="Preview: {STYLES.find(([v]) => v === look.style)?.[1]} pill, {PLACES.find(([v]) => v === look.place)?.[1]}" role="img">
-      {#snippet pill()}<span class="pill" aria-hidden="true"><Pill style={look.style} pill={listening} {wave} secs={4} /></span>{/snippet}
-      {#if look.place === "caret"}
-        <!-- A note being typed in, with the pill hanging from its text cursor. -->
-        <span class="note" aria-hidden="true">Ship the pill this week. <span class="cursor">{@render pill()}</span></span>
-      {:else}
-        {@render pill()}
-      {/if}
+      <span class="pill" aria-hidden="true"><Pill style={look.style} pill={listening} {wave} secs={4} /></span>
     </li>
   </ul>
   <p class="err" role="status">{error}</p>
@@ -71,10 +65,6 @@
   .top .pill { top: var(--sp-3); left: 50%; translate: -50% 0; }
   .bottom-right .pill { bottom: var(--sp-4); right: var(--sp-4); }
   .top-right .pill { top: var(--sp-3); right: var(--sp-4); }
-  .note { position: absolute; top: var(--sp-4); left: var(--sp-4); padding: var(--sp-2) var(--sp-3); border-radius: var(--r-md); background: var(--bg-inset); color: var(--text); box-shadow: var(--shadow-control); white-space: nowrap; }
-  /* The pill goes 6 pt left of the cursor and 10 pt below it, as on screen (pill.rs `under`). */
-  .cursor { position: relative; display: inline-block; width: 2px; height: 1.2em; vertical-align: -0.2em; background: var(--accent); }
-  .caret .pill { top: calc(100% + 10px); left: -6px; z-index: 1; }
   /* Reserved line so an error never shifts the page. */
   .err { margin: var(--sp-1) 0 0; min-height: var(--lh-footnote); color: var(--danger-text); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
 </style>
