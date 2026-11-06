@@ -41,6 +41,7 @@ Components use semantic tokens only. No hex outside `tokens.css`.
 | "Possibly muted" segments, "sends text off this Mac" | `--caution`, `--caution-text`, `--caution-soft` |
 | Installed, saved, meeting detected | `--ok`, `--ok-text` |
 | Tag and folder dots | `--label-*` (dot only; the label text stays `--text`) |
+| Stats for nerds marks: outcomes, step timing, rules | `--o-*`, `--t-*`, `--k-*` (marks only, never text; outcomes are fixed, not the accent) |
 
 Rules:
 - **Red is reserved for capture.** `--rec` appears only when a mic is live. Errors and destructive actions use `--danger`, a different red tuned for text and fills. Never use either for decoration.

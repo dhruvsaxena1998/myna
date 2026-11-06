@@ -22,7 +22,7 @@ const SAMPLES = `(() => {
     { ...base, id: 3, started: ago(60), app: "Notes", steps: step("Uh I I think postgres is fine.", [E("Uh I I think postgres is fine.", "word", "postgres", "Postgres", 0, { matched: "spelling", spelling: "Postgres", heard: null, unchanged: false })], "en", false) },
     { ...base, id: 4, started: ago(90), app: "Safari", steps: step(r4, [E(r4, "word", "Myna", "Myna", 0, { matched: "spelling", spelling: "Myna", heard: null, unchanged: true })], "de") },
     { ...base, id: 5, started: ago(120), app: "Terminal", outcome: "nothing_heard", audio_ms: 900, paste_ms: null, steps: step("Um.", [E("Um.", "filler", "Um.", "")], "en", true, "") },
-    { ...base, id: 6, started: ago(150), app: null, outcome: "failed", reason: "The speech model didn't load.", paste_ms: null, load_ms: 80, steps: [] },
+    { ...base, id: 6, started: ago(140), app: null, outcome: "failed", reason: "The speech model didn't load.", paste_ms: null, load_ms: 80, steps: [] },
   ];
 })()`;
 
@@ -33,6 +33,7 @@ async function open(page: Page, experimental = true) {
     look_set: () => {},
     rules_get: () => ({ settings: { language: "en", tidy: true, words: [{ spelling: "Postgres", heard: null }, { spelling: "Dhruv", heard: "Drove" }, { spelling: "Kubernetes", heard: null }, { spelling: "Desert Ant", heard: null }] }, languages: [["en", "English"], ["de", "German"]] }),
     traces_list: () => ${SAMPLES}.map((t) => ({ id: t.id, started: t.started, app: t.app, outcome: t.outcome, heard: t.steps[0]?.text ?? null })),
+    traces_all: () => ${SAMPLES}.map((t) => ({ ...t, app: t.app ?? "Unknown app" })),
     trace_get: ({ id }) => ${SAMPLES}.find((t) => t.id === id),
   }`);
   await page.goto("/main");

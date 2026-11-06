@@ -112,6 +112,13 @@
   --label-blue: #2F6FD0; --label-purple: #7A5AC8; --label-pink: #B0428A; --label-red: #C42B1C;
   --label-orange: #C0731A; --label-yellow: #B38F00; --label-green: #1F8A4C; --label-teal: #0F8A8A;
   --label-brown: #A35A2A; --label-graphite: #5A6B7B;
+
+  /* Data colours (Stats for nerds): marks only, the text beside them stays --text. Outcomes are fixed, not the accent,
+     because a red accent would read as "failed" (checked with the dataviz palette validator; the grey is a deliberate neutral).
+     Timing: the opened trace's steps. Rules: one per kind of edit. */
+  --o-pasted: #0A64D8; --o-none: #8A8A92; --o-failed: #B3261E;
+  --t-load: #C77700; --t-stt: #0A64D8; --t-rules: #5E9BEA; --t-paste: #A9C8F3;
+  --k-filler: #2B6CD8; --k-repeat: #C26A00; --k-cutoff: #8A47C2; --k-number: #0E8A7A; --k-word: #C2306B;
 }
 
 /* ---------- 3. Colour: dark. An elevation ladder: each step up is lighter. ---------- */
@@ -138,6 +145,9 @@
   --label-blue: #5B9BFF; --label-purple: #A98BF0; --label-pink: #E57BC0; --label-red: #FF6961;
   --label-orange: #FF9F45; --label-yellow: #FFD60A; --label-green: #4CD964; --label-teal: #40C8C8;
   --label-brown: #C9895A; --label-graphite: #98A6B4;
+  --o-pasted: #3D8BFF; --o-none: #8E8E96; --o-failed: #E0443C;
+  --t-load: #E0A030; --t-stt: #3D8BFF; --t-rules: #7FB0FF; --t-paste: #3A5F96;
+  --k-filler: #6AA8FF; --k-repeat: #FFB04A; --k-cutoff: #C99BFF; --k-number: #4FD1BE; --k-word: #FF7AA8;
 }
 /* auto: same values as dark. Keep in sync with the block above (check-contrast.mjs fails if they drift). */
 @media (prefers-color-scheme: dark) {
@@ -164,6 +174,9 @@
     --label-blue: #5B9BFF; --label-purple: #A98BF0; --label-pink: #E57BC0; --label-red: #FF6961;
     --label-orange: #FF9F45; --label-yellow: #FFD60A; --label-green: #4CD964; --label-teal: #40C8C8;
     --label-brown: #C9895A; --label-graphite: #98A6B4;
+    --o-pasted: #3D8BFF; --o-none: #8E8E96; --o-failed: #E0443C;
+    --t-load: #E0A030; --t-stt: #3D8BFF; --t-rules: #7FB0FF; --t-paste: #3A5F96;
+    --k-filler: #6AA8FF; --k-repeat: #FFB04A; --k-cutoff: #C99BFF; --k-number: #4FD1BE; --k-word: #FF7AA8;
   }
 }
 
