@@ -103,7 +103,7 @@
 </div>
 
 <style>
-  .window { display: grid; grid-template-columns: var(--w-settings-nav) 1fr; gap: var(--win-inset);
+  .window { display: grid; grid-template-columns: var(--w-settings-nav) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: var(--win-inset);
     height: 100vh; box-sizing: border-box; padding: var(--win-inset); }
   /* Sidebar glass is the window's native vibrancy; the panel adds the token tint and edge. */
   .sidebar { border-radius: var(--r-xl); background: var(--mat-sidebar); box-shadow: inset 0 0 0 .5px var(--edge); }
@@ -117,13 +117,15 @@
   li.selected { background: color-mix(in srgb, var(--accent) 28%, transparent); }
   /* On Liquid Glass, tinted or not, a wash of the accent vanishes into the glass: a solid fill, like a focused Finder sidebar. */
   :global(html[data-liquid]) li.selected { background: var(--accent); color: var(--on-accent); }
-  main { border-radius: var(--r-xl); background: var(--bg-content); box-shadow: var(--shadow-panel); overflow: auto; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
-  main::-webkit-scrollbar { width: 8px; }
-  main::-webkit-scrollbar-thumb { border-radius: 4px; background: var(--line-strong); border: 2px solid transparent; background-clip: content-box; }
+  main { border-radius: var(--r-xl); background: var(--bg-content); box-shadow: var(--shadow-panel); overflow: hidden;
+    display: grid; grid-template-rows: auto minmax(0, 1fr); }
+  /* Only the page scrolls: the title stays put, like the main window. */
+  .content { padding: 0 var(--sp-5) var(--sp-5); overflow: auto; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+  .content::-webkit-scrollbar { width: 8px; }
+  .content::-webkit-scrollbar-thumb { border-radius: 4px; background: var(--line-strong); border: 2px solid transparent; background-clip: content-box; }
   header { height: var(--h-toolbar); display: flex; align-items: center; padding: 0 var(--sp-5); }
   /* Let drags on the title fall through to the header's drag region. */
   h1 { pointer-events: none; margin: 0; font-size: var(--fs-title2); line-height: var(--lh-title2); font-weight: var(--fw-semibold); }
-  .content { padding: 0 var(--sp-5) var(--sp-5); }
   .soon { margin: 0; color: var(--text-2); }
   .later { margin-top: var(--sp-5); }
 </style>
