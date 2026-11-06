@@ -91,32 +91,65 @@ pub fn delete(conn: &Connection, id: i64) -> Result<(), String> {
     tx.commit().map_err(err)
 }
 
+const COLS: &str = "id, started, mode, app, model, audio_ms, outcome, reason, load_ms, paste_ms";
+
+/// A trace's columns as JSON, the model still as its id.
+fn trace_json(r: &rusqlite::Row) -> rusqlite::Result<serde_json::Value> {
+    Ok(serde_json::json!({
+        "id": r.get::<_, i64>(0)?, "started": r.get::<_, i64>(1)?, "mode": r.get::<_, String>(2)?, "app": r.get::<_, Option<String>>(3)?,
+        "model": r.get::<_, Option<String>>(4)?, "audio_ms": r.get::<_, i64>(5)?, "outcome": r.get::<_, String>(6)?,
+        "reason": r.get::<_, Option<String>>(7)?, "load_ms": r.get::<_, Option<f64>>(8)?, "paste_ms": r.get::<_, Option<f64>>(9)?,
+    }))
+}
+
+/// A step as JSON, from `kind, text, ms, settings, edits` starting at column `at`.
+fn step_json(r: &rusqlite::Row, at: usize) -> rusqlite::Result<serde_json::Value> {
+    let json = |s: Option<String>| s.and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+    Ok(serde_json::json!({ "kind": r.get::<_, String>(at)?, "text": r.get::<_, String>(at + 1)?, "ms": r.get::<_, f64>(at + 2)?,
+        "settings": json(r.get(at + 3)?), "edits": json(r.get(at + 4)?) }))
+}
+
 /// One trace with its steps, for the opened view. The model shows by name; a model no longer in the catalog keeps its id.
 pub fn get(conn: &Connection, id: i64) -> Result<serde_json::Value, String> {
     let err = |e: rusqlite::Error| format!("Couldn't read the dictation trace: {e}");
-    let json = |s: Option<String>| s.and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
-    let mut t = conn
-        .query_row("SELECT started, mode, app, model, audio_ms, outcome, reason, load_ms, paste_ms FROM trace WHERE id = ?1", [id], |r| {
-            let model: Option<String> = r.get(3)?;
-            Ok(serde_json::json!({
-                "id": id, "started": r.get::<_, i64>(0)?, "mode": r.get::<_, String>(1)?, "app": r.get::<_, Option<String>>(2)?,
-                "model": model.map(|m| crate::models::find(&m).map_or(m, |m| m.name)),
-                "audio_ms": r.get::<_, i64>(4)?, "outcome": r.get::<_, String>(5)?, "reason": r.get::<_, Option<String>>(6)?,
-                "load_ms": r.get::<_, Option<f64>>(7)?, "paste_ms": r.get::<_, Option<f64>>(8)?,
-            }))
-        })
-        .map_err(err)?;
+    let mut t = conn.query_row(&format!("SELECT {COLS} FROM trace WHERE id = ?1"), [id], trace_json).map_err(err)?;
+    if let Some(m) = t["model"].as_str().map(String::from) {
+        t["model"] = crate::models::find(&m).map_or(m, |m| m.name).into();
+    }
     let mut q = conn.prepare("SELECT kind, text, ms, settings, edits FROM step WHERE trace = ?1 ORDER BY rowid").map_err(err)?;
-    let steps = q
-        .query_map([id], |r| {
-            Ok(serde_json::json!({ "kind": r.get::<_, String>(0)?, "text": r.get::<_, String>(1)?, "ms": r.get::<_, f64>(2)?,
-                "settings": json(r.get(3)?), "edits": json(r.get(4)?) }))
-        })
-        .map_err(err)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(err)?;
+    let steps = q.query_map([id], |r| step_json(r, 0)).map_err(err)?.collect::<Result<Vec<_>, _>>().map_err(err)?;
     t["steps"] = steps.into();
     Ok(t)
+}
+
+/// Every trace with its steps, newest first, for Stats for nerds' Overview. As `get`, except that a model no longer
+/// in the catalog shows as "<id> (removed)" and a missing model or app as "Unknown model" or "Unknown app", so neither drops out of a breakdown.
+pub fn all(conn: &Connection) -> Result<Vec<serde_json::Value>, String> {
+    let err = |e: rusqlite::Error| format!("Couldn't read the dictation traces: {e}");
+    let mut steps: std::collections::HashMap<i64, Vec<serde_json::Value>> = Default::default();
+    let mut q = conn.prepare("SELECT trace, kind, text, ms, settings, edits FROM step ORDER BY rowid").map_err(err)?;
+    for s in q.query_map([], |r| Ok((r.get::<_, i64>(0)?, step_json(r, 1)?))).map_err(err)? {
+        let (trace, s) = s.map_err(err)?;
+        steps.entry(trace).or_default().push(s);
+    }
+    let names: std::collections::HashMap<String, String> = crate::models::all().into_iter().map(|m| (m.id, m.name)).collect();
+    // shortcut: loads every trace at once; page it if history grows past a few thousand.
+    let mut q = conn.prepare(&format!("SELECT {COLS} FROM trace ORDER BY started DESC, id DESC")).map_err(err)?;
+    let traces = q.query_map([], trace_json).map_err(err)?.collect::<Result<Vec<_>, _>>().map_err(err)?;
+    Ok(traces
+        .into_iter()
+        .map(|mut t| {
+            t["model"] = match t["model"].as_str() {
+                Some(m) => names.get(m).cloned().unwrap_or(format!("{m} (removed)")).into(),
+                None => "Unknown model".into(),
+            };
+            if t["app"].is_null() {
+                t["app"] = "Unknown app".into();
+            }
+            t["steps"] = steps.remove(&t["id"].as_i64().unwrap_or_default()).unwrap_or_default().into();
+            t
+        })
+        .collect())
 }
 
 #[cfg(test)]
@@ -155,5 +188,25 @@ mod tests {
         let steps: i64 = conn.query_row("SELECT count(*) FROM step WHERE trace = ?1", [gone], |r| r.get(0)).unwrap();
         let left: i64 = conn.query_row("SELECT count(*) FROM step", [], |r| r.get(0)).unwrap();
         assert_eq!((steps, left), (0, 1));
+    }
+
+    #[test]
+    fn all_traces_come_with_their_steps_and_keep_a_removed_model_and_a_missing_app() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = crate::storage::open(tmp.path()).unwrap();
+        let step = |text: &str| Step { kind: "speech-to-text", text: text.into(), ms: 2.0, settings: None, edits: None };
+        save(&conn, &Trace { started: 1, mode: "hold", model: Some("gone-model".into()), outcome: "pasted", steps: vec![step("old")], ..Default::default() }).unwrap();
+        save(&conn, &Trace { started: 2, mode: "tap", app: Some("Mail".into()), outcome: "failed", ..Default::default() }).unwrap();
+        save(&conn, &Trace { started: 3, mode: "hold", app: Some("Notes".into()), outcome: "pasted", steps: vec![step("new"), step("newer")], ..Default::default() }).unwrap();
+        let all = all(&conn).unwrap();
+        assert_eq!(all.iter().map(|t| t["started"].as_i64().unwrap()).collect::<Vec<_>>(), [3, 2, 1]);
+        assert_eq!(all[0]["steps"].as_array().unwrap().iter().map(|s| s["text"].as_str().unwrap()).collect::<Vec<_>>(), ["new", "newer"]);
+        assert_eq!(all[1]["steps"], serde_json::json!([]));
+        assert_eq!(all[2]["model"], "gone-model (removed)");
+        assert_eq!(all[2]["app"], "Unknown app");
+        assert_eq!(all[1]["model"], "Unknown model");
+        let one = get(&conn, all[2]["id"].as_i64().unwrap()).unwrap();
+        assert_eq!((one["model"].as_str(), one["app"].is_null()), (Some("gone-model"), true), "the opened trace is unchanged");
+        assert_eq!(one["steps"], all[2]["steps"]);
     }
 }
