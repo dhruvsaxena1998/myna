@@ -93,9 +93,6 @@
   .row + .row { box-shadow: inset 0 .5px 0 var(--line); }
   .name { display: block; font-weight: var(--fw-semibold); }
   .desc { display: block; margin-top: 2px; color: var(--text-2); }
-  .select { height: var(--h-ctl); padding: 0 var(--sp-2); border: 0; border-radius: var(--r-md); background: var(--fill-control); color: var(--text); font: inherit;
-    box-shadow: inset 0 0 0 .5px var(--line-strong), var(--shadow-control); }
-  .select:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   /* Switch, 38×22 (DESIGN.md). */
   .switch { appearance: none; width: 38px; height: 22px; margin: 0; border-radius: 11px; position: relative; flex: none; background: var(--fill-track);
     transition: background var(--dur) var(--ease-out); }

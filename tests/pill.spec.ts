@@ -160,7 +160,7 @@ test("Liquid Glass: the glass follows the drawn pill, its corners, and whether i
   await say(page, "listening");
   const b = (await page.locator(".hud").boundingBox())!;
   await expect.poll(() => lastGlass(page)).toEqual({ x: b.x, y: b.y, w: b.width, h: b.height, radius: 20, shown: true });
-  await expect(page.locator(".hud")).toHaveCSS("background-color", "rgba(0, 0, 0, 0)"); // only the native glass shows
+  await expect(page.locator(".hud")).toHaveCSS("background-color", "rgba(28, 28, 30, 0)"); // only the native glass shows
   await emit(page, "pill-look", { style: "card", place: "top-right" });
   const c = (await page.locator(".hud").boundingBox())!;
   await expect.poll(() => lastGlass(page)).toMatchObject({ x: c.x, y: c.y, w: c.width, h: c.height, radius: 18 });

@@ -452,11 +452,21 @@ body { background:
 .btn.danger { background: var(--alert); color: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.14); }
 .input, .select, .textarea { border: 0; border-radius: var(--r-ctl); background: var(--field); box-shadow: inset 0 0 0 .5px var(--line-strong); min-height: 30px; padding: 5px 10px; }
 .textarea { border-radius: 14px; padding: 8px 12px; }
+.select { appearance: none; border-radius: var(--r-pill); padding: 5px 28px 5px 12px; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='12' fill='none' stroke='%238E8E93' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 4.5 4 1.5 7 4.5M1 7.5 4 10.5 7 7.5'/%3E%3C/svg%3E") no-repeat right 12px center, var(--field); }
 .input[aria-invalid="true"] { box-shadow: inset 0 0 0 1.5px var(--alert); }
 .seg { border-radius: var(--r-pill); padding: 3px; background: var(--field); }
 .seg span { border-radius: var(--r-pill); height: 26px; padding: 0 14px; }
 .seg input:checked + span { background: var(--btn-sel); }
 .switch { width: 38px; height: 22px; border-radius: 11px; }
+.frost { display: flex; align-items: center; gap: 8px; width: 260px; color: var(--text-2); }
+.frost:has(:disabled) { opacity: .45; }
+.frost .end { width: 18px; height: 18px; flex: none; }
+.frost .rail { flex: 1; min-width: 0; }
+.frost input { appearance: none; display: block; width: 100%; height: 20px; margin: 0; background: none; }
+.frost input::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: linear-gradient(to right, var(--accent) var(--v), var(--line-strong) var(--v)); }
+.frost input::-webkit-slider-thumb { appearance: none; width: 20px; height: 20px; margin-top: -8px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); }
+.frost .ticks { display: flex; justify-content: space-between; padding: 0 8px; margin-top: 2px; }
+.frost .ticks i { width: 3px; height: 3px; border-radius: 50%; background: var(--text-3); }
 .switch::after { width: 18px; height: 18px; }
 .switch:checked::after { transform: translateX(16px); }
 .list { border: 0; border-radius: var(--r-panel); background: var(--inset); box-shadow: inset 0 0 0 .5px var(--line); }
@@ -951,7 +961,7 @@ const S = {
 };
 S.set = { modules:S.modules, hotkey:'fn', mode:'hold', paste:'clipboard', pillStyle:'capsule', pillPlace:'bottom', dict:['Myna','Parakeet','Desert Ant','Drove → Dhruv'], lang:'en', rules:true,
   capture:'shots', interval:'15', apps:{ meet:false, teams:false, zoom:false, slack:false }, ext:false, retention:'30', folder:true, dataPath:'~/Library/Application Support/Myna', dataMoved:false,
-  meetKey:'ctrl-opt-m', appearance:'auto', accent:'blue', glass:'clear', liquid:false, expOn:false, detect:true,
+  meetKey:'ctrl-opt-m', appearance:'auto', accent:'blue', glass:'clear', liquid:false, liquidFrost:50, expOn:false, detect:true,
   diar:'who', updMode:'auto', updEvery:'launch', channel:'beta',
   exp:{ diarOn:false, uhmD:false, uhmM:false, llmD:false, llmM:false, triage:false, relevance:false, shotsAI:false, nerds:false },
   nerds:{ period:'7', model:'all', app:'all', sample:'full', pick:null } };
@@ -1573,6 +1583,8 @@ const sid = p => 's-' + p.replace(/\./g, '-');
 const sw = (p, label) => `<input type="checkbox" role="switch" class="switch" id="${sid(p)}" data-bind="set" data-path="${p}" ${getPath(p) ? 'checked' : ''} aria-label="${esc(label)}">`;
 const sel = (p, opts, label) => `<select class="select" id="${sid(p)}" data-bind="set" data-path="${p}" aria-label="${esc(label)}" style="width:auto">${opts.map(([v, l]) => `<option value="${v}" ${String(getPath(p)) === String(v) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
 const segc = (p, opts, label) => `<fieldset class="seg" aria-label="${esc(label)}">${opts.map(([v, l]) => `<label><input type="radio" name="${sid(p)}" id="${sid(p)}-${v}" value="${v}" data-bind="set" data-path="${p}" ${getPath(p) === v ? 'checked' : ''}><span>${esc(l)}</span></label>`).join('')}</fieldset>`;
+// Always drawn, disabled while Liquid Glass is off, so the switch never shifts the page.
+const frost = () => { const v = +S.set.liquidFrost; return `<span class="frost"><svg class="end" viewBox="0 0 18 18" aria-hidden="true"><rect x="1" y="1" width="10" height="10" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="7" y="7" width="10" height="10" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/></svg><span class="rail"><input type="range" min="0" max="100" step="1" id="${sid('liquidFrost')}" data-bind="set" data-path="liquidFrost" value="${v}" style="--v:${v}%" ${S.set.liquid ? '' : 'disabled'} aria-label="Opacity" aria-valuetext="${v === 0 ? 'Clear' : v === 100 ? 'Tinted' : v + '%'}"><span class="ticks" aria-hidden="true"><i></i><i></i><i></i></span></span><svg class="end" viewBox="0 0 18 18" aria-hidden="true"><rect x="1" y="1" width="10" height="10" rx="3" fill="currentColor"/><rect x="7" y="7" width="10" height="10" rx="3" fill="currentColor" stroke="var(--bg-inset)"/></svg></span>`; };
 const srow = (title, help, ctrl) => `<li class="srow"><div class="od-field od-fill"><span class="label">${title}</span>${help ? `<span class="help">${help}</span>` : ''}</div><div class="od-fixed">${ctrl}</div></li>`;
 const sgroup = (title, rows, note = '') => `<section class="sgroup"><h2>${title}</h2>${note}<ul class="list">${rows.join('')}</ul></section>`;
 // shortcut recorder: a key, a combination, or a single modifier held on its own (e.g. Right ⌥)
@@ -1876,7 +1888,8 @@ function settingsPage() {
         ]) + (!x.expOn ? '' : ''
         // Shown only on macOS 26 or later; on 14 and 15 the group isn't there.
         + sgroup('Look', [
-          srow('Liquid Glass', 'Uses macOS’s own glass for the pill and the Settings window. Still being tested.', sw('liquid', 'Liquid Glass'))
+          srow('Liquid Glass', 'Uses macOS’s own glass for the pill and the Settings window. Still being tested.', sw('liquid', 'Liquid Glass')),
+          srow('Opacity', 'Clear to tinted. Tinted makes words easier to read on a busy desktop.', frost())
         ])
         + sgroup('Voice typing', [
           srow('Stats for nerds', 'Adds a page to the main window with the numbers behind each dictation: per speech model, rule and app. Reads what Myna already keeps on this Mac.', sw('exp.nerds', 'Stats for nerds')),
@@ -2298,6 +2311,7 @@ document.addEventListener('change', e => {
 document.addEventListener('input', e => {
   const el = e.target;
   if (el.dataset.bind === 'key') S.tasks[el.dataset.k].key = el.value;
+  if (el.dataset.path === 'liquidFrost') el.style.setProperty('--v', el.value + '%'); // live fill; the change event commits
   if (el.id === 'prompt') S.regen.draft = el.value;
   if (el.dataset.bind === 'ai-add' && el.dataset.f !== 'preset') { S.ai.add[el.dataset.f] = el.value; if (el.dataset.f === 'url') $('#add-pill').innerHTML = hostPill(el.value); }
   if (el.id === 'pk-q') { S.ai.q = el.value; $('#pk-list').innerHTML = pickerItems(S.pop.slice(5)); }

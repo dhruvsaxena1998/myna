@@ -213,9 +213,7 @@
   .seg span::after { content: attr(data-l); height: 0; overflow: hidden; visibility: hidden; font-weight: var(--fw-medium); }
   .seg input:checked + span { background: var(--fill-control-on); color: var(--text); font-weight: var(--fw-medium); box-shadow: 0 0 0 .5px var(--line-strong), 0 1px 2px rgba(0, 0, 0, .1); }
   .seg input:focus-visible + span { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
-  .select { height: var(--h-ctl); max-width: 200px; padding: 0 var(--sp-2); border: 0; border-radius: var(--r-md); background: var(--fill-control); color: var(--text); font: inherit;
-    box-shadow: inset 0 0 0 .5px var(--line-strong), var(--shadow-control); }
-  .select:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+  .select { max-width: 200px; }
   .overview { display: grid; gap: var(--sp-3); align-content: start; max-width: 1000px; margin: 0 auto; }
   .lhead { display: flex; align-items: center; gap: var(--sp-3); height: 32px; margin: var(--sp-3) 0 var(--sp-1); }
   .lhead h2 { margin: 0; }

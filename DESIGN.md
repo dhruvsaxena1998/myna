@@ -84,6 +84,8 @@ One family: the system font (`--font`). WebKit picks SF Pro Text or Display by s
 
 - **Button.** Capsule, 30px, 14px side padding. Default: `--fill-control` with a 0.5px `--line-strong` inner ring and `--shadow-control`. Primary: `--accent` fill, `--on-accent` text, weight 500. Plain: transparent until hover. Destructive: `--danger` fill. Icon-only: 30×30 with an `aria-label`. One primary per view.
 - **Field.** `--fill-field` with a 0.5px `--line-strong` inner ring, radius `--r-md`, 30px tall. Invalid: 1.5px `--danger` ring plus a message underneath with an icon.
+- **Dropdown** (`<select class="select">`). Capsule, 30px, `--fill-control` like a default button, with drawn up/down chevrons; one shared rule in `design/tokens.css`.
+- **Slider.** 4px track, `--accent` fill left of a 20px white knob, tick dots under it, a small glyph at each end (Liquid Glass opacity: clear ↔ tinted).
 - **Switch** 38×22, **segmented control** as a capsule track with a raised `--fill-control-on` thumb, **checkbox/radio** using the native control with `accent-color`.
 - **Pill** (status badge). One size, 20px, caption text. Three kinds: neutral (`--fill-hover` / `--text-2`), status (`--accent-soft` / `--accent-text`), caution (`--caution-soft` / `--caution-text`). Off-device badges are always the caution pill with words.
 - **Tag.** Capsule, 22px, `--fill-field`, a 7px `--label-*` dot, removable with a 16px ×.
