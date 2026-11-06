@@ -3,7 +3,7 @@
 
 use crate::models;
 use parakeet_rs::sortformer::{DiarizationConfig, Sortformer};
-use parakeet_rs::{ExecutionConfig, ParakeetTDT, TimestampMode, Transcriber as _};
+use parakeet_rs::{ExecutionConfig, ParakeetTDT, ParakeetUnified, TimestampMode};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperState};
@@ -45,6 +45,12 @@ pub fn transcriber(id: &str, models_dir: &Path) -> Result<Box<dyn Transcriber>, 
         "parakeet-tdt-v3" => {
             let cfg = ort(models_dir).map_err(err)?;
             Ok(Box::new(Parakeet(ParakeetTDT::from_pretrained(&dir, Some(cfg)).map_err(|e| err(e.to_string()))?)))
+        }
+        "parakeet-unified-en" => {
+            let cfg = ort(models_dir).map_err(err)?;
+            // Its files sit in the repo's subfolder, and downloads keep that path.
+            let dir = first_file(&m, &dir).parent().unwrap().to_path_buf();
+            Ok(Box::new(Parakeet(ParakeetUnified::from_pretrained(&dir, Some(cfg)).map_err(|e| err(e.to_string()))?)))
         }
         _ if id.starts_with("whisper-") => {
             let ctx = WhisperContext::new_with_params(first_file(&m, &dir), WhisperContextParameters::default())
@@ -93,10 +99,10 @@ fn ort(models_dir: &Path) -> Result<ExecutionConfig, String> {
     Ok(ExecutionConfig::new().with_environment(env.clone().unwrap()))
 }
 
-// shortcut: Parakeet TDT takes about 4 to 5 minutes of audio per call; meetings must chunk before this (story 05).
-struct Parakeet(ParakeetTDT);
+// shortcut: Parakeet takes about 4 to 5 minutes of audio per call; meetings must chunk before this (story 05).
+struct Parakeet<T>(T);
 
-impl Transcriber for Parakeet {
+impl<T: parakeet_rs::Transcriber + Send> Transcriber for Parakeet<T> {
     fn transcribe(&mut self, audio: &[f32]) -> Result<Vec<Segment>, String> {
         let r = self.0.transcribe_samples(audio.to_vec(), RATE, 1, Some(TimestampMode::Sentences)).map_err(|e| e.to_string())?;
         Ok(r.tokens.into_iter().map(|t| Segment { start: t.start, end: t.end, text: t.text.trim().to_string() }).collect())
@@ -178,7 +184,7 @@ mod tests {
     #[test]
     fn missing_or_unsupported_models_say_so() {
         let empty = tempfile::tempdir().unwrap();
-        for id in ["parakeet-tdt-v3", "whisper-small", "whisper-medium", "whisper-large-v3-turbo", "whisper-large-v3"] {
+        for id in ["parakeet-tdt-v3", "parakeet-unified-en", "whisper-small", "whisper-medium", "whisper-large-v3-turbo", "whisper-large-v3"] {
             let err = transcriber(id, empty.path()).err().unwrap();
             assert!(err.starts_with("Couldn't load"), "{id}: {err}");
         }
@@ -270,9 +276,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "slow: needs the downloaded Parakeet model"]
+    #[ignore = "slow: needs the downloaded Parakeet models"]
     fn parakeet_transcribes() {
         transcribes_the_fixture("parakeet-tdt-v3");
+        transcribes_the_fixture("parakeet-unified-en");
     }
 
     #[test]

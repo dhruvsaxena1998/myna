@@ -40,6 +40,24 @@
       ]
     },
     {
+      "id": "parakeet-unified-en",
+      "name": "Parakeet Unified (English)",
+      "vendor": "NVIDIA",
+      "desc": "The most accurate Parakeet, English only. A large download.",
+      "acc": 5,
+      "spd": 5,
+      "runtime": true,
+      "size": 2518277929,
+      "repo": "altunenes/parakeet-rs",
+      "revision": "664cc742197053fa11afd12f5100749fb8000181",
+      "files": [
+        { "path": "parakeet-unified-en-0.6b/encoder.onnx", "size": 4137221, "sha256": "5d5187c67bbcdbdfe9be9b50c66eb823eb0ec18a1d6feafca6841256e5f27140" },
+        { "path": "parakeet-unified-en-0.6b/encoder.onnx.data", "size": 2478047232, "sha256": "a518f14bd20d7d9aa11fc47f41173a628c7e3ce0b0183e77da9eb322054d0b40" },
+        { "path": "parakeet-unified-en-0.6b/decoder_joint.onnx", "size": 35842420, "sha256": "dd545f80c461f72b6097f62d3da6ba7c4713f6fabd4f87d48f97349ff62e6d62" },
+        { "path": "parakeet-unified-en-0.6b/tokenizer.model", "size": 251056, "sha256": "07d4e5a63840a53ab2d4d106d2874768143fb3fbdd47938b3910d2da05bfb0a9" }
+      ]
+    },
+    {
       "id": "apple-speech",
       "name": "Apple Speech",
       "vendor": "Apple",
