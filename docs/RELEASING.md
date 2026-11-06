@@ -19,6 +19,6 @@ It needs the `Myna Self-Signed` certificate in your login keychain, the updater 
 
 If the run fails, fix the problem, then delete the tag (`git push --delete origin vX` and `git tag -d vX`) and the release if one was made, and push the tag again.
 
-The Release workflow in `.github/workflows/release.yml` is a manual fallback (`macos-15`, run from the Actions tab with the tag as the ref).
-
 Signing keys and secrets: see issue 14.1 (#75).
+
+There is no CI release workflow: GitHub's macOS runners often never got assigned, and the hosted alternatives need a work account. Add one back if the project grows a team.
