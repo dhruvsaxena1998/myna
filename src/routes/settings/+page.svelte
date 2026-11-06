@@ -26,12 +26,20 @@
     { id: "experimental", title: "Experimental features", soon: "New things we're still working on. Off until you turn them on." },
     { id: "about", title: "About", soon: "" },
   ];
+  import type { Ai } from "$lib/AiProviders.svelte";
+  import { invoke } from "@tauri-apps/api/core";
   let current = $state("look");
   const page = $derived(pages.find((p) => p.id === current)!);
   // Shared by the shortcut rows and the pill preview, which shows the same hint as the real pill.
   let voice = $derived(data.voice?.ok ? data.voice.voice : null); // assignable: saves update it
   // Shared by Look & appearance and Experimental features (Liquid Glass): one look, saved whole.
   let look = $derived(data.appearance.ok ? data.appearance.look : null);
+  // The AI provider page changes it; read it again on the way out, so the pages after it (Voice typing's cleanup row) never show the old one.
+  let ai = $derived(data.ai?.ok ? data.ai.ai : null);
+  async function show(id: string) {
+    if (current === "ai" && id !== "ai") ai = await invoke<Ai>("ai_get").catch(() => ai);
+    current = id;
+  }
   $effect(() => {
     void [look && glassOn(look), look?.glass, look?.accent]; // the backend picks the tint
     syncGlass(look);
@@ -40,8 +48,8 @@
 
   function onkeydown(e: KeyboardEvent) {
     const i = pages.findIndex((p) => p.id === current);
-    if (e.key === "ArrowDown") current = pages[Math.min(i + 1, pages.length - 1)].id;
-    else if (e.key === "ArrowUp") current = pages[Math.max(i - 1, 0)].id;
+    if (e.key === "ArrowDown") void show(pages[Math.min(i + 1, pages.length - 1)].id);
+    else if (e.key === "ArrowUp") void show(pages[Math.max(i - 1, 0)].id);
     else return;
     e.preventDefault();
   }
@@ -52,7 +60,7 @@
     <div class="titlebar" data-tauri-drag-region></div>
     <ul role="listbox" tabindex="0" aria-label="Settings pages" {onkeydown}>
       {#each pages as p}
-        <li role="option" aria-selected={current === p.id} class:selected={current === p.id} onclick={() => (current = p.id)} onkeydown={() => {}}>
+        <li role="option" aria-selected={current === p.id} class:selected={current === p.id} onclick={() => show(p.id)} onkeydown={() => {}}>
           {p.title}
         </li>
       {/each}
@@ -72,7 +80,7 @@
         {#if look}<Experimental bind:look />
         {:else}<ErrorState title="Myna couldn't read experimental features" message={data.appearance.ok ? "" : data.appearance.error} />{/if}
       {:else if page.id === "ai"}
-        {#if data.ai?.ok}<AiProviders initial={data.ai.ai} />
+        {#if ai}<AiProviders initial={ai} />
         {:else}<ErrorState title="Myna couldn't read its AI providers" message={data.ai?.ok === false ? data.ai.error : ""} />{/if}
       {:else if page.id === "models"}
         {#if !data.models?.ok}
@@ -87,7 +95,7 @@
         {#if !voice}
           <ErrorState title="Myna couldn't read voice typing's settings" message={data.voice?.ok === false ? data.voice.error : ""} />
         {:else}
-          <VoiceShortcut bind:voice globe={data.globe} />
+          <VoiceShortcut bind:voice globe={data.globe} {ai} setup={() => show("ai")} />
           {#if voice.on}
             {#if data.look?.ok}<PillLook initial={data.look.look} listening={{ state: "listening", hold: voice.mode === "hold", key: voice.key }} />
             {:else}<ErrorState title="Myna couldn't read the pill's look" message={data.look?.error ?? ""} />{/if}
