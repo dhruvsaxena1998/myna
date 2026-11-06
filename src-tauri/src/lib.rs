@@ -308,6 +308,7 @@ fn updates_set(app: AppHandle, d: tauri::State<Data>, prefs: update::Prefs) -> R
     update::set(&d.db.lock().unwrap(), &prefs)?;
     if was.channel != prefs.channel {
         update::forget(&app);
+        let _ = update::remember(&app, &d.db.lock().unwrap()); // the old feed's update no longer applies
         let _ = app.emit("update-channel", &prefs.channel); // the pop-up's "You have Y · Beta"
     }
     Ok(())
@@ -348,8 +349,9 @@ fn open_link(url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn update_download(app: AppHandle) -> Result<(), String> {
-    update::download(&app, false).await
+async fn update_download(app: AppHandle, d: tauri::State<'_, Data>) -> Result<(), String> {
+    let p = update::get(&d.db.lock().unwrap(), prerelease(&app))?;
+    update::download(&app, update::FEEDS, &p.channel, false).await
 }
 
 /// Restart now: installs the downloaded update and relaunches, unless a dictation is under way.
@@ -365,21 +367,34 @@ fn watch_updates(app: AppHandle) {
     if cfg!(debug_assertions) {
         return; // a dev run would quietly download the latest release; the button still checks
     }
-    std::thread::spawn(move || loop {
-        let last = *app.state::<update::Updates>().last.lock().unwrap();
+    std::thread::spawn(move || {
+        // Daily or weekly: the last check's update shows at once; in Check and download it's fetched again.
         let prefs = update::get(&app.state::<Data>().db.lock().unwrap(), prerelease(&app));
-        if let Some(p) = prefs.ok().filter(|p| update::due(&p.mode, last, std::time::SystemTime::now())) {
-            let _ = tauri::async_runtime::block_on(update::check(&app, update::FEEDS, &p, false));
-            tell_update(&app, &p.mode, false);
+        if let Some(p) = prefs.ok().filter(|p| p.mode != "off") {
+            let restored = update::restore(&app, &app.state::<Data>().db.lock().unwrap(), &p) == Ok(true);
+            if restored && p.mode == "auto" {
+                let _ = tauri::async_runtime::block_on(update::download(&app, update::FEEDS, &p.channel, true));
+            }
         }
-        std::thread::sleep(std::time::Duration::from_secs(3600));
+        loop {
+            let last = *app.state::<update::Updates>().last.lock().unwrap();
+            let prefs = update::get(&app.state::<Data>().db.lock().unwrap(), prerelease(&app));
+            if let Some(p) = prefs.ok().filter(|p| update::due(p, last, std::time::SystemTime::now())) {
+                let _ = tauri::async_runtime::block_on(update::check(&app, update::FEEDS, &p, false));
+                tell_update(&app, &p.mode, false);
+            }
+            std::thread::sleep(std::time::Duration::from_secs(3600));
+        }
     });
 }
 
-/// Sends the notification a check earned, if any.
+/// After a check: saves what it found and sends the notification it earned, if any.
 fn tell_update(app: &AppHandle, mode: &str, manual: bool) {
     let s = app.state::<update::Updates>().state.lock().unwrap().clone();
-    if let Ok(Some((title, body))) = update::tell(&app.state::<Data>().db.lock().unwrap(), mode, &s, manual) {
+    let d = app.state::<Data>();
+    let db = d.db.lock().unwrap();
+    let _ = update::remember(app, &db);
+    if let Ok(Some((title, body))) = update::tell(&db, mode, &s, manual) {
         notify::send(&title, &body);
     }
 }

@@ -39,6 +39,7 @@ block2 = "0.6"
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFDictionary", "CFString", "CFNumber"] }
 text2num = { version = "2.8.0", default-features = false, features = ["en", "std"] }
 tauri-plugin-updater = "2.14.1"
+semver = "1"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

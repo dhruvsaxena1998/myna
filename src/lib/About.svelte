@@ -15,6 +15,12 @@
     ["off", "Off", "Never checks on its own. Use Check for updates when you want to."],
   ];
 
+  const EVERY: [Prefs["every"], string, string][] = [
+    ["launch", "At launch and daily", "Checks each time Myna opens, and once a day while it’s open."],
+    ["day", "Daily", "Checks once a day, even if you quit and reopen Myna."],
+    ["week", "Weekly", "Checks once a week, even if you quit and reopen Myna."],
+  ];
+
   async function save(change: Partial<Prefs>) {
     const was = prefs;
     prefs = { ...prefs, ...change };
@@ -52,6 +58,12 @@
       <span><label class="name" for="upd-mode">Update mode</label><span class="desc" id="upd-mode-d">{MODES.find(([v]) => v === prefs.mode)?.[2]}</span></span>
       <select id="upd-mode" class="select" aria-describedby="upd-mode-d" value={prefs.mode} onchange={(e) => save({ mode: e.currentTarget.value as Prefs["mode"] })}>
         {#each MODES as [v, label]}<option value={v}>{label}</option>{/each}
+      </select>
+    </li>
+    <li class="row">
+      <span><label class="name" for="upd-every">How often to check</label><span class="desc" id="upd-every-d">{prefs.mode === "off" ? "Update mode is Off." : EVERY.find(([v]) => v === prefs.every)?.[2]}</span></span>
+      <select id="upd-every" class="select" aria-describedby="upd-every-d" disabled={prefs.mode === "off"} value={prefs.every} onchange={(e) => save({ every: e.currentTarget.value as Prefs["every"] })}>
+        {#each EVERY as [v, label]}<option value={v}>{label}</option>{/each}
       </select>
     </li>
     <li class="row">

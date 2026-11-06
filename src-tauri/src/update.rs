@@ -11,15 +11,19 @@ use tauri_plugin_updater::{Error, Update, UpdaterExt};
 /// Check and download, Check only, Off.
 pub const MODES: [&str; 3] = ["auto", "check", "off"];
 pub const CHANNELS: [&str; 2] = ["stable", "beta"];
+/// How often automatic checks run: at launch and daily, daily, weekly.
+pub const EVERY: [&str; 3] = ["launch", "day", "week"];
 /// `<FEEDS>/stable.json` and `<FEEDS>/beta.json`, rewritten by the release workflow.
 pub const FEEDS: &str = "https://github.com/dhruvsaxena1998/myna/releases/download/updater";
 const DAY: Duration = Duration::from_secs(24 * 60 * 60);
+const WEEK: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 pub const BUSY: &str = "Finish recording first";
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
 pub struct Prefs {
     pub mode: String,
     pub channel: String,
+    pub every: String,
 }
 
 #[derive(serde::Serialize, Clone, Debug, PartialEq, Default)]
@@ -42,7 +46,7 @@ pub struct Updates {
     pub state: Mutex<State>,
     found: Mutex<Option<Update>>,
     bytes: Mutex<Option<Vec<u8>>>,
-    /// The last check, manual or not. In memory only, so every launch checks.
+    /// The last check, manual or not. Saved, but only read back at launch when Check is daily or weekly.
     pub last: Mutex<Option<SystemTime>>,
     /// Stops the download in progress.
     cancel: Mutex<Option<Box<dyn FnOnce() + Send>>>,
@@ -63,23 +67,66 @@ pub fn get(conn: &Connection, prerelease: bool) -> Result<Prefs, String> {
     Ok(Prefs {
         mode: read(conn, "update_mode")?.filter(|m| MODES.contains(&m.as_str())).unwrap_or(MODES[0].into()),
         channel: read(conn, "update_channel")?.filter(|c| CHANNELS.contains(&c.as_str())).unwrap_or(own.into()),
+        every: read(conn, "update_every")?.filter(|e| EVERY.contains(&e.as_str())).unwrap_or(EVERY[0].into()),
     })
 }
 
 pub fn set(conn: &Connection, p: &Prefs) -> Result<(), String> {
-    if !MODES.contains(&p.mode.as_str()) || !CHANNELS.contains(&p.channel.as_str()) {
-        return Err(format!("{} {} isn't one of the choices.", p.mode, p.channel));
+    if !MODES.contains(&p.mode.as_str()) || !CHANNELS.contains(&p.channel.as_str()) || !EVERY.contains(&p.every.as_str()) {
+        return Err(format!("{} {} {} isn't one of the choices.", p.mode, p.channel, p.every));
     }
-    for (k, v) in [("update_mode", &p.mode), ("update_channel", &p.channel)] {
+    for (k, v) in [("update_mode", &p.mode), ("update_channel", &p.channel), ("update_every", &p.every)] {
         conn.execute("INSERT INTO setting(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2", [k, v])
             .map_err(|e| format!("Couldn't save the update settings: {e}"))?;
     }
     Ok(())
 }
 
-/// Whether an automatic check is due: never when Off, else at launch and every 24 h of clock time.
-pub fn due(mode: &str, last: Option<SystemTime>, now: SystemTime) -> bool {
-    mode != "off" && last.is_none_or(|t| !now.duration_since(t).is_ok_and(|d| d < DAY))
+/// Whether an automatic check is due: never when Off, else when none has run yet and then every 24 h
+/// (7 days when weekly) of clock time. At launch `last` is None unless `restore` read it back.
+pub fn due(p: &Prefs, last: Option<SystemTime>, now: SystemTime) -> bool {
+    let every = if p.every == "week" { WEEK } else { DAY };
+    p.mode != "off" && last.is_none_or(|t| !now.duration_since(t).is_ok_and(|d| d < every))
+}
+
+fn write(conn: &Connection, key: &str, value: &str) -> Result<(), String> {
+    conn.execute("INSERT INTO setting(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2", [key, value])
+        .map(drop)
+        .map_err(|e| format!("Couldn't save the update settings: {e}"))
+}
+
+/// Saves when the last check ran and what it found, so a launch that skips the check still shows it.
+pub fn remember<R: Runtime>(app: &AppHandle<R>, conn: &Connection) -> Result<(), String> {
+    let u = app.state::<Updates>();
+    if let Some(t) = *u.last.lock().unwrap() {
+        write(conn, "update_last", &t.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_secs().to_string())?;
+    }
+    match &*u.state.lock().unwrap() {
+        State::Available { version, notes } | State::Downloading { version, notes, .. } | State::Downloaded { version, notes } => {
+            write(conn, "update_found", &serde_json::json!({ "version": version, "notes": notes }).to_string())
+        }
+        State::Idle | State::Uptodate => write(conn, "update_found", ""),
+        State::Checking | State::Error { .. } => Ok(()), // nothing new learned
+    }
+}
+
+/// At launch, when Check is daily or weekly: the last check's time, and its update if still newer than
+/// this build. Returns whether an update was restored (still to download: the bytes aren't saved).
+pub fn restore<R: Runtime>(app: &AppHandle<R>, conn: &Connection, p: &Prefs) -> Result<bool, String> {
+    if p.every == "launch" {
+        return Ok(false);
+    }
+    let u = app.state::<Updates>();
+    let last = read(conn, "update_last")?.and_then(|s| s.parse().ok());
+    *u.last.lock().unwrap() = last.map(|s| SystemTime::UNIX_EPOCH + Duration::from_secs(s));
+    let found = read(conn, "update_found")?.and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+    let newer = found
+        .as_ref()
+        .and_then(|f| Some((f["version"].as_str()?, f["notes"].as_str().unwrap_or_default())))
+        .filter(|(v, _)| v.parse::<semver::Version>().is_ok_and(|v| v > app.package_info().version));
+    let Some((version, notes)) = newer else { return Ok(false) };
+    show(app, State::Available { version: version.into(), notes: notes.into() });
+    Ok(true)
 }
 
 /// The notification for where a check left things, as (version, title, body): only at the state the mode
@@ -157,7 +204,11 @@ fn fail<R: Runtime>(app: &AppHandle<R>, e: &Error, kind: &str) -> String {
 /// The Channel's feed at `base`. The updater only offers a newer version, so switching beta → stable never downgrades.
 pub async fn find<R: Runtime>(app: &AppHandle<R>, base: &str, channel: &str) -> Result<Option<Update>, Error> {
     let url = format!("{base}/{channel}.json").parse()?;
-    match app.updater_builder().endpoints(vec![url])?.build()?.check().await {
+    // GitHub's asset CDN has 4 IPs and some networks drop one; without this a connect to it hangs ~75 s
+    // (the OS default) before the next is tried. hyper splits this across the IPs: 1 s each.
+    // Measured on such a network: check and download 75 s each without it, ~1.3 s with it. Covers the download too.
+    let builder = app.updater_builder().configure_client(|c| c.connect_timeout(Duration::from_secs(4)));
+    match builder.endpoints(vec![url])?.build()?.check().await {
         // shortcut: any non-2xx reads as "nothing yet" (stable.json 404s until the first stable release); tell 404 from 5xx if GitHub outages confuse people.
         Err(Error::ReleaseNotFound) => Ok(None),
         r => r,
@@ -186,7 +237,7 @@ pub async fn check<R: Runtime>(app: &AppHandle<R>, base: &str, p: &Prefs, manual
             show(app, available(&up));
             *u.found.lock().unwrap() = Some(up);
             if !manual && p.mode == "auto" {
-                return download(app, true).await;
+                return download(app, base, &p.channel, true).await;
             }
         }
         Err(e) if manual => return Err(fail(app, &e, "check")),
@@ -196,14 +247,32 @@ pub async fn check<R: Runtime>(app: &AppHandle<R>, base: &str, p: &Prefs, manual
 }
 
 /// Downloads and verifies what the last check found. `quiet`: failures go back to Available, except a bad signature.
-pub async fn download<R: Runtime>(app: &AppHandle<R>, quiet: bool) -> Result<(), String> {
+/// An update restored at launch is looked up again first, at `base` on `channel`.
+pub async fn download<R: Runtime>(app: &AppHandle<R>, base: &str, channel: &str, quiet: bool) -> Result<(), String> {
     let u = app.state::<Updates>();
-    let up = {
+    let (found, was) = {
         let s = u.state.lock().unwrap();
         if matches!(*s, State::Checking | State::Downloading { .. } | State::Downloaded { .. }) {
             return Ok(());
         }
-        u.found.lock().unwrap().clone().ok_or("Check for updates first.")?
+        (u.found.lock().unwrap().clone(), s.clone())
+    };
+    let up = match found {
+        Some(up) => up,
+        None if !matches!(was, State::Available { .. }) => return Err("Check for updates first.".into()),
+        None => match find(app, base, channel).await {
+            Ok(Some(up)) => {
+                show(app, available(&up)); // the feed may have moved on since it was saved
+                *u.found.lock().unwrap() = Some(up.clone());
+                up
+            }
+            Ok(None) => {
+                show(app, State::Uptodate);
+                return Ok(());
+            }
+            Err(_) if quiet => return Ok(()),
+            Err(e) => return Err(fail(app, &e, "download")),
+        },
     };
     let (version, notes) = info(&up);
     let downloading = move |pct| State::Downloading { version: version.clone(), notes: notes.clone(), pct };
@@ -325,7 +394,7 @@ mod tests {
     }
 
     fn run(app: &tauri::App<MockRuntime>, base: &str, mode: &str, channel: &str, manual: bool) -> (Result<(), String>, State) {
-        let p = Prefs { mode: mode.into(), channel: channel.into() };
+        let p = Prefs { mode: mode.into(), channel: channel.into(), every: "launch".into() };
         let r = tauri::async_runtime::block_on(check(app.handle(), base, &p, manual));
         (r, app.state::<Updates>().state.lock().unwrap().clone())
     }
@@ -365,17 +434,61 @@ mod tests {
         assert_eq!(run(&app("0.0.2-beta.1"), &base, "auto", "stable", false), (Ok(()), State::Idle));
     }
 
+    fn prefs(mode: &str, every: &str) -> Prefs {
+        Prefs { mode: mode.into(), channel: "beta".into(), every: every.into() }
+    }
+
     #[test]
-    fn off_never_checks_on_its_own_and_the_others_check_daily() {
+    fn off_never_checks_on_its_own_and_the_others_check_daily_or_weekly() {
         let now = SystemTime::now();
         let hour = Duration::from_secs(3600);
-        assert!(!due("off", None, now) && !due("off", Some(now - 2 * DAY), now));
+        assert!(!due(&prefs("off", "day"), None, now) && !due(&prefs("off", "day"), Some(now - 2 * DAY), now));
         for mode in ["auto", "check"] {
-            assert!(due(mode, None, now), "at launch");
-            assert!(!due(mode, Some(now - 23 * hour), now));
-            assert!(due(mode, Some(now - DAY), now));
-            assert!(due(mode, Some(now + hour), now), "a clock set back still checks");
+            for every in ["launch", "day"] {
+                let p = prefs(mode, every);
+                assert!(due(&p, None, now), "at launch");
+                assert!(!due(&p, Some(now - 23 * hour), now));
+                assert!(due(&p, Some(now - DAY), now));
+                assert!(due(&p, Some(now + hour), now), "a clock set back still checks");
+            }
+            assert!(!due(&prefs(mode, "week"), Some(now - 6 * DAY), now));
+            assert!(due(&prefs(mode, "week"), Some(now - WEEK), now));
         }
+    }
+
+    #[test]
+    fn a_launch_restores_the_last_check_unless_it_checks_at_every_launch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (c, a) = (crate::storage::open(tmp.path()).unwrap(), app("0.0.2-beta.1"));
+        let t = SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000);
+        *a.state::<Updates>().last.lock().unwrap() = Some(t);
+        show(a.handle(), avail("0.0.2-beta.2"));
+        remember(a.handle(), &c).unwrap();
+
+        let b = app("0.0.2-beta.1");
+        assert_eq!(restore(b.handle(), &c, &prefs("check", "launch")), Ok(false));
+        assert_eq!(*b.state::<Updates>().last.lock().unwrap(), None, "checks at launch");
+        assert_eq!(restore(b.handle(), &c, &prefs("check", "day")), Ok(true));
+        assert_eq!(*b.state::<Updates>().last.lock().unwrap(), Some(t));
+        assert_eq!(*b.state::<Updates>().state.lock().unwrap(), avail("0.0.2-beta.2"));
+
+        let updated = app("0.0.2-beta.2"); // the saved update is now this build
+        assert_eq!(restore(updated.handle(), &c, &prefs("check", "week")), Ok(false));
+        assert_eq!(*updated.state::<Updates>().state.lock().unwrap(), State::Idle);
+
+        show(a.handle(), State::Uptodate);
+        remember(a.handle(), &c).unwrap();
+        assert_eq!(restore(app("0.0.2-beta.1").handle(), &c, &prefs("check", "day")), Ok(false), "nothing found last time");
+    }
+
+    #[test]
+    fn a_restored_update_is_looked_up_again_before_downloading() {
+        let base = feed(None, Some("0.0.2-beta.3"));
+        let a = app("0.0.2-beta.1");
+        show(a.handle(), avail("0.0.2-beta.2")); // as restored: no Update in hand
+        let r = tauri::async_runtime::block_on(download(a.handle(), &base, "beta", false));
+        assert_eq!(r, Err("This update failed its security check and wasn’t installed.".into()), "it fetched beta.3's bundle");
+        assert_eq!(a.state::<Updates>().found.lock().unwrap().as_ref().map(|u| u.version.clone()), Some("0.0.2-beta.3".into()));
     }
 
     #[test]
@@ -415,8 +528,8 @@ mod tests {
         let base = feed(None, Some("0.0.3-stall.1"));
         let a = app("0.0.2-beta.1");
         assert_eq!(run(&a, &base, "check", "beta", true), (Ok(()), avail("0.0.3-stall.1")));
-        let h = a.handle().clone();
-        let dl = std::thread::spawn(move || tauri::async_runtime::block_on(download(&h, false)));
+        let (h, base) = (a.handle().clone(), base.clone());
+        let dl = std::thread::spawn(move || tauri::async_runtime::block_on(download(&h, &base, "beta", false)));
         for _ in 0..500 {
             if a.state::<Updates>().cancel.lock().unwrap().is_some() {
                 break;
@@ -465,7 +578,7 @@ mod tests {
     fn settings_default_to_the_builds_channel_and_save_only_valid_choices() {
         let tmp = tempfile::tempdir().unwrap();
         let conn = crate::storage::open(tmp.path()).unwrap();
-        let p = |m: &str, c: &str| Prefs { mode: m.into(), channel: c.into() };
+        let p = |m: &str, c: &str| Prefs { mode: m.into(), channel: c.into(), every: "launch".into() };
         assert_eq!(get(&conn, true), Ok(p("auto", "beta")));
         assert_eq!(get(&conn, false), Ok(p("auto", "beta")), "a beta install that updates to stable stays on beta");
         let fresh = crate::storage::open(&tmp.path().join("other")).unwrap();
@@ -474,6 +587,9 @@ mod tests {
         assert_eq!(get(&conn, true), Ok(p("off", "stable")));
         assert!(set(&conn, &p("sometimes", "beta")).is_err());
         assert!(set(&conn, &p("check", "nightly")).is_err());
+        assert!(set(&conn, &Prefs { every: "hourly".into(), ..p("off", "stable") }).is_err());
         assert_eq!(get(&conn, true), Ok(p("off", "stable")));
+        set(&conn, &Prefs { every: "week".into(), ..p("off", "stable") }).unwrap();
+        assert_eq!(get(&conn, true).unwrap().every, "week");
     }
 }

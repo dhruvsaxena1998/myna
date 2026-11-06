@@ -951,7 +951,7 @@ const S = {
 S.set = { modules:S.modules, hotkey:'fn', mode:'hold', paste:'clipboard', pillStyle:'capsule', pillPlace:'bottom', dict:['Myna','Parakeet','Desert Ant','Drove → Dhruv'], lang:'en', rules:true,
   capture:'shots', interval:'15', apps:{ meet:false, teams:false, zoom:false, slack:false }, ext:false, retention:'30', folder:true, dataPath:'~/Library/Application Support/Myna', dataMoved:false,
   meetKey:'ctrl-opt-m', appearance:'auto', accent:'blue', glass:'clear', liquid:false, expOn:false, detect:true,
-  diar:'who', updMode:'auto', channel:'beta',
+  diar:'who', updMode:'auto', updEvery:'launch', channel:'beta',
   exp:{ diarOn:false, uhmD:false, uhmM:false, llmD:false, llmM:false, triage:false, relevance:false, shotsAI:false, nerds:false },
   nerds:{ period:'7', model:'all', app:'all', sample:'full', pick:null } };
 S.mb = { open:false };
@@ -1893,6 +1893,7 @@ function settingsPage() {
     case 'about': return sgroup('Myna', [
         srow('Version', S.u.ver, updSlot()),
         srow('Update mode', UPD_MODES[x.updMode][1], sel('updMode', Object.entries(UPD_MODES).map(([v, [l]]) => [v, l]), 'Update mode')),
+        srow('How often to check', x.updMode === 'off' ? 'Update mode is Off.' : UPD_EVERY[x.updEvery][1], sel('updEvery', Object.entries(UPD_EVERY).map(([v, [l]]) => [v, l]), 'How often to check')),
         srow('Channel', 'Beta also gets newer stable releases. Switching to stable keeps your current version until stable passes it.', segc('channel', [['stable', 'Stable'], ['beta', 'Beta']], 'Channel')),
         srow('Where your data lives', `<span class="path">${esc(x.dataPath)}</span><br>${x.dataMoved ? 'Moved. Everything now lives in this folder.' : 'Your meetings, AI models and settings are all in one folder. Copy it to back everything up.'}`,
           `<div class="popwrap" data-pop><button class="btn" id="data-btn" data-act="pop" data-p="data" aria-haspopup="menu" aria-expanded="${S.pop === 'data'}">Change…</button>${S.pop === 'data' ? `<div class="pop menu" role="menu" aria-label="Where your data lives">${DATA_PLACES.map(([l, v]) => `<button class="mitem" role="menuitemradio" aria-checked="${x.dataPath === v}" data-act="data-path" data-v="${esc(v)}"><span class="od-truncate">${l}</span>${x.dataPath === v ? `<span class="mkey">${icon('check','ic-s')}</span>` : ''}</button>`).join('')}</div>` : ''}</div>`),
@@ -1907,6 +1908,7 @@ function settingsPage() {
 }
 
 /* ---------- app updates ---------- */
+const UPD_EVERY = { launch:['At launch and daily', 'Checks each time Myna opens, and once a day while it’s open.'], day:['Daily', 'Checks once a day, even if you quit and reopen Myna.'], week:['Weekly', 'Checks once a week, even if you quit and reopen Myna.'] };
 const UPD_MODES = { auto:['Check and download', 'Checks on its own, downloads in the background, then asks you to restart.'], check:['Check only', 'Checks on its own and tells you when there’s an update. You choose when to download.'], off:['Off', 'Never checks on its own. Use Check for updates when you want to.'] };
 const UPD_NOTES = `<h2>What’s new</h2>
   <h3>Dictation</h3><ul><li>Your words now appear faster after you let go of the key.</li><li>Fixed the pill covering the Dock on some displays.</li></ul>

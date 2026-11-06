@@ -5,7 +5,7 @@ async function open(page: Page, extra = "") {
   await fakeTauri(page, `{
     storage_status: () => "/tmp/Myna", models_list: () => [],
     // Saved in localStorage, so a reload plays a restart with the same database.
-    updates_get: () => JSON.parse(localStorage.getItem("updates") ?? '{"mode":"auto","channel":"beta"}'),
+    updates_get: () => JSON.parse(localStorage.getItem("updates") ?? '{"mode":"auto","channel":"beta","every":"launch"}'),
     updates_set: ({ prefs }) => void localStorage.setItem("updates", JSON.stringify(prefs)),
     update_check: () => null, update_download: () => null,
     ${extra}
@@ -74,6 +74,21 @@ test("Update mode and Channel show their hints and persist across a restart", as
   await page.getByRole("option", { name: "About" }).click();
   await expect(page.getByRole("combobox", { name: "Update mode" })).toHaveValue("off");
   await expect(page.getByRole("radio", { name: "Stable" })).toBeChecked();
+});
+
+test("How often to check persists, and is off while Update mode is Off", async ({ page }) => {
+  await open(page);
+  const every = page.getByRole("combobox", { name: "How often to check" });
+  await expect(every).toHaveValue("launch");
+  await every.selectOption("week");
+  await expect(page.getByText("Checks once a week, even if you quit and reopen Myna.")).toBeVisible();
+  await page.getByRole("combobox", { name: "Update mode" }).selectOption("off");
+  await expect(every).toBeDisabled();
+  await expect(page.getByText("Update mode is Off.")).toBeVisible();
+
+  await page.reload();
+  await page.getByRole("option", { name: "About" }).click();
+  await expect(page.getByRole("combobox", { name: "How often to check" })).toHaveValue("week");
 });
 
 test("a failed save puts the old choice back and says why", async ({ page }) => {

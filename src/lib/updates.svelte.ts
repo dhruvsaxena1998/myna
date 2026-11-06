@@ -1,7 +1,7 @@
 // The one update state (update.rs), kept here so it survives switching Settings pages.
 import { listen } from "@tauri-apps/api/event";
 
-export type Prefs = { mode: "auto" | "check" | "off"; channel: "stable" | "beta" };
+export type Prefs = { mode: "auto" | "check" | "off"; channel: "stable" | "beta"; every: "launch" | "day" | "week" };
 export type UpdateState =
   | { state: "idle" | "checking" | "uptodate" }
   | { state: "available" | "downloaded"; version: string; notes: string }
