@@ -257,7 +257,7 @@
         <h3 id="add-h">Add an AI provider</h3>
         <div class="two">
           <div class="field"><label for="add-kind">Kind</label>
-            <select id="add-kind" class="input" value={draft.kind} onchange={pickKind}>{#each PRESETS as [v, l]}<option value={v}>{l}</option>{/each}</select>
+            <select id="add-kind" class="select" value={draft.kind} onchange={pickKind}>{#each PRESETS as [v, l]}<option value={v}>{l}</option>{/each}</select>
             <span class="help kind-h">{draft.kind === "openrouter" ? "One key for models from many companies." : "Ollama, LM Studio, oMLX or any server that speaks the OpenAI API."}</span></div>
           <div class="field"><label for="add-name">Name</label>
             <input id="add-name" class="input" bind:value={draft.name} maxlength="40" placeholder={draft.kind === "openai" ? "Ollama on this Mac" : ""} autocomplete="off" spellcheck="false" aria-invalid={!!errs.name} aria-describedby="add-name-h add-name-e" />
@@ -265,7 +265,7 @@
         </div>
         <div class="field"><label for="add-url">Address</label>
           <input id="add-url" class="input mono" type="url" bind:value={draft.url} placeholder={draft.kind === "openai" ? "http://localhost:11434/v1" : ""} autocomplete="off" spellcheck="false" aria-invalid={!!errs.url} aria-describedby="add-url-h add-url-e" />
-          <span class="help" id="add-url-h">{@render pill(!loopback(draft.url))}</span><span class="err" id="add-url-e" role="status">{errs.url ?? ""}</span></div>
+          <span class="help pill-slot" id="add-url-h">{#if hostOf(draft.url)}{@render pill(!loopback(draft.url))}{/if}</span><span class="err" id="add-url-e" role="status">{errs.url ?? ""}</span></div>
         <div class="field"><label for="add-key">{draft.kind === "openrouter" ? "Key" : "Key (optional)"}</label>
           <input id="add-key" class="input mono" type="password" bind:value={draft.key} autocomplete="off" spellcheck="false" placeholder={draft.kind === "openrouter" ? "sk-or-…" : ""} aria-invalid={!!errs.key} aria-describedby="add-key-h add-key-e" />
           <span class="help" id="add-key-h">{draft.kind === "openrouter" ? "Find it at openrouter.ai/keys." : "Only if your server asks for one."} Myna keeps it in your Mac’s Keychain.</span>
@@ -411,4 +411,6 @@
   .sk i { display: block; height: 8px; border-radius: 4px; background: var(--fill-track); }
   .sk i:first-child { width: 55%; }
   .sk i:last-child { width: 80%; }
+  /* Holds the pill's height while the address is empty, so typing one doesn't push the form down. */
+  .pill-slot { display: block; min-height: 20px; }
 </style>
