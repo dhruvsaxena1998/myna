@@ -23,6 +23,8 @@ const SAMPLES = `(() => {
     { ...base, id: 4, started: ago(90), app: "Safari", steps: step(r4, [E(r4, "word", "Myna", "Myna", 0, { matched: "spelling", spelling: "Myna", heard: null, unchanged: true })], "de") },
     { ...base, id: 5, started: ago(120), app: "Terminal", outcome: "nothing_heard", audio_ms: 900, paste_ms: null, steps: step("Um.", [E("Um.", "filler", "Um.", "")], "en", true, "") },
     { ...base, id: 6, started: ago(140), app: null, outcome: "failed", reason: "The speech model didn't load.", paste_ms: null, load_ms: 80, steps: [] },
+    { ...base, id: 7, started: ago(141), app: "Messages", paste_ms: 1310, steps: [...step("so um we meet tuesday at five", []), { kind: "cleanup", text: "So we meet Tuesday at 5.", ms: 920, edits: null, settings: { model: "openai/gpt-5-mini", cost: { kind: "usd", usd: 0.0003 }, fallback: null, detail: null } }] },
+    { ...base, id: 8, started: ago(142), app: "Mail", paste_ms: 4100, steps: [...step("send the deck to Priya", []), { kind: "cleanup", text: "send the deck to Priya", ms: 3004, edits: null, settings: { model: "qwen2.5:7b", cost: null, fallback: "AI took too long", detail: null } }] },
   ];
 })()`;
 
@@ -74,7 +76,7 @@ test("lists traces newest first with title, app, time and outcome", async ({ pag
   await open(page);
   await nerdsNav(page).click();
   const rows = page.getByRole("list", { name: "Dictations" }).getByRole("button");
-  await expect(rows).toHaveCount(6);
+  await expect(rows).toHaveCount(8);
   await expect(rows.nth(0)).toContainText("Um, so I I think we");
   await expect(rows.nth(0)).toContainText("Slack · Today");
   await expect(rows.nth(0)).toContainText("Pasted");
@@ -188,4 +190,28 @@ test("rebuilding the cleaned text from raw + edits: outermost wins, spans count 
   expect(rebuild(raw, [um, filler, number])).toBe("I got 25 😀 pods");
   expect(rebuild(raw, [number, filler, um])).toBe("I got 25 😀 pods"); // order applied doesn't matter
   expect(rebuild(raw, [])).toBe(raw);
+});
+
+test("a dictation with cleanup shows its step: the text, the model, the cost, and a bar segment", async ({ page }) => {
+  await open(page);
+  await go(page, 6); // trace 7, the sixth by time
+  const card = page.getByRole("region", { name: "Cleanup" });
+  await expect(card).toContainText("openai/gpt-5-mini · < $0.01 · 920 ms");
+  await expect(card).toContainText("So we meet Tuesday at 5.");
+  await expect(card.getByRole("status")).toHaveText("");
+  await expect(page.getByLabel("Timing", { exact: true }).first()).toContainText("Cleanup 920 ms");
+  await expect(page.getByRole("region", { name: "What Myna changed" })).toBeVisible();
+});
+
+test("a cleanup that fell back says why", async ({ page }) => {
+  await open(page);
+  await go(page, 7); // trace 8
+  await expect(page.getByRole("region", { name: "Cleanup" })).toContainText("Added without cleanup: AI took too long");
+});
+
+test("a dictation without cleanup has no cleanup card or bar segment", async ({ page }) => {
+  await open(page);
+  await go(page, 1);
+  await expect(page.getByRole("region", { name: "Cleanup" })).toHaveCount(0);
+  await expect(page.getByLabel("Timing", { exact: true }).first()).not.toContainText("Cleanup");
 });

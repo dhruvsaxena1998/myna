@@ -11,7 +11,7 @@
   import Overview from "./Overview.svelte";
   import { edits as editsOf, overview, picks, PERIODS } from "./stats";
   import type { Rules, Word } from "./Words.svelte";
-  import { dur, KIND_ONE, KINDS, OUTCOME, outermost, title, when, type Edit, type Trace } from "./trace";
+  import { dur, KIND_ONE, KINDS, OUTCOME, outermost, title, when, type Cleanup, type Edit, type Trace } from "./trace";
 
   let { traces = $bindable(), words }: { traces: Trace[]; words: Word[] } = $props();
   let open = $state<{ t: Trace; rules: Rules } | null>(null);
@@ -46,6 +46,9 @@
   const bad = (o: string) => o !== "pasted";
   const stt = $derived(open?.t.steps.find((s) => s.kind === "speech-to-text"));
   const rulesStep = $derived(open?.t.steps.find((s) => s.kind === "rules"));
+  const cleanupStep = $derived(open?.t.steps.find((s) => s.kind === "cleanup"));
+  const cleanup = $derived(cleanupStep?.settings as Cleanup | null | undefined);
+  const price = (c: Cleanup["cost"]) => (c?.kind === "usd" ? (c.usd < 0.01 ? "< $0.01" : `$${c.usd.toFixed(2)}`) : c?.kind === "free" ? "Free" : "Cost unknown");
   const edits = $derived(rulesStep?.edits ?? []);
   const raw = $derived(Array.from(stt?.text ?? ""));
   const shown = $derived(outermost(edits));
@@ -68,18 +71,19 @@
   // The bar: what the paste step took is what's left of the whole after the other three.
   const segs = $derived.by(() => {
     if (!open) return [];
-    const { t } = open, parts = [t.load_ms ?? 0, stt?.ms ?? 0, rulesStep?.ms ?? 0];
+    const { t } = open, parts = [t.load_ms ?? 0, stt?.ms ?? 0, rulesStep?.ms ?? 0, cleanupStep?.ms ?? 0];
     const all = t.paste_ms ?? parts.reduce((a, b) => a + b, 0);
     return [
       ["Model load wait", parts[0], "--t-load"],
       ["Speech to text", parts[1], "--t-stt"],
       ["Rules", parts[2], "--t-rules"],
+      ["Cleanup", parts[3], "--t-clean"],
       ["Paste", all - parts.reduce((a, b) => a + b, 0), "--t-paste"],
     ].filter((s) => (s[1] as number) >= 1) as [string, number, string][];
   });
   const whole = $derived(segs.reduce((a, s) => a + s[1], 0));
 
-  const settings = $derived(rulesStep?.settings);
+  const settings = $derived(rulesStep?.settings as { language: string; tidy: boolean } | null | undefined);
   const language = $derived(open?.rules.languages.find(([c]) => c === settings?.language)?.[1] ?? settings?.language ?? "");
   const wordStatus = (w: { spelling: string; heard: string | null }) => {
     const hits = edits.filter((e) => e.kind === "word" && e.spelling === w.spelling && (e.heard ?? null) === (w.heard ?? null));
@@ -158,6 +162,14 @@
           <span class="w" class:off={s === "not heard"}>{#if s === "not heard"}{w.heard ? `${w.heard} → ` : ""}{w.spelling}{:else}<b>{w.heard ? `${w.heard} → ` : ""}{w.spelling}</b>{/if}<span class="meta">{s}</span></span>
         {:else}<span class="meta">None on your list</span>{/each}
       </div>
+    </section>
+  {/if}
+
+  {#if cleanupStep && cleanup}
+    <section class="card" aria-labelledby="cln-h">
+      <h3 id="cln-h">Cleanup <span class="meta">{[cleanup.model ?? "No Fast model", cleanup.model ? price(cleanup.cost) : "", dur(cleanupStep.ms)].filter(Boolean).join(" · ")}</span></h3>
+      <div class="text">{cleanupStep.text}</div>
+      <p class="meta note" role="status">{cleanup.fallback ? `Added without cleanup: ${cleanup.fallback}${cleanup.detail ? ` (${cleanup.detail})` : ""}` : ""}</p>
     </section>
   {/if}
 
