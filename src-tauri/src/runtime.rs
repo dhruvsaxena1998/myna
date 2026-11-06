@@ -46,7 +46,7 @@ pub fn transcriber(id: &str, models_dir: &Path) -> Result<Box<dyn Transcriber>, 
             let cfg = ort(models_dir).map_err(err)?;
             Ok(Box::new(Parakeet(ParakeetTDT::from_pretrained(&dir, Some(cfg)).map_err(|e| err(e.to_string()))?)))
         }
-        "whisper-large-v3-turbo" => {
+        _ if id.starts_with("whisper-") => {
             let ctx = WhisperContext::new_with_params(first_file(&m, &dir), WhisperContextParameters::default())
                 .map_err(|e| err(e.to_string()))?;
             Ok(Box::new(Whisper(ctx.create_state().map_err(|e| err(e.to_string()))?, String::new())))
@@ -178,7 +178,7 @@ mod tests {
     #[test]
     fn missing_or_unsupported_models_say_so() {
         let empty = tempfile::tempdir().unwrap();
-        for id in ["parakeet-tdt-v3", "whisper-large-v3-turbo"] {
+        for id in ["parakeet-tdt-v3", "whisper-small", "whisper-medium", "whisper-large-v3-turbo", "whisper-large-v3"] {
             let err = transcriber(id, empty.path()).err().unwrap();
             assert!(err.starts_with("Couldn't load"), "{id}: {err}");
         }
@@ -276,9 +276,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "slow: needs the downloaded Whisper model"]
+    #[ignore = "slow: needs the downloaded Whisper models"]
     fn whisper_transcribes() {
-        transcribes_the_fixture("whisper-large-v3-turbo");
+        for id in ["whisper-small", "whisper-medium", "whisper-large-v3-turbo", "whisper-large-v3"] {
+            transcribes_the_fixture(id);
+        }
     }
 
     #[test]

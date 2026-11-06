@@ -335,7 +335,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let f = std::fs::File::create(dir.join("ggml-large-v3-turbo.bin")).unwrap();
         let installed = |conn: &Connection| {
-            list(conn, &tmp.path().join("models"), 15, &english(true)).unwrap()[0].models.iter().find(|m| m.id.starts_with("whisper")).unwrap().installed
+            list(conn, &tmp.path().join("models"), 15, &english(true)).unwrap()[0].models.iter().find(|m| m.id == "whisper-large-v3-turbo").unwrap().installed
         };
         assert!(!installed(&conn), "partial file");
         f.set_len(1624555275).unwrap(); // sparse, no real disk use

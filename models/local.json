@@ -1,5 +1,5 @@
 {
-  "checked": "2026-11-02",
+  "checked": "2026-11-06",
   "runtime": {
     "id": "onnxruntime",
     "name": "ONNX Runtime",
@@ -65,6 +65,34 @@
       "files": []
     },
     {
+      "id": "whisper-small",
+      "name": "Whisper small",
+      "vendor": "OpenAI",
+      "desc": "Small and quick, for older Macs. Many languages, less accurate.",
+      "acc": 3,
+      "spd": 4,
+      "size": 487601967,
+      "repo": "ggerganov/whisper.cpp",
+      "revision": "5359861c739e955e79d9a303bcbc70fb988958b1",
+      "files": [
+        { "path": "ggml-small.bin", "size": 487601967, "sha256": "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b" }
+      ]
+    },
+    {
+      "id": "whisper-medium",
+      "name": "Whisper medium",
+      "vendor": "OpenAI",
+      "desc": "Many languages, more accurate than small. Slower on long meetings.",
+      "acc": 4,
+      "spd": 3,
+      "size": 539212467,
+      "repo": "ggerganov/whisper.cpp",
+      "revision": "5359861c739e955e79d9a303bcbc70fb988958b1",
+      "files": [
+        { "path": "ggml-medium-q5_0.bin", "size": 539212467, "sha256": "19fea4b380c3a618ec4723c3eef2eb785ffba0d0538cf43f8f235e7b3b34220f" }
+      ]
+    },
+    {
       "id": "whisper-large-v3-turbo",
       "name": "Whisper large-v3-turbo",
       "vendor": "OpenAI",
@@ -76,6 +104,20 @@
       "revision": "5359861c739e955e79d9a303bcbc70fb988958b1",
       "files": [
         { "path": "ggml-large-v3-turbo.bin", "size": 1624555275, "sha256": "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69" }
+      ]
+    },
+    {
+      "id": "whisper-large-v3",
+      "name": "Whisper large-v3",
+      "vendor": "OpenAI",
+      "desc": "The most accurate Whisper. The largest and slowest.",
+      "acc": 4,
+      "spd": 2,
+      "size": 1081140203,
+      "repo": "ggerganov/whisper.cpp",
+      "revision": "5359861c739e955e79d9a303bcbc70fb988958b1",
+      "files": [
+        { "path": "ggml-large-v3-q5_0.bin", "size": 1081140203, "sha256": "d75795ecff3f83b5faa89d1900604ad8c780abd5739fae406de19f23ecd98ad1" }
       ]
     }
   ],
