@@ -138,8 +138,8 @@ impl Session {
         let id = stt.active.ok_or("No speech-to-text model runs on this Mac")?;
         match stt.models.iter().find(|m| m.id == id) {
             Some(m) if m.installed => Ok(id),
-            Some(m) if m.system => Err(format!("Download {}’s language in Settings › AI & privacy", m.name)),
-            Some(m) => Err(format!("Download {} in Settings › AI & privacy", m.name)),
+            Some(m) if m.system => Err(format!("Download {}’s language in Settings › Speech models", m.name)),
+            Some(m) => Err(format!("Download {} in Settings › Speech models", m.name)),
             None => Err(format!("Unknown model {id}")),
         }
     }
@@ -603,7 +603,7 @@ mod tests {
     #[test]
     fn checks_before_recording_run_mic_then_accessibility_then_model() {
         let (s, mac, _tmp) = session("hold");
-        let no_model = "Download Parakeet TDT v3 in Settings › AI & privacy";
+        let no_model = "Download Parakeet TDT v3 in Settings › Speech models";
         let press = |set: &dyn Fn(&mut Log)| {
             set(&mut mac.0.lock().unwrap());
             mac.0.lock().unwrap().shown.clear();
@@ -713,7 +713,7 @@ mod tests {
     fn switching_models_frees_the_old_one_and_loads_the_new_one_on_the_next_dictation() {
         let (s, mac, tmp) = session("hold");
         assert_eq!(dictate(&s, &mac, false), [Pill::Writing, Pill::Added]);
-        // Whisper downloaded (a sparse file at its catalog size) and picked on AI & privacy.
+        // Whisper downloaded (a sparse file at its catalog size) and picked on Speech models.
         let dir = tmp.path().join("models/whisper-large-v3-turbo");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::File::create(dir.join("ggml-large-v3-turbo.bin")).unwrap().set_len(1624555275).unwrap();
@@ -761,7 +761,7 @@ mod tests {
         unload_after(&s, 60);
         dictate(&s, &mac, false); // its timer would run out during the next dictation
         s.key(true);
-        s.schedule_unload(); // the idle time changed on AI & privacy mid-dictation
+        s.schedule_unload(); // the idle time changed on Speech models mid-dictation
         std::thread::sleep(Duration::from_millis(150));
         assert_eq!(freed(&mac), 0);
         s.key(false);

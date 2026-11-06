@@ -1,3 +1,4 @@
+mod ai;
 mod apple;
 mod dictation;
 mod download;
@@ -42,6 +43,8 @@ struct Data {
     shortcut: Mutex<Option<String>>,
     /// Set while Settings records a new shortcut, so pressing the old one types into the recorder.
     paused: AtomicBool,
+    /// API keys for AI providers: the Keychain.
+    keys: Arc<dyn ai::Keys>,
 }
 
 /// "Start voice typing" in the menubar menu, which shows the shortcut.
@@ -143,6 +146,46 @@ fn model_delete(d: tauri::State<Data>, id: String) -> Result<(), String> {
 #[tauri::command]
 fn debug_on() -> bool {
     std::env::var("MYNA_DEBUG").is_ok_and(|v| !v.is_empty() && v != "0")
+}
+
+#[tauri::command]
+fn ai_get(d: tauri::State<Data>) -> Result<ai::State, String> {
+    ai::get(&d.db.lock().unwrap(), &*d.keys)
+}
+
+#[tauri::command]
+fn ai_add(d: tauri::State<Data>, kind: String, name: String, url: String, key: String) -> Result<ai::Provider, String> {
+    ai::add(&d.db.lock().unwrap(), &*d.keys, &kind, &name, &url, &key)
+}
+
+#[tauri::command]
+fn ai_remove(d: tauri::State<Data>, id: i64) -> Result<Vec<String>, String> {
+    ai::remove(&mut d.db.lock().unwrap(), &*d.keys, id)
+}
+
+#[tauri::command]
+fn ai_set(d: tauri::State<Data>, slot: String, provider: i64, model: String) -> Result<(), String> {
+    ai::set(&d.db.lock().unwrap(), &slot, provider, &model)
+}
+
+// The two below call out over the network, so they run off the main thread and never hold the database lock while waiting.
+#[tauri::command]
+async fn ai_models(d: tauri::State<'_, Data>, id: i64) -> Result<Vec<ai::Model>, String> {
+    let (db, keys) = (d.db.clone(), d.keys.clone());
+    tauri::async_runtime::spawn_blocking(move || ai::provider(&db.lock().unwrap(), &*keys, id)?.models())
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn ai_test(d: tauri::State<'_, Data>, id: i64) -> Result<ai::TestResult, String> {
+    let (db, keys) = (d.db.clone(), d.keys.clone());
+    tauri::async_runtime::spawn_blocking(move || {
+        let p = ai::provider(&db.lock().unwrap(), &*keys, id)?;
+        ai::test(&db, id, &*p)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -469,7 +512,7 @@ fn open_update(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![debug_on, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, traces_list, traces_all, trace_get, trace_delete, text_copy, settings_open, voice_pause, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
+        .invoke_handler(tauri::generate_handler![debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, traces_list, traces_all, trace_get, trace_delete, text_copy, settings_open, voice_pause, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::Updates::default())
         .setup(|app| {
@@ -490,6 +533,7 @@ pub fn run() {
                         downloads: Default::default(),
                         shortcut: Default::default(),
                         paused: Default::default(),
+                        keys: Arc::new(ai::Keychain),
                     });
                     app.handle().plugin(
                         tauri_plugin_global_shortcut::Builder::new()

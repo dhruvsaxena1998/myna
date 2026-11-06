@@ -12,6 +12,8 @@ const MIGRATIONS: &[&str] = &[
         audio_ms INTEGER NOT NULL, outcome TEXT NOT NULL, reason TEXT, load_ms REAL, paste_ms REAL);
      CREATE TABLE step(trace INTEGER NOT NULL REFERENCES trace(id), kind TEXT NOT NULL, text TEXT NOT NULL, ms REAL NOT NULL,
         settings TEXT, edits TEXT);",
+    "CREATE TABLE provider(id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, name TEXT NOT NULL UNIQUE COLLATE NOCASE, url TEXT NOT NULL);
+     CREATE TABLE route(slot TEXT PRIMARY KEY, provider_id INTEGER NOT NULL REFERENCES provider(id), model TEXT NOT NULL);",
 ];
 const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
 

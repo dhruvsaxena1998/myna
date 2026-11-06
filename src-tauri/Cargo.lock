@@ -2434,6 +2434,7 @@ dependencies = [
  "objc2-foundation",
  "parakeet-rs",
  "rusqlite",
+ "security-framework",
  "semver",
  "serde",
  "serde_json",
