@@ -120,7 +120,8 @@
   main { border-radius: var(--r-xl); background: var(--bg-content); box-shadow: var(--shadow-panel); overflow: hidden;
     display: grid; grid-template-rows: auto minmax(0, 1fr); }
   /* Only the page scrolls: the title stays put, like the main window. */
-  .content { padding: 0 var(--sp-5) var(--sp-5); overflow: auto; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+  /* relative: screen-reader-only text (position: absolute) stays inside the scroller instead of stretching the window. */
+  .content { position: relative; padding: 0 var(--sp-5) var(--sp-5); overflow: auto; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
   .content::-webkit-scrollbar { width: 8px; }
   .content::-webkit-scrollbar-thumb { border-radius: 4px; background: var(--line-strong); border: 2px solid transparent; background-clip: content-box; }
   header { height: var(--h-toolbar); display: flex; align-items: center; padding: 0 var(--sp-5); }

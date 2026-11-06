@@ -49,11 +49,14 @@
       </li>
     {/each}
   </ul>
+  <p class="help fix"><strong>Accessibility already on, but Myna still asks?</strong> After a reinstall, macOS can keep the old entry. In System Settings, select Myna and click −, then come back and click Open System Settings again.</p>
 </section>
 
 <style>
   h2 { margin: 0; font-size: var(--fs-title3); line-height: var(--lh-title3); font-weight: var(--fw-semibold); }
   .help { margin: var(--sp-1) 0 var(--sp-3); color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
+  .fix { margin: var(--sp-2) 0 0; }
+  .fix strong { color: var(--text-2); font-weight: var(--fw-semibold); }
   .list { list-style: none; margin: 0; padding: 0; border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); }
   .list > li + li { border-top: 1px solid var(--line); }
   .row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-3); align-items: center; padding: var(--sp-3) var(--sp-4); }

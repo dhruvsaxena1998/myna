@@ -120,3 +120,11 @@ test("How words are added: Paste by default, Type saves and changes the help", a
   await expect(page.getByText("Types each letter. Slower, but works in apps that block pasting.")).toBeVisible();
   expect(await calls(page, "voice_set")).toEqual([{ voice: { on: true, key: "Alt+Space", mode: "hold", paste: "type" } }]);
 });
+
+test("only the page scrolls, never the whole window", async ({ page }) => {
+  await page.setViewportSize({ width: 880, height: 420 });
+  await open(page);
+  await expect(page.getByRole("heading", { name: "Permissions" })).toBeAttached();
+  const doc = await page.evaluate(() => [document.documentElement.scrollHeight, innerHeight]);
+  expect(doc[0]).toBeLessThanOrEqual(doc[1]);
+});
