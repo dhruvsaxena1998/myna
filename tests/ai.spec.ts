@@ -36,6 +36,7 @@ test("adding an OpenAI-compatible server: placeholders, loopback pill, then the 
   await expect(page.getByLabel("Name")).toHaveAttribute("placeholder", "Ollama on this Mac");
   await expect(page.getByLabel("Address")).toHaveAttribute("placeholder", "http://localhost:11434/v1");
   await expect(page.getByLabel("Key (optional)")).toBeVisible();
+  await expect(page.locator("#add-url-h")).toHaveText(""); // no claim about an address not typed yet
   await page.getByRole("button", { name: "Add", exact: true }).click();
   await expect(page.getByText("Give it a name.")).toBeVisible();
   await page.getByLabel("Name").fill("Ollama on this Mac");
