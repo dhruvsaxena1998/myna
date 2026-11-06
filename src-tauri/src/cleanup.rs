@@ -4,6 +4,7 @@
 
 use crate::ai::{Backend, Cost};
 use crate::rules;
+use rusqlite::{Connection, OptionalExtension};
 use std::collections::HashSet;
 use std::sync::mpsc;
 use std::time::Duration;
@@ -80,10 +81,29 @@ fn guard(text: &str, reply: &str, default: bool) -> Result<(), &'static str> {
 
 /// Asks `backend` to clean `text` (the rules output) within `budget`; on a timeout, an error or a failed guard
 /// the outcome is `text` itself. The call runs on its own thread, so nothing a backend does can hold the paste past the budget.
-pub fn run(backend: Box<dyn Backend>, model: &str, text: &str, words: &rules::Settings, budget: Duration) -> Outcome {
+/// The user's own instruction, or none while they're on the default.
+pub fn load(conn: &Connection) -> Result<Option<String>, String> {
+    conn.query_row("SELECT value FROM setting WHERE key = 'cleanup_instruction'", [], |r| r.get(0))
+        .optional()
+        .map_err(|e| format!("Couldn't read the cleanup instructions: {e}"))
+}
+
+/// Saves the instruction. Blank, or the default itself, goes back to following the default.
+pub fn save(conn: &Connection, text: &str) -> Result<(), String> {
+    let text = text.trim();
+    let r = if text.is_empty() || text == DEFAULT {
+        conn.execute("DELETE FROM setting WHERE key = 'cleanup_instruction'", [])
+    } else {
+        conn.execute("INSERT INTO setting(key, value) VALUES ('cleanup_instruction', ?1) ON CONFLICT(key) DO UPDATE SET value = ?1", [text])
+    };
+    r.map(|_| ()).map_err(|e| format!("Couldn't save the cleanup instructions: {e}"))
+}
+
+/// `instruction` is the default or the user's own; the length and new-word guards only run for the default.
+pub fn run(backend: Box<dyn Backend>, model: &str, instruction: &str, text: &str, words: &rules::Settings, budget: Duration) -> Outcome {
     let back = |reason, detail, cost| Outcome { text: text.into(), cost, fallback: Some(Fallback { reason, detail }) };
     let (tx, rx) = mpsc::channel();
-    let (model, system, user) = (model.to_string(), system(DEFAULT, words), user(text));
+    let (model, system, user) = (model.to_string(), system(instruction, words), user(text));
     std::thread::spawn(move || {
         let _ = tx.send(backend.chat(&model, Some(&system), &user, BUDGET.as_secs()));
     });
@@ -93,7 +113,7 @@ pub fn run(backend: Box<dyn Backend>, model: &str, text: &str, words: &rules::Se
         Err(_) => return back("AI took too long", None, None),
     };
     let cleaned = reply.text.trim().trim_start_matches("<dictated>").trim_end_matches("</dictated>").trim();
-    match guard(text, cleaned, true) {
+    match guard(text, cleaned, instruction == DEFAULT) {
         Ok(()) => Outcome { text: cleaned.into(), cost: Some(reply.cost), fallback: None },
         Err(reason) => back(reason, Some(format!("it sent: {cleaned}")), Some(reply.cost)),
     }
@@ -146,7 +166,7 @@ mod tests {
     fn a_good_cleanup_is_pasted_with_its_cost_and_sent_as_system_plus_data() {
         let b = fake(Ok(" Let’s meet on Tuesday at 5 to talk about the budget. "));
         let seen = b.seen.clone();
-        let o = run(b, "m", TEXT, &settings(&["Myna"]), BUDGET);
+        let o = run(b, "m", DEFAULT, TEXT, &settings(&["Myna"]), BUDGET);
         assert_eq!(o, Outcome { text: "Let’s meet on Tuesday at 5 to talk about the budget.".into(), cost: Some(Cost::Free), fallback: None });
         let seen = seen.lock().unwrap();
         assert!(seen[0].0.as_deref().unwrap().contains("Spell these exactly as written: Myna."));
@@ -154,8 +174,28 @@ mod tests {
     }
 
     #[test]
+    fn your_instruction_is_saved_until_blank_or_the_default_and_is_what_the_model_gets() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = crate::storage::open(tmp.path()).unwrap();
+        assert_eq!(load(&conn), Ok(None));
+        save(&conn, "  Make it formal.  ").unwrap();
+        assert_eq!(load(&conn), Ok(Some("Make it formal.".into())));
+        save(&conn, "   ").unwrap();
+        assert_eq!(load(&conn), Ok(None));
+        save(&conn, "Make it formal.").unwrap();
+        save(&conn, DEFAULT).unwrap();
+        assert_eq!(load(&conn), Ok(None));
+        // Its own text goes to the model, and the guards that only suit the default stand down.
+        let b = fake(Ok("Let's meet on Tuesday at 5 to talk about the budget and the hiring plan and then go for lunch together with the whole team."));
+        let seen = b.seen.clone();
+        let o = run(b, "m", "Make it formal.", TEXT, &settings(&[]), BUDGET);
+        assert!(o.fallback.is_none());
+        assert!(seen.lock().unwrap()[0].0.as_deref().unwrap().starts_with("Make it formal."));
+    }
+
+    #[test]
     fn a_reply_that_echoes_the_data_tags_is_unwrapped() {
-        let o = run(fake(Ok("<dictated>Let's meet on Tuesday at 5 to talk about the budget.</dictated>")), "m", TEXT, &settings(&[]), BUDGET);
+        let o = run(fake(Ok("<dictated>Let's meet on Tuesday at 5 to talk about the budget.</dictated>")), "m", DEFAULT, TEXT, &settings(&[]), BUDGET);
         assert_eq!((o.text.as_str(), o.fallback), ("Let's meet on Tuesday at 5 to talk about the budget.", None));
     }
 
@@ -169,7 +209,7 @@ mod tests {
         assert_eq!(why("Sure that works for me", "Sure, that works for me."), Ok(()));
         // And so is a custom prompt: only the reply check runs without the default.
         assert_eq!(guard(TEXT, "Sure, done.", false), Err("AI replied instead"));
-        let o = run(fake(Ok("Sure, here's the cleaned text: Let's meet on Tuesday at 5 to talk about the budget.")), "m", TEXT, &settings(&[]), BUDGET);
+        let o = run(fake(Ok("Sure, here's the cleaned text: Let's meet on Tuesday at 5 to talk about the budget.")), "m", DEFAULT, TEXT, &settings(&[]), BUDGET);
         assert_eq!((o.text.as_str(), o.fallback.unwrap().reason, o.cost), (TEXT, "AI replied instead", Some(Cost::Free)));
     }
 
@@ -195,13 +235,13 @@ mod tests {
     #[test]
     fn an_empty_reply_falls_back() {
         assert_eq!(guard(TEXT, "", true), Err("AI sent nothing"));
-        let o = run(fake(Ok("  ")), "m", TEXT, &settings(&[]), BUDGET);
+        let o = run(fake(Ok("  ")), "m", DEFAULT, TEXT, &settings(&[]), BUDGET);
         assert_eq!(o.fallback.unwrap().reason, "AI sent nothing");
     }
 
     #[test]
     fn an_error_falls_back_with_the_rules_text_and_the_reason_kept() {
-        let o = run(fake(Err("Couldn't reach http://x: refused")), "m", TEXT, &settings(&[]), BUDGET);
+        let o = run(fake(Err("Couldn't reach http://x: refused")), "m", DEFAULT, TEXT, &settings(&[]), BUDGET);
         assert_eq!(o, Outcome { text: TEXT.into(), cost: None, fallback: Some(Fallback { reason: "AI didn’t answer", detail: Some("Couldn't reach http://x: refused".into()) }) });
     }
 
@@ -209,7 +249,7 @@ mod tests {
     fn a_backend_slower_than_the_budget_falls_back_without_waiting_for_it() {
         let b = Box::new(Fake { reply: Ok("never used"), delay: Duration::from_secs(5), seen: Default::default() });
         let start = std::time::Instant::now();
-        let o = run(b, "m", TEXT, &settings(&[]), Duration::from_millis(50));
+        let o = run(b, "m", DEFAULT, TEXT, &settings(&[]), Duration::from_millis(50));
         assert!(start.elapsed() < Duration::from_secs(2));
         assert_eq!(o, Outcome { text: TEXT.into(), cost: None, fallback: Some(Fallback { reason: "AI took too long", detail: None }) });
     }

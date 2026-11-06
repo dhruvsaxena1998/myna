@@ -308,9 +308,10 @@ impl Session {
             Err(e) => return (None, fail("No Fast model", e)),
         };
         let backend = ai::provider(&db, &*self.keys, record.id);
+        let instruction = cleanup::load(&db).ok().flatten().unwrap_or_else(|| cleanup::DEFAULT.into());
         drop(db);
         match backend {
-            Ok(b) => (Some(model.clone()), cleanup::run(b, &model, text, words, self.second * cleanup::BUDGET.as_secs() as u32)),
+            Ok(b) => (Some(model.clone()), cleanup::run(b, &model, &instruction, text, words, self.second * cleanup::BUDGET.as_secs() as u32)),
             Err(e) => (Some(model), fail("AI didn’t answer", e)),
         }
     }

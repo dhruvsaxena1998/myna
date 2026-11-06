@@ -3,11 +3,12 @@ import { fakeTauri } from "./tauri";
 
 // `voice_set` fails for any shortcut using Ctrl+Alt, like a shortcut another app holds.
 // `__globe` stands for the 🌐 key's setting being Do Nothing.
-async function open(page: Page, key = "Alt+Space", globe = false, extra: { clean?: string | null; ai?: object } = {}) {
+async function open(page: Page, key = "Alt+Space", globe = false, extra: { clean?: string | null; ai?: object; text?: string } = {}) {
   await page.addInitScript((g) => ((window as any).__globe = g), globe);
   await fakeTauri(page, `{
     storage_status: () => "/tmp/Myna", models_list: () => [],
     voice_get: () => ({ on: true, key: "${key}", clean: ${JSON.stringify(extra.clean ?? null)}, mode: "hold", paste: "clipboard" }),
+    cleanup_get: () => ({ text: ${JSON.stringify(extra.text ?? "Fix punctuation.")}, default: "Fix punctuation." }), cleanup_set: ({ text }) => { if (text === "boom") throw "Couldn't save the cleanup instructions: disk full"; },
     ai_get: () => (${JSON.stringify(extra.ai ?? { providers: [], main: null, fast: null })}),
     globe_ok: () => window.__globe, globe_open: () => {},
     voice_set: ({ voice }) => { if (voice.key.startsWith("Ctrl+Alt")) throw "Another app is using that shortcut. Pick a different one."; },
@@ -212,4 +213,35 @@ test("a Fast model set on AI provider shows on Voice typing without reloading", 
   await page.getByRole("option", { name: "Voice typing" }).click();
   await expect(cleanRow(page)).toContainText("Ollama on this Mac · qwen2.5:7b");
   await expect(cleanRow(page).getByRole("button", { name: "Set", exact: true })).toBeVisible();
+});
+
+test("Cleanup instructions: shows what's sent, saves on leaving the box, and Reset goes back to the default", async ({ page }) => {
+  await open(page);
+  const box = page.getByRole("textbox", { name: "Cleanup instructions" });
+  const reset = page.getByRole("button", { name: "Reset to default" });
+  await expect(box).toHaveValue("Fix punctuation.");
+  await expect(reset).toBeDisabled();
+  await box.fill("Make it formal.");
+  expect(await calls(page, "cleanup_set")).toEqual([]); // not on every key
+  await box.blur();
+  await expect(reset).toBeEnabled();
+  expect(await calls(page, "cleanup_set")).toEqual([{ text: "Make it formal." }]);
+  await reset.click();
+  await expect(box).toHaveValue("Fix punctuation.");
+  await expect(reset).toBeDisabled();
+  expect((await calls(page, "cleanup_set")).at(-1)).toEqual({ text: "Fix punctuation." });
+});
+
+test("Cleanup instructions: a saved instruction shows, an emptied box returns to the default, a failed save puts the text back", async ({ page }) => {
+  await open(page, "Alt+Space", false, { text: "Make it formal." });
+  const box = page.getByRole("textbox", { name: "Cleanup instructions" });
+  await expect(box).toHaveValue("Make it formal.");
+  await expect(page.getByRole("button", { name: "Reset to default" })).toBeEnabled();
+  await box.fill("  ");
+  await box.blur();
+  await expect(box).toHaveValue("Fix punctuation.");
+  await box.fill("boom");
+  await box.blur();
+  await expect(page.getByText("Couldn't save the cleanup instructions: disk full")).toBeVisible();
+  await expect(box).toHaveValue("Fix punctuation.");
 });
