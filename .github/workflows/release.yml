@@ -13,12 +13,20 @@ concurrency: release
 
 jobs:
   release:
-    runs-on: macos-26
+    # macos-26 runners often never get assigned (macOS arm64 capacity). The build needs the macOS 26 SDK, not a macOS 26 host: the deployment target is 14.2.
+    runs-on: macos-15
     env:
       TAG: ${{ github.ref_name }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Build with the macOS 26 SDK
+        # The image's default is Xcode 16.4; AppleSpeech.swift and NSGlassEffectView need the 26 SDK.
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.3.app
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
 
       - name: Check the tag matches the app version
         run: |
