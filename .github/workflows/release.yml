@@ -1,10 +1,9 @@
-# Cut a release: write notes in an annotated tag and push it (see docs/RELEASING.md).
-# Never runs on branch pushes.
+# Manual fallback only. Releases run on CircleCI (.circleci/config.yml), because GitHub's macOS runners
+# often never got assigned. Run this from the Actions tab on a tag ("Use workflow from": the tag) if CircleCI is down.
 name: Release
 
 on:
-  push:
-    tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -16,7 +15,7 @@ jobs:
     # macos-26 runners often never get assigned (macOS arm64 capacity). The build needs the macOS 26 SDK, not a macOS 26 host: the deployment target is 14.2.
     runs-on: macos-15
     env:
-      TAG: ${{ github.ref_name }}
+      TAG: ${{ github.ref_name }} # run it from the tag, not a branch
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
