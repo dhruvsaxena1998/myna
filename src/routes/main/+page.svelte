@@ -86,9 +86,9 @@
       <header data-tauri-drag-region><h1>{view === "nerds" ? "Stats for nerds" : "Voice typing history"}</h1></header>
       <div class="content"><ErrorState title="Myna couldn't read your dictations" message={failed?.ok === false ? failed.error : ""} /></div>
     {:else if view === "nerds"}
-      <Traces bind:traces={all} {words} />
+      <Traces bind:traces={all} {words} onclear={() => (rows = [])} />
     {:else}
-      <History bind:rows {said} />
+      <History bind:rows {said} onclear={() => (all = [])} />
     {/if}
   </main>
 </div>

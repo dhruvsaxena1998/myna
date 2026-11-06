@@ -32,7 +32,7 @@ async function open(page: Page, experimental = true) {
   await fakeTauri(page, `{
     storage_status: () => "/tmp/Myna", models_list: () => [],
     look_get: () => ({ theme: "auto", accent: "blue", glass: "clear", liquid: null, experimental: ${experimental}, nerds: true }),
-    look_set: () => {},
+    look_set: () => {}, traces_clear: () => {},
     rules_get: () => ({ settings: { language: "en", tidy: true, words: [{ spelling: "Postgres", heard: null }, { spelling: "Dhruv", heard: "Drove" }, { spelling: "Kubernetes", heard: null }, { spelling: "Desert Ant", heard: null }] }, languages: [["en", "English"], ["de", "German"]] }),
     traces_list: () => ${SAMPLES}.map((t) => ({ id: t.id, started: t.started, app: t.app, outcome: t.outcome, heard: t.steps[0]?.text ?? null })),
     traces_all: () => ${SAMPLES}.map((t) => ({ ...t, app: t.app ?? "Unknown app" })),
@@ -214,4 +214,22 @@ test("a dictation without cleanup has no cleanup card or bar segment", async ({ 
   await go(page, 1);
   await expect(page.getByRole("region", { name: "Cleanup" })).toHaveCount(0);
   await expect(page.getByLabel("Timing", { exact: true }).first()).not.toContainText("Cleanup");
+});
+
+test("Clear all in Stats for nerds asks first, then empties it and the history", async ({ page }) => {
+  await open(page);
+  await nerdsNav(page).click();
+  await page.getByRole("button", { name: "Clear all" }).click();
+  await page.getByRole("button", { name: "Delete all" }).click();
+  await expect(page.getByText("No dictations yet")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Clear all" })).toBeDisabled();
+  expect(await page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "traces_clear").length)).toBe(1);
+  await page.getByRole("navigation", { name: "Sidebar" }).getByRole("button", { name: /^Voice typing history/ }).click();
+  await expect(page.getByRole("heading", { name: "Nothing here yet" })).toBeVisible();
+});
+
+test("Clear all is not on an opened dictation", async ({ page }) => {
+  await open(page);
+  await go(page, 0);
+  await expect(page.getByRole("button", { name: "Clear all" })).toHaveCount(0);
 });

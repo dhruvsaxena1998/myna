@@ -91,6 +91,15 @@ pub fn delete(conn: &Connection, id: i64) -> Result<(), String> {
     tx.commit().map_err(err)
 }
 
+/// Clear all, in Voice typing history and Stats for nerds: every trace and its steps.
+pub fn clear(conn: &Connection) -> Result<(), String> {
+    let err = |e: rusqlite::Error| format!("Couldn't clear the history: {e}");
+    let tx = conn.unchecked_transaction().map_err(err)?;
+    tx.execute("DELETE FROM step", []).map_err(err)?;
+    tx.execute("DELETE FROM trace", []).map_err(err)?;
+    tx.commit().map_err(err)
+}
+
 const COLS: &str = "id, started, mode, app, model, audio_ms, outcome, reason, load_ms, paste_ms";
 
 /// A trace's columns as JSON, the model still as its id.
@@ -172,6 +181,20 @@ mod tests {
         assert_eq!(t["steps"][1]["edits"][0]["kind"], "filler");
         assert_eq!(rows[0].text.as_deref(), Some("hello"));
         assert!(get(&conn, 99).is_err());
+    }
+
+    #[test]
+    fn clearing_takes_every_trace_and_step() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = crate::storage::open(tmp.path()).unwrap();
+        for started in [1, 2] {
+            let steps = vec![Step { kind: "speech-to-text", text: "hi".into(), ms: 1.0, settings: None, edits: None }];
+            save(&conn, &Trace { started, mode: "hold", outcome: "pasted", steps, ..Default::default() }).unwrap();
+        }
+        clear(&conn).unwrap();
+        let left: i64 = conn.query_row("SELECT (SELECT count(*) FROM trace) + (SELECT count(*) FROM step)", [], |r| r.get(0)).unwrap();
+        assert_eq!(left, 0);
+        clear(&conn).unwrap(); // nothing to clear is fine
     }
 
     #[test]

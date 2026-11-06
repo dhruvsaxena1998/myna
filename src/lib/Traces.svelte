@@ -8,12 +8,13 @@
 
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import ClearAll from "./ClearAll.svelte";
   import Overview from "./Overview.svelte";
   import { edits as editsOf, overview, picks, PERIODS } from "./stats";
   import type { Rules, Word } from "./Words.svelte";
   import { dur, KIND_ONE, KINDS, OUTCOME, outermost, title, when, type Cleanup, type Edit, type Trace } from "./trace";
 
-  let { traces = $bindable(), words }: { traces: Trace[]; words: Word[] } = $props();
+  let { traces = $bindable(), words, onclear }: { traces: Trace[]; words: Word[]; onclear: () => void } = $props();
   let open = $state<{ t: Trace; rules: Rules } | null>(null);
   let error = $state("");
   let off = $state<Record<string, boolean>>({});
@@ -113,6 +114,7 @@
       <option value="all">All apps</option>
       {#each apps as a}<option value={a}>{a}</option>{/each}
     </select>
+    <ClearAll count={traces.length} onclear={() => { traces = []; f.pick = null; onclear(); }} />
   {/if}
 </header>
 

@@ -15,7 +15,7 @@ async function open(page: Page, rows = ROWS) {
   await fakeTauri(page, `{
     storage_status: () => "/tmp/Myna",
     traces_list: () => ${rows},
-    text_copy: () => {}, trace_delete: () => {}, settings_open: () => {},
+    text_copy: () => {}, trace_delete: () => {}, traces_clear: () => {}, settings_open: () => {},
   }`);
   await page.goto("/main");
   await expect(page.getByRole("heading", { name: "Voice typing history" })).toBeVisible(); // mounted: keys and events land
@@ -114,4 +114,39 @@ test("deleting doesn't move the header or the rows above", async ({ page }) => {
   await expect(list(page)).toHaveCount(1);
   expect(await page.getByRole("heading", { name: "Voice typing history" }).boundingBox()).toEqual(head);
   expect((await list(page).nth(0).boundingBox())?.y).toEqual(first?.y);
+});
+
+test("Clear all asks first; Cancel and Esc keep everything", async ({ page }) => {
+  await open(page);
+  await page.getByRole("button", { name: "Clear all" }).click();
+  const ask = page.getByRole("alertdialog");
+  await expect(ask).toContainText("Delete all dictations, with their stats? This can’t be undone.");
+  await expect(ask.getByRole("button", { name: "Cancel" })).toBeFocused();
+  await ask.getByRole("button", { name: "Cancel" }).click();
+  await expect(ask).toHaveCount(0);
+  await page.getByRole("button", { name: "Clear all" }).click();
+  await page.keyboard.press("Escape");
+  await expect(ask).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Clear all" })).toBeFocused();
+  expect(await calls(page, "traces_clear")).toEqual([]);
+  await expect(list(page)).toHaveCount(2);
+});
+
+test("Delete all clears the history, and Clear all waits for the next dictation", async ({ page }) => {
+  await open(page);
+  await page.getByRole("button", { name: "Clear all" }).click();
+  await page.getByRole("button", { name: "Delete all" }).click();
+  expect(await calls(page, "traces_clear")).toHaveLength(1);
+  await expect(page.getByRole("heading", { name: "Nothing here yet" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Clear all" })).toBeDisabled();
+  await expect(nav(page).getByRole("button", { name: /^Voice typing history/ })).toHaveText("Voice typing history0");
+});
+
+test("a failed Clear all keeps the history and says why", async ({ page }) => {
+  await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", traces_list: () => ${ROWS}, traces_clear: () => { throw "Couldn't clear the history: disk full"; } }`);
+  await page.goto("/main");
+  await page.getByRole("button", { name: "Clear all" }).click();
+  await page.getByRole("button", { name: "Delete all" }).click();
+  await expect(page.getByRole("alertdialog")).toContainText("disk full");
+  await expect(list(page)).toHaveCount(2);
 });
