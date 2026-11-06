@@ -97,8 +97,9 @@ jobs:
                 --rawfile sig "$B/Myna.app.tar.gz.sig" \
             '{version:$v, notes:$notes, pub_date:$date, platforms:{"darwin-aarch64":{url:$url, signature:$sig}}}' > feed.json
           cat feed.json
+          # A pre-release, so GitHub never shows the feeds as the Latest release while every Myna build is a beta.
           gh release view updater >/dev/null 2>&1 || \
-            gh release create updater --latest=false --title "Update feeds" --notes "Feeds the app reads to find updates. Rewritten by the release workflow; don't edit by hand."
+            gh release create updater --prerelease --latest=false --title "Update feeds" --notes "Feeds the app reads to find updates. Rewritten by the release workflow; don't edit by hand."
           # Beta also gets newer stable releases; stable never sees betas.
           cp feed.json beta.json
           FILES=beta.json
