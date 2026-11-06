@@ -1,0 +1,7 @@
+<!-- Myna app icon (GL, "note with cursor"): voice wave, a line of text, the cursor still writing. macOS grid: 824 tile in 1024. Regenerate PNGs/icns from this. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <path d="M285 100h454a185 185 0 0 1 185 185v454a185 185 0 0 1-185 185H285a185 185 0 0 1-185-185V285a185 185 0 0 1 185-185z" fill="#F4F1EA"/>
+  <path d="M300 380q53-80 106 0t106 0 106 0 106 0" fill="none" stroke="#E8572A" stroke-width="56" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M300 530h424M300 680h220" stroke="#1F2A44" stroke-width="56" stroke-linecap="round"/>
+  <path d="M620 620v120" stroke="#E8572A" stroke-width="56" stroke-linecap="round"/>
+</svg>

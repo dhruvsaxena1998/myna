@@ -1,0 +1,4 @@
+<!-- Myna menu bar glyph (template image: one colour, macOS tints it). 18pt; tray.png is this at 44px. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" fill="none" stroke="#000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 5q1.5-2.2 3 0t3 0 3 0 3 0M3 9.5h12M3 14h5.5M11.5 12.25v3.5"/>
+</svg>
