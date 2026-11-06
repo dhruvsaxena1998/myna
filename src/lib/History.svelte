@@ -108,9 +108,11 @@
   .search input:focus + kbd, .search input:not(:placeholder-shown) + kbd { display: none; }
   .note { margin: 0; color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
   .err { margin: 0 0 var(--sp-2); min-height: var(--lh-footnote); color: var(--danger-text); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
-  ul { list-style: none; margin: 0; padding: 0; }
-  li { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-3) var(--sp-2); border-bottom: .5px solid var(--line); }
-  li:last-child { border-bottom: 0; }
+  /* Same list as Stats for nerds (Traces.svelte `.list`). */
+  ul { list-style: none; margin: 0; padding: 0; border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); }
+  li { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4); border-radius: var(--r-xl); }
+  li + li { box-shadow: 0 -.5px 0 var(--line); }
+  li:hover { background: var(--fill-hover); }
   .body { flex: 1; min-width: 0; display: grid; gap: 2px; }
   p { margin: 0; font-size: 14px; line-height: 1.6; user-select: text; overflow-wrap: anywhere; }
   .clamp { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
