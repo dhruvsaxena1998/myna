@@ -1,0 +1,124 @@
+# Cut a release: write notes in an annotated tag and push it (see docs/RELEASING.md).
+# Runs on tag pushes only. Same steps as the manual-only GitHub workflow, which GitHub's macOS runners often never picked up.
+#
+# Project environment variables (Project Settings > Environment Variables):
+#   MYNA_CERT_P12, MYNA_CERT_PASSWORD, MYNA_SIGNING_IDENTITY   the self-signed code-signing certificate
+#   TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD   the updater key
+#   GH_TOKEN   fine-grained token for this repo with Contents: read and write, to publish the release
+version: 2.1
+
+jobs:
+  release:
+    macos:
+      # The build needs the macOS 26 SDK (Xcode 26), not a macOS 26 host: the deployment target is 14.2.
+      xcode: "26.6.0"
+    resource_class: m4pro.medium
+    environment:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+    steps:
+      - checkout
+
+      - run:
+          name: Check the tag matches the app version
+          command: |
+            TAG=$CIRCLE_TAG
+            V=${TAG#v}
+            for f in "$(jq -r .version package.json)" \
+                     "$(jq -r .version src-tauri/tauri.conf.json)" \
+                     "$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)"; do
+              [ "$f" = "$V" ] || { echo "Tag $TAG but a version file says $f"; exit 1; }
+            done
+            # The updater compares semver; "beta2" sorts above every "beta.N".
+            [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$ ]] || { echo "Use X.Y.Z or X.Y.Z-beta.N, not $V"; exit 1; }
+            git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+            [ "$(git cat-file -t "$TAG")" = tag ] || { echo "$TAG needs to be an annotated tag; its message is the release notes"; exit 1; }
+
+      - run:
+          name: Install the toolchain
+          command: |
+            command -v jq >/dev/null || brew install jq
+            command -v gh >/dev/null || brew install gh
+            node -v 2>/dev/null | grep -q '^v22' || { brew install node@22 && brew link --overwrite --force node@22; }
+            npm install -g pnpm@10
+            command -v cargo >/dev/null || curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal
+            echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$BASH_ENV"
+            xcodebuild -version
+            xcrun --sdk macosx --show-sdk-version
+
+      - run:
+          name: Import the signing certificate
+          command: |
+            # Tauri's APPLE_CERTIFICATE import rejects self-signed certs, so import by hand and sign by name.
+            T=$(mktemp -d)
+            KC=$T/build.keychain-db
+            echo "$MYNA_CERT_P12" | base64 --decode > "$T/cert.p12"
+            security create-keychain -p ci "$KC"
+            security set-keychain-settings -lut 3600 "$KC"
+            security unlock-keychain -p ci "$KC"
+            security import "$T/cert.p12" -k "$KC" -P "$MYNA_CERT_PASSWORD" -T /usr/bin/codesign
+            security set-key-partition-list -S apple-tool:,apple: -s -k ci "$KC"
+            security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+            rm "$T/cert.p12"
+
+      - run: pnpm install --frozen-lockfile
+
+      - run:
+          name: Build
+          no_output_timeout: 30m
+          # Updater artifacts only here, so local builds don't need the private key.
+          command: |
+            export APPLE_SIGNING_IDENTITY="$MYNA_SIGNING_IDENTITY"
+            pnpm tauri build --config '{"bundle":{"createUpdaterArtifacts":true}}'
+
+      - run:
+          name: Check the signature
+          command: |
+            APP=src-tauri/target/release/bundle/macos/Myna.app
+            codesign --verify --deep --strict "$APP"
+            codesign -dr - "$APP" 2>&1 | tee /dev/stderr | grep -q 'certificate leaf = H"'
+            codesign -d --entitlements - --xml "$APP" | grep -q audio-input
+
+      - run:
+          name: Publish the release
+          command: |
+            TAG=$CIRCLE_TAG
+            REPO=$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME
+            B=src-tauri/target/release/bundle
+            V=${TAG#v}
+            PRE=; [[ "$TAG" == *-beta.* ]] && PRE=--prerelease
+            gh release create "$TAG" --repo "$REPO" --verify-tag --notes-from-tag --title "Myna $V" $PRE \
+              "$B"/dmg/*.dmg "$B/macos/Myna.app.tar.gz" "$B/macos/Myna.app.tar.gz.sig"
+
+      - run:
+          name: Update the feeds
+          command: |
+            TAG=$CIRCLE_TAG
+            REPO=$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME
+            B=src-tauri/target/release/bundle/macos
+            V=${TAG#v}
+            jq -n --arg v "$V" \
+                  --arg notes "$(gh release view "$TAG" --repo "$REPO" --json body -q .body)" \
+                  --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                  --arg url "https://github.com/$REPO/releases/download/$TAG/Myna.app.tar.gz" \
+                  --rawfile sig "$B/Myna.app.tar.gz.sig" \
+              '{version:$v, notes:$notes, pub_date:$date, platforms:{"darwin-aarch64":{url:$url, signature:$sig}}}' > feed.json
+            cat feed.json
+            # A pre-release, so GitHub never shows the feeds as the Latest release while every Myna build is a beta.
+            gh release view updater --repo "$REPO" >/dev/null 2>&1 || \
+              gh release create updater --repo "$REPO" --prerelease --latest=false --title "Update feeds" --notes "Feeds the app reads to find updates. Rewritten by the release job; don't edit by hand."
+            # Beta also gets newer stable releases; stable never sees betas.
+            cp feed.json beta.json
+            FILES=beta.json
+            [[ "$TAG" == *-beta.* ]] || { cp feed.json stable.json; FILES="$FILES stable.json"; }
+            gh release upload updater $FILES --repo "$REPO" --clobber
+
+workflows:
+  release:
+    jobs:
+      - release:
+          filters:
+            tags:
+              only: /^v.*/
+            branches:
+              ignore: /.*/
