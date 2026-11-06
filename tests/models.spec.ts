@@ -15,7 +15,7 @@ const tasks = JSON.stringify([
 async function open(page: import("@playwright/test").Page, select = "() => null", extra = "") {
   await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", models_list: () => (${tasks}), model_select: ${select}, ${extra} }`);
   await page.goto("/settings");
-  await page.getByRole("option", { name: "AI & privacy" }).click();
+  await page.getByRole("option", { name: "Speech models" }).click();
 }
 
 test("lists the catalog per task with size and state", async ({ page }) => {
@@ -58,7 +58,7 @@ test("a failed save reverts the pick and says why, without moving the rows", asy
 test("a failed model list shows the error, not a blank page", async ({ page }) => {
   await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", models_list: () => { throw "Couldn't read the chosen models: locked" } }`);
   await page.goto("/settings");
-  await page.getByRole("option", { name: "AI & privacy" }).click();
+  await page.getByRole("option", { name: "Speech models" }).click();
   await expect(page.getByRole("alert")).toContainText("Couldn't read the chosen models: locked");
 });
 
@@ -116,7 +116,7 @@ test("a model with no downloadable files says coming soon (Desert Ant, until tic
   const t = JSON.stringify([{ id: "stt", active: "voz", models: [model("voz", { min_macos: 15, files: [] })] }, { id: "diar", active: null, models: [] }]);
   await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", models_list: () => (${t}) }`);
   await page.goto("/settings");
-  await page.getByRole("option", { name: "AI & privacy" }).click();
+  await page.getByRole("option", { name: "Speech models" }).click();
   await expect(page.getByText("Coming soon")).toBeVisible();
   await expect(page.getByRole("button", { name: /Download/ })).toHaveCount(0);
 });
@@ -127,11 +127,11 @@ test("download progress survives switching to another page and back", async ({ p
   await emit(page, { id: "parakeet", state: "progress", pct: 30 });
   await page.getByRole("option", { name: "About" }).click();
   await emit(page, { id: "parakeet", state: "progress", pct: 55 }); // keeps arriving while away
-  await page.getByRole("option", { name: "AI & privacy" }).click();
+  await page.getByRole("option", { name: "Speech models" }).click();
   await expect(row(page).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "55");
   await page.getByRole("option", { name: "About" }).click();
   await emit(page, { id: "parakeet", state: "done" });
-  await page.getByRole("option", { name: "AI & privacy" }).click();
+  await page.getByRole("option", { name: "Speech models" }).click();
   await expect(row(page)).toContainText("Installed");
 });
 
@@ -162,7 +162,7 @@ async function openApple(page: import("@playwright/test").Page, a: object, extra
   const t = JSON.stringify([{ id: "stt", active: "apple", models: [apple(a), model("parakeet", { default: true })] }, { id: "diar", active: null, models: [] }]);
   await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", models_list: () => (${t}), ${extra} }`);
   await page.goto("/settings");
-  await page.getByRole("option", { name: "AI & privacy" }).click();
+  await page.getByRole("option", { name: "Speech models" }).click();
   return row(page);
 }
 

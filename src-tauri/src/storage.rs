@@ -12,6 +12,10 @@ const MIGRATIONS: &[&str] = &[
         audio_ms INTEGER NOT NULL, outcome TEXT NOT NULL, reason TEXT, load_ms REAL, paste_ms REAL);
      CREATE TABLE step(trace INTEGER NOT NULL REFERENCES trace(id), kind TEXT NOT NULL, text TEXT NOT NULL, ms REAL NOT NULL,
         settings TEXT, edits TEXT);",
+    "CREATE TABLE provider(id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, name TEXT NOT NULL UNIQUE COLLATE NOCASE, url TEXT NOT NULL);
+     CREATE TABLE route(slot TEXT PRIMARY KEY, provider_id INTEGER NOT NULL REFERENCES provider(id), model TEXT NOT NULL);",
+    "UPDATE provider SET kind = 'openai' WHERE kind <> 'openrouter';
+     CREATE TABLE model_list(provider_id INTEGER PRIMARY KEY REFERENCES provider(id), json TEXT NOT NULL, fetched INTEGER NOT NULL);",
 ];
 const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
 
@@ -69,5 +73,19 @@ mod tests {
         let file = tmp.path().join("not-a-dir");
         std::fs::write(&file, "").unwrap();
         assert!(open(&file.join("Myna")).unwrap_err().starts_with("Couldn't create"));
+    }
+
+    #[test]
+    fn kinds_collapse_to_two_and_the_model_cache_appears() {
+        let tmp = tempfile::tempdir().unwrap();
+        let c = Connection::open(tmp.path().join("myna.sqlite")).unwrap();
+        let before: String = MIGRATIONS[..MIGRATIONS.len() - 1].iter().map(|m| format!("{m};")).collect();
+        c.execute_batch(&before).unwrap();
+        c.execute_batch("INSERT INTO provider(kind, name, url) VALUES ('ollama','A','http://x'),('custom','B','http://y'),('openrouter','C','http://z'); PRAGMA user_version = 6;").unwrap();
+        drop(c);
+        let c = open(tmp.path()).unwrap();
+        let kinds: String = c.query_row("SELECT group_concat(kind) FROM provider ORDER BY id", [], |r| r.get(0)).unwrap();
+        assert_eq!(kinds, "openai,openai,openrouter");
+        c.execute("INSERT INTO model_list VALUES (1, '[]', 0)", []).unwrap();
     }
 }

@@ -140,6 +140,7 @@ ul { margin: 0; padding: 0; list-style: none; }
 .input[aria-invalid="true"] { border-color: var(--alert); }
 .label { font-weight: 500; }
 .help { color: var(--text-3); font-size: var(--fs-s); }
+.kind-h { display: block; min-height: 2lh; } /* both kinds' help fit, so switching never moves the form */
 .err { color: var(--alert); font-size: var(--fs-s); display: flex; gap: 6px; align-items: flex-start; }
 .pill { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 8px; border-radius: 10px; font-size: var(--fs-xs); font-weight: 500; white-space: nowrap; background: var(--hover); color: var(--text-2); }
 .pill.status { background: var(--accent-soft); color: var(--accent-text); }
@@ -1601,7 +1602,7 @@ function settings() {
     </div>`;
 }
 /* ---------- AI providers (story 10): Endpoints, Main and Fast, Decision provider ---------- */
-// shortcut: sample model lists and prices (Sample data); the real app reads each Endpoint's /v1/models live, and price, window and images from OpenRouter's own list
+// shortcut: sample model lists and prices (Sample data); the real app keeps each provider's last list and refreshes it when the picker opens, with price, window and images from OpenRouter's own list
 const OR_MODELS = [
   { id:'anthropic/claude-sonnet-4.5', inP:3, outP:15, ctx:'200K', img:true },
   { id:'openai/gpt-5-mini', inP:0.25, outP:2, ctx:'400K', img:true },
@@ -1610,15 +1611,11 @@ const OR_MODELS = [
   { id:'meta-llama/llama-3.3-70b-instruct', inP:0.13, outP:0.40, ctx:'128K', img:false }
 ];
 const LOCAL_MODELS = ['qwen2.5:7b-instruct', 'llama3.2:3b', 'gemma3:4b'].map(id => ({ id }));
-const OTHER_MODELS = ['gpt-4.1-mini', 'gpt-4.1'].map(id => ({ id }));
 const DEC_MODELS = [{ id:'typesafe/jev-1.14', inP:0.08 }, { id:'openai/gpt-6-luna-decisions', inP:0.15 }, { id:'typesafe/jev-router', inP:0.05 }];
-// local servers first; oMLX's port is its default and the user can change it
+// [kind, label, name, address]; OpenAI-compatible covers Ollama, LM Studio, oMLX and any other server that speaks the API
 const PRESETS = [
-  ['ollama', 'Ollama on this Mac', 'http://localhost:11434/v1'],
-  ['lmstudio', 'LM Studio on this Mac', 'http://localhost:1234/v1'],
-  ['omlx', 'oMLX on this Mac', 'http://localhost:8000/v1'],
-  ['openrouter', 'OpenRouter', 'https://openrouter.ai/api/v1'],
-  ['custom', 'Other (OpenAI-compatible)', 'https://']
+  ['openai', 'OpenAI-compatible', '', ''],
+  ['openrouter', 'OpenRouter', 'OpenRouter', 'https://openrouter.ai/api/v1']
 ];
 const DEC_Q = { q:'Which folder should this meeting go in?', ctx:'“Acme pricing follow-up”, starting: “Thanks for joining. Let’s go over the pilot pricing…”', opts:['Inbox', 'Acme', 'Platform team', '1:1s', 'None of these'] };
 S.ai = { providers:[], main:null, fast:null, dec:null, add:null, confirm:null, notice:'', test:{}, decTest:null, fail:false, q:'' };
@@ -1630,7 +1627,7 @@ console.assert(loopback('http://localhost:11434/v1') && loopback('http://127.0.0
 const hostPill = u => loopback(u) ? `<span class="pill status">${icon('mac','ic-s')}Stays on this Mac</span>` : `<span class="pill alert">${icon('cloud','ic-s')}Sends text off this Mac</span>`;
 const prov = id => S.ai.providers.find(p => p.id === id);
 const orProv = () => S.ai.providers.find(p => p.preset === 'openrouter');
-const modelsOf = p => p.preset === 'openrouter' ? OR_MODELS : ['ollama','lmstudio','omlx'].includes(p.preset) ? LOCAL_MODELS : OTHER_MODELS;
+const modelsOf = p => p.preset === 'openrouter' ? OR_MODELS : LOCAL_MODELS;
 const usd = n => '$' + (n >= 0.01 ? n.toFixed(2) : n.toPrecision(2));
 const modelMeta = (p, m) => p.preset === 'openrouter'
   ? `${usd(m.inP)} in · ${usd(m.outP)} out per 1M tokens · ${m.ctx} context${m.img ? ' · reads images' : ''}`
@@ -1673,25 +1670,24 @@ function picker(slot) {
 
 function testLine(id) {
   const t = S.ai.test[id];
-  if (!t) return `<span class="help">Not tested yet. Test sends a short prompt and shows the reply.</span>`;
-  if (t.st === 'run') return `<span class="help">Asking ${esc(t.model)}…</span>`;
-  if (t.st === 'err') return `<span class="err">${icon('alert','ic-s')}Couldn’t get a reply: ${esc(t.msg)}</span><button class="btn plain sm" data-act="ai-test" data-id="${id}">Retry</button>`;
-  return `<span class="help od-truncate">${icon('check','ic-s')} “${esc(t.reply)}” · ${t.secs} s · ${esc(t.cost)}</span>`;
+  if (!t) return `<span class="help">Not tested yet. Test checks the address and key; it spends nothing.</span>`;
+  if (t.st === 'run') return `<span class="help">Checking…</span>`;
+  if (t.st === 'err') return `<span class="err">${icon('alert','ic-s')}${esc(t.msg)}</span><button class="btn plain sm" data-act="ai-test" data-id="${id}">Retry</button>`;
+  return `<span class="help od-truncate">${icon('check','ic-s')} ${t.models != null ? `Connected · ${t.models} model${t.models === 1 ? '' : 's'}` : `Key works · ${usd(t.used)} used${t.limit != null ? ` of ${usd(t.limit)}` : ''}`} · ${t.secs} s</span>`;
 }
 function paintTest(id) {
   const el = document.querySelector(`[data-tl="${id}"]`); if (el) el.innerHTML = testLine(id);
   const b = document.querySelector(`[data-act=ai-test][data-id="${id}"].tbtn`); if (b) b.disabled = S.ai.test[id]?.st === 'run';
 }
 function testEndpoint(id) {
-  const p = prov(id), r = [S.ai.main, S.ai.fast].find(r => r && r.pid === id), model = r ? r.model : modelsOf(p)[0].id;
-  S.ai.test[id] = { st:'run', model }; paintTest(id);
+  const p = prov(id);
+  S.ai.test[id] = { st:'run' }; paintTest(id);
   setTimeout(() => {
     if (!prov(id)) return;
-    const m = modelsOf(p).find(m => m.id === model) || {};
-    // OpenRouter returns its own cost per response; local is free; anything else has no price
-    S.ai.test[id] = S.ai.fail ? { st:'err', msg: loopback(p.url) ? `nothing is answering at ${hostOf(p.url)}. Is ${p.name.replace(/ on this Mac$/, '')} running?` : 'the server said the key isn’t valid (401).' }
-      : { st:'ok', model, reply:'Hello! Myna can reach me.', secs: loopback(p.url) ? '1.4' : '0.8',
-          cost: p.preset === 'openrouter' ? usd((m.inP * 24 + m.outP * 8) / 1e6) : loopback(p.url) ? 'Free · runs on your server' : 'cost unknown' };
+    // OpenRouter: its key endpoint reports usage and limit; any other server: its model list is counted. No tokens spent either way
+    S.ai.test[id] = S.ai.fail ? { st:'err', msg: loopback(p.url) ? `Couldn’t reach ${p.url}: connection refused.` : `${p.url} refused the key (HTTP 401).` }
+      : p.preset === 'openrouter' ? { st:'ok', used:0.12, limit:5, secs:'0.3' }
+      : { st:'ok', models: modelsOf(p).length, secs: loopback(p.url) ? '0.4' : '0.8' };
     S.ai.fail = false; paintTest(id);
   }, 900);
 }
@@ -1727,9 +1723,9 @@ function removeProvider(id) {
 }
 function aiSample() {
   S.ai.providers = [
-    { id:'p-ollama', preset:'ollama', name:'Ollama on this Mac', url:'http://localhost:11434/v1', key:'' },
+    { id:'p-ollama', preset:'openai', name:'Ollama on this Mac', url:'http://localhost:11434/v1', key:'' },
     { id:'p-or', preset:'openrouter', name:'OpenRouter', url:'https://openrouter.ai/api/v1', key:'sk-or-v1-sample' },
-    { id:'p-lan', preset:'custom', name:'Ollama on the studio Mac', url:'http://192.168.1.20:11434/v1', key:'' }
+    { id:'p-lan', preset:'openai', name:'Ollama on the studio Mac', url:'http://192.168.1.20:11434/v1', key:'' }
   ];
   Object.assign(S.ai, { main:{ pid:'p-or', model:'anthropic/claude-sonnet-4.5' }, fast:{ pid:'p-ollama', model:'qwen2.5:7b-instruct' }, dec:null, add:null, confirm:null, notice:'', test:{}, decTest:null });
 }
@@ -1738,18 +1734,18 @@ function addForm() {
   const a = S.ai.add, f = (k, label, type, help, extra = '') => `<div class="od-field" style="--od-gap:4px"><label class="label" for="add-${k}">${label}</label>
       <input class="input${k === 'url' || k === 'key' ? ' mono' : ''}" id="add-${k}" type="${type}" value="${esc(a[k])}" data-bind="ai-add" data-f="${k}" autocomplete="off" spellcheck="false" aria-describedby="add-${k}-h add-${k}-e" ${a.err[k] ? 'aria-invalid="true"' : ''} ${extra}>
       <span class="help" id="add-${k}-h">${help}</span><span class="err" id="add-${k}-e" role="status">${a.err[k] ? icon('alert','ic-s') + esc(a.err[k]) : ''}</span></div>`;
-  const local = ['ollama','lmstudio','omlx'].includes(a.preset);
+  const openai = a.preset === 'openai';
   return `<form class="list cloud" data-form="ai-add" aria-labelledby="add-h">
     <h3 id="add-h" class="add-h">Add an AI provider</h3>
     <div class="row2">
       <div class="od-field" style="--od-gap:4px"><label class="label" for="add-preset">Kind</label>
         <select class="select" id="add-preset" data-bind="ai-add" data-f="preset">${PRESETS.map(([v, l]) => `<option value="${v}" ${a.preset === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
-        <span class="help">Any server that speaks the OpenAI API works.</span></div>
-      ${f('name', 'Name', 'text', 'Shown when you pick a model.', 'maxlength="40"')}
+        <span class="help kind-h">${a.preset === 'openrouter' ? 'One key for models from many companies.' : 'Ollama, LM Studio, oMLX or any server that speaks the OpenAI API.'}</span></div>
+      ${f('name', 'Name', 'text', 'Shown when you pick a model.', `maxlength="40" ${openai ? 'placeholder="Ollama on this Mac"' : ''}`)}
     </div>
-    ${f('url', 'Address', 'url', `<span id="add-pill">${hostPill(a.url)}</span>`)}
+    ${f('url', 'Address', 'url', `<span id="add-pill">${hostPill(a.url)}</span>`, openai ? 'placeholder="http://localhost:11434/v1"' : '')}
     ${f('key', a.preset === 'openrouter' ? 'Key' : 'Key (optional)', 'password',
-      (a.preset === 'openrouter' ? 'Find it at openrouter.ai/keys.' : local ? 'Only if your server asks for one.' : 'If the service needs one.') + ' Myna keeps it in your Mac’s Keychain.',
+      (a.preset === 'openrouter' ? 'Find it at openrouter.ai/keys.' : 'Only if your server asks for one.') + ' Myna keeps it in your Mac’s Keychain.',
       a.preset === 'openrouter' ? 'placeholder="sk-or-…"' : '')}
     <div class="od-row" style="justify-content:flex-end;gap:var(--s2)"><button type="button" class="btn" data-act="ai-add-cancel">Cancel</button><button class="btn primary">Add</button></div>
   </form>`;
@@ -2197,7 +2193,7 @@ document.addEventListener('click', e => {
       if (slot === 'dec') { S.ai.dec = m || null; S.ai.decTest = null; } else S.ai[slot] = { pid:el.dataset.pid, model:m };
       S.pop = null; render(); $('#pick-' + slot).focus(); break;
     }
-    case 'ai-add': S.ai.add = { preset:'ollama', name:PRESETS[0][1], url:PRESETS[0][2], key:'', err:{} }; S.ai.notice = ''; render(); $('#add-preset').focus(); break;
+    case 'ai-add': S.ai.add = { preset:'openai', name:'', url:'', key:'', err:{} }; S.ai.notice = ''; render(); $('#add-preset').focus(); break;
     case 'ai-add-cancel': S.ai.add = null; render(); $('#ai-add-btn').focus(); break;
     case 'ai-test': testEndpoint(id); break;
     case 'ai-rm': S.ai.confirm = id; render(); $('#rm-no').focus(); break;
@@ -2291,7 +2287,7 @@ document.addEventListener('change', e => {
       setPath(el.dataset.path, el.type === 'checkbox' ? el.checked : el.value); render(); document.getElementById(el.id)?.focus(); break;
     case 'folder': byId(el.dataset.id).folder = el.value; break;
     case 'ai-fail': S.ai.fail = el.checked; break;
-    case 'ai-add': if (el.dataset.f === 'preset') { const pr = PRESETS.find(x => x[0] === el.value); Object.assign(S.ai.add, { preset:pr[0], name:pr[1], url:pr[2], err:{} }); render(); $('#add-preset').focus(); } break;
+    case 'ai-add': if (el.dataset.f === 'preset') { const pr = PRESETS.find(x => x[0] === el.value); Object.assign(S.ai.add, { preset:pr[0], name:pr[2], url:pr[3], err:{} }); render(); $('#add-preset').focus(); } break;
     case 'tpl': S.regen.tpl = el.value; break;
   }
 });

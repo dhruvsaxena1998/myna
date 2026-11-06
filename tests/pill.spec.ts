@@ -44,7 +44,7 @@ test("Writing, then Added where you were typing, then it goes away", async ({ pa
   await expect(pill).toBeHidden();
 });
 
-for (const [title, hint] of [["No speech model", "Download Parakeet v3 in Settings › AI & privacy"], ["Needs the Microphone", "Allow it in Settings › Voice typing"], ["Didn’t hear anything", "Hold the keys while you talk"]]) {
+for (const [title, hint] of [["No speech model", "Download Parakeet v3 in Settings › Speech models"], ["Needs the Microphone", "Allow it in Settings › Voice typing"], ["Didn’t hear anything", "Hold the keys while you talk"]]) {
   test(`error: ${title}`, async ({ page }) => {
     await open(page);
     await fail(page, title, hint);
