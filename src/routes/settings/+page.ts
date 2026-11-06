@@ -5,6 +5,7 @@ import type { Perms } from "$lib/Permissions.svelte";
 import type { Look } from "$lib/Pill.svelte";
 import type { Rules } from "$lib/Words.svelte";
 import type { Voice } from "$lib/VoiceShortcut.svelte";
+import type { Ai } from "$lib/AiProviders.svelte";
 import type { Prefs, UpdateState } from "$lib/updates.svelte";
 
 // Load before the first paint so nothing pops in after the window shows.
@@ -42,11 +43,17 @@ export async function load() {
         (err) => ({ ok: false as const, error: String(err) }),
       )
     : null;
+  const ai = storage.ok
+    ? await invoke<Ai>("ai_get").then(
+        (ai) => ({ ok: true as const, ai }),
+        (err) => ({ ok: false as const, error: String(err) }),
+      )
+    : null;
   const updates = storage.ok
     ? await Promise.all([invoke<Prefs>("updates_get"), invoke<UpdateState>("update_state")]).then(
         ([prefs, status]) => ({ ok: true as const, prefs, status }),
         (err) => ({ ok: false as const, error: String(err) }),
       )
     : null;
-  return { storage, version, models, perms, globe, look, voice, rules, updates };
+  return { storage, version, models, perms, globe, look, voice, rules, ai, updates };
 }

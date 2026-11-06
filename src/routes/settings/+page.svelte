@@ -1,5 +1,6 @@
 <script lang="ts">
   let { data } = $props();
+  import AiProviders from "$lib/AiProviders.svelte";
   import About from "$lib/About.svelte";
   import ErrorState from "$lib/ErrorState.svelte";
   import { glassOn, syncGlass } from "$lib/look";
@@ -19,7 +20,9 @@
     { id: "look", title: "Look & appearance", soon: "Light or dark, highlight colour, see-through panels." },
     { id: "dictation", title: "Voice typing", soon: "Turn voice typing on, pick its shortcut, and words to remember." },
     { id: "meetings", title: "Meeting notes", soon: "Turn meeting notes on, notice calls, pictures of the call, keep your voice when muted." },
-    { id: "ai", title: "AI & privacy", soon: "Speech-to-text and voice models, AI providers for summaries and chat, and quick decisions." },
+    { id: "models", title: "Speech models", soon: "Speech-to-text and voice models." },
+    { id: "ai", title: "AI provider", soon: "Providers for summaries and chat, and which model does what." },
+    { id: "decide", title: "Decision provider", soon: "Who makes Myna's small choices, like which folder a meeting goes in." },
     { id: "experimental", title: "Experimental features", soon: "New things we're still working on. Off until you turn them on." },
     { id: "about", title: "About", soon: "" },
   ];
@@ -69,6 +72,9 @@
         {#if look}<Experimental bind:look />
         {:else}<ErrorState title="Myna couldn't read experimental features" message={data.appearance.ok ? "" : data.appearance.error} />{/if}
       {:else if page.id === "ai"}
+        {#if data.ai?.ok}<AiProviders initial={data.ai.ai} />
+        {:else}<ErrorState title="Myna couldn't read its AI providers" message={data.ai?.ok === false ? data.ai.error : ""} />{/if}
+      {:else if page.id === "models"}
         {#if !data.models?.ok}
           <ErrorState title="Myna couldn't list its models" message={data.models?.error ?? ""} />
         {:else}
@@ -76,7 +82,6 @@
           <ModelTask task={stt} title="Turning speech into text" help="Used for voice typing and meeting notes." />
           <UnloadAfter initial={data.models.unload} />
           <ModelTask task={diar} title="Telling voices apart" help="Works out who said what. Always runs on this Mac. Your own voice is always “Me”." />
-          <p class="soon later">AI providers for summaries and chat, and quick decisions, will live here too.</p>
         {/if}
       {:else if page.id === "dictation"}
         {#if !voice}
@@ -128,5 +133,4 @@
   /* Let drags on the title fall through to the header's drag region. */
   h1 { pointer-events: none; margin: 0; font-size: var(--fs-title2); line-height: var(--lh-title2); font-weight: var(--fw-semibold); }
   .soon { margin: 0; color: var(--text-2); }
-  .later { margin-top: var(--sp-5); }
 </style>

@@ -1,4 +1,4 @@
-<!-- One task's on-device models (prototype: taskBlock/DIAR on the AI & privacy page). -->
+<!-- One task's on-device models (prototype: taskBlock/DIAR on the Speech models page). -->
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
