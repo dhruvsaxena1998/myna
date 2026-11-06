@@ -709,6 +709,13 @@ body { letter-spacing: -.005em; text-rendering: optimizeLegibility; }
 .toolbar .seg span { height: 26px; }
 .nerds { padding: 0 var(--s4) var(--s7); display: grid; gap: var(--s3); align-content: start; }
 .nerds > * { width: 100%; max-width: 1000px; margin: 0 auto; }
+.style-li { padding: 0 var(--s4) var(--s4); }
+.style-ed { display: grid; gap: var(--s3); }
+.style-apps, .style-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.style-tabs { gap: var(--s2); margin: var(--s2) 0; }
+.style-newer { display: flex; align-items: center; gap: var(--s2); padding: 8px 12px; border-radius: 12px; background: var(--accent-soft); color: var(--accent-text); font-size: var(--fs-s); }
+.style-acts { display: flex; gap: var(--s2); }
+.sgroup > .err { display: flex; align-items: center; gap: 4px; margin: 4px 0; }
 .nd-proto { display: flex; align-items: center; gap: var(--s2); padding: 6px 10px; border: 1px dashed var(--line-strong); border-radius: var(--r-ctl); color: var(--text-3); font-size: var(--fs-s); }
 .nd-overview { display: grid; gap: var(--s3); transition: opacity var(--dur) var(--ease-out); }
 .nd-busy { opacity: .45; pointer-events: none; }
@@ -960,11 +967,27 @@ const S = {
   chats:{}, tokensSent:{},
   global:{ msgs:[] }
 };
-S.set = { modules:S.modules, hotkey:'fn', mode:'hold', paste:'clipboard', pillStyle:'capsule', pillPlace:'bottom', dict:['Myna','Parakeet','Desert Ant','Drove → Dhruv'], lang:'en', rules:true,
+/* Dictate with cleanup (04.7): the shipped instruction text per style. Only this text is editable; the wrapper (data tags, Words to remember) is fixed. */
+const CLEAN_BASE = 'Fix punctuation, capitals and grammar slips. Take out filler words and repeats. When I correct myself, keep only the correction. Write dates, times, phone numbers, versions and decades in digits. Keep my words: don’t rephrase, shorten, add to or answer what I said.';
+const STYLE_DEF = {
+  default: CLEAN_BASE,
+  code: CLEAN_BASE + ' Keep code names, file names and commands exactly as I said them.',
+  message: CLEAN_BASE + ' Keep it casual. No full stop after a single short sentence.',
+  email: CLEAN_BASE + ' Use full sentences. Put a greeting or sign-off on its own line.'
+};
+// shortcut: the real app notices a newer shipped default per style when Myna updates; here Message is a fixed sample of an edited style with a newer default
+const MAC_APPS = ['Mail','Outlook','Slack','Messages','WhatsApp','Xcode','Visual Studio Code','Cursor','Terminal','Notes','Linear','Safari','Chrome'];
+function STYLES_SAMPLE() { return [
+  { id:'default', name:'Default', apps:[], text:null },
+  { id:'code', name:'Code', apps:['Xcode','Visual Studio Code','Cursor','Terminal'], text:null },
+  { id:'message', name:'Message', apps:['Slack','Messages','WhatsApp'], text:'Fix punctuation and capitals. Keep it casual and short. Never use emoji.', newer:true },
+  { id:'email', name:'Email', apps:['Mail','Outlook'], text:null }
+]; }
+S.set = { modules:S.modules, hotkey:'fn', mode:'hold', paste:'clipboard', pillStyle:'capsule', pillPlace:'bottom', dict:['Myna','Parakeet','Desert Ant','Drove → Dhruv'], lang:'en', rules:true, hotkeyClean:'', styles:STYLES_SAMPLE(), styleOpen:null, styleSel:'default', cleanFail:false, stylesView:'a', hkErr:'',
   capture:'shots', interval:'15', apps:{ meet:false, teams:false, zoom:false, slack:false }, ext:false, retention:'30', folder:true, dataPath:'~/Library/Application Support/Myna', dataMoved:false,
   meetKey:'ctrl-opt-m', appearance:'auto', accent:'blue', glass:'clear', liquid:false, liquidFrost:50, expOn:false, detect:true,
   diar:'who', updMode:'auto', updEvery:'launch', channel:'beta',
-  exp:{ diarOn:false, uhmD:false, uhmM:false, llmD:false, llmM:false, triage:false, relevance:false, shotsAI:false, nerds:false },
+  exp:{ diarOn:false, uhmD:false, uhmM:false, llmM:false, triage:false, relevance:false, shotsAI:false, nerds:false },
   nerds:{ period:'7', model:'all', app:'all', sample:'full', pick:null } };
 S.mb = { open:false };
 const UPD_CUR = '0.0.1-beta.2', UPD_NEXT = '0.0.2-beta.1';
@@ -1590,9 +1613,11 @@ const srow = (title, help, ctrl) => `<li class="srow"><div class="od-field od-fi
 const sgroup = (title, rows, note = '') => `<section class="sgroup"><h2>${title}</h2>${note}<ul class="list">${rows.join('')}</ul></section>`;
 // shortcut recorder: a key, a combination, or a single modifier held on its own (e.g. Right ⌥)
 const hkLabel = h => h.replace(/\+/g, ' ');
-const hotkeyRec = () => S.hkRec
-  ? `<button class="btn hk-live" id="hk-btn" data-act="hk-cancel" aria-live="polite">Press a key…</button>`
-  : `<div class="hk"><span class="hk-keys" aria-label="Current hotkey: ${esc(hkLabel(S.set.hotkey))}">${S.set.hotkey.split('+').map(k => `<kbd>${esc(k)}</kbd>`).join('')}</span><button class="btn" id="hk-btn" data-act="hk-rec">Change</button></div>`;
+// p: 'hotkey' (Dictate) or 'hotkeyClean' (Dictate with cleanup, may be unassigned)
+const hotkeyRec = (p = 'hotkey') => S.hkRec === p
+  ? `<button class="btn hk-live" id="hk-${p}" data-act="hk-cancel" aria-live="polite">Press a key…</button>`
+  : `<div class="hk">${S.set[p] ? `<span class="hk-keys" aria-label="Current shortcut: ${esc(hkLabel(S.set[p]))}">${S.set[p].split('+').map(k => `<kbd>${esc(k)}</kbd>`).join('')}</span>` : '<span class="help">Not set</span>'}
+      ${S.set[p] && p === 'hotkeyClean' ? `<button class="btn plain" data-act="hk-clear" aria-label="Remove the Dictate with cleanup shortcut">Remove</button>` : ''}<button class="btn" id="hk-${p}" data-act="hk-rec" data-p="${p}">${S.set[p] ? 'Change' : 'Set'}</button></div>`;
 const MOD_SIDE = { AltLeft:'⌥', AltRight:'Right ⌥', MetaLeft:'⌘', MetaRight:'Right ⌘', ControlLeft:'⌃', ControlRight:'Right ⌃', ShiftLeft:'⇧', ShiftRight:'Right ⇧' };
 function hkKeyName(e) {
   if (e.code.startsWith('Key')) return e.code.slice(3);
@@ -1600,10 +1625,66 @@ function hkKeyName(e) {
   if (e.code === 'Space') return 'Space';
   return e.key.length === 1 ? e.key.toUpperCase() : e.key;
 }
-function hkSave(v) { S.set.hotkey = v; S.hkRec = false; S.hkMod = null; render(); $('#hk-btn')?.focus(); }
+function hkSave(v) {
+  const p = S.hkRec, other = p === 'hotkey' ? 'hotkeyClean' : 'hotkey';
+  S.set.hkErr = S.set[other] === v ? `${hkLabel(v)} is already the ${p === 'hotkey' ? 'Dictate with cleanup' : 'Dictate'} shortcut. Pick another key.` : '';
+  if (!S.set.hkErr) S.set[p] = v;
+  S.hkRec = false; S.hkMod = null; render(); $('#hk-' + p)?.focus();
+}
 // shortcut: "Choose another folder…" picks a fixed sample path; the real app opens the macOS folder picker
 const DATA_PLACES = [['This Mac (recommended)', '~/Library/Application Support/Myna'], ['iCloud Drive', '~/Library/Mobile Documents/iCloud Drive/Myna'], ['Choose another folder…', '~/Documents/Myna data']];
 const desertAnt = () => [S.modules.meetings && S.set.exp.diarOn && S.set.diar === 'who' && 'telling voices apart (Who)', (S.set.exp.uhmD || S.set.exp.uhmM) && 'removing “um” and “uh” (Uhm)'].filter(Boolean);
+
+/* ---------- Dictate with cleanup (04.7) ---------- */
+const styleText = st => st.text ?? STYLE_DEF[st.id] ?? '';
+const styleBy = id => S.set.styles.find(x => x.id === id);
+// Words to remember, as the model sees them: an alias like "Drove → Dhruv" sends only the right spelling
+const spellList = () => [...new Set(S.set.dict.map(w => w.split(/→|->/).pop().trim()).filter(Boolean))];
+function cleanProto(v) {
+  if (v === 'none') { S.ai.fast = null; return; }
+  if (!prov('p-ollama')) aiSample();
+  S.ai.fast = v === 'local' ? { pid:'p-ollama', model:'qwen2.5:7b-instruct' } : { pid:'p-or', model:'openai/gpt-5-mini' };
+}
+function cleanRowHelp() {
+  const f = S.ai.fast;
+  if (S.hkRec === 'hotkeyClean') return 'Press the key or keys you want to use. Esc cancels.';
+  if (!f) return 'Fixes punctuation, grammar slips and self-corrections with AI before adding your words.<br><span class="pill">Needs an Endpoint</span> Set a Fast model on AI provider first.';
+  return `Fixes punctuation, grammar slips and self-corrections with your Fast model, ${esc(routeName(f))}, before adding your words. If that takes over 3 seconds, Myna adds them as they are.<br>${hostPill(prov(f.pid).url)}`;
+}
+function styleEditor(st) {
+  const builtin = st.id in STYLE_DEF, inOther = a => S.set.styles.find(o => o !== st && o.apps.includes(a));
+  return `<div class="style-ed" id="ed-${st.id}">
+    ${st.id === 'default' ? '' : `<div class="od-field" style="--od-gap:4px"><label class="label" for="sn-${st.id}">Name</label><input class="input" id="sn-${st.id}" data-style="${st.id}" data-f="name" value="${esc(st.name)}" maxlength="32" autocomplete="off"></div>`}
+    <div class="od-field" style="--od-gap:4px"><span class="label" id="sa-${st.id}">Apps</span>
+      ${st.id === 'default' ? '<span class="help">Every app that doesn’t have its own style.</span>'
+        : `<div class="style-apps" role="group" aria-labelledby="sa-${st.id}">${st.apps.map(a => `<span class="tag">${esc(a)}<button data-act="style-app-rm" data-id="${st.id}" data-a="${esc(a)}" aria-label="Remove ${esc(a)} from ${esc(st.name)}">${icon('x','ic-s')}</button></span>`).join('')}
+          <select class="select" style="width:auto" data-bind="style-app" data-id="${st.id}" aria-label="Add an app to ${esc(st.name)}"><option value="">Add an app…</option>${MAC_APPS.filter(a => !st.apps.includes(a)).map(a => `<option value="${esc(a)}">${esc(a)}${inOther(a) ? ` (now ${esc(inOther(a).name)})` : ''}</option>`).join('')}</select></div>`}
+    </div>
+    <div class="od-field" style="--od-gap:4px"><label class="label" for="st-${st.id}">Instructions</label>
+      <textarea class="textarea" id="st-${st.id}" rows="5" data-style="${st.id}" data-f="text">${esc(styleText(st))}</textarea>
+      <span class="help">Myna always adds: “Spell these exactly as written: ${esc(spellList().join(', '))}.” What you said goes in as text to clean up, never as instructions.</span></div>
+    ${st.newer ? `<p class="style-newer" role="status"><span class="od-fill">A newer default is available. Your edit is kept until you choose.</span><button class="btn" data-act="style-newer" data-id="${st.id}">Use the new default</button></p>` : ''}
+    <div class="style-acts">${builtin
+      ? `<button class="btn" id="reset-${st.id}" data-act="style-reset" data-id="${st.id}" ${st.text == null ? 'disabled' : ''}>Reset to default</button>`
+      : `<button class="btn danger" data-act="style-del" data-id="${st.id}">Delete style</button>`}</div>
+  </div>`;
+}
+const styleMeta = st => (st.id === 'default' ? 'Every other app' : st.apps.length ? st.apps.join(', ') : 'No apps yet')
+  + (st.text != null && st.id in STYLE_DEF ? ' · edited' : '');
+function stylesGroup() {
+  const x = S.set, head = `<h2>Cleanup styles</h2><p class="help">Dictate with cleanup picks a style by the app you’re in. Only Myna sees the app; its name is never sent.</p>`;
+  const add = `<button class="btn" id="style-add" data-act="style-add">Add style</button>`;
+  if (x.stylesView === 'b') {
+    const cur = styleBy(x.styleSel) || x.styles[0];
+    return `<section class="sgroup">${head}
+      <div class="style-tabs"><fieldset class="seg" aria-label="Style">${x.styles.map(st => `<label><input type="radio" name="style-sel" id="ss-${st.id}" value="${st.id}" data-bind="set" data-path="styleSel" ${cur === st ? 'checked' : ''}><span>${esc(st.name)}${st.newer ? ' •' : ''}</span></label>`).join('')}</fieldset>${add}</div>
+      <p class="help">${esc(styleMeta(cur))}</p>${styleEditor(cur)}</section>`;
+  }
+  return `<section class="sgroup">${head}<ul class="list">${x.styles.map(st => `<li class="srow"><div class="od-field od-fill"><span class="label">${esc(st.name)}${st.newer ? ' <span class="pill status">Newer default</span>' : ''}</span><span class="help">${esc(styleMeta(st))}</span></div>
+      <div class="od-fixed"><button class="btn" id="se-${st.id}" data-act="style-open" data-id="${st.id}" aria-expanded="${x.styleOpen === st.id}" aria-controls="ed-${st.id}">${x.styleOpen === st.id ? 'Done' : 'Edit'}</button></div></li>
+      ${x.styleOpen === st.id ? `<li class="style-li">${styleEditor(st)}</li>` : ''}`).join('')}</ul>
+    <div style="margin-top:var(--s2)">${add}</div></section>`;
+}
 
 function settings() {
   const menu = `<button class="btn icon plain menu-btn" data-act="drawer" aria-label="Show sidebar">${icon('sidebar')}</button>`;
@@ -1827,10 +1908,14 @@ function settingsPage() {
     }
     case 'dictation': return sgroup('Voice typing', [
         srow('Use voice typing', 'Hold a key, talk, and let go. Your words appear wherever you’re typing.', sw('modules.dictation', 'Use voice typing'))
-      ]) + (!S.modules.dictation ? '' : sgroup('Shortcut', [
-        srow('Shortcut key', S.hkRec ? 'Press the key or keys you want to use. Esc cancels.' : 'Works in any app.', hotkeyRec()),
-        srow('How it starts', x.mode === 'hold' ? 'Hold the key while you talk. Let go to add your words.' : 'Press once to start and again to stop.', segc('mode', [['hold','Hold to talk'],['toggle','Tap to start and stop']], 'How it starts'))
-      ]) + sgroup('Pill', [
+      ]) + (!S.modules.dictation ? '' : (x.cleanProto = !S.ai.fast ? 'none' : loopback(prov(S.ai.fast.pid).url) ? 'local' : 'cloud', '')
+      + `<div class="nd-proto" style="flex-wrap:wrap;margin-bottom:var(--s4)"><span>Prototype only:</span>${segc('cleanProto', [['none','No Fast model'],['local','Fast on this Mac'],['cloud','Fast online']], 'Sample Fast model')}
+          ${segc('cleanFail', [['','Cleanup works'],['slow','Cleanup too slow']], 'Sample cleanup result')}${segc('stylesView', [['a','Styles: list'],['b','Styles: tabs']], 'Styles layout')}</div>`
+      + sgroup('Shortcuts', [
+        srow('Dictate', S.hkRec === 'hotkey' ? 'Press the key or keys you want to use. Esc cancels.' : 'Adds what you said. Works in any app.', hotkeyRec()),
+        srow('Dictate with cleanup', cleanRowHelp(), S.ai.fast ? hotkeyRec('hotkeyClean') : `<button class="btn" data-act="spage" data-p="ai">Set up</button>`),
+        srow('How it starts', (x.mode === 'hold' ? 'Hold the key while you talk. Let go to add your words.' : 'Press once to start and again to stop.') + ' Same for both shortcuts.', segc('mode', [['hold','Hold to talk'],['toggle','Tap to start and stop']], 'How it starts'))
+      ], x.hkErr ? `<p class="err" role="status">${icon('alert','ic-s')}${esc(x.hkErr)}</p>` : '') + sgroup('Pill', [
         srow('Style', 'How the pill looks while you talk. Settings shows a preview of it.', sel('pillStyle', [['capsule','Capsule'],['orb','Orb'],['wave','Waveform'],['card','Card']], 'Pill style')),
         srow('Position', 'Where it shows, on the screen you’re typing on.', sel('pillPlace', [['bottom','Bottom centre'],['top','Top centre'],['bottom-right','Bottom right'],['top-right','Top right']], 'Pill position'))
       ]) + sgroup('Adding your words', [
@@ -1841,7 +1926,8 @@ function settingsPage() {
       ]) + `<section class="sgroup"><h2>Words to remember</h2><p class="help">Names and special words Myna should spell your way.</p>
         <div class="chipin" data-act="dict-focus">${x.dict.map(w => `<span class="tag">${esc(w)}<button data-act="dict-rm" data-w="${esc(w)}" aria-label="Remove ${esc(w)}">${icon('x','ic-s')}</button></span>`).join('')}
           <form data-form="dict" class="chipin-f"><label class="sr-only" for="dict-in">Add words for Myna to remember</label><input id="dict-in" maxlength="200" placeholder="${x.dict.length ? 'Add a word' : 'Type a word, then a comma'}" autocomplete="off" aria-describedby="dict-help"></form></div>
-        <p class="help" id="dict-help" style="margin-top:6px">Press comma or Return to add a word. Press Backspace in an empty box to remove the last one. If Myna keeps mishearing a word, type it like Drove -&gt; Dhruv.</p></section>`);
+        <p class="help" id="dict-help" style="margin-top:6px">Press comma or Return to add a word. Press Backspace in an empty box to remove the last one. If Myna keeps mishearing a word, type it like Drove -&gt; Dhruv.</p></section>`
+      + (S.ai.fast ? stylesGroup() : ''));
     case 'meetings': return sgroup('Meeting notes', [
         srow('Use meeting notes', 'Record your calls and get notes, a summary and answers to your questions.', sw('modules.meetings', 'Use meeting notes'))
       ]) + (!S.modules.meetings ? '' : sgroup('Shortcut', [
@@ -1889,8 +1975,7 @@ function settingsPage() {
         ])
         + sgroup('Voice typing', [
           srow('Stats for nerds', 'Adds a page to the main window with the numbers behind each dictation: per speech model, rule and app. Reads what Myna already keeps on this Mac.', sw('exp.nerds', 'Stats for nerds')),
-          row('Remove “um” and “uh”', 'Takes out filler words before your text is added. Stays on this Mac.', 'exp.uhmD'),
-          row('Tidy up with AI', 'Fixes punctuation and wording.', 'exp.llmD', llmCloud() && offBadge())
+          row('Remove “um” and “uh”', 'Takes out filler words before your text is added. Stays on this Mac.', 'exp.uhmD')
         ]) + sgroup('Meeting notes', [
           row('Tell voices apart', 'Works out who said what, so notes show names instead of one long block. Stays on this Mac.', 'exp.diarOn'),
           row('Remove “um” and “uh”', 'Takes out filler words from the notes. Stays on this Mac.', 'exp.uhmM'),
@@ -2028,6 +2113,7 @@ function overlay() {
       <div class="msep"></div>
       <div class="mlabel">Voice typing</div>
       <button class="mitem" role="menuitem" data-act="dict-start" ${S.modules.dictation && !S.dictS.state ? '' : 'disabled'}>Start voice typing<span class="mkey">${hkLabel(S.set.hotkey)}</span></button>
+      ${S.ai.fast ? `<button class="mitem" role="menuitem" data-act="dict-start" data-clean="1" ${S.modules.dictation && !S.dictS.state ? '' : 'disabled'}>Start voice typing with cleanup<span class="mkey">${S.set.hotkeyClean ? hkLabel(S.set.hotkeyClean) : ''}</span></button>` : ''}
       ${S.modules.dictation ? '' : '<div class="mnote">Voice typing is off. Turn it on in Settings.</div>'}
       <div class="msep"></div>
       <div class="mlabel">Recent</div>
@@ -2058,9 +2144,9 @@ function overlay() {
     </section>`;
   if (S.u.open) h += updPopup();
   const d = S.dictS;
-  if (d.state === 'rec') h += `<div class="hud dpill" role="status" aria-label="Voice typing: listening"><span class="lvl" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><span>Listening</span>${d.hold ? '<span class="sub">Release to paste</span>' : '<button class="hud-btn" id="dict-done" data-act="dict-stop">Done</button>'}</div>`;
-  if (d.state === 'proc') h += `<div class="hud dpill" role="status"><span>Writing…</span></div>`;
-  if (d.state === 'done') h += `<div class="hud dpill" role="status">${icon('check','ic-s')}<span>${d.into ? 'Added to ' + d.into : 'Added where you were typing'}</span></div>`;
+  if (d.state === 'rec') h += `<div class="hud dpill" role="status" aria-label="Voice typing: listening"><span class="lvl" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><span>Listening</span>${d.clean ? '<span class="sub">With cleanup</span>' : ''}${d.hold ? '<span class="sub">Release to paste</span>' : '<button class="hud-btn" id="dict-done" data-act="dict-stop">Done</button>'}</div>`;
+  if (d.state === 'proc') h += `<div class="hud dpill" role="status"><span>${d.clean ? 'Cleaning up…' : 'Writing…'}</span></div>`;
+  if (d.state === 'done') h += `<div class="hud dpill" role="status">${d.raw ? `${icon('alert','ic-s')}<span>Added without cleanup</span><span class="sub">AI took too long</span>` : `${icon('check','ic-s')}<span>${d.into ? 'Added to ' + d.into : 'Added where you were typing'}</span>`}</div>`;
   if (rec && !r.open) h += `<button class="hud mpill" id="rec-pill" data-act="rec-toggle" aria-expanded="false" aria-label="Meeting recording, show live notes"><span class="recdot" aria-hidden="true"></span><span>Recording</span><span class="od-nowrap" data-rec-time>${fmtDur(Date.now() - r.start)}</span><span class="sub">${r.muted ? 'Muted' : 'Mic live'}</span></button>`;
   if (rec && r.open) h += `<section class="mpanel" aria-label="Live meeting notes">
       <div class="mp-head"><span class="recdot" aria-hidden="true"></span><span class="t">Recording</span><time data-rec-time>${fmtDur(Date.now() - r.start)}</time><span class="help od-fill od-truncate">Google Meet · Chrome</span>
@@ -2087,10 +2173,10 @@ function maybeDetect() {
   if (!S.set.detect || S.detect.ignored || !S.modules.meetings || S.rec.state === 'rec' || S.view === 'onboarding') return;
   S.detect.state = 'shown'; renderOverlay();
 }
-function startDict(hold) {
+function startDict(hold, clean) {
   if (!S.modules.dictation || S.dictS.state) return;
   const a = document.activeElement;
-  S.dictS = { state:'rec', hold, t0:Date.now(), target: a && a.matches('textarea:not([disabled]), input[type=text], input:not([type])') ? a : null };
+  S.dictS = { state:'rec', hold, clean, t0:Date.now(), target: a && a.matches('textarea:not([disabled]), input[type=text], input:not([type])') ? a : null };
   renderOverlay();
 }
 function stopDict() {
@@ -2101,9 +2187,10 @@ function stopDict() {
     const t = d.target && document.contains(d.target) ? d.target : null;
     if (t) { t.value = (t.value ? t.value.trimEnd() + ' ' : '') + DICT_SAMPLE; t.focus(); d.into = t.closest('.composer') ? 'chat' : 'the text field'; }
     S.clips.unshift({ id:'c' + Date.now(), text:DICT_SAMPLE, src: t ? (d.into === 'chat' ? 'Myna chat' : 'a text field') : 'the focused app', t:'Today ' + now() });
+    d.raw = d.clean && S.set.cleanFail === 'slow';
     d.state = 'done'; if (S.view === 'clips') render(); else renderOverlay();
-    setTimeout(() => { if (S.dictS === d) { S.dictS = { state:null }; renderOverlay(); } }, 1600);
-  }, 700);
+    setTimeout(() => { if (S.dictS === d) { S.dictS = { state:null }; renderOverlay(); } }, d.raw ? 2600 : 1600);
+  }, d.clean ? (S.set.cleanFail ? 3000 : 1300) : 700);
 }
 function startRec() {
   if (!S.modules.meetings || S.rec.state === 'rec') return;
@@ -2250,8 +2337,15 @@ document.addEventListener('click', e => {
     case 'data-path': if (S.set.dataPath !== el.dataset.v) { S.set.dataPath = el.dataset.v; S.set.dataMoved = true; } S.pop = null; render(); $('#data-btn').focus(); break;
     case 'clip-more': S.clipOpen[id] = !S.clipOpen[id]; render(); $(`[data-act=clip-more][data-id=${id}]`)?.focus(); break;
     case 'go-settings': go('settings'); break;
-    case 'hk-rec': S.hkRec = true; S.hkMod = null; render(); $('#hk-btn')?.focus(); break;
-    case 'hk-cancel': S.hkRec = false; render(); $('#hk-btn')?.focus(); break;
+    case 'hk-rec': S.hkRec = el.dataset.p; S.hkMod = null; S.set.hkErr = ''; render(); $('#hk-' + S.hkRec)?.focus(); break;
+    case 'hk-cancel': { const p = S.hkRec; S.hkRec = false; render(); $('#hk-' + p)?.focus(); break; }
+    case 'style-open': S.set.styleOpen = S.set.styleOpen === el.dataset.id ? null : el.dataset.id; render(); $('#se-' + el.dataset.id).focus(); break;
+    case 'style-add': { const id = 's' + Date.now(); S.set.styles.push({ id, name:'New style', apps:[], text:CLEAN_BASE }); S.set.styleOpen = S.set.styleSel = id; render(); $('#sn-' + id).select(); break; }
+    case 'style-del': S.set.styles = S.set.styles.filter(x => x.id !== el.dataset.id); S.set.styleOpen = null; S.set.styleSel = 'default'; render(); $('#style-add').focus(); break;
+    case 'style-reset': { const st = styleBy(el.dataset.id); st.text = null; st.newer = false; render(); $('#st-' + st.id).focus(); break; }
+    case 'style-newer': { const st = styleBy(el.dataset.id); st.text = null; st.newer = false; render(); $('#st-' + st.id).focus(); break; }
+    case 'style-app-rm': { const st = styleBy(el.dataset.id); st.apps = st.apps.filter(a => a !== el.dataset.a); render(); $(`[data-bind=style-app][data-id="${st.id}"]`).focus(); break; }
+    case 'hk-clear': S.set.hotkeyClean = ''; render(); $('#hk-hotkeyClean')?.focus(); break;
     case 'det-start': S.detect.state = null; startRec(); $('#rec-pill')?.focus(); break;
     case 'det-live': S.detect.state = null; startRec(); S.rec.open = true; renderOverlay(); $('#rec-hide')?.focus(); break;
     case 'det-close': S.detect = { ...S.detect, state:null, menu:false }; renderOverlay(); break;
@@ -2266,7 +2360,7 @@ document.addEventListener('click', e => {
     case 'rec-mute': S.rec.muted = !S.rec.muted; renderOverlay(); break;
     case 'rec-toggle': S.rec.open = !S.rec.open; renderOverlay(); $(S.rec.open ? '#rec-hide' : '#rec-pill')?.focus(); break;
     case 'rec-dismiss': S.rec = { state:null }; renderOverlay(); break;
-    case 'dict-start': S.mb.open = false; startDict(false); $('#dict-done')?.focus(); break;
+    case 'dict-start': S.mb.open = false; startDict(false, !!el.dataset.clean); $('#dict-done')?.focus(); break;
     case 'dict-stop': stopDict(); break;
     case 'spage': S.setPage = el.dataset.p; render(); $('#spage').scrollTop = 0; $(`[data-act=spage][data-p=${S.setPage}]`).focus(); break;
     case 'dict-rm': S.set.dict = S.set.dict.filter(w => w !== el.dataset.w); render(); $('#dict-in').focus(); break;
@@ -2297,9 +2391,12 @@ document.addEventListener('change', e => {
     case 'model': t.model = el.value; break;
     case 'set':
       if (/^(text|url|password)$/.test(el.type)) { setPath(el.dataset.path, el.value); break; }
-      setPath(el.dataset.path, el.type === 'checkbox' ? el.checked : el.value); render(); document.getElementById(el.id)?.focus(); break;
+      setPath(el.dataset.path, el.type === 'checkbox' ? el.checked : el.value); if (el.dataset.path === 'cleanProto') cleanProto(el.value); render(); document.getElementById(el.id)?.focus(); break;
     case 'folder': byId(el.dataset.id).folder = el.value; break;
     case 'ai-fail': S.ai.fail = el.checked; break;
+    case 'style-app': { const st = styleBy(el.dataset.id), a = el.value; if (!a) break;
+      S.set.styles.forEach(o => { o.apps = o.apps.filter(x => x !== a); }); st.apps.push(a);   // an app belongs to one style, so adding it moves it
+      render(); $(`[data-bind=style-app][data-id="${st.id}"]`).focus(); break; }
     case 'ai-add': if (el.dataset.f === 'preset') { const pr = PRESETS.find(x => x[0] === el.value); Object.assign(S.ai.add, { preset:pr[0], name:pr[2], url:pr[3], err:{} }); render(); $('#add-preset').focus(); } break;
     case 'tpl': S.regen.tpl = el.value; break;
   }
@@ -2309,6 +2406,9 @@ document.addEventListener('input', e => {
   if (el.dataset.bind === 'key') S.tasks[el.dataset.k].key = el.value;
   if (el.dataset.path === 'liquidFrost') el.style.setProperty('--v', el.value + '%'); // live fill; the change event commits
   if (el.id === 'prompt') S.regen.draft = el.value;
+  if (el.dataset.style) { const st = styleBy(el.dataset.style);
+    if (el.dataset.f === 'name') st.name = el.value.trim() || 'Untitled';
+    else { st.text = el.value === STYLE_DEF[st.id] ? null : el.value; const r = $('#reset-' + st.id); if (r) r.disabled = st.text == null; } }
   if (el.dataset.bind === 'ai-add' && el.dataset.f !== 'preset') { S.ai.add[el.dataset.f] = el.value; if (el.dataset.f === 'url') $('#add-pill').innerHTML = hostPill(el.value); }
   if (el.id === 'pk-q') { S.ai.q = el.value; $('#pk-list').innerHTML = pickerItems(S.pop.slice(5)); }
   if (el.id === 'clipq' || el.id === 'mq') {
@@ -2363,7 +2463,7 @@ document.addEventListener('keydown', e => {
   if ((e.key === 'Enter' || e.key === ' ') && e.target.matches?.('tr[data-act]')) { e.preventDefault(); e.target.click(); return; }
   if (S.hkRec) {
     e.preventDefault(); e.stopPropagation();
-    if (e.key === 'Escape') { S.hkRec = false; render(); $('#hk-btn')?.focus(); return; }
+    if (e.key === 'Escape') { const p = S.hkRec; S.hkRec = false; render(); $('#hk-' + p)?.focus(); return; }
     if (MOD_SIDE[e.code]) { S.hkMod = MOD_SIDE[e.code]; return; }   // wait: modifier alone or part of a combo
     const mods = [e.ctrlKey && '⌃', e.altKey && '⌥', e.shiftKey && '⇧', e.metaKey && '⌘'].filter(Boolean);
     hkSave([...mods, hkKeyName(e)].join('+'));
