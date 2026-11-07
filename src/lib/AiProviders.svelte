@@ -231,7 +231,7 @@
               </div>
             {:else}
               <div class="top">
-                <span class="pname"><span class="name">{p.name}</span><span class="url">{p.url}{p.has_key ? " · key in Keychain" : ""}</span></span>
+                <span class="pname"><span class="name">{p.name}</span><span class="url">{p.url}</span>{#if p.has_key}<span class="help">Key in Keychain</span>{/if}</span>
                 {@render pill(p.off_device)}
                 <button type="button" class="btn tbtn" disabled={t?.st === "run"} onclick={() => test(p)}>Test</button>
                 <button type="button" class="btn icon quiet" id="rm-{p.id}" aria-label="Remove {p.name}" onclick={() => (confirm = p.id)}><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" /></svg></button>
@@ -374,7 +374,7 @@
   .btn.icon { width: var(--h-ctl-sm); height: var(--h-ctl-sm); padding: 0; justify-content: center; }
   .btn.sm { height: var(--h-ctl-sm); padding: 0 10px; }
   .pop-wrap { position: relative; }
-  .pk-btn { max-width: 300px; }
+  .pk-btn { max-width: 360px; }
   .pop { position: absolute; z-index: 10; right: 0; top: calc(100% + var(--sp-1)); width: min(420px, calc(100vw - 96px)); box-sizing: border-box; padding: 5px;
     border-radius: var(--r-lg); background: var(--bg-raised); box-shadow: var(--shadow-menu); }
   .search { margin-bottom: 5px; }

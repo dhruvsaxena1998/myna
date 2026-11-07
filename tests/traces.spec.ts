@@ -136,7 +136,7 @@ test("a cold start shows the model load wait; Back returns to the list", async (
   await expect(page.getByRole("region", { name: "What Myna changed" })).toContainText("nothing · English · Tidy up on");
   await expect(page.getByLabel("Timing", { exact: true }).first()).toContainText("Model load wait 1.42 s");
   await expect(page.getByText("Tap to start and stop")).toBeVisible();
-  await page.getByRole("button", { name: "‹ All dictations" }).click();
+  await page.getByRole("button", { name: "All dictations" }).click();
   await expect(page.getByRole("list", { name: "Dictations" })).toBeVisible();
 });
 

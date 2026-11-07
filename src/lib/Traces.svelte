@@ -109,7 +109,7 @@
 {#if open}
   {@const t = open.t}
   <div class="top">
-    <button class="back" onclick={() => (open = null)}>‹ All dictations</button>
+    <button class="back" onclick={() => (open = null)}><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6 8.5 12l6 6" /></svg>All dictations</button>
   </div>
   <div class="head">
     <div>
@@ -263,7 +263,8 @@
   .badge { font-size: var(--fs-caption); border-radius: var(--r-full); padding: 0 8px; height: 20px; display: inline-flex; align-items: center; background: var(--fill-hover); color: var(--text-2); font-weight: 500; white-space: nowrap; }
   .badge.bad { background: var(--caution-soft); color: var(--caution-text); }
   .top { margin-bottom: var(--sp-2); }
-  .back { border: 0; background: none; padding: 0; font: inherit; color: var(--accent-text); border-radius: var(--r-sm); }
+  .back { display: inline-flex; align-items: center; gap: 2px; min-height: 24px; margin-left: -4px; padding: 0 4px 0 0; border: 0; background: none; font: inherit; color: var(--accent-text); border-radius: var(--r-sm); }
+  .back .ic { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   .head { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--sp-3); }
   h2 { margin: 0; font-size: var(--fs-title3); line-height: var(--lh-title3); font-weight: var(--fw-semibold); }
   .reason { margin: 2px 0 var(--sp-2); min-height: var(--lh-footnote); }

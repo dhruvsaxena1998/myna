@@ -135,7 +135,7 @@ async function open(page: Page, traces = TRACES) {
   await page.getByRole("navigation", { name: "Sidebar" }).getByRole("button", { name: "Stats for nerds" }).click();
 }
 const list = (page: Page) => page.getByRole("list", { name: "Dictations" }).getByRole("listitem");
-const tile = (page: Page, name: string) => page.locator(".tile", { hasText: name });
+const tile = (page: Page, name: string) => page.locator(".tile", { has: page.locator(".label", { hasText: name }) });
 
 test("the tiles, chart and tables for the last 7 days", async ({ page }) => {
   await open(page);
@@ -219,7 +219,7 @@ test("opening a trace and going back keeps the period, filters and row filter", 
   await page.getByRole("region", { name: "By model" }).getByRole("row", { name: /Whisper/ }).click();
   await list(page).first().getByRole("button").click();
   await expect(page.getByRole("radio", { name: "30 days" })).toHaveCount(0);
-  await page.getByRole("button", { name: "‹ All dictations" }).click();
+  await page.getByRole("button", { name: "All dictations" }).click();
   await expect(page.getByRole("radio", { name: "30 days" })).toBeChecked();
   await expect(page.getByText("Only Whisper Large v3 Turbo")).toBeVisible();
 });

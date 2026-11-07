@@ -33,12 +33,12 @@
   <div class="tile">
     <span class="label">Let go → pasted</span>
     <span class="big">{@render g(ov.med, dur(ov.med.v))}</span>
-    <span class="sub">median<br />p90 {@render g(ov.p90, dur(ov.p90.v))}</span>
+    <span class="sub">{#if shown(ov.med)}median<br />p90 {@render g(ov.p90, dur(ov.p90.v))}{:else}{why(ov.med.n)}{/if}</span>
   </div>
   <div class="tile">
     <span class="label">Cold starts</span>
     <span class="big">{@render g(ov.cold, pct(ov.cold))}</span>
-    <span class="sub">waited for the model<br />median wait {@render g(ov.wait, dur(ov.wait.v))}</span>
+    <span class="sub">{#if shown(ov.cold)}waited for the model<br />median wait {@render g(ov.wait, dur(ov.wait.v))}{:else}{why(ov.cold.n)}{/if}</span>
   </div>
   <div class="tile">
     <span class="label">Edits per 100 words</span>

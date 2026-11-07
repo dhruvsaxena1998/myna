@@ -24,7 +24,7 @@ test("Listening: level bars follow the mic, with Release to paste", async ({ pag
   await open(page);
   await say(page, "listening");
   const pill = page.getByRole("status");
-  await expect(pill).toHaveText("ListeningRelease to paste");
+  await expect(pill).toHaveText("ListeningRelease ⌥Space to paste");
   const middle = pill.locator(".lvl i").nth(2);
   await expect(middle).toHaveCSS("transform", "matrix(1, 0, 0, 0.2, 0, 0)");
   await emit(page, "dictation-level", 1);
@@ -76,7 +76,7 @@ test("a new dictation keeps the pill up past an earlier result's timer", async (
   await page.clock.runFor(1000);
   await say(page, "listening");
   await page.clock.runFor(1000);
-  await expect(page.getByRole("status")).toHaveText("ListeningRelease to paste");
+  await expect(page.getByRole("status")).toHaveText("ListeningRelease ⌥Space to paste");
 });
 
 test("a tap hides the pill at once", async ({ page }) => {
@@ -161,7 +161,7 @@ test("hold mode never counts down", async ({ page }) => {
   await open(page);
   await say(page, "listening", true);
   await page.clock.runFor(290_000);
-  await expect(page.getByRole("status")).toHaveText("ListeningRelease to paste");
+  await expect(page.getByRole("status")).toHaveText("ListeningRelease ⌥Space to paste");
 });
 
 // Liquid Glass: the backend puts macOS's glass where the page says the pill is.

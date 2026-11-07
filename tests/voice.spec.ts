@@ -79,10 +79,10 @@ test("a shortcut another app holds says so and keeps the old one", async ({ page
 
 test("Tap to start and stop saves, says how it stops, and the preview follows", async ({ page }) => {
   await open(page);
-  await expect(page.getByRole("img", { name: /Preview/ })).toContainText("Release to paste");
+  await expect(page.getByRole("img", { name: /Preview/ })).toContainText("Release ⌥Space to paste");
   await page.getByText("Tap to start and stop").click();
   await expect(page.getByText("Press once to start and again to stop. Stops by itself after 5 minutes.")).toBeVisible();
-  await expect(page.getByRole("img", { name: /Preview/ })).toContainText("Press again to paste");
+  await expect(page.getByRole("img", { name: /Preview/ })).toContainText("Press ⌥Space again to paste");
   expect(await calls(page, "voice_set")).toEqual([{ voice: { on: true, key: "Alt+Space", clean: null, mode: "tap", paste: "clipboard" } }]);
 });
 

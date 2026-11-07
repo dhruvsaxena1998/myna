@@ -88,7 +88,7 @@
 <style>
   .row + .row { box-shadow: inset 0 .5px 0 var(--line); }
   .help.after { margin: 6px 0 0; }
-  .chipin { display: flex; flex-wrap: wrap; align-items: center; align-content: flex-start; gap: 6px; min-height: 80px; box-sizing: border-box; padding: 10px 12px;
+  .chipin { display: flex; flex-wrap: wrap; align-items: center; align-content: flex-start; gap: 6px; min-height: var(--h-ctl-lg); box-sizing: border-box; padding: 6px 8px;
     border-radius: var(--r-lg); background: var(--fill-field); box-shadow: inset 0 0 0 .5px var(--line-strong); cursor: text; }
   .chipin:focus-within { box-shadow: inset 0 0 0 1.5px var(--accent); }
   /* Tag: capsule, 22px (DESIGN.md), lifted off the field like a control. */
