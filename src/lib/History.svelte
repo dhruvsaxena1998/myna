@@ -117,7 +117,7 @@
   li + li::before { content: ""; position: absolute; top: 0; left: var(--sp-4); right: 0; height: 1px; transform: scaleY(.5); transform-origin: top; background: var(--line); }
   li:hover { background: var(--fill-hover); }
   .body { flex: 1; min-width: 0; display: grid; gap: 2px; }
-  p { margin: 0; font-size: 14px; line-height: 1.6; user-select: text; overflow-wrap: anywhere; }
+  p { margin: 0; font-size: var(--fs-reading); line-height: var(--lh-reading); user-select: text; overflow-wrap: anywhere; }
   .clamp { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .meta { color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
   .link { border: 0; background: none; padding: 0; font: inherit; color: var(--accent-text); border-radius: var(--r-sm); }

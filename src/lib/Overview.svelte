@@ -175,7 +175,7 @@
   .tile { display: grid; grid-template-rows: 16px 32px 50px; gap: 2px; }
   .label, .sub, .help { color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
   .help { margin: 0; }
-  .big { font-size: 24px; line-height: 32px; font-weight: var(--fw-semibold); }
+  .big { font-size: 26px; line-height: 32px; font-weight: var(--fw-semibold); }
   .sub .thin { margin: 4px 0 6px; }
   .split { display: block; font-variant-numeric: tabular-nums; }
   .gap { color: var(--text-3); cursor: help; }

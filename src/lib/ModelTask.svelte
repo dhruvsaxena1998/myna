@@ -109,7 +109,7 @@
             <input type="radio" name="model-{task.id}" id="m-{m.id}" value={m.id} checked={active === m.id}
               disabled={blocked} onchange={() => pick(m.id)} />
             <label for="m-{m.id}">
-              <span class="name">{m.name}{#if !tools} <span class="vendor">{m.vendor}</span>{/if}</span>
+              <span class="name">{m.name}{#if !tools}{" "}<span class="vendor">{m.vendor}</span>{/if}</span>
               <span class="desc">{m.desc}</span>
             </label>
             <span class="rates">{@render rating("Accuracy", m.acc, ACC)}{@render rating("Speed", m.spd, SPD)}</span>

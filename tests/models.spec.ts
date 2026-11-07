@@ -267,3 +267,8 @@ test("sort works inside each provider and keeps the providers in place", async (
   expect(await names(page)).toEqual(["parakeet", "apple", "w-large", "w-turbo", "w-small"]);
   expect(await headings(page)).toEqual(["NVIDIA", "Apple", "OpenAI"]);
 });
+
+test("a task without grouping shows the vendor after the name, with a space", async ({ page }) => {
+  await open(page);
+  await expect(page.getByRole("radiogroup", { name: "Telling voices apart model" }).getByText("who Vendor")).toBeVisible();
+});

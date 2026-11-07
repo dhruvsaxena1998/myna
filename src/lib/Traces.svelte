@@ -277,7 +277,7 @@
   .legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: var(--sp-2); min-height: var(--lh-footnote); font-size: var(--fs-footnote); color: var(--text-2); }
   .legend span { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
   .legend span::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--c); }
-  .text { font-size: var(--fs-reading); line-height: 30px; margin-top: var(--sp-2); user-select: text; }
+  .text { font-size: var(--fs-reading); line-height: 28px; margin-top: var(--sp-2); user-select: text; }
   .note { margin: 4px 0 0; min-height: var(--lh-footnote); }
   .e { border-radius: 4px; padding: 1px; }
   /* One mark per edit: what went is struck in the rule's colour, what came is underlined in it. The tint only shows on hover or focus, to tie the edit to its chip. */
