@@ -210,3 +210,60 @@ test("Apple Speech in a language Apple doesn't support can't be picked", async (
   await expect(page.getByRole("radio", { name: /Apple Speech/ })).toBeDisabled();
   await expect(page.getByText("Needs a language Apple supports")).toBeVisible();
 });
+
+// A longer speech-to-text list from three providers; parakeet is chosen.
+const many = JSON.stringify([
+  { id: "stt", active: "parakeet", models: [
+    model("parakeet", { name: "Parakeet TDT v3", vendor: "NVIDIA", default: true, acc: 5, spd: 5, size: 670 }),
+    model("apple", { name: "Apple Speech", vendor: "Apple", acc: 4, spd: 5, size: 0, system: true, files: [] }),
+    model("w-small", { name: "Whisper small", vendor: "OpenAI", acc: 3, spd: 4, size: 488 }),
+    model("w-large", { name: "Whisper large-v3", vendor: "OpenAI", acc: 4, spd: 2, size: 1081 }),
+    model("w-turbo", { name: "Whisper large-v3-turbo", vendor: "OpenAI", acc: 4, spd: 3, size: 1624 }),
+  ] },
+  { id: "diar", active: "sortformer", models: [model("sortformer", { vendor: "NVIDIA" })] },
+]);
+async function openMany(page: import("@playwright/test").Page) {
+  await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", models_list: () => (${many}), model_select: () => null }`);
+  await page.goto("/settings");
+  await page.getByRole("option", { name: "Speech models" }).click();
+}
+const stt = (page: import("@playwright/test").Page) => page.getByRole("radiogroup", { name: "Turning speech into text model" });
+const names = (page: import("@playwright/test").Page) => stt(page).getByRole("radio").evaluateAll((rs) => rs.map((r) => (r as HTMLInputElement).value));
+const headings = (page: import("@playwright/test").Page) => stt(page).getByRole("heading").allTextContents();
+
+test("speech-to-text models are grouped by provider in catalog order", async ({ page }) => {
+  await openMany(page);
+  expect(await headings(page)).toEqual(["NVIDIA", "Apple", "OpenAI"]);
+  await expect(stt(page).getByRole("list", { name: "OpenAI" }).getByRole("listitem")).toHaveCount(3);
+  // The voices list stays plain: no search, no sort, no headings.
+  const diar = page.locator("section", { has: page.getByRole("heading", { name: "Telling voices apart" }) });
+  await expect(diar.getByRole("searchbox")).toHaveCount(0);
+  await expect(diar.getByRole("heading", { level: 3 })).toHaveCount(0);
+});
+
+test("fuzzy search on the name forgives a typo and never hides the chosen model", async ({ page }) => {
+  await openMany(page);
+  const box = page.getByRole("searchbox", { name: "Search models" });
+  await box.fill("wisper turbo");
+  expect(await names(page)).toEqual(["parakeet", "w-turbo"]);
+  expect(await headings(page)).toEqual(["NVIDIA", "OpenAI"]);
+  await box.fill("zzz");
+  expect(await names(page)).toEqual(["parakeet"]);
+  await expect(page.getByText("No model matches “zzz”.")).toBeVisible();
+  await box.press("Escape");
+  expect(await names(page)).toHaveLength(5);
+  await expect(page.getByText("No model matches")).toHaveCount(0);
+});
+
+test("sort works inside each provider and keeps the providers in place", async ({ page }) => {
+  await openMany(page);
+  const sort = page.getByRole("combobox", { name: "Sort by" });
+  await expect(sort).toHaveValue("rec");
+  await sort.selectOption("spd");
+  expect(await names(page)).toEqual(["parakeet", "apple", "w-small", "w-turbo", "w-large"]);
+  await sort.selectOption("size");
+  expect(await names(page)).toEqual(["parakeet", "apple", "w-small", "w-large", "w-turbo"]);
+  await sort.selectOption("acc");
+  expect(await names(page)).toEqual(["parakeet", "apple", "w-large", "w-turbo", "w-small"]);
+  expect(await headings(page)).toEqual(["NVIDIA", "Apple", "OpenAI"]);
+});

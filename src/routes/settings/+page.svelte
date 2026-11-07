@@ -88,7 +88,7 @@
           <ErrorState title="Myna couldn't list its models" message={data.models?.error ?? ""} />
         {:else}
           {@const [stt, diar] = data.models.tasks}
-          <ModelTask task={stt} title="Turning speech into text" help="Used for voice typing and meeting notes." />
+          <ModelTask task={stt} title="Turning speech into text" help="Used for voice typing and meeting notes." tools />
           <UnloadAfter initial={data.models.unload} />
           <ModelTask task={diar} title="Telling voices apart" help="Works out who said what. Always runs on this Mac. Your own voice is always “Me”." />
         {/if}

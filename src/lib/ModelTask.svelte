@@ -4,8 +4,10 @@
   import { onMount } from "svelte";
   import { fmtSize, type Task } from "$lib/models";
   import { dl, watchDownloads } from "$lib/downloads.svelte";
+  import { fuzzy } from "$lib/fuzzy";
 
-  let { task, title, help }: { task: Task; title: string; help: string } = $props();
+  // `tools`: provider headings, Sort by and a search box, for a list long enough to need them.
+  let { task, title, help, tools = false }: { task: Task; title: string; help: string; tools?: boolean } = $props();
 
   let active = $derived(task.active); // assignable: a pick shows at once, a failed save reverts it
   let error = $state("");
@@ -42,6 +44,22 @@
     }
   }
 
+  let q = $state("");
+  let sort = $state<"rec" | "acc" | "spd" | "size">("rec");
+  const SORTS = [["rec", "Recommended"], ["acc", "Accuracy"], ["spd", "Speed"], ["size", "Size"]] as const;
+  let hits = $derived(task.models.filter((m) => fuzzy(q, m.name)));
+  // The chosen model never searches out of sight. Best first for accuracy and speed, smallest first for size; ties keep the catalog's order.
+  let visible = $derived.by(() => {
+    const list = task.models.filter((m) => m.id === active || hits.includes(m));
+    if (sort === "size") return list.sort((a, b) => a.size - b.size);
+    return sort === "rec" ? list : list.sort((a, b) => (sort === "acc" ? b.acc - a.acc : b.spd - a.spd));
+  });
+  // Providers in catalog order, whatever the sort.
+  let groups = $derived(
+    tools ? [...new Set(task.models.map((m) => m.vendor))].map((v) => ({ v, models: visible.filter((m) => m.vendor === v) })).filter((g) => g.models.length)
+      : [{ v: "", models: task.models }],
+  );
+
   const ACC = ["", "Basic", "Fair", "Good", "Great", "Best"];
   const SPD = ["", "Slow", "Steady", "Quick", "Fast", "Fastest"];
 
@@ -69,49 +87,81 @@
 <section class="task" aria-labelledby="task-{task.id}">
   <h2 id="task-{task.id}">{title}</h2>
   <p class="help">{help}</p>
-  <ul class="list" role="radiogroup" aria-label="{title} model">
-    {#each task.models as m (m.id)}
-      {@const blocked = !!m.needs}
-      <li class="row" class:blocked>
-        <input type="radio" name="model-{task.id}" id="m-{m.id}" value={m.id} checked={active === m.id}
-          disabled={blocked} onchange={() => pick(m.id)} />
-        <label for="m-{m.id}">
-          <span class="name">{m.name} <span class="vendor">{m.vendor}</span></span>
-          <span class="desc">{m.desc}</span>
-        </label>
-        <span class="rates">{@render rating("Accuracy", m.acc, ACC)}{@render rating("Speed", m.spd, SPD)}</span>
-        <!-- Fixed width so the state can change (Download → progress → Installed) without moving the row. -->
-        <div class="dl">
-          <!-- Apple Speech: macOS owns the model, so no size, no Cancel (Apple's download can't stop), no Remove. SDK models (Voz) can't cancel either. -->
-          {#if blocked}
-            {#if !m.system}<span class="size">{fmtSize(m.size)}</span>{/if}<span class="pill">{m.needs}</span>
-          {:else if m.id in dl.pct}
-            <span class="bar" role="progressbar" aria-label="Downloading {m.name}" aria-valuenow={dl.pct[m.id]} aria-valuemin="0" aria-valuemax="100"><b style:transform="scaleX({dl.pct[m.id] / 100})"></b></span>
-            <span class="size">{dl.pct[m.id]}%</span>
-            {#if !m.system && !m.sdk}<button class="btn" onclick={() => cancel(m.id)}>Cancel</button>{/if}
-          {:else if installed(m)}
-            <span class="ok"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>Installed</span>
-            {#if !m.system}
-              <span class="size">{fmtSize(m.size)}</span>
-              <button class="btn quiet" aria-label="Remove {m.name}" onclick={() => remove(m.id)}>Remove</button>
-            {/if}
-          {:else if m.files.length === 0 && !m.system && !m.sdk}
-            <span class="size">{fmtSize(m.size)}</span><span class="pill">Coming soon</span>
-          {:else}
-            {#if !m.system}<span class="size">{fmtSize(m.size)}</span>{/if}
-            <button class="btn" aria-label="Download {m.name}" onclick={() => start(m.id)}>
-              <svg class="ic" viewBox="0 0 24 24" aria-hidden="true">{#if dl.retry[m.id]}<path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6" />{:else}<path d="M12 4v11M7 10l5 5 5-5M5 20h14" />{/if}</svg>{dl.retry[m.id] ? "Try again" : "Download"}
-            </button>
-          {/if}
-        </div>
-      </li>
+  {#if tools}
+    <div class="tools">
+      <label class="search">
+        <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" /><path d="M16 16l4.5 4.5" /></svg>
+        <input bind:value={q} type="search" placeholder="Search models" aria-label="Search models" autocomplete="off" spellcheck="false"
+          onkeydown={(e) => { if (e.key === "Escape" && q) { e.preventDefault(); q = ""; } }} />
+      </label>
+      <label class="sort"><span>Sort by</span>
+        <select class="select" bind:value={sort}>{#each SORTS as [v, l] (v)}<option value={v}>{l}</option>{/each}</select>
+      </label>
+    </div>
+  {/if}
+  <div role="radiogroup" aria-label="{title} model">
+    {#each groups as g, i (g.v)}
+      {#if g.v}<h3 class="group" id="mg-{task.id}-{i}">{g.v}</h3>{/if}
+      <ul class="list" aria-labelledby={g.v ? `mg-${task.id}-${i}` : undefined}>
+        {#each g.models as m (m.id)}
+          {@const blocked = !!m.needs}
+          <li class="row" class:blocked>
+            <input type="radio" name="model-{task.id}" id="m-{m.id}" value={m.id} checked={active === m.id}
+              disabled={blocked} onchange={() => pick(m.id)} />
+            <label for="m-{m.id}">
+              <span class="name">{m.name}{#if !tools} <span class="vendor">{m.vendor}</span>{/if}</span>
+              <span class="desc">{m.desc}</span>
+            </label>
+            <span class="rates">{@render rating("Accuracy", m.acc, ACC)}{@render rating("Speed", m.spd, SPD)}</span>
+            <!-- Fixed width so the state can change (Download → progress → Installed) without moving the row. -->
+            <div class="dl">
+              <!-- Apple Speech: macOS owns the model, so no size, no Cancel (Apple's download can't stop), no Remove. SDK models (Voz) can't cancel either. -->
+              {#if blocked}
+                {#if !m.system}<span class="size">{fmtSize(m.size)}</span>{/if}<span class="pill">{m.needs}</span>
+              {:else if m.id in dl.pct}
+                <span class="bar" role="progressbar" aria-label="Downloading {m.name}" aria-valuenow={dl.pct[m.id]} aria-valuemin="0" aria-valuemax="100"><b style:transform="scaleX({dl.pct[m.id] / 100})"></b></span>
+                <span class="size">{dl.pct[m.id]}%</span>
+                {#if !m.system && !m.sdk}<button class="btn" onclick={() => cancel(m.id)}>Cancel</button>{/if}
+              {:else if installed(m)}
+                <span class="ok"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>Installed</span>
+                {#if !m.system}
+                  <span class="size">{fmtSize(m.size)}</span>
+                  <button class="btn quiet" aria-label="Remove {m.name}" onclick={() => remove(m.id)}>Remove</button>
+                {/if}
+              {:else if m.files.length === 0 && !m.system && !m.sdk}
+                <span class="size">{fmtSize(m.size)}</span><span class="pill">Coming soon</span>
+              {:else}
+                {#if !m.system}<span class="size">{fmtSize(m.size)}</span>{/if}
+                <button class="btn" aria-label="Download {m.name}" onclick={() => start(m.id)}>
+                  <svg class="ic" viewBox="0 0 24 24" aria-hidden="true">{#if dl.retry[m.id]}<path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6" />{:else}<path d="M12 4v11M7 10l5 5 5-5M5 20h14" />{/if}</svg>{dl.retry[m.id] ? "Try again" : "Download"}
+                </button>
+              {/if}
+            </div>
+          </li>
+        {/each}
+      </ul>
     {/each}
-  </ul>
+  </div>
+  {#if tools}<p class="none" role="status">{q.trim() && !hits.length ? `No model matches “${q.trim()}”.` : ""}</p>{/if}
   <p class="err" role="status">{shown}</p>
 </section>
 
 <style>
   .task + :global(.task) { margin-top: var(--sp-5); }
+  .tools { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); margin-bottom: var(--sp-1); }
+  .sort { display: flex; align-items: center; gap: var(--sp-2); color: var(--text-3); font-size: var(--fs-footnote); }
+  .sort .select { width: auto; }
+  .group { margin: var(--sp-3) 0 var(--sp-1); padding: 0 var(--sp-4); font-size: var(--fs-footnote); font-weight: var(--fw-semibold); color: var(--text-3); }
+  .list + .group { margin-top: var(--sp-4); }
+  /* Reserved line, so a search with no match never shifts the page. */
+  .none { margin: var(--sp-1) 0 0; min-height: var(--lh-footnote); color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
+  /* Same search field as Voice typing history (History.svelte). */
+  .search { position: relative; display: flex; align-items: center; flex: 0 1 220px; min-width: 120px; }
+  .search > .ic { position: absolute; left: 10px; color: var(--text-3); pointer-events: none; }
+  .search input { width: 100%; box-sizing: border-box; height: var(--h-ctl); padding: 0 30px; border: 0; border-radius: var(--r-full); background: var(--fill-field);
+    box-shadow: inset 0 0 0 .5px var(--line-strong); color: var(--text); font: inherit; outline: none; -webkit-appearance: none; appearance: none; }
+  .search input::-webkit-search-cancel-button { display: none; }
+  .search input:focus-visible { box-shadow: inset 0 0 0 1.5px var(--accent); }
   h2 { margin: 0; font-size: var(--fs-title3); line-height: var(--lh-title3); font-weight: var(--fw-semibold); }
   .help { margin: var(--sp-1) 0 var(--sp-3); color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
   .list { container-type: inline-size; list-style: none; margin: 0; padding: 0; border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); }
