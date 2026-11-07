@@ -88,12 +88,15 @@ pub fn fetch(base: &str, m: &Model, models_dir: &Path, cancel: &AtomicBool, mut 
 fn files(base: &str, m: &Model, tmp: &Path, cancel: &AtomicBool, progress: &mut impl FnMut(u64)) -> Result<bool, String> {
     let mut total = 0u64;
     let mut buf = vec![0u8; 256 * 1024];
+    // Some networks drop one of a CDN's IPs (seen on GitHub's release assets); without this each dead IP waits out the OS's ~75 s.
+    // ureq splits the budget across IPs (about 4, 2, 1 and 0.5 s for four); it covers the TLS handshake too, so it's roomier than update.rs's 4 s.
+    let agent: ureq::Agent = ureq::Agent::config_builder().timeout_connect(Some(std::time::Duration::from_secs(8))).build().into();
     for f in &m.files {
         let (url, want_size, want_sha) = match &f.archive {
             Some(a) => (a.url.clone(), a.size, &a.sha256),
             None => (format!("{base}/{}/resolve/{}/{}", m.repo, m.revision, f.path), f.size, &f.sha256),
         };
-        let resp = ureq::get(url.as_str()).call().map_err(|e| format!("Couldn't download {}: {e}", m.name))?;
+        let resp = agent.get(url.as_str()).call().map_err(|e| format!("Couldn't download {}: {e}", m.name))?;
         let mut body = resp.into_body().into_reader();
         let dest = tmp.join(if f.archive.is_some() { ".archive.tgz" } else { &f.path }); // catalog paths may sit in a repo subfolder
         let mut out = std::fs::create_dir_all(dest.parent().unwrap_or(tmp))
