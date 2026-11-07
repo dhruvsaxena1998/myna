@@ -60,6 +60,18 @@ pub fn setup(w: &WebviewWindow) {
     // pill is never closed or released.
     unsafe { objc2::ffi::object_setClass((ns as *const NSWindow).cast_mut().cast(), NSPanel::class()) };
     ns.setStyleMask(ns.styleMask() | NSWindowStyleMask::NonactivatingPanel);
+    // The swap skips NSPanel's init, and setStyleMask: alone doesn't tell the WindowServer: without this a click
+    // still activated Myna (seen: 👎 took focus from the app being typed into). Private, so only if it's there.
+    let sel = objc2::sel!(_setPreventsActivation:);
+    // SAFETY: plain message sends to the live pill window, on the main thread (setup runs there).
+    unsafe {
+        let responds: bool = objc2::msg_send![ns, respondsToSelector: sel];
+        if responds {
+            let _: () = objc2::msg_send![ns, _setPreventsActivation: true];
+        } else {
+            eprintln!("dictation: the pill can't stop a click activating Myna on this macOS");
+        }
+    }
     ns.setIgnoresMouseEvents(true);
     ns.setLevel(NSStatusWindowLevel);
     ns.setCollectionBehavior(B::CanJoinAllSpaces | B::FullScreenAuxiliary | B::Stationary | B::IgnoresCycle);
