@@ -55,8 +55,10 @@ pub fn setup(w: &WebviewWindow) {
     let Some(ns) = ns(w) else { return };
     // A non-activating panel: a click on 👍/👎 leaves the app being typed into frontmost and focused.
     // Same as tauri-nspanel: swap the class, since only an NSPanel honours NonactivatingPanel.
-    // SAFETY: NSPanel is an NSWindow subclass that adds no instance variables; the pill is never closed.
-    unsafe { objc2::runtime::AnyObject::set_class(ns, NSPanel::class()) };
+    // SAFETY: raw object_setClass, as tauri-nspanel does: tao's window class is 8 bytes bigger (its own ivar),
+    // which objc2's checked set_class refuses. The memory stays allocated; NSPanel just doesn't use it, and the
+    // pill is never closed or released.
+    unsafe { objc2::ffi::object_setClass((ns as *const NSWindow).cast_mut().cast(), NSPanel::class()) };
     ns.setStyleMask(ns.styleMask() | NSWindowStyleMask::NonactivatingPanel);
     ns.setIgnoresMouseEvents(true);
     ns.setLevel(NSStatusWindowLevel);

@@ -21,7 +21,7 @@
     if (fix === null || !said.some((r) => r.id === fix)) return;
     (q = ""), (panel = fix), (fix = null); // a search could hide the row
   });
-  let thumbs: Record<number, Thumbs> = {};
+  const thumbs: Record<number, Thumbs> = $state({});
 
   const shown = $derived.by(() => {
     const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
