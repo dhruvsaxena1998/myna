@@ -101,19 +101,6 @@
   <h1>Stats for nerds</h1>
   {#if !open}
     <span class="grow" data-tauri-drag-region></span>
-    <fieldset class="seg" aria-label="Period">
-      {#each PERIODS as [v, label]}
-        <label><input type="radio" name="period" value={v} bind:group={f.period} /><span data-l={label}>{label}</span></label>
-      {/each}
-    </fieldset>
-    <select class="select" aria-label="Model" bind:value={f.model}>
-      <option value="all">All models</option>
-      {#each models as m}<option value={m}>{m}</option>{/each}
-    </select>
-    <select class="select" aria-label="App" bind:value={f.app}>
-      <option value="all">All apps</option>
-      {#each apps as a}<option value={a}>{a}</option>{/each}
-    </select>
     <ClearAll count={traces.length} onclear={() => { traces = []; f.pick = null; onclear(); }} />
   {/if}
 </header>
@@ -185,6 +172,21 @@
   {/if}
 {:else}
   <div class="overview">
+    <div class="filters">
+      <fieldset class="seg" aria-label="Period">
+        {#each PERIODS as [v, label]}
+          <label><input type="radio" name="period" value={v} bind:group={f.period} /><span data-l={label}>{label}</span></label>
+        {/each}
+      </fieldset>
+      <select class="select" aria-label="Model" bind:value={f.model}>
+        <option value="all">All models</option>
+        {#each models as m}<option value={m}>{m}</option>{/each}
+      </select>
+      <select class="select" aria-label="App" bind:value={f.app}>
+        <option value="all">All apps</option>
+        {#each apps as a}<option value={a}>{a}</option>{/each}
+      </select>
+    </div>
     <Overview {ov} pick={f.pick} {onpick} />
     <section aria-labelledby="list-h">
       <div class="lhead">
@@ -228,7 +230,10 @@
   .seg input:checked + span { background: var(--fill-control-on); color: var(--text); font-weight: var(--fw-medium); box-shadow: 0 0 0 .5px var(--line-strong), 0 1px 2px rgba(0, 0, 0, .1); }
   .seg input:focus-visible + span { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
   .select { max-width: 200px; }
-  .overview { display: grid; gap: var(--sp-3); align-content: start; max-width: 1000px; margin: 0 auto; }
+  /* minmax(0, 1fr): the tables' min-content width never pushes the cards past the panel; their .scroll scrolls instead. */
+  .overview { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-3); align-content: start; max-width: 1000px; margin: 0 auto; container: overview / inline-size; }
+  .filters { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+  .filters .grow { flex: 1; }
   .lhead { display: flex; align-items: center; gap: var(--sp-3); height: 32px; margin: var(--sp-3) 0 var(--sp-1); }
   .lhead h2 { margin: 0; }
   .n { font-weight: var(--fw-regular); color: var(--text-3); font-variant-numeric: tabular-nums; margin-left: 4px; }

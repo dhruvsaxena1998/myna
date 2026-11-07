@@ -250,3 +250,12 @@ test("traces_all failing shows the error state", async ({ page }) => {
   await page.getByRole("navigation", { name: "Sidebar" }).getByRole("button", { name: "Stats for nerds" }).click();
   await expect(page.getByRole("alert")).toContainText("disk on fire");
 });
+
+test("fits the main window at its default size: nothing runs past the panel", async ({ page }) => {
+  await page.setViewportSize({ width: 1000, height: 640 });
+  await open(page);
+  await expect(page.getByRole("heading", { name: "Stats for nerds" })).toHaveCSS("white-space", "nowrap");
+  const over = await page.locator("main .content").evaluate((e) => e.scrollWidth - e.clientWidth);
+  expect(over).toBeLessThanOrEqual(0);
+  expect((await page.getByRole("heading", { name: "Stats for nerds" }).boundingBox())!.height).toBeLessThanOrEqual(24);
+});

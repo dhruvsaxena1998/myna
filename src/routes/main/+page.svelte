@@ -114,6 +114,6 @@
   .foot { margin-top: auto; }
   main { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; border-radius: var(--r-xl); background: var(--bg-content); box-shadow: var(--shadow-panel); overflow: hidden; }
   main > :global(header) { height: var(--h-toolbar); display: flex; align-items: center; gap: var(--sp-2); padding: 0 var(--sp-5); }
-  main > :global(header h1) { pointer-events: none; margin: 0; font-size: var(--fs-title2); line-height: var(--lh-title2); font-weight: var(--fw-semibold); }
+  main > :global(header h1) { pointer-events: none; margin: 0; white-space: nowrap; font-size: var(--fs-title2); line-height: var(--lh-title2); font-weight: var(--fw-semibold); }
   main > :global(.content) { position: relative; padding: 0 var(--sp-5) var(--sp-5); overflow: auto; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
 </style>
