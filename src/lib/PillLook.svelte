@@ -49,7 +49,7 @@
 <style>
   .list { overflow: hidden; } /* the preview stage keeps the list's corners */
   /* The preview screen: a desktop-ish wash so the dark pill reads in both themes. */
-  .stage { position: relative; height: 150px; display: flex; background: linear-gradient(160deg, #5b7aa6, #b08a6a); }
+  .stage { position: relative; height: 150px; display: flex; background: var(--stage-desk); }
   .pill { position: absolute; }
   .bottom .pill { bottom: var(--sp-4); left: 50%; translate: -50% 0; }
   .top .pill { top: var(--sp-3); left: 50%; translate: -50% 0; }

@@ -280,10 +280,10 @@
   .text { font-size: var(--fs-reading); line-height: 30px; margin-top: var(--sp-2); user-select: text; }
   .note { margin: 4px 0 0; min-height: var(--lh-footnote); }
   .e { border-radius: 4px; padding: 1px; }
-  .e del { text-decoration-thickness: 1.5px; opacity: .75; } .e ins { text-decoration: none; font-weight: 600; }
-  .e[data-k] { background: color-mix(in srgb, var(--kc) 14%, transparent); box-shadow: inset 0 -2px 0 var(--kc); }
-  .e[data-k] del { color: var(--kc); }
-  .e.same { background: none; box-shadow: inset 0 -1.5px 0 color-mix(in srgb, var(--kc) 60%, transparent); }
+  /* One mark per edit: what went is struck in the rule's colour, what came is underlined in it. The tint only shows on hover or focus, to tie the edit to its chip. */
+  .e del { color: var(--text-3); text-decoration: line-through 1px var(--kc); } .e ins { text-decoration: underline 2px var(--kc); text-underline-offset: 4px; font-weight: var(--fw-medium); }
+  .e[data-k]:hover, .e[data-k]:focus-visible { background: color-mix(in srgb, var(--kc) 14%, transparent); }
+  .e.same { text-decoration: underline 1.5px color-mix(in srgb, var(--kc) 60%, transparent); text-underline-offset: 4px; }
   .e.dim { padding: 0; }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: var(--sp-3); }
   .chip { height: var(--h-ctl-sm, 24px); border-radius: var(--r-full); border: 0; padding: 0 10px 0 8px; display: inline-flex; align-items: center; gap: 6px; background: var(--fill-control); color: inherit;

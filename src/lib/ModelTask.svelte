@@ -174,7 +174,7 @@
   .rate-l { width: 56px; color: var(--text-3); }
   .pips { display: inline-flex; gap: 3px; }
   .pips i { width: 6px; height: 6px; border-radius: 50%; background: var(--line-strong); }
-  .pips i.on { background: var(--accent); }
+  .pips i.on { background: var(--text-2); } /* the accent marks the chosen model, not every rating */
   .rate-w { min-width: 48px; font-weight: var(--fw-medium); }
   .dl { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); min-width: 240px; height: var(--h-ctl); }
   .size { color: var(--text-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
