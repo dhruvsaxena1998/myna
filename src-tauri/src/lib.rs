@@ -41,7 +41,7 @@ struct Data {
     macos: u32,
     /// Model id -> cancel flag, for each download in progress.
     downloads: Mutex<HashMap<String, Arc<AtomicBool>>>,
-    /// The shortcuts registered with macOS right now: Dictate, and Dictate with cleanup if it's set.
+    /// The shortcuts registered with macOS right now: Dictate's keys, and Dictate with cleanup's if set.
     shortcut: Mutex<Vec<String>>,
     /// Set while Settings records a new shortcut, so pressing the old one types into the recorder.
     paused: AtomicBool,
@@ -493,7 +493,7 @@ fn tell_update(app: &AppHandle, mode: &str, manual: bool) {
 fn sync_shortcut(app: &AppHandle) -> Result<(), String> {
     let d = app.state::<Data>();
     let v = voice::get(&d.db.lock().unwrap())?;
-    let want: Vec<String> = if v.on && !d.paused.load(Ordering::SeqCst) { [Some(v.key.clone()), v.clean.clone()].into_iter().flatten().collect() } else { vec![] };
+    let want: Vec<String> = if v.on && !d.paused.load(Ordering::SeqCst) { v.keys().into_iter().map(|(k, _)| k).collect() } else { vec![] };
     let mut have = d.shortcut.lock().unwrap();
     if *have != want {
         let gs = app.global_shortcut();
@@ -513,7 +513,7 @@ fn sync_shortcut(app: &AppHandle) -> Result<(), String> {
     }
     drop(have);
     // The recorder hears fn from the tap too, so it watches while paused.
-    if v.on && (v.key == voice::FN || v.clean.as_deref() == Some(voice::FN) || d.paused.load(Ordering::SeqCst)) {
+    if v.on && (v.keys().iter().any(|(k, _)| k == voice::FN) || d.paused.load(Ordering::SeqCst)) {
         let app = app.clone();
         fnkey::watch(move |down| on_fn(&app, down));
     }
@@ -557,9 +557,8 @@ fn on_fn(app: &AppHandle, down: bool) {
             let _ = app.emit_to("settings", "voice-fn", ());
         }
     } else if d.shortcut.lock().unwrap().iter().any(|k| k == voice::FN) {
-        // fn is Dictate's key, or else it's the cleanup one.
-        let plain = voice::get(&d.db.lock().unwrap()).is_ok_and(|v| v.key == voice::FN);
-        app.state::<Arc<Session>>().key(down, !plain);
+        let clean = voice::get(&d.db.lock().unwrap()).is_ok_and(|v| v.is_clean(voice::FN));
+        app.state::<Arc<Session>>().key(down, clean);
     }
 }
 
@@ -616,7 +615,7 @@ pub fn run() {
                         tauri_plugin_global_shortcut::Builder::new()
                             .with_handler(|app, shortcut, e| {
                                 let clean = voice::get(&app.state::<Data>().db.lock().unwrap())
-                                    .is_ok_and(|v| v.clean.and_then(|k| k.parse::<Shortcut>().ok()).as_ref() == Some(shortcut));
+                                    .is_ok_and(|v| v.keys().iter().any(|(k, c)| *c && k.parse::<Shortcut>().ok().as_ref() == Some(shortcut)));
                                 app.state::<Arc<Session>>().key(e.state() == ShortcutState::Pressed, clean)
                             })
                             .build(),

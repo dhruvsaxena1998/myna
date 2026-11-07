@@ -195,7 +195,30 @@ test("Set records the cleanup shortcut and saves it beside Dictate's; Change and
   await expect(row.getByRole("button", { name: "Change" })).toBeVisible();
   await row.getByRole("button", { name: "Remove the Dictate with cleanup shortcut" }).click();
   await expect(row.getByLabel("No shortcut")).toBeVisible();
-  expect((await calls(page, "voice_set")).at(-1)).toEqual({ voice: { on: true, key: "Alt+Space", clean: null, mode: "hold", paste: "clipboard" } });
+  expect((await calls(page, "voice_set")).at(-1)).toEqual({ voice: { on: true, key: "Alt+Space", clean: null, clean2: null, mode: "hold", paste: "clipboard" } });
+});
+
+test("Add another key gives each shortcut a second key; one key can't serve twice; removing the first cleanup key moves the second up", async ({ page }) => {
+  await open(page, "Alt+Space", false, { ai: fastOn(OLLAMA, "qwen2.5:7b"), clean: "Ctrl+Shift+KeyC" });
+  const add = page.getByRole("button", { name: "Add another key" });
+  await expect(add).toHaveCount(2); // one per shortcut
+  await add.first().click();
+  await expect(page.getByRole("button", { name: "Press a key…" })).toBeFocused();
+  await page.keyboard.press("PageDown");
+  await expect(page.getByLabel("Current shortcut: Page Down")).toBeVisible();
+  expect((await calls(page, "voice_set")).at(-1)).toEqual({ voice: { on: true, key: "Alt+Space", clean: "Ctrl+Shift+KeyC", key2: "PageDown", mode: "hold", paste: "clipboard" } });
+  // Dictate's second key can't also be cleanup's.
+  await page.getByRole("button", { name: "Add another key" }).click();
+  await page.keyboard.press("PageDown");
+  await expect(page.getByText("Page Down is already the Dictate shortcut. Pick another key.")).toBeVisible();
+  await page.getByRole("button", { name: "Add another key" }).click();
+  await page.keyboard.press("End");
+  expect((await calls(page, "voice_set")).at(-1)).toMatchObject({ voice: { clean: "Ctrl+Shift+KeyC", clean2: "End" } });
+  await page.getByRole("button", { name: "Remove the Dictate with cleanup shortcut" }).click();
+  expect((await calls(page, "voice_set")).at(-1)).toMatchObject({ voice: { key2: "PageDown", clean: "End", clean2: null } });
+  await page.getByRole("button", { name: "Remove the second Dictate shortcut" }).click();
+  expect((await calls(page, "voice_set")).at(-1)).toMatchObject({ voice: { key2: null } });
+  await expect(add).toHaveCount(2);
 });
 
 test("a key already used by the other shortcut is refused with the reason", async ({ page }) => {
