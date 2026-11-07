@@ -20,10 +20,10 @@
   const pages = [
     { id: "look", icon: '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16z" fill="currentColor"/>', title: "Look & appearance", soon: "Light or dark, highlight colour, see-through panels." },
     { id: "dictation", icon: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>', title: "Voice typing", soon: "Turn voice typing on, pick its shortcut, and words to remember." },
-    { id: "meetings", icon: '<circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="16.5" cy="9" r="2.5"/><path d="M16.5 14.5a4 4 0 0 1 4 4.5"/>', title: "Meeting notes", soon: "Turn meeting notes on, notice calls, pictures of the call, keep your voice when muted." },
+    { id: "meetings", icon: '<circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="16.5" cy="9" r="2.5"/><path d="M16.5 14.5a4 4 0 0 1 4 4.5"/>', title: "Meeting notes", soon: "Notes from your calls: noticing a call, taking notes, and keeping your voice when you’re muted." },
     { id: "models", icon: '<path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2"/>', title: "Speech models", soon: "Speech-to-text and voice models." },
     { id: "ai", icon: '<rect x="4" y="4" width="16" height="7" rx="2"/><rect x="4" y="13" width="16" height="7" rx="2"/><path d="M8 7.5h.01M8 16.5h.01"/>', title: "AI provider", soon: "Providers for summaries and chat, and which model does what." },
-    { id: "decide", icon: '<path d="M12 20v-6L6 8M12 14l6-6M6 4v4h4M18 4v4h-4"/>', title: "Decision provider", soon: "Who makes Myna's small choices, like which folder a meeting goes in." },
+    { id: "decide", icon: '<path d="M12 20v-6L6 8M12 14l6-6M6 4v4h4M18 4v4h-4"/>', title: "Decision provider", soon: "Which model makes Myna’s small choices, like the folder a meeting goes in." },
     { id: "experimental", icon: '<path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.7 3h10.6a2 2 0 0 0 1.7-3l-5-9V3M7.5 15h9"/>', title: "Experimental features", soon: "New things we're still working on. Off until you turn them on." },
     { id: "about", icon: '<circle cx="12" cy="12" r="8"/><path d="M12 11v5M12 8h.01"/>', title: "About", soon: "" },
   ];
@@ -115,7 +115,12 @@
         {#if data.updates?.ok}<About version={data.version} path={data.storage.path} prefs={data.updates.prefs} status={data.updates.status} />
         {:else}<ErrorState title="Myna couldn't read the update settings" message={data.updates?.ok === false ? data.updates.error : ""} />{/if}
       {:else}
-        <p class="soon">{page.soon}</p>
+        <!-- An unbuilt page is an empty state, not a blank one (DESIGN.md › Empty and error states). -->
+        <div class="soon">
+          <h2>Not in this version yet</h2>
+          <p>{page.soon}</p>
+          <span class="tag">Coming later</span>
+        </div>
       {/if}
     </div>
   </main>
@@ -151,5 +156,9 @@
   header { height: var(--h-toolbar); display: flex; align-items: center; padding: 0 var(--sp-5); }
   /* Let drags on the title fall through to the header's drag region. */
   h1 { pointer-events: none; margin: 0; font-size: var(--fs-title2); line-height: var(--lh-title2); font-weight: var(--fw-semibold); }
-  .soon { margin: 0; color: var(--text-2); }
+  .soon { margin: auto; max-width: 360px; padding-bottom: var(--h-toolbar); text-align: center; } /* centred in the panel, not the scroller */
+  .soon h2 { margin-bottom: var(--sp-1); }
+  .soon p { margin: 0 0 var(--sp-3); color: var(--text-2); }
+  .tag { display: inline-flex; align-items: center; height: 20px; padding: 0 var(--sp-2); border-radius: var(--r-full); background: var(--fill-hover); color: var(--text-2);
+    font-size: var(--fs-caption); font-weight: var(--fw-medium); }
 </style>
