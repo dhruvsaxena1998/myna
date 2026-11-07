@@ -822,6 +822,7 @@ body { letter-spacing: -.005em; text-rendering: optimizeLegibility; }
   <symbol id="i-minimize" viewBox="0 0 24 24"><path d="M6 12h12"/></symbol>
   <symbol id="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/></symbol>
   <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5.5A1.5 1.5 0 0 0 14.5 4h-9A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16H8"/></symbol>
+  <symbol id="i-trend" viewBox="0 0 24 24"><path d="M3 17l5-5 4 4 8-9"/><path d="M15 7h5v5"/></symbol>
   <symbol id="i-bars" viewBox="0 0 24 24"><path d="M5 20V11M12 20V5M19 20v-6"/></symbol>
   <symbol id="i-clip" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="16" rx="2"/><path d="M9 5V3.5h6V5M9 11h6M9 15h4"/></symbol>
   <symbol id="i-more" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="18" cy="12" r="1.4" fill="currentColor"/></symbol>
@@ -998,6 +999,7 @@ S.set = { modules:S.modules, hotkey:'fn', mode:'hold', paste:'clipboard', pillSt
   meetKey:'ctrl-opt-m', appearance:'auto', accent:'blue', glass:'clear', liquid:false, liquidFrost:50, expOn:false, detect:true,
   diar:'who', updMode:'auto', updEvery:'launch', channel:'beta',
   exp:{ diarOn:false, uhmD:false, uhmM:false, llmM:false, triage:false, relevance:false, shotsAI:false, nerds:false },
+  yours:{ period:'7' },
   nerds:{ period:'7', model:'all', app:'all', sample:'full', pick:null } };
 S.mb = { open:false };
 const UPD_CUR = '0.0.1-beta.2', UPD_NEXT = '0.0.2-beta.1';
@@ -1207,7 +1209,7 @@ function obDone() {
 /* ---------- app ---------- */
 function app() {
   const v = S.view;
-  const main = v === 'detail' ? detail() : v === 'chat' ? appChat() : v === 'clips' ? clipsView() : v === 'nerds' ? nerdsView() : v === 'settings' ? settings() : meetingsList();
+  const main = v === 'detail' ? detail() : v === 'chat' ? appChat() : v === 'clips' ? clipsView() : v === 'yours' ? yoursView() : v === 'nerds' ? nerdsView() : v === 'settings' ? settings() : meetingsList();
   return `<div class="win"><div class="titlebar"><div class="lights" aria-hidden="true"><i></i><i></i><i></i></div><div class="wt">Myna</div></div>
     <div class="app ${S.drawer ? 'drawer' : ''}">${sidebar()}<button class="scrim" data-act="drawer" aria-label="Close sidebar" tabindex="-1"></button><main class="main">${main}</main></div></div>`;
 }
@@ -1227,6 +1229,7 @@ function sidebar() {
     ${nav('filter','data-type="all"', icon('list'), 'All meetings', MEETINGS.length, inList && f.type === 'all')}
     ${nav('go-chat','', icon('chat'), 'Chat', null, S.view === 'chat')}
     ${nav('go-clips','', icon('clip'), 'Voice typing history', S.clips.length, S.view === 'clips')}
+    ${nav('go-yours','', icon('trend'), 'Your dictation', null, S.view === 'yours')}
     ${S.set.expOn && S.set.exp.nerds ? nav('go-nerds','', icon('bars'), 'Stats for nerds', null, S.view === 'nerds') : ''}
     <h2>Folders</h2>
     ${S.folders.map(name => item('folder', name, nav('filter', `data-type="folder" data-v="${esc(name)}"`, icon(fIcon(name)), name, MEETINGS.filter(m => m.folder === name).length, inList && f.type === 'folder' && f.v === name))).join('')}
@@ -1461,6 +1464,34 @@ function nerdsView() {
       </div>
       ${nerdList(ts)}
     </div>`;
+}
+
+/* ---------- Your dictation: personal numbers from the same sample traces (words ≈ audio × 2.5/s). ---------- */
+function yoursView() {
+  const p = +S.set.yours.period, ts = NERD_ALL.filter(t => t.outcome === 'pasted' && t.day < p);
+  const words = ts.reduce((a, t) => a + t.words, 0), saved = Math.max(0, words / 40 * 6e4 - ts.reduce((a, t) => a + t.audio, 0)), m = Math.floor(saved / 6e4);
+  const days = new Set(NERD_ALL.filter(t => t.outcome === 'pasted').map(t => t.day)); let streak = 0;
+  for (let d = days.has(0) ? 0 : 1; days.has(d); d++) streak++;
+  const lab = k => { const d = new Date(NERD_TODAY); d.setDate(d.getDate() - k); return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }); };
+  const b = Array.from({ length: p }, (_, i) => { const k = p - 1 - i; return { k, w: ts.filter(t => t.day === k).reduce((a, t) => a + t.words, 0) }; });
+  const max = Math.max(...b.map(x => x.w), 0), top = max <= 4 ? 4 : Math.ceil(max / 4) * 4;
+  const byApp = {}; ts.forEach(t => byApp[t.app] = (byApp[t.app] || 0) + t.words);
+  const apps = Object.entries(byApp).sort((a, c) => c[1] - a[1]).slice(0, 3);
+  const tile = (l, v, s) => `<div class="nd-tile"><span class="nd-label">${l}</span><span class="nd-big">${v}</span><span class="nd-sub">${s}</span></div>`;
+  const cols = b.map(x => `<div class="nd-col" tabindex="0" aria-label="${lab(x.k)}: ${x.w} words"><div class="nd-stack" style="height:${x.w / top * 100}%;background:var(--o-pasted)"></div>
+      <div class="nd-ctip" role="presentation"><b>${lab(x.k)}</b><br>${x.w} words</div></div>`).join('');
+  const menu = `<button class="btn icon plain menu-btn" data-act="drawer" aria-label="Show sidebar">${icon('sidebar')}</button>`;
+  return `<div class="toolbar">${menu}<h1>Your dictation</h1><span class="grow"></span>${segc('yours.period', [['7','7 days'],['30','30 days']], 'Period')}</div>
+    <div class="nerds od-scroll"><div class="nd-overview">
+      <div class="nd-tiles">${tile('Words dictated', words.toLocaleString('en'), `pasted in the last ${p} days`)}${tile('Time saved', m < 1 ? 'under a minute' : m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`, 'against typing at 40 words a minute')}
+        ${tile('Dictations', ts.length.toLocaleString('en'), `pasted in the last ${p} days`)}${tile('Streak', `${streak} day${streak === 1 ? '' : 's'}`, streak ? 'days in a row' : 'Dictate today to start one')}</div>
+      <section class="nd-card" aria-labelledby="yr-ch"><div class="nd-head"><h3 id="yr-ch">Words per day</h3></div>
+        <div class="nd-chart"><div class="nd-y" aria-hidden="true"><span>${top}</span><span>${top / 2}</span><span>0</span></div>
+          <div class="nd-plot">${cols}${ts.length ? '' : '<p class="nd-none">No dictations in this period</p>'}</div></div>
+        <div class="nd-x" aria-hidden="true">${[b[0], b[Math.floor(p / 2)], b[p - 1]].map(x => `<span>${lab(x.k)}</span>`).join('')}</div></section>
+      <section class="nd-card" aria-labelledby="yr-ap"><div class="nd-head"><h3 id="yr-ap">Top apps</h3></div>
+        ${apps.length ? apps.map(([n, w]) => `<div style="padding:8px 0;border-top:.5px solid var(--line)"><div class="nd-head" style="margin:0 0 4px"><b>${esc(n)}</b><span>${w.toLocaleString('en')} words</span></div><div class="nd-thin" role="img" aria-label="${esc(n)}: ${w} words"><i style="width:${w / apps[0][1] * 100}%;background:var(--o-pasted)"></i></div></div>`).join('') : '<p class="nd-sub">No dictations in this period</p>'}</section>
+    </div></div>`;
 }
 
 function detail() {
@@ -2300,6 +2331,7 @@ document.addEventListener('click', e => {
     case 'back': go('meetings'); break;
     case 'go-chat': go('chat'); break;
     case 'go-clips': go('clips', { undoClip:null, clipConfirm:false }); break;
+    case 'go-yours': go('yours'); break;
     case 'go-nerds': go('nerds'); break;
     case 'nerd-pick': { const n = S.set.nerds, v = el.dataset.v, k = el.dataset.kind; n.pick = n.pick && n.pick.kind === k && n.pick.v === v ? null : { kind:k, v }; render(); document.querySelector(`[data-act=nerd-pick][data-kind="${k}"][data-v="${CSS.escape(v)}"]`)?.focus(); break; }
     case 'nerd-unpick': S.set.nerds.pick = null; render(); break;
@@ -2553,7 +2585,7 @@ document.addEventListener('keyup', e => {
   const [v, a] = decodeURIComponent(location.hash.slice(1)).split('/'); if (!v) return;
   if (v === 'onboarding') { S.step = Math.max(0, STEPS.indexOf(a)); return; }
   Object.assign(S.perms, { mic:true, ax:true, screen:true });
-  S.view = ['meetings', 'detail', 'chat', 'clips', 'settings', 'nerds'].includes(v) ? v : 'meetings';
+  S.view = ['meetings', 'detail', 'chat', 'clips', 'settings', 'yours', 'nerds'].includes(v) ? v : 'meetings';
   if (v === 'nerds') { S.set.expOn = true; S.set.exp.nerds = true; }
   if (v === 'detail') { S.current = byId(a) ? a : MEETINGS[0].id; if (a === 'transcript' || a === 'chat') S.panel = a; }
   if (v === 'settings' && a) S.setPage = a;
