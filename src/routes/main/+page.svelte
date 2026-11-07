@@ -106,6 +106,7 @@
   .nav:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
   /* As the Settings sidebar: stronger than --accent-soft-strong on see-through material, solid on Liquid Glass. */
   .nav[aria-current="true"] { background: color-mix(in srgb, var(--accent) 28%, transparent); }
+  .nav[aria-current="true"] .ic { color: var(--accent-text); }
   :global(html[data-liquid]) .nav[aria-current="true"] { background: var(--accent); color: var(--on-accent); }
   :global(html[data-liquid]) .nav[aria-current="true"] .ic, :global(html[data-liquid]) .nav[aria-current="true"] .count { color: var(--on-accent); }
   .ic { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; color: var(--text-2); }
