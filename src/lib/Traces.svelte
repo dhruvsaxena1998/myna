@@ -253,11 +253,13 @@
   [data-k="filler"] { --kc: var(--k-filler); } [data-k="repeat"] { --kc: var(--k-repeat); } [data-k="cutoff"] { --kc: var(--k-cutoff); }
   [data-k="number"] { --kc: var(--k-number); } [data-k="word"] { --kc: var(--k-word); }
   .meta { color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); font-weight: var(--fw-regular, 400); }
-  .list { list-style: none; margin: 0; padding: 0; border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); }
-  .list li + li { box-shadow: 0 -.5px 0 var(--line); }
-  .row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: var(--sp-3); align-items: center; width: 100%; padding: var(--sp-3) var(--sp-4); border: 0; background: none; color: inherit; font: inherit; text-align: left; border-radius: var(--r-xl); }
+  .list { list-style: none; margin: 0; padding: 0; border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); overflow: hidden; }
+  .list li { position: relative; }
+  .list li + li::before { content: ""; position: absolute; top: 0; left: var(--sp-4); right: 0; height: 1px; transform: scaleY(.5); transform-origin: top; background: var(--line); }
+  .row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: var(--sp-3); align-items: center; width: 100%; padding: var(--sp-3) var(--sp-4); border: 0; background: none; color: inherit; font: inherit; text-align: left; }
   .row:hover { background: var(--fill-hover); }
-  .row:focus-visible, .back:focus-visible, .chip:focus-visible, .e:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+  .row:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; } /* inside: the list clips */
+  .back:focus-visible, .chip:focus-visible, .e:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   .t { display: grid; min-width: 0; } .name { font-weight: var(--fw-semibold); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .badge { font-size: var(--fs-caption); border-radius: var(--r-full); padding: 0 8px; height: 20px; display: inline-flex; align-items: center; background: var(--fill-hover); color: var(--text-2); font-weight: 500; white-space: nowrap; }
   .badge.bad { background: var(--caution-soft); color: var(--caution-text); }
