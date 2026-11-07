@@ -1,3 +1,4 @@
+import type { Rating } from "./feedback";
 /** What a stored dictation trace looks like to Stats for nerds (see src-tauri/src/trace.rs and rules.rs `Edit`). */
 export type Edit =
   | { kind: "filler" | "repeat" | "cutoff" | "number"; start: number; end: number; to: string }
@@ -7,10 +8,10 @@ export type Cleanup = { model: string | null; cost: { kind: "usd"; usd: number }
 export type Step = { kind: "speech-to-text" | "rules" | "cleanup"; text: string; ms: number; settings: { language: string; tidy: boolean } | Cleanup | null; edits: Edit[] | null };
 export type Trace = {
   id: number; started: number; mode: "hold" | "tap"; app: string | null; model: string | null; audio_ms: number;
-  outcome: string; reason: string | null; load_ms: number | null; paste_ms: number | null; steps: Step[];
+  outcome: string; rating: Rating; reason: string | null; load_ms: number | null; paste_ms: number | null; steps: Step[];
 };
 /** `heard`: what speech-to-text wrote. `text`: what the last step left, which is what was pasted. */
-export type Row = { id: number; started: number; app: string | null; outcome: string; heard: string | null; text: string | null };
+export type Row = { id: number; started: number; app: string | null; outcome: string; rating: Rating; heard: string | null; text: string | null };
 
 export const KINDS = { filler: "Filler words", repeat: "Repeats", cutoff: "Cut-off words", number: "Numbers", word: "Words to remember" } as const;
 export const KIND_ONE = { filler: "Filler word", repeat: "Repeat", cutoff: "Cut-off word", number: "Number", word: "Word to remember" } as const;

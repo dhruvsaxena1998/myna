@@ -696,6 +696,11 @@ body { letter-spacing: -.005em; text-rendering: optimizeLegibility; }
 .clip { padding: var(--s3) var(--s2); border-radius: 0; background: none; box-shadow: none; border-bottom: .5px solid var(--line); align-items: center; }
 .clip:last-child { border-bottom: 0; }
 .clip .help .link { font-size: inherit; }
+.clip .btn.icon[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-text); }
+.clip .mean { flex: 1 0 100%; display: grid; gap: var(--s2); padding-top: var(--s2); }
+.clip .mean label { font-weight: 600; }
+.clip .mean textarea { width: 100%; box-sizing: border-box; padding: var(--s2); border: 0; border-radius: 10px; background: var(--field, var(--inset)); box-shadow: inset 0 0 0 .5px var(--line-strong); color: var(--text); font: inherit; resize: vertical; }
+.clip .mean .list { margin-top: 0; }
 .clip-acts { opacity: 0; transition: opacity var(--dur) var(--ease-out); }
 .clip:hover .clip-acts, .clip:focus-within .clip-acts { opacity: 1; }
 @media (hover: none) { .clip-acts { opacity: 1; } }
@@ -821,6 +826,8 @@ body { letter-spacing: -.005em; text-rendering: optimizeLegibility; }
   <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></symbol>
   <symbol id="i-minimize" viewBox="0 0 24 24"><path d="M6 12h12"/></symbol>
   <symbol id="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/></symbol>
+  <symbol id="i-thumb-up" viewBox="0 0 24 24"><path d="M4 11h3v9H4zM7 11l3.5-7a2 2 0 0 1 2 2v3.5h5.2a2 2 0 0 1 2 2.3l-1.1 6a2 2 0 0 1-2 1.7H7"/></symbol>
+  <symbol id="i-thumb-down" viewBox="0 0 24 24"><g transform="rotate(180 12 12)"><path d="M4 11h3v9H4zM7 11l3.5-7a2 2 0 0 1 2 2v3.5h5.2a2 2 0 0 1 2 2.3l-1.1 6a2 2 0 0 1-2 1.7H7"/></g></symbol>
   <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5.5A1.5 1.5 0 0 0 14.5 4h-9A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16H8"/></symbol>
   <symbol id="i-trend" viewBox="0 0 24 24"><path d="M3 17l5-5 4 4 8-9"/><path d="M15 7h5v5"/></symbol>
   <symbol id="i-bars" viewBox="0 0 24 24"><path d="M5 20V11M12 20V5M19 20v-6"/></symbol>
@@ -967,7 +974,7 @@ const S = {
   current:null,
   templates:BUILTIN_TEMPLATES.slice(),
   sums:{}, regen:{ mode:null, tpl:'t-summary', saving:false, draft:'' },
-  pop:null, panel:null, copied:null, folderIcon:{}, clipQ:'', mq:'', modelQ:'', modelSort:'rec', undoClip:null, clipConfirm:false, clipOpen:{}, suggOff:{},
+  pop:null, panel:null, copied:null, folderIcon:{}, clipQ:'', mq:'', modelQ:'', modelSort:'rec', undoClip:null, clipConfirm:false, clipOpen:{}, suggOff:{}, rate:{ c3:'up' }, mean:null, meanDone:false,
   clips:[
     { id:'c1', text:'Can we move the design review to Thursday afternoon? Wednesday is packed.', raw:'Um, can we move the the design review to Thursday afternoon? Wednesday is packed.', src:'Slack', t:'Today 11:52' },
     { id:'c2', text:'Tom, please add cancel, retry and checksum checks to the model downloads before Friday.', raw:'Tom, please add uh cancel, retry and checksum checks to the model downloads before Friday.', src:'Linear', t:'Today 11:20' },
@@ -994,7 +1001,7 @@ function STYLES_SAMPLE() { return [
   { id:'message', name:'Message', apps:['Slack','Messages','WhatsApp'], text:'Fix punctuation and capitals. Keep it casual and short. Never use emoji.', newer:true },
   { id:'email', name:'Email', apps:['Mail','Outlook'], text:null }
 ]; }
-S.set = { modules:S.modules, hotkey:'fn', mode:'hold', paste:'clipboard', pillStyle:'capsule', pillPlace:'bottom', dict:['Myna','Parakeet','Desert Ant','Drove → Dhruv'], lang:'en', rules:true, hotkeyClean:'', hotkey2:'', hotkeyClean2:'', styles:STYLES_SAMPLE(), styleOpen:null, cleanFail:false, hkErr:'',
+S.set = { modules:S.modules, hotkey:'fn', mode:'hold', paste:'clipboard', pillStyle:'capsule', pillPlace:'bottom', dict:['Myna','Parakeet','Desert Ant','Drove → Dhruv'], keep:['oh'], fixes:[{ k:'a', kind:'alias', from:'Mina', to:'Myna', n:2 }, { k:'k', kind:'keep', to:'the', n:3 }], exported:false, lang:'en', rules:true, hotkeyClean:'', hotkey2:'', hotkeyClean2:'', styles:STYLES_SAMPLE(), styleOpen:null, cleanFail:false, hkErr:'',
   capture:'shots', interval:'15', apps:{ meet:false, teams:false, zoom:false, slack:false }, ext:false, retention:'30', folder:true, dataPath:'~/Library/Application Support/Myna', dataMoved:false,
   meetKey:'ctrl-opt-m', appearance:'auto', accent:'blue', glass:'clear', liquid:false, liquidFrost:50, expOn:false, detect:true,
   diar:'who', updMode:'auto', updEvery:'launch', channel:'beta',
@@ -1285,6 +1292,12 @@ function meetingsList() {
       : `<div class="empty"><h2>Nothing here yet</h2><p>${f.type === 'folder' ? 'Move a meeting into this folder from its page, using the folder button.' : 'No meetings match this filter.'}</p><button class="btn" data-act="filter" data-type="all">Show all meetings</button></div>`}</div>`;
 }
 
+const fixName = f => f.kind === 'keep' ? `Never remove “${f.to}”` : `Add “${f.kind === 'alias' ? f.from + ' → ' + f.to : f.to}” to Words to remember`;
+const fixRow = f => `<li class="srow"><div class="od-field od-fill"><span class="label">${fixName(f)}</span><span class="help">Came up in ${f.n} dictations</span></div><div class="od-fixed od-row" style="--od-gap:var(--s2)"><button class="btn" data-act="fix-add" data-k="${f.k}">Add</button><button class="btn" data-act="fix-no" data-k="${f.k}">Not now</button></div></li>`;
+const meanPanel = c => `<div class="mean" role="group" aria-label="What did you mean?">${S.meanDone
+  ? (S.set.fixes.length ? `<ul class="list">${S.set.fixes.slice(0, 1).map(fixRow).join('')}</ul>` : '<p class="help">Thanks. Myna will suggest a fix if this happens again.</p>') + `<div><button class="btn" data-act="mean-skip" data-id="${c.id}">Done</button></div>`
+  : `<label for="mean-t">What did you mean?</label><textarea id="mean-t" rows="3" spellcheck="false">${esc(c.text)}</textarea><p class="help">Fix the words Myna got wrong. Myna suggests a fix once the same mistake comes up twice.</p>
+     <div class="od-row" style="--od-gap:var(--s2)"><button class="btn" data-act="mean-save">Save</button><button class="btn" data-act="mean-skip" data-id="${c.id}">Skip</button></div>`}</div>`;
 function clipsView() {
   const menu = `<button class="btn icon plain menu-btn" data-act="drawer" aria-label="Show sidebar">${icon('sidebar')}</button>`;
   const q = S.clipQ.trim(), list = q ? S.clips.filter(c => fuzzy(q, c.text + ' ' + c.src)) : S.clips;
@@ -1297,7 +1310,7 @@ function clipsView() {
       ${S.undoClip ? `<div class="undo" role="status">${S.undoClip.all ? `Deleted ${S.undoClip.all.length} items.` : 'Deleted.'}<button class="link" id="clip-undo" data-act="clip-undo">Undo</button></div>` : ''}
       ${list.length ? `<ul class="clist">${list.map(c => `<li class="clip"><div class="od-field od-fill" style="--od-gap:2px"><p class="${S.clipOpen[c.id] ? '' : 'od-clamp-2'}">${esc(c.text)}</p>
             <span class="help">${esc(c.src)} · ${esc(c.t)}${c.text.length > 140 ? ` · <button class="link" data-act="clip-more" data-id="${c.id}" aria-expanded="${!!S.clipOpen[c.id]}">${S.clipOpen[c.id] ? 'Show less' : 'Show more'}</button>` : ''}</span></div>
-          <div class="clip-acts od-row od-fixed" style="--od-gap:2px">${c.raw && c.raw !== c.text ? `<button class="btn icon plain" data-act="clip-raw" data-id="${c.id}" aria-label="Copy what I said" title="Copy what I said">${icon('mic','ic-s')}</button>` : ''}<button class="btn icon plain" data-act="clip-copy" data-id="${c.id}" aria-label="Copy again" title="Copy again">${icon('copy','ic-s')}</button><button class="btn icon plain" data-act="clip-del" data-id="${c.id}" aria-label="Delete" title="Delete">${icon('x','ic-s')}</button></div></li>`).join('')}</ul>`
+          <div class="clip-acts od-row od-fixed" style="--od-gap:2px"><button class="btn icon plain" data-act="rate" data-v="up" data-id="${c.id}" aria-pressed="${S.rate[c.id] === 'up'}" aria-label="Good dictation" title="Good dictation">${icon('thumb-up','ic-s')}</button><button class="btn icon plain" data-act="rate" data-v="down" data-id="${c.id}" id="down-${c.id}" aria-pressed="${S.rate[c.id] === 'down'}" aria-label="Bad dictation" title="Bad dictation">${icon('thumb-down','ic-s')}</button>${c.raw && c.raw !== c.text ? `<button class="btn icon plain" data-act="clip-raw" data-id="${c.id}" aria-label="Copy what I said" title="Copy what I said">${icon('mic','ic-s')}</button>` : ''}<button class="btn icon plain" data-act="clip-copy" data-id="${c.id}" aria-label="Copy again" title="Copy again">${icon('copy','ic-s')}</button><button class="btn icon plain" data-act="clip-del" data-id="${c.id}" aria-label="Delete" title="Delete">${icon('x','ic-s')}</button></div>${S.mean === c.id ? meanPanel(c) : ''}</li>`).join('')}</ul>`
         : `<div class="empty"><h2>${q ? 'No matches' : 'Nothing here yet'}</h2><p>${q ? 'Try another word, or check the spelling.' : 'Hold your voice typing key in any app and talk. What you say shows up here too.'}</p>${q ? `<button class="btn" data-act="clipq-clear">Clear search</button>` : ''}</div>`}
     </div>`;
 }
@@ -1978,11 +1991,15 @@ function settingsPage() {
       ]) + sgroup('Your words', [
         srow('Language you speak', 'Myna tidies up English. In other languages it keeps your words as said.', sel('lang', LANGS, 'Language you speak')),
         srow('Tidy up as I talk', x.rules ? 'Removes um and uh and repeated words, and writes numbers like 25 as digits.' : 'Pastes exactly what the model heard. Words to remember still apply.', sw('rules', 'Tidy up as I talk'))
-      ]) + `<section class="sgroup"><h2>Words to remember</h2><p class="help">Names and special words Myna should spell your way.</p>
+      ]) + (S.set.fixes.length ? `<section class="sgroup"><h2>Suggested fixes</h2><p class="help">Mistakes Myna noticed in the dictations you rated.</p><ul class="list">${S.set.fixes.map(fixRow).join('')}</ul></section>` : '') + `<section class="sgroup"><h2>Words to remember</h2><p class="help">Names and special words Myna should spell your way.</p>
         <div class="chipin" data-act="dict-focus">${x.dict.map(w => `<span class="tag">${esc(w)}<button data-act="dict-rm" data-w="${esc(w)}" aria-label="Remove ${esc(w)}">${icon('x','ic-s')}</button></span>`).join('')}
           <form data-form="dict" class="chipin-f"><label class="sr-only" for="dict-in">Add words for Myna to remember</label><input id="dict-in" maxlength="200" placeholder="${x.dict.length ? 'Add a word' : 'Type a word, then a comma'}" autocomplete="off" aria-describedby="dict-help"></form></div>
         <p class="help" id="dict-help" style="margin-top:6px">Press comma or Return to add a word. Press Backspace in an empty box to remove the last one. If Myna keeps mishearing a word, type it like Drove -&gt; Dhruv.</p></section>`
-      + (S.ai.fast ? stylesGroup() : ''));
+      + `<section class="sgroup"><h2>Never remove</h2><p class="help">Words Myna keeps even when they sound like a filler or a repeat, like oh or the.</p>
+        <div class="chipin" data-act="keep-focus">${x.keep.map(w => `<span class="tag">${esc(w)}<button data-act="keep-rm" data-w="${esc(w)}" aria-label="Remove ${esc(w)} from Never remove">${icon('x','ic-s')}</button></span>`).join('')}
+          <form data-form="keep" class="chipin-f"><label class="sr-only" for="keep-in">Add words for Myna to never remove</label><input id="keep-in" maxlength="200" placeholder="${x.keep.length ? 'Add a word' : 'Type a word, then a comma'}" autocomplete="off"></form></div></section>`
+      + (S.ai.fast ? stylesGroup() : '')
+      + sgroup('Feedback', [srow('Your feedback', 'Ratings and corrections stay on this Mac. Export saves them to a file you can look over and send us.', `<button class="btn" data-act="fb-export">Export…</button>`)], `<p class="help" role="status" style="min-height:1.4em">${x.exported ? 'Saved to Downloads' : ''}</p>`));
     case 'meetings': return sgroup('Meeting notes', [
         srow('Use meeting notes', 'Record your calls and get notes, a summary and answers to your questions.', sw('modules.meetings', 'Use meeting notes'))
       ]) + (!S.modules.meetings ? '' : sgroup('Shortcut', [
@@ -2389,6 +2406,13 @@ document.addEventListener('click', e => {
     case 'mq-clear': S.mq = ''; render(); $('#mq').focus(); break;
     case 'sugg-move': byId(id).folder = el.dataset.f; render(); $('#mq')?.focus(); break;
     case 'sugg-off': S.suggOff[id] = true; render(); $('#mq')?.focus(); break;
+    case 'rate': { const v = el.dataset.v; S.rate[id] = S.rate[id] === v ? null : v; S.mean = S.rate[id] === 'down' ? id : null; S.meanDone = false; render(); if (S.mean) $('#mean-t').focus(); else $('#down-' + id)?.focus(); break; }
+    case 'mean-save': S.meanDone = true; render(); break;
+    case 'mean-skip': S.mean = null; render(); $('#down-' + id)?.focus(); break;
+    case 'fix-add': case 'fix-no': { const f = S.set.fixes.find(x => x.k === el.dataset.k); S.set.fixes = S.set.fixes.filter(x => x !== f); if (a === 'fix-add') (f.kind === 'keep' ? S.set.keep : S.set.dict).push(f.kind === 'alias' ? f.from + ' → ' + f.to : f.to); render(); break; }
+    case 'fb-export': S.set.exported = true; render(); break;
+    case 'keep-focus': $('#keep-in').focus(); break;
+    case 'keep-rm': S.set.keep = S.set.keep.filter(w => w !== el.dataset.w); render(); $('#keep-in').focus(); break;
     case 'dict-focus': $('#dict-in').focus(); break;
     case 'data-path': if (S.set.dataPath !== el.dataset.v) { S.set.dataPath = el.dataset.v; S.set.dataMoved = true; } S.pop = null; render(); $('#data-btn').focus(); break;
     case 'clip-more': S.clipOpen[id] = !S.clipOpen[id]; render(); $(`[data-act=clip-more][data-id=${id}]`)?.focus(); break;
@@ -2509,6 +2533,7 @@ document.addEventListener('submit', e => {
     setTimeout(() => { S.sums[m.id] = { ...generate(m, tpl, p), ...(mode === 'custom' ? { custom:true } : {}) }; if (S.current === m.id) render(); $('#regen-btn')?.focus(); }, 1400);
   }
   if (kind === 'dict') addDict($('#dict-in').value);
+  if (kind === 'keep') { $('#keep-in').value.split(',').map(w => w.trim().toLowerCase().slice(0, 40)).filter(Boolean).forEach(w => { if (!S.set.keep.includes(w)) S.set.keep.push(w); }); render(); $('#keep-in').focus(); }
   if (kind === 'ai-add') {
     if (!validateAdd()) { render(); $('[aria-invalid=true]').focus(); return; }
     const a = S.ai.add, id = 'p' + Date.now();

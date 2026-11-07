@@ -1,7 +1,7 @@
 <!-- Voice typing › Your words: the language, the Tidy up switch and the words to remember (docs/index.html). -->
 <script lang="ts" module>
   export type Word = { spelling: string; heard: string | null };
-  export type Rules = { settings: { language: string; tidy: boolean; words: Word[] }; languages: [string, string][] };
+  export type Rules = { settings: { language: string; tidy: boolean; words: Word[]; keep: string[] }; languages: [string, string][] };
 </script>
 
 <script lang="ts">
@@ -12,6 +12,8 @@
   let draft = $state("");
   let error = $state("");
   let input: HTMLInputElement;
+  let keepDraft = $state("");
+  let keepInput: HTMLInputElement;
 
   async function save(next: Rules["settings"]) {
     const was = s;
@@ -43,6 +45,18 @@
   function remove(w: Word) {
     save({ ...s, words: s.words.filter((x) => x !== w) });
     input.focus();
+  }
+
+  // Words Myna keeps even when a filler or repeat rule would take them out. Lowercase, no duplicates.
+  function addKeep(text: string) {
+    keepDraft = "";
+    const fresh = text.split(",").map((x) => x.trim().toLowerCase().slice(0, 40)).filter((x, i, all) => x && !s.keep.includes(x) && all.indexOf(x) === i);
+    if (fresh.length) save({ ...s, keep: [...s.keep, ...fresh] });
+  }
+
+  function removeKeep(w: string) {
+    save({ ...s, keep: s.keep.filter((x) => x !== w) });
+    keepInput.focus();
   }
 
   function onkeydown(e: KeyboardEvent) {
@@ -83,6 +97,24 @@
   </div>
   <p class="help after" id="dict-help">Return or comma adds a word. To fix a word Myna mishears, type it as Drove -&gt; Dhruv.</p>
   <p class="err" role="status">{error}</p>
+</section>
+
+<section class="group" aria-labelledby="keep-h">
+  <h2 id="keep-h">Never remove</h2>
+  <p class="help">Words Myna keeps even when they sound like a filler or a repeat, like oh or the.</p>
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (the input inside takes the keys) -->
+  <div class="chipin" onclick={() => keepInput.focus()}>
+    {#each s.keep as w (w)}
+      <span class="tag">{w}<button type="button" aria-label="Remove {w} from Never remove" onclick={(e) => { e.stopPropagation(); removeKeep(w); }}>
+        <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" /></svg></button></span>
+    {/each}
+    <form class="chipin-f" onsubmit={(e) => { e.preventDefault(); addKeep(keepDraft); }}>
+      <label class="sr-only" for="keep-in">Add words for Myna to never remove</label>
+      <input id="keep-in" bind:this={keepInput} bind:value={keepDraft} maxlength="200" autocomplete="off" spellcheck="false"
+        placeholder={s.keep.length ? "Add a word" : "Type a word, then a comma"} oninput={() => keepDraft.includes(",") && addKeep(keepDraft)}
+        onkeydown={(e) => { if (e.key === "Backspace" && !keepDraft && s.keep.length) save({ ...s, keep: s.keep.slice(0, -1) }); }} />
+    </form>
+  </div>
 </section>
 
 <style>

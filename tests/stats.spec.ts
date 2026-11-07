@@ -8,7 +8,7 @@ let id = 0;
 const T = (o: Partial<Trace> & { heard?: string; edits?: Edit[]; stt?: number; rules?: number } = {}): Trace => {
   const { heard = "one two three four", edits = [], stt = 100, rules = 10, ...t } = o;
   return {
-    id: ++id, started: NOW - 3600e3, mode: "hold", app: "Slack", model: "Parakeet", audio_ms: 4000, outcome: "pasted", reason: null, load_ms: 0, paste_ms: 200,
+    id: ++id, started: NOW - 3600e3, mode: "hold", app: "Slack", model: "Parakeet", audio_ms: 4000, outcome: "pasted", rating: null, reason: null, load_ms: 0, paste_ms: 200,
     steps: [{ kind: "speech-to-text", text: heard, ms: stt, settings: null, edits: null }, { kind: "rules", text: heard, ms: rules, settings: { language: "en", tidy: true }, edits }],
     ...t,
   };

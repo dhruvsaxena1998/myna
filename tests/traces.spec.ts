@@ -33,7 +33,7 @@ async function open(page: Page, experimental = true) {
     storage_status: () => "/tmp/Myna", models_list: () => [],
     look_get: () => ({ theme: "auto", accent: "blue", glass: "clear", liquid: null, experimental: ${experimental}, nerds: true }),
     look_set: () => {}, traces_clear: () => {},
-    rules_get: () => ({ settings: { language: "en", tidy: true, words: [{ spelling: "Postgres", heard: null }, { spelling: "Dhruv", heard: "Drove" }, { spelling: "Kubernetes", heard: null }, { spelling: "Desert Ant", heard: null }] }, languages: [["en", "English"], ["de", "German"]] }),
+    rules_get: () => ({ settings: { language: "en", tidy: true, words: [{ spelling: "Postgres", heard: null }, { spelling: "Dhruv", heard: "Drove" }, { spelling: "Kubernetes", heard: null }, { spelling: "Desert Ant", heard: null }], keep: [] }, languages: [["en", "English"], ["de", "German"]] }),
     traces_list: () => ${SAMPLES}.map((t) => ({ id: t.id, started: t.started, app: t.app, outcome: t.outcome, heard: t.steps[0]?.text ?? null })),
     traces_all: () => ${SAMPLES}.map((t) => ({ ...t, app: t.app ?? "Unknown app" })),
     trace_get: ({ id }) => ${SAMPLES}.find((t) => t.id === id),

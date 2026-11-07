@@ -11,7 +11,9 @@
   import Experimental from "$lib/Experimental.svelte";
   import Look from "$lib/Look.svelte";
   import PillLook from "$lib/PillLook.svelte";
-  import Words from "$lib/Words.svelte";
+  import Words, { type Rules } from "$lib/Words.svelte";
+  import Fixes from "$lib/Fixes.svelte";
+  import Feedback from "$lib/Feedback.svelte";
   import VoiceShortcut from "$lib/VoiceShortcut.svelte";
   import CleanupStyles from "$lib/CleanupStyles.svelte";
 
@@ -34,6 +36,9 @@
   // Shared by the shortcut rows and the pill preview, which shows the same hint as the real pill.
   let voice = $derived(data.voice?.ok ? data.voice.voice : null); // assignable: saves update it
   // Shared by Look & appearance and Experimental features (Liquid Glass): one look, saved whole.
+  // Adding a fix changes it behind Words' back, so read it again.
+  let rules = $derived(data.rules?.ok ? data.rules.rules : null);
+  const reloadRules = async () => (rules = await invoke<Rules>("rules_get").catch(() => rules));
   let look = $derived(data.appearance.ok ? data.appearance.look : null);
   // The AI provider page changes it; read it again on the way out, so the pages after it (Voice typing's cleanup row) never show the old one.
   let ai = $derived(data.ai?.ok ? data.ai.ai : null);
@@ -101,8 +106,10 @@
             {#if data.look?.ok}<PillLook initial={data.look.look} listening={{ state: "listening", hold: voice.mode === "hold", key: voice.key }} />
             {:else}<ErrorState title="Myna couldn't read the pill's look" message={data.look?.error ?? ""} />{/if}
             <PasteMethod bind:voice />
-            {#if data.rules?.ok}<Words initial={data.rules.rules} />
-            {:else}<ErrorState title="Myna couldn't read your words" message={data.rules?.error ?? ""} />{/if}
+            <Fixes initial={data.fixes} onadd={reloadRules} />
+            {#if rules}<Words initial={rules} />
+            {:else}<ErrorState title="Myna couldn't read your words" message={data.rules?.ok === false ? data.rules.error : ""} />{/if}
+            <Feedback />
             <!-- Styles only matter once there's a Fast model to run them. -->
             {#if ai?.fast && !ai.fast.gone}
               {#if data.cleanup?.ok}<CleanupStyles initial={data.cleanup.cleanup} />

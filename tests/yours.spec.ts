@@ -9,7 +9,7 @@ let id = 0;
 // A trace pasting `n` words.
 const T = (o: Partial<Trace> & { n?: number } = {}): Trace => {
   const { n = 4, ...t } = o, text = Array.from({ length: n }, (_, i) => `w${i}`).join(" ");
-  return { id: ++id, started: at(6), mode: "hold", app: "Slack", model: "Parakeet", audio_ms: 1000, outcome: "pasted", reason: null, load_ms: 0, paste_ms: 100,
+  return { id: ++id, started: at(6), mode: "hold", app: "Slack", model: "Parakeet", audio_ms: 1000, outcome: "pasted", rating: null, reason: null, load_ms: 0, paste_ms: 100,
     steps: [{ kind: "speech-to-text", text: "raw", ms: 1, settings: null, edits: null }, { kind: "rules", text, ms: 1, settings: null, edits: [] }], ...t };
 };
 
