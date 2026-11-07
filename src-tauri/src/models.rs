@@ -187,6 +187,12 @@ pub fn select(conn: &Connection, task: &str, id: &str, macos: u32, sys: &System)
     Ok(())
 }
 
+/// Drops `id` as any task's saved pick, so a deleted model hands over to the task's default.
+pub fn forget(conn: &Connection, id: &str) -> Result<(), String> {
+    conn.execute("DELETE FROM active_model WHERE model_id = ?1", [id]).map_err(|e| format!("Couldn't update the chosen models: {e}"))?;
+    Ok(())
+}
+
 /// Seconds the speech-to-text model stays loaded after its last use; 0 unloads right away, -1 never.
 pub const UNLOAD_CHOICES: [i64; 6] = [0, 60, 300, 900, 3600, -1];
 const UNLOAD_DEFAULT: i64 = 300;
@@ -322,6 +328,19 @@ mod tests {
             select(&conn, "stt", "apple-speech", 26, &System::default()).unwrap_err(),
             "Apple Speech: Needs a language Apple supports."
         );
+    }
+
+    #[test]
+    fn deleting_the_chosen_model_hands_over_to_the_default() {
+        let (tmp, conn) = db();
+        let models = tmp.path().join("models");
+        installed_parakeet(&models);
+        let stt = |conn: &Connection| list(conn, &models, 26, &english(true)).unwrap().remove(0).active;
+        select(&conn, "stt", "whisper-large-v3-turbo", 26, &english(true)).unwrap();
+        forget(&conn, "parakeet-tdt-v3").unwrap();
+        assert_eq!(stt(&conn).as_deref(), Some("whisper-large-v3-turbo"), "only the deleted model's pick goes");
+        forget(&conn, "whisper-large-v3-turbo").unwrap();
+        assert_eq!(stt(&conn).as_deref(), Some("parakeet-tdt-v3"));
     }
 
     #[test]

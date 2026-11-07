@@ -74,8 +74,9 @@ async fn model_select(d: tauri::State<'_, Data>, task: String, id: String) -> Re
     models::select(&d.db.lock().unwrap(), &task, &id, d.macos, &apple::status())
 }
 
-/// What the Settings window hears while a model downloads: `{ id, state: "progress" | "done" | "canceled" | "failed", ... }`.
-fn model_event(app: &AppHandle, id: &str, state: &str, extra: serde_json::Value) {
+/// What the Settings window hears about a model: `{ id, state: "progress" | "done" | "canceled" | "failed" | "loaded", ... }`.
+/// "failed" also comes from a downloaded model that won't load; "loaded" clears that.
+pub(crate) fn model_event(app: &AppHandle, id: &str, state: &str, extra: serde_json::Value) {
     let mut p = serde_json::json!({ "id": id, "state": state });
     if let (Some(p), Some(e)) = (p.as_object_mut(), extra.as_object()) {
         p.extend(e.clone());
@@ -143,14 +144,19 @@ fn model_cancel(app: AppHandle, d: tauri::State<Data>, id: String) {
     }
 }
 
+/// Returns the task's active model afterwards: deleting the chosen one falls back to the default.
 #[tauri::command]
-fn model_delete(d: tauri::State<Data>, id: String) -> Result<(), String> {
+async fn model_delete(d: tauri::State<'_, Data>, id: String) -> Result<Option<String>, String> {
     let m = models::find(&id).ok_or_else(|| format!("Unknown model {id}"))?;
     if d.downloads.lock().unwrap().contains_key(&id) {
         return Err(format!("{} is downloading. Cancel it first.", m.name));
     }
     let downloading: Vec<String> = d.downloads.lock().unwrap().keys().cloned().collect();
-    download::remove(&m, &d.models_dir, &downloading)
+    download::remove(&m, &d.models_dir, &downloading)?;
+    let db = d.db.lock().unwrap();
+    models::forget(&db, &id)?;
+    let tasks = models::list(&db, &d.models_dir, d.macos, &apple::status())?;
+    Ok(tasks.into_iter().find(|t| t.models.iter().any(|x| x.id == id)).and_then(|t| t.active))
 }
 
 /// `MYNA_DEBUG=1` turns on debug aids in the UI (for now: the window size while resizing).
@@ -595,6 +601,7 @@ pub fn run() {
                     let tap_limit = std::time::Duration::from_secs(voice::TAP_LIMIT_SECS);
                     let second = std::time::Duration::from_secs(1);
                     let keys: Arc<dyn ai::Keys> = Arc::new(ai::Keychain);
+                    download::sweep(&dir.join("models")); // before any download can start
                     app.manage(Session::new(world, db.clone(), keys.clone(), dir.join("models"), models::macos_major(), tap_limit, second));
                     app.manage(Data {
                         db,
