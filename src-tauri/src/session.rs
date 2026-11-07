@@ -374,7 +374,13 @@ impl World for Mac {
         (app.localizedName().map(|n| n.to_string()), app.bundleIdentifier().map(|b| b.to_string()))
     }
     fn transcriber(&self, id: &str, models_dir: &Path) -> Result<Box<dyn Transcriber>, String> {
-        runtime::transcriber(id, models_dir)
+        let t = runtime::transcriber(id, models_dir);
+        // The pill says it too, but only for this dictation; the model's row in Settings keeps it.
+        match &t {
+            Ok(_) => crate::model_event(&self.0, id, "loaded", serde_json::json!({})),
+            Err(e) => crate::model_event(&self.0, id, "failed", serde_json::json!({ "error": e })),
+        }
+        t
     }
 }
 

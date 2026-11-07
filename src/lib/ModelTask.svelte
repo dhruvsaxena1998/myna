@@ -33,8 +33,10 @@
   async function remove(id: string) {
     error = "";
     try {
-      await invoke("model_delete", { id });
+      active = await invoke<string | null>("model_delete", { id }); // the default takes over from a deleted pick
       dl.installed[id] = false;
+      delete dl.errors[id];
+      delete dl.retry[id]; // a load failure set it; a removed model offers Download, not Try again
     } catch (e) {
       error = String(e);
     }

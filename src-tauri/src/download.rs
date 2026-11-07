@@ -11,6 +11,14 @@ pub const HF: &str = "https://huggingface.co";
 
 /// Installs `m`, fetching ONNX Runtime first if it needs one that isn't there yet.
 /// `fetch` downloads one model (or the runtime) and gets its bytes so far; `progress` gets the percent of the whole.
+/// Removes what downloads left when the app quit mid-way. Only safe at launch, before any download starts.
+pub fn sweep(models_dir: &Path) {
+    let Ok(rd) = std::fs::read_dir(models_dir) else { return };
+    for e in rd.flatten().filter(|e| e.file_name().to_string_lossy().starts_with(".downloading-")) {
+        let _ = std::fs::remove_dir_all(e.path());
+    }
+}
+
 /// Ok(true) = installed, Ok(false) = canceled.
 pub fn install(
     m: &Model,
@@ -203,6 +211,17 @@ mod tests {
         let err = fetch(&format!("http://{dead}"), &model(b"hello", HELLO), tmp.path(), &AtomicBool::new(false), |_| {}).unwrap_err();
         assert!(err.contains("Couldn't download"), "{err}");
         assert!(entries(tmp.path()).is_empty());
+    }
+
+    #[test]
+    fn launch_sweeps_downloads_left_by_a_quit_and_keeps_installed_models() {
+        let tmp = tempfile::tempdir().unwrap();
+        for d in [".downloading-parakeet-tdt-v3-123/sub", ".downloading-whisper-9", "parakeet-tdt-v3"] {
+            std::fs::create_dir_all(tmp.path().join(d)).unwrap();
+        }
+        sweep(tmp.path());
+        assert_eq!(entries(tmp.path()), ["parakeet-tdt-v3"]);
+        sweep(&tmp.path().join("missing")); // a fresh install has no models folder yet
     }
 
     #[test]

@@ -112,6 +112,23 @@ test("Remove uninstalls a model", async ({ page }) => {
   await expect(whisper.getByRole("button", { name: "Download whisper" })).toBeVisible();
 });
 
+test("removing the chosen model selects the one that takes over", async ({ page }) => {
+  await open(page, undefined, `model_delete: () => "parakeet"`);
+  await page.getByRole("radio", { name: /whisper/ }).check();
+  await page.getByRole("button", { name: "Remove whisper" }).click();
+  await expect(page.getByRole("radio", { name: /parakeet/ })).toBeChecked();
+  await expect(page.getByRole("button", { name: "Download whisper" })).not.toContainText("Try again");
+});
+
+test("an installed model that won't load says so in its row until it loads", async ({ page }) => {
+  await open(page);
+  await emit(page, { id: "whisper", state: "failed", error: "Couldn't load whisper: the file is damaged." });
+  await expect(page.getByText("Couldn't load whisper: the file is damaged.")).toBeVisible();
+  await expect(page.getByRole("radiogroup", { name: "Turning speech into text model" }).getByRole("listitem").nth(2)).toContainText("Installed");
+  await emit(page, { id: "whisper", state: "loaded" });
+  await expect(page.getByText("Couldn't load whisper")).toHaveCount(0);
+});
+
 test("a model with no downloadable files says coming soon (Desert Ant, until ticket 03.4)", async ({ page }) => {
   const t = JSON.stringify([{ id: "stt", active: "voz", models: [model("voz", { min_macos: 15, files: [] })] }, { id: "diar", active: null, models: [] }]);
   await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", models_list: () => (${t}) }`);
