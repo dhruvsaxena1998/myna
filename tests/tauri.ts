@@ -18,6 +18,7 @@ export async function fakeTauri(page: Page, handlers: string) {
         if (cmd === "plugin:event|listen") return void (listeners[(args as any).event] ??= []).push((args as any).handler);
         if (cmd === "plugin:event|unlisten") return;
         if (cmd === "plugin:window|hide") return;
+        if (["pill_hit", "dictation_fix", "feedback_set", "fix_take"].includes(cmd) && !(cmd in h)) return cmd === "feedback_set" ? [] : cmd === "fix_take" ? null : undefined;
         if (cmd === "permissions_state" && !(cmd in h)) return { mic: "allowed", ax: true };
         if (cmd === "stt_unload_get" && !(cmd in h)) return 300;
         if (cmd === "pill_look_get" && !(cmd in h)) return { style: "capsule", place: "bottom" };
@@ -25,8 +26,10 @@ export async function fakeTauri(page: Page, handlers: string) {
         if (cmd === "glass_set" && !(cmd in h)) return;
         if (cmd === "globe_ok" && !(cmd in h)) return true;
         if (cmd === "voice_get" && !(cmd in h)) return { on: true, key: "Alt+Space", mode: "hold", paste: "clipboard", clean: null };
-        if (cmd === "rules_get" && !(cmd in h)) return { settings: { language: "en", tidy: true, words: [] }, languages: [["en", "English"], ["de", "German"]] };
+        if (cmd === "rules_get" && !(cmd in h)) return { settings: { language: "en", tidy: true, words: [], keep: [] }, languages: [["en", "English"], ["de", "German"]] };
         if (cmd === "rules_set" && !(cmd in h)) return;
+        if (cmd === "fixes_get" && !(cmd in h)) return [];
+        if (cmd === "feedback_set" && !(cmd in h)) return [];
         if (cmd === "cleanup_get" && !(cmd in h)) return { styles: [], apps: [] };
         if (cmd === "traces_list" && !(cmd in h)) return [];
         if (cmd === "traces_all" && !(cmd in h)) return [];

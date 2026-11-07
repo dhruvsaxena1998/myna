@@ -8,9 +8,12 @@ const PUNCT: Record<string, string> = {
   Backslash: "\\", Minus: "-", Equal: "=", Backquote: "`", Enter: "Return", ArrowUp: "↑", ArrowDown: "↓", ArrowLeft: "←", ArrowRight: "→",
 };
 
+// Keys that don't type, named as on the keycap; not in PUNCT, which marks keys that type.
+const NAMES: Record<string, string> = { PageUp: "Page Up", PageDown: "Page Down" };
+
 /** "Ctrl+Shift+KeyD" → ["⌃", "⇧", "D"]. */
 export const keycaps = (accel: string) =>
-  accel.split("+").map((k) => MODS[k] ?? PUNCT[k] ?? k.replace(/^(Key|Digit)/, ""));
+  accel.split("+").map((k) => MODS[k] ?? PUNCT[k] ?? NAMES[k] ?? k.replace(/^(Key|Digit)/, ""));
 
 /** Words for screen readers: "Control Shift D". */
 export const spoken = (accel: string) =>

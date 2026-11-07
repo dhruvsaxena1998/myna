@@ -8,7 +8,7 @@ async function open(page: Page, look = { style: "capsule", place: "bottom" }) {
   await fakeTauri(page, `{ pill_look_get: () => (${JSON.stringify(look)}) }`);
   await page.clock.install();
   await page.goto("/pill");
-  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(5); // the layout's and the page's "look" too
+  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(7); // the layout's and the page's "look" too
 }
 const emit = (page: Page, event: string, payload: unknown) => page.evaluate(([e, p]) => (window as any).__emit(e, p), [event, payload] as const);
 const say = (page: Page, state: string, hold = true) => emit(page, "dictation", state === "listening" ? { state, hold, key: "Alt+Space", limit: 300 } : { state });
@@ -169,7 +169,7 @@ async function openGlass(page: Page, look: object) {
   await fakeTauri(page, `{ look_get: () => (${JSON.stringify({ theme: "auto", accent: "green", glass: "clear", liquid: true, experimental: true, ...look })}) }`);
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/pill");
-  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(5);
+  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(7);
 }
 const lastGlass = (page: Page) => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "glass_set").at(-1)?.[1].glass?.[0] ?? null);
 
@@ -196,4 +196,62 @@ test("Liquid Glass: a new tint re-dresses the glass, and turning it off takes th
   await expect.poll(() => lastGlass(page)).toBeNull(); // the master switch alone takes it away
   await say(page, "listening");
   await expect(page.locator(".hud")).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)"); // today's pill again
+});
+
+test("Ask how it went: 👍 says thanks, 👎 offers Fix it, and only the buttons take the mouse", async ({ page }) => {
+  await open(page);
+  const calls = (cmd: string) => page.evaluate((c) => (window as any).__calls.filter((x: any) => x[0] === c).map((x: any) => x[1]), cmd);
+  await say(page, "added");
+  await emit(page, "dictation-ask", 7);
+  const pill = page.getByRole("status");
+  const across = async () => { const b = (await pill.locator(".hud").boundingBox())!; return [b.x, b.width]; };
+  const box = await across();
+  await page.getByRole("button", { name: "Good dictation" }).click();
+  expect(await calls("feedback_set")).toEqual([{ trace: 7, rating: "up", corrected: null }]);
+  await expect(page.getByRole("button", { name: "Good dictation" })).toHaveAttribute("aria-pressed", "true");
+  expect(await across()).toEqual(box); // the pill didn't move sideways
+  expect((await calls("pill_hit")).some((c: any) => c.rect?.length === 4)).toBe(true); // where the buttons are
+  await page.clock.runFor(1300);
+  await expect(pill).toBeHidden();
+  expect((await calls("pill_hit")).at(-1)).toEqual({ rect: null });
+
+  await say(page, "added");
+  await emit(page, "dictation-ask", 8);
+  await page.getByRole("button", { name: "Bad dictation" }).click();
+  await page.getByRole("button", { name: "Fix it" }).click();
+  expect((await calls("feedback_set")).at(-1)).toEqual({ trace: 8, rating: "down", corrected: null });
+  expect(await calls("dictation_fix")).toEqual([{ trace: 8 }]);
+});
+
+test("a new dictation clears the question", async ({ page }) => {
+  await open(page);
+  await say(page, "added");
+  await emit(page, "dictation-ask", 7);
+  await expect(page.getByRole("button", { name: "Good dictation" })).toBeVisible();
+  await say(page, "listening");
+  await expect(page.getByRole("button", { name: "Good dictation" })).toHaveCount(0);
+});
+
+test("the question goes away by itself; hovering the buttons holds it 8 s at most, and leaving lets it go", async ({ page }) => {
+  await open(page);
+  const pill = page.getByRole("status");
+  await say(page, "added");
+  await emit(page, "dictation-ask", 7);
+  await page.clock.runFor(4100);
+  await expect(pill).toBeHidden(); // nobody touched it
+
+  await say(page, "added");
+  await emit(page, "dictation-ask", 8);
+  await emit(page, "pill-hover", true); // pill.rs: the pointer is over the buttons
+  await page.clock.runFor(6000);
+  await expect(pill).toBeVisible();
+  await page.clock.runFor(2100);
+  await expect(pill).toBeHidden(); // a cursor parked there doesn't keep it for good
+
+  await say(page, "added");
+  await emit(page, "dictation-ask", 9);
+  await emit(page, "pill-hover", true);
+  await emit(page, "pill-hover", false);
+  await page.clock.runFor(1600);
+  await expect(pill).toBeHidden();
 });

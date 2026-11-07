@@ -9,7 +9,11 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import ClearAll from "./ClearAll.svelte";
+  import Correct from "./Correct.svelte";
+  import { rate, type Rating } from "./feedback";
   import Overview from "./Overview.svelte";
+  import Thumbs from "./Thumbs.svelte";
+  import { tick } from "svelte";
   import { edits as editsOf, overview, picks, PERIODS } from "./stats";
   import type { Rules, Word } from "./Words.svelte";
   import { dur, KIND_ONE, KINDS, OUTCOME, outermost, title, when, type Cleanup, type Edit, type Trace } from "./trace";
@@ -17,6 +21,8 @@
   let { traces = $bindable(), words, onclear }: { traces: Trace[]; words: Word[]; onclear: () => void } = $props();
   let open = $state<{ t: Trace; rules: Rules } | null>(null);
   let error = $state("");
+  let correcting = $state(false);
+  let thumbs = $state<Thumbs>();
   let off = $state<Record<string, boolean>>({});
   let tip = $state<{ e: Edit; raw: string; x: number; y: number } | null>(null);
 
@@ -38,10 +44,31 @@
       // Everything first, then swap: the page never paints half a trace.
       const [t, rules] = await Promise.all([invoke<Trace>("trace_get", { id }), invoke<Rules>("rules_get")]);
       off = {};
+      correcting = false;
       open = { t, rules };
     } catch (err) {
       error = String(err);
     }
+  }
+
+  async function rateOpen(rating: Rating) {
+    if (!open) return;
+    const { t } = open, was = t.rating;
+    const set = (r: Rating) => { open = open && { ...open, t: { ...t, rating: r } }; traces = traces.map((x) => (x.id === t.id ? { ...x, rating: r } : x)); };
+    error = "";
+    set(rating);
+    try {
+      await rate(t.id, rating, null);
+      correcting = rating === "down";
+    } catch (err) {
+      set(was);
+      error = String(err);
+    }
+  }
+  async function closeCorrect() {
+    correcting = false;
+    await tick();
+    thumbs?.focusDown();
   }
 
   const bad = (o: string) => o !== "pasted";
@@ -116,8 +143,10 @@
       <h2>{title(stt?.text ?? null)}</h2>
       <div class="meta">{[when(t.started), t.app, t.mode === "hold" ? "Hold to talk" : "Tap to start and stop", t.model].filter(Boolean).join(" · ")}</div>
     </div>
-    <span class="badge" class:bad={bad(t.outcome)}>{OUTCOME[t.outcome] ?? t.outcome}</span>
+    <span class="side"><Thumbs bind:this={thumbs} rating={t.rating} onrate={rateOpen} /><span class="badge" class:bad={bad(t.outcome)}>{OUTCOME[t.outcome] ?? t.outcome}</span></span>
   </div>
+  {#if correcting}<Correct text={t.steps.at(-1)?.text ?? ""} save={(c) => rate(t.id, "down", c)} onclose={closeCorrect} />{/if}
+  <p class="err" role="status">{error}</p>
   <p class="reason meta" role="status">{t.reason ?? ""}</p>
 
   <section class="card" aria-label="Timing">
@@ -262,6 +291,7 @@
   .t { display: grid; min-width: 0; } .name { font-weight: var(--fw-semibold); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .badge { font-size: var(--fs-caption); border-radius: var(--r-full); padding: 0 8px; height: 20px; display: inline-flex; align-items: center; background: var(--fill-hover); color: var(--text-2); font-weight: 500; white-space: nowrap; }
   .badge.bad { background: var(--caution-soft); color: var(--caution-text); }
+  .side { display: flex; align-items: center; gap: var(--sp-2); }
   .top { margin-bottom: var(--sp-2); }
   .back { display: inline-flex; align-items: center; gap: 2px; min-height: 24px; margin-left: -4px; padding: 0 4px 0 0; border: 0; background: none; font: inherit; color: var(--accent-text); border-radius: var(--r-sm); }
   .back .ic { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }

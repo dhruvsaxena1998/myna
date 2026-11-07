@@ -3,6 +3,7 @@ mod apple;
 mod cleanup;
 mod dictation;
 mod download;
+mod feedback;
 mod fnkey;
 mod look;
 mod models;
@@ -41,7 +42,7 @@ struct Data {
     macos: u32,
     /// Model id -> cancel flag, for each download in progress.
     downloads: Mutex<HashMap<String, Arc<AtomicBool>>>,
-    /// The shortcuts registered with macOS right now: Dictate, and Dictate with cleanup if it's set.
+    /// The shortcuts registered with macOS right now: Dictate's keys, and Dictate with cleanup's if set.
     shortcut: Mutex<Vec<String>>,
     /// Set while Settings records a new shortcut, so pressing the old one types into the recorder.
     paused: AtomicBool,
@@ -320,6 +321,24 @@ fn trace_get(d: tauri::State<Data>, id: i64) -> Result<serde_json::Value, String
     trace::get(&d.db.lock().unwrap(), id)
 }
 
+/// The dictation Fix it asked for, until the main window takes it. An event alone gets lost when the page
+/// isn't listening yet (just reloaded, or waking after being hidden).
+static FIX: Mutex<Option<i64>> = Mutex::new(None);
+
+/// "Fix it" on the pill after a 👎: opens Voice typing history with that dictation's What did you mean? box.
+#[tauri::command]
+fn dictation_fix(app: AppHandle, trace: i64) {
+    *FIX.lock().unwrap() = Some(trace);
+    open_main(&app);
+    let _ = app.emit_to("main", "fix", trace);
+}
+
+/// The main window asks on load, on focus and on the "fix" event; the first ask gets it.
+#[tauri::command]
+fn fix_take() -> Option<i64> {
+    FIX.lock().unwrap().take()
+}
+
 /// Delete in Voice typing history.
 #[tauri::command]
 fn trace_delete(d: tauri::State<Data>, id: i64) -> Result<(), String> {
@@ -330,6 +349,50 @@ fn trace_delete(d: tauri::State<Data>, id: i64) -> Result<(), String> {
 #[tauri::command]
 fn traces_clear(d: tauri::State<Data>) -> Result<(), String> {
     trace::clear(&d.db.lock().unwrap())
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64
+}
+
+/// 👍/👎 on a dictation (`rating` none takes it back); returns the fixes now suggested.
+#[tauri::command]
+fn feedback_set(d: tauri::State<Data>, trace: i64, rating: Option<String>, corrected: Option<String>) -> Result<Vec<feedback::Fix>, String> {
+    let db = d.db.lock().unwrap();
+    feedback::set(&db, trace, rating.as_deref(), corrected.as_deref(), now_ms())?;
+    feedback::fixes(&db)
+}
+
+#[tauri::command]
+fn fixes_get(d: tauri::State<Data>) -> Result<Vec<feedback::Fix>, String> {
+    feedback::fixes(&d.db.lock().unwrap())
+}
+
+/// Apply a suggested fix; returns the fixes left.
+#[tauri::command]
+fn fix_add(d: tauri::State<Data>, key: String) -> Result<Vec<feedback::Fix>, String> {
+    let db = d.db.lock().unwrap();
+    feedback::add(&db, &key)?;
+    feedback::fixes(&db)
+}
+
+/// Not now; returns the fixes left.
+#[tauri::command]
+fn fix_dismiss(d: tauri::State<Data>, key: String) -> Result<Vec<feedback::Fix>, String> {
+    let db = d.db.lock().unwrap();
+    feedback::dismiss(&db, &key)?;
+    feedback::fixes(&db)
+}
+
+/// Export feedback: writes the JSON to Downloads, shows it in Finder, returns its path.
+#[tauri::command]
+fn feedback_export(d: tauri::State<Data>) -> Result<String, String> {
+    let json = feedback::export(&d.db.lock().unwrap(), now_ms())?;
+    let downloads = std::path::PathBuf::from(std::env::var("HOME").map_err(|_| "Couldn't find your home folder.")?).join("Downloads");
+    let date = std::process::Command::new("/bin/date").arg("+%Y-%m-%d").output().map_err(|e| e.to_string())?;
+    let path = feedback::write_export(&downloads, String::from_utf8_lossy(&date.stdout).trim(), &json)?;
+    let _ = std::process::Command::new("/usr/bin/open").arg("-R").arg(&path).status();
+    Ok(path.display().to_string())
 }
 
 /// Copy again and Copy what I said, in Voice typing history.
@@ -493,7 +556,7 @@ fn tell_update(app: &AppHandle, mode: &str, manual: bool) {
 fn sync_shortcut(app: &AppHandle) -> Result<(), String> {
     let d = app.state::<Data>();
     let v = voice::get(&d.db.lock().unwrap())?;
-    let want: Vec<String> = if v.on && !d.paused.load(Ordering::SeqCst) { [Some(v.key.clone()), v.clean.clone()].into_iter().flatten().collect() } else { vec![] };
+    let want: Vec<String> = if v.on && !d.paused.load(Ordering::SeqCst) { v.keys().into_iter().map(|(k, _)| k).collect() } else { vec![] };
     let mut have = d.shortcut.lock().unwrap();
     if *have != want {
         let gs = app.global_shortcut();
@@ -513,7 +576,7 @@ fn sync_shortcut(app: &AppHandle) -> Result<(), String> {
     }
     drop(have);
     // The recorder hears fn from the tap too, so it watches while paused.
-    if v.on && (v.key == voice::FN || v.clean.as_deref() == Some(voice::FN) || d.paused.load(Ordering::SeqCst)) {
+    if v.on && (v.keys().iter().any(|(k, _)| k == voice::FN) || d.paused.load(Ordering::SeqCst)) {
         let app = app.clone();
         fnkey::watch(move |down| on_fn(&app, down));
     }
@@ -557,9 +620,8 @@ fn on_fn(app: &AppHandle, down: bool) {
             let _ = app.emit_to("settings", "voice-fn", ());
         }
     } else if d.shortcut.lock().unwrap().iter().any(|k| k == voice::FN) {
-        // fn is Dictate's key, or else it's the cleanup one.
-        let plain = voice::get(&d.db.lock().unwrap()).is_ok_and(|v| v.key == voice::FN);
-        app.state::<Arc<Session>>().key(down, !plain);
+        let clean = voice::get(&d.db.lock().unwrap()).is_ok_and(|v| v.is_clean(voice::FN));
+        app.state::<Arc<Session>>().key(down, clean);
     }
 }
 
@@ -587,7 +649,7 @@ fn open_update(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, text_copy, settings_open, voice_pause, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
+        .invoke_handler(tauri::generate_handler![pill::pill_hit, dictation_fix, fix_take, debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::Updates::default())
         .setup(|app| {
@@ -616,7 +678,7 @@ pub fn run() {
                         tauri_plugin_global_shortcut::Builder::new()
                             .with_handler(|app, shortcut, e| {
                                 let clean = voice::get(&app.state::<Data>().db.lock().unwrap())
-                                    .is_ok_and(|v| v.clean.and_then(|k| k.parse::<Shortcut>().ok()).as_ref() == Some(shortcut));
+                                    .is_ok_and(|v| v.keys().iter().any(|(k, c)| *c && k.parse::<Shortcut>().ok().as_ref() == Some(shortcut)));
                                 app.state::<Arc<Session>>().key(e.state() == ShortcutState::Pressed, clean)
                             })
                             .build(),

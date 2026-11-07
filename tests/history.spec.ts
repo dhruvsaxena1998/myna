@@ -26,7 +26,7 @@ const list = (page: Page) => page.getByRole("list", { name: "Voice typing histor
 
 test("the sidebar has Voice typing history with its count and Settings, and nothing that isn't built yet", async ({ page }) => {
   await open(page);
-  await expect(nav(page).getByRole("button")).toHaveText(["Voice typing history2", "Settings⌘,"]);
+  await expect(nav(page).getByRole("button")).toHaveText(["Voice typing history2", "Your dictation", "Settings⌘,"]);
   await expect(nav(page).getByRole("button", { name: "Voice typing history" })).toHaveAttribute("aria-current", "true");
 });
 

@@ -45,9 +45,9 @@ export function steps(t: Trace) {
 }
 export const STEPS: [string, string][] = [["Model load wait", "--t-load"], ["Speech to text", "--t-stt"], ["Rules", "--t-rules"], ["Cleanup", "--t-clean"], ["Paste", "--t-paste"]];
 
-const midnight = (ms: number) => { const d = new Date(ms); d.setHours(0, 0, 0, 0); return d; };
+export const midnight = (ms: number) => { const d = new Date(ms); d.setHours(0, 0, 0, 0); return d; };
 /** Local calendar days back from today: 0 is today. */
-const daysAgo = (ms: number, now: number) => Math.round((midnight(now).getTime() - midnight(ms).getTime()) / 864e5);
+export const daysAgo = (ms: number, now: number) => Math.round((midnight(now).getTime() - midnight(ms).getTime()) / 864e5);
 /** The first moment in the period: local midnight, today and the days before it. */
 export function since(period: Period, now: number) {
   if (period === "all") return -Infinity;

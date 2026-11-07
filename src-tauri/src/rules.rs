@@ -19,11 +19,14 @@ pub struct Settings {
     pub tidy: bool,
     /// Oldest first.
     pub words: Vec<Word>,
+    /// Words fillers and repeats never remove, any case.
+    #[serde(default)]
+    pub keep: Vec<String>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { language: "en".into(), tidy: true, words: vec![] }
+        Settings { language: "en".into(), tidy: true, words: vec![], keep: vec![] }
     }
 }
 
@@ -168,12 +171,16 @@ fn is_number(t: &Tok) -> bool {
     t.text.starts_with(|c: char| c.is_ascii_digit()) || WORDS.contains(&t.lower().as_str())
 }
 
-fn fillers(toks: &mut Vec<Tok>, edits: &mut Vec<Edit>) {
+fn kept(keep: &[String], w: &str) -> bool {
+    keep.iter().any(|k| k.to_lowercase() == w.to_lowercase())
+}
+
+fn fillers(toks: &mut Vec<Tok>, keep: &[String], edits: &mut Vec<Edit>) {
     let mut i = 0;
     while i < toks.len() {
         let near_number = (i > 0 && is_number(&toks[i - 1])) || toks.get(i + 1).is_some_and(is_number);
         let t = &toks[i];
-        if !is_filler(&t.text) || (near_number && matches!(t.lower().as_str(), "oh" | "mm")) {
+        if !is_filler(&t.text) || kept(keep, &t.text) || (near_number && matches!(t.lower().as_str(), "oh" | "mm")) {
             i += 1;
             continue;
         }
@@ -227,7 +234,7 @@ const REPEATABLE: [&str; 26] = [
 
 /// Collapses runs of listed words and two-word repeats led by a listed word to their first copy, and drops cut-offs.
 /// Commas between copies go with them; a full stop or question mark between them blocks the collapse.
-fn repeats(toks: &mut Vec<Tok>, edits: &mut Vec<Edit>) {
+fn repeats(toks: &mut Vec<Tok>, keep: &[String], edits: &mut Vec<Edit>) {
     let mut i = 0;
     while i < toks.len() {
         let t = &toks[i];
@@ -256,7 +263,7 @@ fn repeats(toks: &mut Vec<Tok>, edits: &mut Vec<Edit>) {
             commas |= at > end;
             end = at + len;
         }
-        if end > i + len {
+        if end > i + len && !toks[i..i + len].iter().any(|t| kept(keep, &t.text)) {
             if commas && toks.get(end).is_some_and(|c| c.is(",")) {
                 end += 1;
             }
@@ -349,11 +356,14 @@ fn read(conn: &Connection, key: &str) -> Result<Option<String>, String> {
 pub fn load(conn: &Connection) -> Result<Settings, String> {
     let err = |e: rusqlite::Error| format!("Couldn't read your words: {e}");
     let mut q = conn.prepare("SELECT spelling, heard FROM word ORDER BY id").map_err(err)?;
-    let words = q.query_map([], |r| Ok(Word { spelling: r.get(0)?, heard: r.get(1)? })).map_err(err)?;
+    let words = q.query_map([], |r| Ok(Word { spelling: r.get(0)?, heard: r.get(1)? })).map_err(err)?.collect::<Result<_, _>>().map_err(err)?;
+    let mut q = conn.prepare("SELECT word FROM keep_word ORDER BY rowid").map_err(err)?;
+    let keep = q.query_map([], |r| r.get(0)).map_err(err)?.collect::<Result<_, _>>().map_err(err)?;
     Ok(Settings {
         language: read(conn, "dictation_language")?.unwrap_or_else(mac_language),
         tidy: read(conn, "dictation_tidy")?.is_none_or(|v| v == "1"),
-        words: words.collect::<Result<_, _>>().map_err(err)?,
+        words,
+        keep,
     })
 }
 
@@ -367,6 +377,10 @@ pub fn save(conn: &Connection, s: &Settings) -> Result<(), String> {
     tx.execute("DELETE FROM word", []).map_err(err)?;
     for w in &s.words {
         tx.execute("INSERT INTO word(spelling, heard) VALUES (?1, ?2)", (&w.spelling, &w.heard)).map_err(err)?;
+    }
+    tx.execute("DELETE FROM keep_word", []).map_err(err)?;
+    for w in &s.keep {
+        tx.execute("INSERT OR IGNORE INTO keep_word(word) VALUES (?1)", [w]).map_err(err)?;
     }
     tx.commit().map_err(err)
 }
@@ -394,8 +408,8 @@ pub fn clean(raw: &str, s: &Settings) -> String {
 pub fn edits(raw: &str, s: &Settings) -> (String, Vec<Edit>) {
     let (mut toks, mut edits) = (tokenize(raw), vec![]);
     if s.tidy && s.language == "en" {
-        fillers(&mut toks, &mut edits);
-        repeats(&mut toks, &mut edits);
+        fillers(&mut toks, &s.keep, &mut edits);
+        repeats(&mut toks, &s.keep, &mut edits);
         numbers(&mut toks, &mut edits);
     }
     remember(&mut toks, &s.words, &mut edits);
@@ -447,6 +461,27 @@ mod tests {
         for (input, want, why) in rows {
             assert_eq!(clean(input, &Settings::default()), want, "{why}: {input}");
         }
+    }
+
+    #[test]
+    fn kept_words_stay() {
+        let keep = |w: &[&str]| Settings { keep: w.iter().map(|w| w.to_string()).collect(), ..Default::default() };
+        let rows = [
+            ("Oh, that works.", &["oh"][..], "Oh, that works.", "kept filler"),
+            ("Oh, that works.", &["OH"], "Oh, that works.", "any case"),
+            ("Um, that works.", &["oh"], "That works.", "other filler goes"),
+            ("the the build", &["the"], "the the build", "kept repeat"),
+            ("we should, we should talk", &["should"], "we should, we should talk", "either word of a pair"),
+            ("I I think", &["the"], "I think", "unkept repeat goes"),
+            ("th- the build", &["the"], "the build", "cut-offs unaffected"),
+        ];
+        for (input, k, want, why) in rows {
+            let s = keep(k);
+            assert_eq!(clean(input, &s), want, "{why}: {input}");
+            assert_eq!(clean(want, &s), want, "idempotent: {why}");
+        }
+        let old: Settings = serde_json::from_str(r#"{"language":"en","tidy":true,"words":[]}"#).unwrap();
+        assert!(old.keep.is_empty());
     }
 
     #[test]
@@ -506,16 +541,16 @@ mod tests {
     fn an_alias_and_the_switches_round_trip_through_the_database() {
         let tmp = tempfile::tempdir().unwrap();
         let conn = crate::storage::open(tmp.path()).unwrap();
-        let s = Settings { language: "de".into(), tidy: false, words: vec![word("Postgres", None), word("Dhruv", Some("Drove"))] };
+        let s = Settings { language: "de".into(), tidy: false, words: vec![word("Postgres", None), word("Dhruv", Some("Drove"))], keep: vec!["oh".into(), "the".into()] };
         save(&conn, &s).unwrap();
         let back = load(&conn).unwrap();
-        assert_eq!((back.language.as_str(), back.tidy, back.words), ("de", false, s.words));
+        assert_eq!((back.language.as_str(), back.tidy, back.words, back.keep), ("de", false, s.words, s.keep));
         assert!(LANGUAGES.iter().any(|l| l.0 == mac_language()), "an unsaved language is one we offer");
     }
 
     fn with_words(language: &str, tidy: bool) -> Settings {
         let words = vec![word("Postgres", None), word("Kubernetes", None), word("iPhone", None), word("Dhruv", Some("Drove"))];
-        Settings { language: language.into(), tidy, words }
+        Settings { language: language.into(), tidy, words, keep: vec![] }
     }
 
     #[test]
