@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
+  import { fade } from "svelte/transition";
   import Pill, { WAVE, type Look, type Shown } from "$lib/Pill.svelte";
   import { glassOn, type Look as Appearance } from "$lib/look";
 
@@ -71,10 +72,15 @@
     const hud = spot.querySelector<HTMLElement>(".hud");
     if (!appearance || !glassOn(appearance) || !hud) return void invoke("glass_set", { glass: [] });
     const r = hud.getBoundingClientRect(), css = getComputedStyle(hud);
-    invoke("glass_set", { glass: [{ x: r.x, y: r.y, w: r.width, h: r.height, radius: Math.min(parseFloat(css.borderTopLeftRadius), r.height / 2), shown: on }] });
+    const glass = [{ x: r.x, y: r.y, w: r.width, h: r.height, radius: Math.min(parseFloat(css.borderTopLeftRadius), r.height / 2), shown: on }];
+    if (ask && askEl) {
+      const a = askEl.getBoundingClientRect();
+      glass.push({ x: a.x, y: a.y, w: a.width, h: a.height, radius: Math.min(parseFloat(getComputedStyle(askEl).borderTopLeftRadius), a.height / 2), shown: on });
+    }
+    invoke("glass_set", { glass });
   }
   $effect(() => {
-    void [appearance && glassOn(appearance), appearance?.glass, appearance?.accent, look.style, look.place, on]; // any of these moves or restyles the glass (the backend picks the tint)
+    void [appearance && glassOn(appearance), appearance?.glass, appearance?.accent, look.style, look.place, on, ask?.rated, askEl]; // any of these moves or restyles the glass (the backend picks the tint)
     syncGlass();
   });
   $effect(() => {
@@ -86,34 +92,48 @@
 
 <!-- The window sits against the same screen edges (pill.rs `place`), so the pill keeps clear of the menubar and Dock. -->
 <div class="spot {look.place}" class:on role="status" bind:this={spot}>
-  <span class="anchor">
+  <span class="anchor {look.style}">
   <Pill style={look.style} {pill} {wave} {secs} {left} />
   {#if ask}
-    <!-- Beside the pill, not in its row, so the pill doesn't move when this appears. Hovering keeps it up. -->
+    <!-- A trailing segment: beside the pill, not in its row, so the pill doesn't move; same height, corners and material. Hovering keeps it up. -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="ask" bind:this={askEl} onmouseenter={() => clearTimeout(hide)} onmouseleave={() => close(1500)}>
-      {#if ask.rated === "up"}<span class="thanks">Thanks</span>
-      {:else if ask.rated === "down"}<button class="fix" onclick={fix}>Fix it</button>
-      {:else}
-        <button aria-label="Good dictation" title="Good dictation" onclick={() => rate("up")}><svg viewBox="0 0 24 24" aria-hidden="true">{@html THUMB}</svg></button>
-        <button aria-label="Bad dictation" title="Bad dictation" onclick={() => rate("down")}><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="rotate(180 12 12)">{@html THUMB}</g></svg></button>
+    <div class="ask" bind:this={askEl} in:fade={{ duration: 120 }} onmouseenter={() => clearTimeout(hide)} onmouseleave={() => close(1500)}>
+      {#if ask.rated !== "down"}
+        <button aria-label="Good dictation" title="Good dictation" aria-pressed={ask.rated === "up"} disabled={!!ask.rated} onclick={() => rate("up")}><svg viewBox="0 0 24 24" aria-hidden="true">{@html THUMB}</svg></button>
       {/if}
+      {#if ask.rated !== "up"}
+        <button aria-label="Bad dictation" title="Bad dictation" aria-pressed={ask.rated === "down"} disabled={!!ask.rated} onclick={() => rate("down")}><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="rotate(180 12 12)">{@html THUMB}</g></svg></button>
+      {/if}
+      {#if ask.rated === "down"}<button class="fix" onclick={fix}>Fix it</button>{/if}
     </div>
   {/if}
   </span>
 </div>
 
 <style>
-  .anchor { position: relative; display: inline-flex; }
-  .ask { position: absolute; bottom: 0; left: calc(100% + var(--sp-2)); height: var(--h-hud); display: flex; align-items: center; gap: 2px; padding: 0 var(--sp-1);
-    box-sizing: border-box; border-radius: var(--r-full); background: var(--hud-bg); color: var(--hud-fg); white-space: nowrap; }
-  .top .ask, .top-right .ask { bottom: auto; top: 0; }
-  .bottom-right .ask, .top-right .ask { left: auto; right: calc(100% + var(--sp-2)); }
-  .ask button { height: calc(var(--h-hud) - 8px); min-width: calc(var(--h-hud) - 8px); display: grid; place-items: center; padding: 0 var(--sp-2); border: 0; border-radius: var(--r-full);
-    background: none; color: inherit; font: inherit; cursor: default; }
-  .ask button:hover { background: var(--hud-fill); }
-  .ask svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-  .thanks, .fix { padding: 0 var(--sp-2); font-weight: var(--fw-medium); }
+  /* A grid, not flex: WebKit sizes a flex wrapper without the card's 280px minimum, so the card overflowed it
+     (under the segment, and off the window at the right). */
+  .anchor { position: relative; display: inline-grid; flex: none; --seg-r: var(--r-full); }
+  .anchor.wave { --seg-r: var(--r-lg); }
+  .anchor.card { --seg-r: var(--r-xl); }
+  /* The pill's own height, corners, fill, edge and shadow (Pill.svelte .hud), 4px off its side. */
+  .ask { position: absolute; top: 0; bottom: 0; left: calc(100% + var(--sp-1)); display: flex; align-items: center; gap: 2px; padding: 4px; box-sizing: border-box;
+    border-radius: var(--seg-r); background: var(--hud-bg); color: var(--hud-fg); white-space: nowrap;
+    -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%); box-shadow: inset 0 0 0 0.5px var(--hud-edge), var(--shadow-hud); }
+  .top .ask, .top-right .ask { top: 0; }
+  .bottom-right .ask, .top-right .ask { left: auto; right: calc(100% + var(--sp-1)); }
+  /* Square, at most 32px, so the tall card keeps them hand-sized; corners nest inside the segment's. */
+  .ask button { height: min(100%, 32px); aspect-ratio: 1; display: grid; place-items: center; padding: 0; border: 0; border-radius: max(4px, calc(var(--seg-r) - 4px));
+    background: none; color: var(--hud-2); font: inherit; cursor: default; transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
+  .ask button:hover:not(:disabled) { background: color-mix(in srgb, var(--hud-fill) 60%, transparent); color: var(--hud-fg); }
+  /* Rated: the thumb turns bright, no fill, so a lone one doesn't read as a button in a ring. */
+  .ask button[aria-pressed="true"] { color: var(--hud-fg); }
+  .ask button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+  .ask .fix { aspect-ratio: auto; padding: 0 var(--sp-3); background: var(--hud-fill); color: var(--hud-fg); font-weight: var(--fw-medium); }
+  .ask .fix:hover { background: color-mix(in srgb, var(--hud-fg) 22%, transparent); }
+  .ask svg { width: var(--ic); height: var(--ic); stroke: currentColor; fill: none; stroke-width: var(--ic-stroke); stroke-linecap: round; stroke-linejoin: round; }
+  /* Liquid Glass: like the pill, only the native glass shows behind it. */
+  :global(html[data-liquid]) .ask { background: rgba(28,28,30, calc(max(0, var(--frost, .5) - .5) * .9)); -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: none; }
   .spot { position: fixed; z-index: var(--z-hud); display: flex;
     opacity: 0; visibility: hidden; translate: 0 8px;
     transition: opacity var(--dur-fast) var(--ease-in), translate var(--dur-fast) var(--ease-in), visibility 0s var(--dur-fast); }

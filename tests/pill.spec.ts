@@ -208,7 +208,7 @@ test("Ask how it went: 👍 says thanks, 👎 offers Fix it, and only the button
   const box = await across();
   await page.getByRole("button", { name: "Good dictation" }).click();
   expect(await calls("feedback_set")).toEqual([{ trace: 7, rating: "up", corrected: null }]);
-  await expect(pill).toContainText("Thanks");
+  await expect(page.getByRole("button", { name: "Good dictation" })).toHaveAttribute("aria-pressed", "true");
   expect(await across()).toEqual(box); // the pill didn't move sideways
   expect((await calls("pill_hit")).some((c: any) => c.rect?.length === 4)).toBe(true); // where the buttons are
   await page.clock.runFor(1300);

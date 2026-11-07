@@ -321,9 +321,12 @@ body.mb .win { height: calc(100vh - var(--mb-h) - 48px); }
 .hud :focus-visible, .hud:focus-visible { outline: 2px solid #6AAEFF; outline-offset: 2px; }
 .dpill { position: fixed; bottom: var(--s5); left: 50%; transform: translateX(-50%); z-index: 70; }
 .dwrap { display: inline-flex; }
-.dask { position: absolute; left: calc(100% + 8px); bottom: 0; gap: 2px; padding: 0 4px; }
-.dask-b { height: 28px; min-width: 28px; display: grid; place-items: center; padding: 0 8px; border: 0; border-radius: 999px; background: none; color: inherit; font: inherit; }
-.dask-b:hover { background: rgba(255,255,255,.12); }
+/* A trailing segment of the pill: its height, corners and material, 4px off its side (src/routes/pill/+page.svelte). */
+.dask { position: absolute; left: calc(100% + 4px); top: 0; bottom: 0; gap: 2px; padding: 4px; }
+.dask-b { height: min(100%, 32px); aspect-ratio: 1; display: grid; place-items: center; padding: 0; border: 0; border-radius: 999px; background: none; color: rgba(255,255,255,.6); font: inherit; }
+.dask-b:hover, .dask-b[aria-pressed="true"] { color: #fff; }
+.dask-b:hover { background: rgba(255,255,255,.08); }
+.dask-b.fix { aspect-ratio: auto; padding: 0 12px; background: rgba(255,255,255,.14); color: #fff; font-weight: 500; }
 .lvl { display: flex; align-items: center; gap: 2px; height: 16px; }
 .lvl i { width: 3px; height: 16px; border-radius: 2px; background: currentColor; animation: lvl .9s ease-in-out infinite; }
 .lvl i:nth-child(2) { animation-delay: .15s; } .lvl i:nth-child(3) { animation-delay: .3s; } .lvl i:nth-child(4) { animation-delay: .45s; } .lvl i:nth-child(5) { animation-delay: .6s; }
@@ -2225,7 +2228,7 @@ function overlay() {
   if (d.state === 'done') {
     const said = `${d.raw ? `${icon('alert','ic-s')}<span>Added without cleanup</span><span class="sub">AI took too long</span>` : `${icon('check','ic-s')}<span>${d.into ? 'Added to ' + d.into : 'Added where you were typing'}</span>`}`;
     // Ask how it went (off by default): 👍/👎 beside the pill, not in it, so the pill doesn't move. Clicking keeps focus in the app being typed into.
-    const ask = !S.set.askRate ? '' : `<div class="hud dask">${d.rated === 'up' ? '<span>Thanks</span>' : d.rated === 'down' ? '<button class="dask-b" data-act="dict-fix">Fix it</button>'
+    const ask = !S.set.askRate ? '' : `<div class="hud dask">${d.rated === 'up' ? `<button class="dask-b" aria-pressed="true" aria-label="Good dictation" disabled>${icon('thumb-up','ic-s')}</button>` : d.rated === 'down' ? `<button class="dask-b" aria-pressed="true" aria-label="Bad dictation" disabled>${icon('thumb-down','ic-s')}</button><button class="dask-b fix" data-act="dict-fix">Fix it</button>`
       : `<button class="dask-b" data-act="dict-rate" data-v="up" aria-label="Good dictation" title="Good dictation">${icon('thumb-up','ic-s')}</button><button class="dask-b" data-act="dict-rate" data-v="down" aria-label="Bad dictation" title="Bad dictation">${icon('thumb-down','ic-s')}</button>`}</div>`;
     h += ask ? `<div class="dpill dwrap" role="status"><div class="hud">${said}</div>${ask}</div>` : `<div class="hud dpill" role="status">${said}</div>`;
   }
