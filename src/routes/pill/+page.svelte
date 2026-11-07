@@ -115,7 +115,9 @@
      (under the segment, and off the window at the right). */
   .anchor { position: relative; display: inline-grid; flex: none; --seg-r: var(--r-full); }
   .anchor.wave { --seg-r: var(--r-lg); }
-  /* The card is 56px tall: a full-height segment beside it reads heavy, so it's a 40px capsule on the card's middle. */
+  /* The card is 56px tall: a full-height segment beside it reads heavy, so it's 40px on the card's middle, with
+     rounded-rectangle corners like the card's (a full capsule clashes with them). */
+  .anchor.card { --seg-r: var(--r-lg); }
   .anchor.card .ask { top: 50%; bottom: auto; height: 40px; translate: 0 -50%; }
   /* The pill's own height, corners, fill, edge and shadow (Pill.svelte .hud), 4px off its side. */
   .ask { position: absolute; top: 0; bottom: 0; left: calc(100% + var(--sp-1)); display: flex; align-items: center; gap: 2px; padding: 4px; box-sizing: border-box;
