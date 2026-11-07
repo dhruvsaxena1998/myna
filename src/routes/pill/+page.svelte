@@ -115,12 +115,12 @@
      (under the segment, and off the window at the right). */
   .anchor { position: relative; display: inline-grid; flex: none; --seg-r: var(--r-full); }
   .anchor.wave { --seg-r: var(--r-lg); }
-  .anchor.card { --seg-r: var(--r-xl); }
+  /* The card is 56px tall: a full-height segment beside it reads heavy, so it's a 40px capsule on the card's middle. */
+  .anchor.card .ask { top: 50%; bottom: auto; height: 40px; translate: 0 -50%; }
   /* The pill's own height, corners, fill, edge and shadow (Pill.svelte .hud), 4px off its side. */
   .ask { position: absolute; top: 0; bottom: 0; left: calc(100% + var(--sp-1)); display: flex; align-items: center; gap: 2px; padding: 4px; box-sizing: border-box;
     border-radius: var(--seg-r); background: var(--hud-bg); color: var(--hud-fg); white-space: nowrap;
     -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%); box-shadow: inset 0 0 0 0.5px var(--hud-edge), var(--shadow-hud); }
-  .top .ask, .top-right .ask { top: 0; }
   .bottom-right .ask, .top-right .ask { left: auto; right: calc(100% + var(--sp-1)); }
   /* Square, at most 32px, so the tall card keeps them hand-sized; corners nest inside the segment's. */
   .ask button { height: min(100%, 32px); aspect-ratio: 1; display: grid; place-items: center; padding: 0; border: 0; border-radius: max(4px, calc(var(--seg-r) - 4px));
