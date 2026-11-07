@@ -65,6 +65,8 @@ pub struct Row {
     pub outcome: String,
     pub heard: Option<String>,
     pub text: Option<String>,
+    /// "up", "down" or none.
+    pub rating: Option<String>,
 }
 
 pub fn list(conn: &Connection) -> Result<Vec<Row>, String> {
@@ -73,11 +75,12 @@ pub fn list(conn: &Connection) -> Result<Vec<Row>, String> {
         // shortcut: loads every trace at once; page it if history grows past a few thousand.
         .prepare(
             "SELECT id, started, app, outcome, (SELECT text FROM step WHERE trace = trace.id AND kind = 'speech-to-text'),
-                (SELECT text FROM step WHERE trace = trace.id ORDER BY rowid DESC LIMIT 1) FROM trace ORDER BY started DESC, id DESC",
+                (SELECT text FROM step WHERE trace = trace.id ORDER BY rowid DESC LIMIT 1),
+                (SELECT rating FROM feedback WHERE trace = trace.id) FROM trace ORDER BY started DESC, id DESC",
         )
         .map_err(err)?;
     let rows = q
-        .query_map([], |r| Ok(Row { id: r.get(0)?, started: r.get(1)?, app: r.get(2)?, outcome: r.get(3)?, heard: r.get(4)?, text: r.get(5)? }))
+        .query_map([], |r| Ok(Row { id: r.get(0)?, started: r.get(1)?, app: r.get(2)?, outcome: r.get(3)?, heard: r.get(4)?, text: r.get(5)?, rating: r.get(6)? }))
         .map_err(err)?;
     rows.collect::<Result<_, _>>().map_err(err)
 }
@@ -86,6 +89,7 @@ pub fn list(conn: &Connection) -> Result<Vec<Row>, String> {
 pub fn delete(conn: &Connection, id: i64) -> Result<(), String> {
     let err = |e: rusqlite::Error| format!("Couldn't delete the dictation: {e}");
     let tx = conn.unchecked_transaction().map_err(err)?;
+    tx.execute("DELETE FROM feedback WHERE trace = ?1", [id]).map_err(err)?;
     tx.execute("DELETE FROM step WHERE trace = ?1", [id]).map_err(err)?;
     tx.execute("DELETE FROM trace WHERE id = ?1", [id]).map_err(err)?;
     tx.commit().map_err(err)
@@ -95,19 +99,20 @@ pub fn delete(conn: &Connection, id: i64) -> Result<(), String> {
 pub fn clear(conn: &Connection) -> Result<(), String> {
     let err = |e: rusqlite::Error| format!("Couldn't clear the history: {e}");
     let tx = conn.unchecked_transaction().map_err(err)?;
+    tx.execute("DELETE FROM feedback", []).map_err(err)?;
     tx.execute("DELETE FROM step", []).map_err(err)?;
     tx.execute("DELETE FROM trace", []).map_err(err)?;
     tx.commit().map_err(err)
 }
 
-const COLS: &str = "id, started, mode, app, model, audio_ms, outcome, reason, load_ms, paste_ms";
+const COLS: &str = "id, started, mode, app, model, audio_ms, outcome, reason, load_ms, paste_ms, (SELECT rating FROM feedback WHERE trace = trace.id)";
 
 /// A trace's columns as JSON, the model still as its id.
 fn trace_json(r: &rusqlite::Row) -> rusqlite::Result<serde_json::Value> {
     Ok(serde_json::json!({
         "id": r.get::<_, i64>(0)?, "started": r.get::<_, i64>(1)?, "mode": r.get::<_, String>(2)?, "app": r.get::<_, Option<String>>(3)?,
         "model": r.get::<_, Option<String>>(4)?, "audio_ms": r.get::<_, i64>(5)?, "outcome": r.get::<_, String>(6)?,
-        "reason": r.get::<_, Option<String>>(7)?, "load_ms": r.get::<_, Option<f64>>(8)?, "paste_ms": r.get::<_, Option<f64>>(9)?,
+        "reason": r.get::<_, Option<String>>(7)?, "load_ms": r.get::<_, Option<f64>>(8)?, "paste_ms": r.get::<_, Option<f64>>(9)?, "rating": r.get::<_, Option<String>>(10)?,
     }))
 }
 
@@ -180,6 +185,7 @@ mod tests {
         assert_eq!(t["model"], "gone");
         assert_eq!(t["steps"][1]["edits"][0]["kind"], "filler");
         assert_eq!(rows[0].text.as_deref(), Some("hello"));
+        assert_eq!((rows[0].rating.as_deref(), t["rating"].is_null()), (None, true));
         assert!(get(&conn, 99).is_err());
     }
 

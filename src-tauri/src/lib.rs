@@ -3,6 +3,7 @@ mod apple;
 mod cleanup;
 mod dictation;
 mod download;
+mod feedback;
 mod fnkey;
 mod look;
 mod models;
@@ -332,6 +333,50 @@ fn traces_clear(d: tauri::State<Data>) -> Result<(), String> {
     trace::clear(&d.db.lock().unwrap())
 }
 
+fn now_ms() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64
+}
+
+/// 👍/👎 on a dictation (`rating` none takes it back); returns the fixes now suggested.
+#[tauri::command]
+fn feedback_set(d: tauri::State<Data>, trace: i64, rating: Option<String>, corrected: Option<String>) -> Result<Vec<feedback::Fix>, String> {
+    let db = d.db.lock().unwrap();
+    feedback::set(&db, trace, rating.as_deref(), corrected.as_deref(), now_ms())?;
+    feedback::fixes(&db)
+}
+
+#[tauri::command]
+fn fixes_get(d: tauri::State<Data>) -> Result<Vec<feedback::Fix>, String> {
+    feedback::fixes(&d.db.lock().unwrap())
+}
+
+/// Apply a suggested fix; returns the fixes left.
+#[tauri::command]
+fn fix_add(d: tauri::State<Data>, key: String) -> Result<Vec<feedback::Fix>, String> {
+    let db = d.db.lock().unwrap();
+    feedback::add(&db, &key)?;
+    feedback::fixes(&db)
+}
+
+/// Not now; returns the fixes left.
+#[tauri::command]
+fn fix_dismiss(d: tauri::State<Data>, key: String) -> Result<Vec<feedback::Fix>, String> {
+    let db = d.db.lock().unwrap();
+    feedback::dismiss(&db, &key)?;
+    feedback::fixes(&db)
+}
+
+/// Export feedback: writes the JSON to Downloads, shows it in Finder, returns its path.
+#[tauri::command]
+fn feedback_export(d: tauri::State<Data>) -> Result<String, String> {
+    let json = feedback::export(&d.db.lock().unwrap(), now_ms())?;
+    let downloads = std::path::PathBuf::from(std::env::var("HOME").map_err(|_| "Couldn't find your home folder.")?).join("Downloads");
+    let date = std::process::Command::new("/bin/date").arg("+%Y-%m-%d").output().map_err(|e| e.to_string())?;
+    let path = feedback::write_export(&downloads, String::from_utf8_lossy(&date.stdout).trim(), &json)?;
+    let _ = std::process::Command::new("/usr/bin/open").arg("-R").arg(&path).status();
+    Ok(path.display().to_string())
+}
+
 /// Copy again and Copy what I said, in Voice typing history.
 #[tauri::command]
 fn text_copy(text: String) {
@@ -586,7 +631,7 @@ fn open_update(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, text_copy, settings_open, voice_pause, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
+        .invoke_handler(tauri::generate_handler![debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::Updates::default())
         .setup(|app| {
