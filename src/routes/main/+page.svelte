@@ -22,12 +22,17 @@
   let words = $state(data.words);
   let current = $state<"history" | "yours" | "nerds">("history");
   let fix = $state<number | null>(null);
-  // Fix it on the pill: the dictation it rated 👎, with its "What did you mean?" open.
+  // Fix it on the pill: the dictation it rated 👎, with its "What did you mean?" open. The backend holds it until
+  // taken, so a "fix" event missed while the page reloaded or slept still lands on load or on focus.
+  async function takeFix() {
+    const id = await invoke<number | null>("fix_take").catch(() => null);
+    if (id === null) return;
+    rows = await invoke<Row[]>("traces_list").catch(() => rows);
+    (current = "history"), (fix = id);
+  }
   $effect(() => {
-    const un = listen<number>("fix", async ({ payload }) => {
-      rows = await invoke<Row[]>("traces_list").catch(() => rows);
-      (current = "history"), (fix = payload);
-    });
+    takeFix();
+    const un = listen<number>("fix", takeFix);
     return () => void un.then((f) => f());
   });
   // Stats for nerds is experimental: its entry shows only while it and Experimental features are on.
@@ -50,6 +55,7 @@
   $effect(() => {
     const off = getCurrentWindow().onFocusChanged(({ payload }) => {
       if (!payload) return;
+      takeFix();
       if (data.traces?.ok) invoke<Row[]>("traces_list").then((r) => (rows = r), () => {});
       if (data.all?.ok) invoke<Trace[]>("traces_all").then((r) => (all = r), () => {});
       invoke<Rules>("rules_get").then((r) => (words = r.settings.words), () => {});

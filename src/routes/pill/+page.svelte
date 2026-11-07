@@ -60,6 +60,8 @@
         if (payload.state === "error") hide = setTimeout(() => (on = false), 4000);
       }),
       listen<number>("dictation-ask", ({ payload }) => ((ask = { trace: payload, rated: null }), (on = true), close(4000))),
+      // Over the buttons (pill.rs tells us; the page can't see the pointer leave): up to 8 s, then 1.5 s after leaving. Never for good.
+      listen<boolean>("pill-hover", ({ payload }) => ask && ask.rated !== "up" && close(payload ? 8000 : 1500)),
       listen<number>("dictation-level", ({ payload }) => (wave = [...wave.slice(1), payload])),
       listen<Look>("pill-look", ({ payload }) => (look = payload)),
       listen<Appearance>("look", ({ payload }) => (appearance = payload)),
@@ -95,9 +97,8 @@
   <span class="anchor {look.style}">
   <Pill style={look.style} {pill} {wave} {secs} {left} />
   {#if ask}
-    <!-- A trailing segment: beside the pill, not in its row, so the pill doesn't move; same height, corners and material. Hovering keeps it up. -->
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="ask" bind:this={askEl} in:fade={{ duration: 120 }} onmouseenter={() => clearTimeout(hide)} onmouseleave={() => close(1500)}>
+    <!-- A trailing segment: beside the pill, not in its row, so the pill doesn't move; same height, corners and material. -->
+    <div class="ask" bind:this={askEl} in:fade={{ duration: 120 }}>
       {#if ask.rated !== "down"}
         <button aria-label="Good dictation" title="Good dictation" aria-pressed={ask.rated === "up"} disabled={!!ask.rated} onclick={() => rate("up")}><svg viewBox="0 0 24 24" aria-hidden="true">{@html THUMB}</svg></button>
       {/if}

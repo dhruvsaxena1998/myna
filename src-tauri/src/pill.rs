@@ -111,6 +111,8 @@ pub fn pill_hit(app: AppHandle, rect: Option<[f64; 4]>) {
             let ignore = !r.is_some_and(|r| inside(r, NSEvent::mouseLocation(), ns.frame()));
             if ns.ignoresMouseEvents() != ignore {
                 ns.setIgnoresMouseEvents(ignore);
+                // The page can't see the pointer leave: the window stops taking the mouse first. So this tells it.
+                let _ = a.emit_to("pill", "pill-hover", !ignore);
             }
         });
         if r.is_none() {

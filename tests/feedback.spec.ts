@@ -137,11 +137,14 @@ test("a failed export says why", async ({ page }) => {
   await expect(page.getByText("Couldn't write the file")).toBeVisible();
 });
 
+// `__fix`: the dictation Fix it left with the backend (`fix_take` hands it over once).
+const TAKE = `fix_take: () => { const v = window.__fix ?? null; window.__fix = null; return v; },`;
+
 test("Fix it on the pill opens history on that dictation's box, even from another page or a search", async ({ page }) => {
-  await history(page);
+  await history(page, TAKE);
   await page.getByRole("searchbox").fill("Send");
   await page.getByRole("button", { name: "Your dictation" }).click();
-  await page.evaluate(() => (window as any).__emit("fix", 4));
+  await page.evaluate(() => (((window as any).__fix = 4), (window as any).__emit("fix", 4)));
   const box = page.getByLabel("What did you mean?");
   await expect(box).toBeFocused();
   await expect(box).toHaveValue("Mina is here");
@@ -155,4 +158,11 @@ test("Ask how it went is off until switched on, and saves with the other voice s
   await ask.click();
   await expect(ask).toBeChecked();
   expect((await calls(page, "voice_set")).at(-1)).toMatchObject({ voice: { key: "Alt+Space", rate: true } });
+});
+
+test("a Fix it the page missed (it was reloading) still opens the box on load", async ({ page }) => {
+  await page.addInitScript(() => ((window as any).__fix = 4));
+  await history(page, TAKE);
+  await expect(page.getByLabel("What did you mean?")).toHaveValue("Mina is here");
+  expect(await calls(page, "fix_take")).not.toHaveLength(0);
 });
