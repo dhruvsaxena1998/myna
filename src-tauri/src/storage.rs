@@ -44,6 +44,18 @@ pub fn open(dir: &Path) -> Result<Connection, String> {
     Ok(conn)
 }
 
+/// Starts `to` (a dev build's data folder) as a snapshot of `from` (the installed app's), the first time only.
+/// Read-only on `from`, so testing a migration in dev never touches the installed Myna's data.
+pub fn seed(from: &Path, to: &Path) -> Result<(), String> {
+    let (src, dst) = (from.join("myna.sqlite"), to.join("myna.sqlite"));
+    if dst.exists() || !src.exists() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(to).map_err(|e| format!("Couldn't create {}: {e}", to.display()))?;
+    let c = Connection::open_with_flags(&src, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|e| format!("Couldn't read {}: {e}", src.display()))?;
+    c.execute("VACUUM INTO ?1", [dst.to_string_lossy()]).map(drop).map_err(|e| format!("Couldn't copy {}: {e}", src.display()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -51,6 +63,23 @@ mod tests {
     fn version(dir: &Path) -> i64 {
         Connection::open(dir.join("myna.sqlite")).unwrap()
             .query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap()
+    }
+
+    #[test]
+    fn a_dev_folder_starts_as_a_copy_once_and_never_writes_the_original() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (real, dev) = (tmp.path().join("Myna"), tmp.path().join("Myna Dev"));
+        seed(&real, &dev).unwrap(); // nothing to copy yet
+        assert!(!dev.exists());
+        open(&real).unwrap().execute("INSERT INTO word(spelling) VALUES ('Myna')", []).unwrap();
+        let before = std::fs::read(real.join("myna.sqlite")).unwrap();
+        seed(&real, &dev).unwrap();
+        let words = |d: &Path| open(d).unwrap().query_row("SELECT count(*) FROM word", [], |r| r.get::<_, i64>(0)).unwrap();
+        assert_eq!(words(&dev), 1);
+        open(&dev).unwrap().execute("INSERT INTO word(spelling) VALUES ('Dev')", []).unwrap();
+        seed(&real, &dev).unwrap(); // already there: left alone
+        assert_eq!(words(&dev), 2);
+        assert_eq!(std::fs::read(real.join("myna.sqlite")).unwrap(), before, "the installed app's file is untouched");
     }
 
     #[test]
