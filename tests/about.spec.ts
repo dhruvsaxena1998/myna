@@ -97,3 +97,9 @@ test("a failed save puts the old choice back and says why", async ({ page }) => 
   await expect(page.getByText("Couldn't save the update settings: disk full")).toBeVisible();
   await expect(page.getByRole("radio", { name: "Beta" })).toBeChecked();
 });
+
+test("the dev build label sits after the version with a space either side of the dot", async ({ page }) => {
+  await open(page);
+  // The dev server always has a build label (vite.config.js), so the row reads "0.1.0 · dev …".
+  await expect(page.getByText(/^0\.1\.0 · dev/)).toBeVisible();
+});

@@ -209,8 +209,8 @@
 {/if}
 
 <section class="group" aria-labelledby="prov-h">
-  <h2 id="prov-h">AI providers</h2>
-  <p class="help">Where Myna sends text for an AI to answer. Servers on this Mac keep your words here; anything else, even another computer on your network, gets them.</p>
+  <h2 id="prov-h">Providers</h2>
+  <p class="help">Servers on this Mac keep your words here. Anything else gets them, even another computer on your network. Test checks the address and key without spending anything.</p>
   {#if none && !adding}
     <div class="list empty">
       <h3>No AI providers yet</h3>
@@ -231,13 +231,13 @@
               </div>
             {:else}
               <div class="top">
-                <span class="pname"><span class="name">{p.name}</span><span class="url">{p.url}{p.has_key ? " · key in Keychain" : ""}</span></span>
+                <span class="pname"><span class="name">{p.name}</span><span class="url">{p.url}</span>{#if p.has_key}<span class="help">Key in Keychain</span>{/if}</span>
                 {@render pill(p.off_device)}
                 <button type="button" class="btn tbtn" disabled={t?.st === "run"} onclick={() => test(p)}>Test</button>
                 <button type="button" class="btn icon quiet" id="rm-{p.id}" aria-label="Remove {p.name}" onclick={() => (confirm = p.id)}><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" /></svg></button>
               </div>
               <div class="tline" aria-live="polite">
-                {#if !t}<span class="help">Not tested yet. Test checks the address and key; it spends nothing.</span>
+                {#if !t}<span class="help">Not tested yet</span>
                 {:else if t.st === "run"}<span class="help">Checking…</span>
                 {:else if t.st === "err"}<span class="terr">{t.msg}</span><button type="button" class="btn quiet sm" onclick={() => test(p)}>Retry</button>
                 {:else}<span class="help trunc">{testText(t)}</span>{/if}
@@ -327,13 +327,8 @@
 </section>
 
 <style>
-  .group { margin-bottom: var(--sp-5); }
-  h2 { margin: 0 0 var(--sp-1); font-size: var(--fs-title3); line-height: var(--lh-title3); font-weight: var(--fw-semibold); }
   h3 { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body); font-weight: var(--fw-semibold); }
-  .help { margin: var(--sp-1) 0 var(--sp-3); color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
   .help.after { margin-top: var(--sp-2); }
-  .list { list-style: none; margin: 0; padding: 0; border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); }
-  .list > li + li { border-top: 1px solid var(--line); }
   .list.empty { padding: var(--sp-5) var(--sp-4); text-align: center; }
   .list.empty p { margin: var(--sp-1) 0 var(--sp-3); color: var(--text-2); }
   .prov { padding: var(--sp-3) var(--sp-4); }
@@ -341,7 +336,6 @@
   .pname { display: grid; gap: 2px; flex: 1; min-width: 0; }
   .name { display: block; font-weight: var(--fw-semibold); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .url { font: 12px/16px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .desc { display: block; margin-top: 2px; color: var(--text-2); }
   .confirm { display: flex; align-items: center; gap: var(--sp-2); min-height: 52px; }
   .confirm span { flex: 1; }
   /* Reserved line, so a test result never moves the rows below. */
@@ -372,10 +366,6 @@
   .err { margin: 0; min-height: var(--lh-footnote); color: var(--danger-text); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
   .actions { display: flex; justify-content: flex-end; gap: var(--sp-2); }
   .ic { width: 14px; height: 14px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-  .btn { display: inline-flex; align-items: center; gap: var(--sp-1h); height: var(--h-ctl); padding: 0 14px; border: 0; border-radius: var(--r-full);
-    background: var(--fill-control); color: var(--text); font: inherit; box-shadow: inset 0 0 0 .5px var(--line-strong), var(--shadow-control); white-space: nowrap; }
-  .btn:hover:not(:disabled) { background: color-mix(in srgb, var(--fill-control) 85%, var(--text)); }
-  .btn:disabled { color: var(--text-disabled); }
   .btn:focus-visible, .pk:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   .btn.primary { background: var(--accent); color: var(--on-accent); box-shadow: var(--shadow-solid); }
   .btn.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 88%, black); }
@@ -384,7 +374,7 @@
   .btn.icon { width: var(--h-ctl-sm); height: var(--h-ctl-sm); padding: 0; justify-content: center; }
   .btn.sm { height: var(--h-ctl-sm); padding: 0 10px; }
   .pop-wrap { position: relative; }
-  .pk-btn { max-width: 300px; }
+  .pk-btn { max-width: 360px; }
   .pop { position: absolute; z-index: 10; right: 0; top: calc(100% + var(--sp-1)); width: min(420px, calc(100vw - 96px)); box-sizing: border-box; padding: 5px;
     border-radius: var(--r-lg); background: var(--bg-raised); box-shadow: var(--shadow-menu); }
   .search { margin-bottom: 5px; }

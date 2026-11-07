@@ -29,11 +29,11 @@ test("the saved look is applied before the page first shows", async ({ page }) =
 
 test("shows the three rows with the saved choices", async ({ page }) => {
   await open(page);
-  await expect(page.getByRole("heading", { name: "Appearance", exact: true })).toBeVisible();
-  await expect(page.getByRole("group", { name: "Appearance" }).getByRole("radio", { name: "Dark" })).toBeChecked();
+  await expect(page.getByText("Theme", { exact: true })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Theme" }).getByRole("radio", { name: "Dark" })).toBeChecked();
   await expect(page.getByRole("group", { name: "Highlight colour" }).getByRole("radio")).toHaveCount(8);
   await expect(page.getByRole("radio", { name: "Green" })).toBeChecked();
-  await expect(page.getByText("Used for buttons and selected items. Now: Green.")).toBeVisible();
+  await expect(page.getByText("Used for buttons and selected items.")).toBeVisible();
   await expect(page.getByRole("radio", { name: "Tinted" })).toBeChecked();
   await expect(page.getByText("The sidebar and menus take on a hint of your highlight colour.")).toBeVisible();
 });
@@ -46,7 +46,7 @@ test("each choice saves and restyles at once, without moving the rows", async ({
   await page.getByRole("radio", { name: "Graphite" }).check();
   await page.getByRole("radio", { name: "Clear" }).check();
   expect(await attrs(page)).toEqual({ theme: "light", accent: "graphite", glass: "clear" });
-  await expect(page.getByText("Now: Graphite.")).toBeVisible();
+  await expect(page.getByRole("radio", { name: "Graphite" })).toBeChecked();
   await expect(page.getByText("The sidebar and menus show a little of what’s behind them.")).toBeVisible();
   expect(await sets(page)).toEqual([
     L({ theme: "light", accent: "green", glass: "tinted" }),
@@ -172,4 +172,12 @@ test("Liquid Glass Opacity: a slider that previews live, saves the new frost, an
   expect((await sets(page)).at(-1)).toMatchObject({ liquid: true, frost: 51 });
   await page.getByRole("switch", { name: "Liquid Glass" }).click();
   await expect(slider).toBeDisabled();
+});
+
+test("a page that isn't built yet says so, with what will live there", async ({ page }) => {
+  await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", models_list: () => [] }`);
+  await page.goto("/settings");
+  await page.getByRole("option", { name: "Meeting notes" }).click();
+  await expect(page.getByRole("heading", { name: "Not in this version yet" })).toBeVisible();
+  await expect(page.getByText("Coming later")).toBeVisible();
 });

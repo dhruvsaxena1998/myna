@@ -26,6 +26,7 @@
     : "Checking for updates…",
   );
 
+  let kb = $state(false);
   const focusMain = () => (document.querySelector<HTMLElement>("[data-main]:not(:disabled)") ?? document.querySelector<HTMLElement>("footer button"))?.focus();
   // A new state can take the focused button away (Cancel, once the download stops): focus the main one again.
   $effect(() => {
@@ -36,6 +37,7 @@
     const un = [
       listen("update-open", async () => {
         refusal = "";
+        kb = false;
         await tick();
         focusMain();
       }),
@@ -71,9 +73,10 @@
   }
 </script>
 
-<svelte:window onkeydown={(e) => e.key === "Escape" && close()} />
+<!-- kb: a key was pressed since the pop-up opened. Until then the default button shows no ring, like a native one; Return still presses it. -->
+<svelte:window onkeydown={(e) => { kb = true; if (e.key === "Escape") close(); }} />
 
-<div class="window" role="dialog" aria-labelledby="upd-h">
+<div class="window" class:quiet={!kb} role="dialog" aria-labelledby="upd-h">
   <div class="titlebar" data-tauri-drag-region>Software update</div>
   <div class="panel">
     <div class="body">
@@ -145,4 +148,5 @@
   .btn.primary:hover { background: var(--accent-hover); }
   .btn:disabled { opacity: .5; }
   .btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+  .quiet .btn:focus-visible { outline: none; }
 </style>

@@ -39,11 +39,10 @@
   let shown = $derived(error || (upd.s.state === "error" ? upd.s.message : ""));
 </script>
 
-<section aria-labelledby="about-h">
-  <h2 id="about-h">Myna</h2>
+<section aria-label="Myna">
   <ul class="list">
     <li class="row">
-      <span><span class="name">Version</span><span class="desc">{version}{#if import.meta.env.VITE_BUILD} · {import.meta.env.VITE_BUILD}{/if}</span></span>
+      <span><span class="name">Version</span><span class="desc">{version}{#if import.meta.env.VITE_BUILD}{" · "}{import.meta.env.VITE_BUILD}{/if}</span></span>
       <!-- Fixed size, so no state moves the row. -->
       <div class="slot">
         {#if upd.s.state === "checking"}<span class="pill" role="status">Checking…</span>
@@ -86,12 +85,6 @@
 </section>
 
 <style>
-  h2 { margin: 0 0 var(--sp-3); font-size: var(--fs-title3); line-height: var(--lh-title3); font-weight: var(--fw-semibold); }
-  .list { list-style: none; margin: 0; padding: 0; border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); }
-  .list > li + li { border-top: 1px solid var(--line); }
-  .row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-3); align-items: center; padding: var(--sp-3) var(--sp-4); }
-  .name { display: block; font-weight: var(--fw-semibold); }
-  .desc { display: block; margin-top: 2px; color: var(--text-2); user-select: text; }
   .attrib { color: var(--text-3); }
   .attrib a { color: inherit; }
   .mono { font: 12px/var(--lh-body) var(--font-mono); overflow-wrap: anywhere; }
@@ -100,18 +93,4 @@
   .pill { display: inline-flex; align-items: center; height: 20px; padding: 0 var(--sp-2); border-radius: var(--r-full); font-size: var(--fs-caption); font-weight: var(--fw-medium);
     background: var(--accent-soft); color: var(--accent-text); white-space: nowrap; }
   .pill.alert { background: var(--danger-soft); color: var(--danger-text); }
-  .btn { display: inline-flex; align-items: center; height: var(--h-ctl); padding: 0 14px; border: 0; border-radius: var(--r-full);
-    background: var(--fill-control); color: var(--text); font: inherit; box-shadow: inset 0 0 0 .5px var(--line-strong), var(--shadow-control); white-space: nowrap; }
-  .btn:hover { background: color-mix(in srgb, var(--fill-control) 85%, var(--text)); }
-  .btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-  /* Segmented control: a capsule track with a raised thumb (as in Look & appearance). */
-  .seg { display: inline-flex; gap: 2px; margin: 0; padding: 3px; border: 0; border-radius: var(--r-full); background: var(--fill-field); }
-  .seg label { position: relative; }
-  .seg input { position: absolute; inset: 0; margin: 0; opacity: 0; }
-  .seg span { display: grid; align-content: center; justify-items: center; height: 26px; padding: 0 14px; border-radius: var(--r-full); color: var(--text-2); white-space: nowrap; }
-  .seg span::after { content: attr(data-l); height: 0; overflow: hidden; visibility: hidden; font-weight: var(--fw-medium); }
-  .seg input:checked + span { background: var(--fill-control-on); color: var(--text); font-weight: var(--fw-medium); box-shadow: 0 0 0 .5px var(--line-strong), 0 1px 2px rgba(0, 0, 0, .1); }
-  .seg input:focus-visible + span { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
-  /* Reserved line so an error never shifts the page. */
-  .err { margin: var(--sp-1) 0 0; min-height: var(--lh-footnote); color: var(--danger-text); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
 </style>

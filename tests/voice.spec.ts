@@ -79,10 +79,10 @@ test("a shortcut another app holds says so and keeps the old one", async ({ page
 
 test("Tap to start and stop saves, says how it stops, and the preview follows", async ({ page }) => {
   await open(page);
-  await expect(page.getByRole("img", { name: /Preview/ })).toContainText("Release to paste");
+  await expect(page.getByRole("img", { name: /Preview/ })).toContainText("Release ⌥Space to paste");
   await page.getByText("Tap to start and stop").click();
   await expect(page.getByText("Press once to start and again to stop. Stops by itself after 5 minutes.")).toBeVisible();
-  await expect(page.getByRole("img", { name: /Preview/ })).toContainText("Press again to paste");
+  await expect(page.getByRole("img", { name: /Preview/ })).toContainText("Press ⌥Space again to paste");
   expect(await calls(page, "voice_set")).toEqual([{ voice: { on: true, key: "Alt+Space", clean: null, mode: "tap", paste: "clipboard" } }]);
 });
 
@@ -158,7 +158,7 @@ test("cleanup without a Fast model: Needs an Endpoint, and Set up opens AI provi
   const row = cleanRow(page);
   await expect(row).toContainText("Needs an Endpoint");
   await expect(row).toContainText("Set a Fast model on AI provider first.");
-  await expect(row.getByRole("button", { name: "Set", exact: true })).toHaveCount(0); // no recorder yet
+  await expect(row.getByRole("button", { name: "Set shortcut", exact: true })).toHaveCount(0); // no recorder yet
   await row.getByRole("button", { name: "Set up" }).click();
   await expect(page.getByRole("heading", { name: "AI provider", exact: true })).toBeVisible();
 });
@@ -171,9 +171,10 @@ test("a Fast model that's gone counts as none", async ({ page }) => {
 test("cleanup with a Fast model on this Mac: names it, says it stays here, and starts unassigned", async ({ page }) => {
   await open(page, "Alt+Space", false, { ai: fastOn(OLLAMA, "qwen2.5:7b") });
   const row = cleanRow(page);
-  await expect(row).toContainText("with your Fast model, Ollama on this Mac · qwen2.5:7b, before adding your words. If that takes over 3 seconds, Myna adds them as they are.");
+  await expect(row).toContainText("before adding your words. If that takes over 3 s, they go in as they are.");
+  await expect(row).toContainText("Ollama on this Mac · qwen2.5:7b");
   await expect(row).toContainText("Stays on this Mac");
-  await expect(row).toContainText("Not set");
+  await expect(row.getByLabel("No shortcut")).toBeVisible();
   await expect(row).not.toContainText("Needs an Endpoint");
   await expect(row.getByRole("button", { name: "Remove" })).toHaveCount(0);
 });
@@ -186,20 +187,20 @@ test("cleanup with an online Fast model says it sends text off this Mac", async 
 test("Set records the cleanup shortcut and saves it beside Dictate's; Change and Remove follow", async ({ page }) => {
   await open(page, "Alt+Space", false, { ai: fastOn(OLLAMA, "qwen2.5:7b") });
   const row = cleanRow(page);
-  await row.getByRole("button", { name: "Set", exact: true }).click();
+  await row.getByRole("button", { name: "Set shortcut", exact: true }).click();
   await expect(page.getByRole("button", { name: "Press a key…" })).toBeFocused();
   await page.keyboard.press("Control+Shift+KeyC");
   await expect(page.getByLabel("Current shortcut: Control Shift C")).toHaveText("⌃⇧C");
   expect(await calls(page, "voice_set")).toEqual([{ voice: { on: true, key: "Alt+Space", clean: "Ctrl+Shift+KeyC", mode: "hold", paste: "clipboard" } }]);
   await expect(row.getByRole("button", { name: "Change" })).toBeVisible();
   await row.getByRole("button", { name: "Remove the Dictate with cleanup shortcut" }).click();
-  await expect(row).toContainText("Not set");
+  await expect(row.getByLabel("No shortcut")).toBeVisible();
   expect((await calls(page, "voice_set")).at(-1)).toEqual({ voice: { on: true, key: "Alt+Space", clean: null, mode: "hold", paste: "clipboard" } });
 });
 
 test("a key already used by the other shortcut is refused with the reason", async ({ page }) => {
   await open(page, "Alt+Space", false, { ai: fastOn(OLLAMA, "qwen2.5:7b") });
-  await cleanRow(page).getByRole("button", { name: "Set", exact: true }).click();
+  await cleanRow(page).getByRole("button", { name: "Set shortcut", exact: true }).click();
   await page.keyboard.press("Alt+Space");
   await expect(page.getByText("Option Space is already the Dictate shortcut. Pick another key.")).toBeVisible();
   expect(await calls(page, "voice_set")).toEqual([]);
@@ -207,7 +208,7 @@ test("a key already used by the other shortcut is refused with the reason", asyn
   // And the other way round.
   await page.getByRole("button", { name: "Change" }).click();
   await page.keyboard.press("Control+Shift+KeyC");
-  await cleanRow(page).getByRole("button", { name: "Set", exact: true }).click();
+  await cleanRow(page).getByRole("button", { name: "Set shortcut", exact: true }).click();
   await page.keyboard.press("Control+Shift+KeyC");
   await expect(page.getByText("Control Shift C is already the Dictate shortcut. Pick another key.")).toBeVisible();
 });
@@ -222,7 +223,7 @@ test("a Fast model set on AI provider shows on Voice typing without reloading", 
   await page.evaluate(() => ((window as any).__ai.fast = { provider: 1, model: "qwen2.5:7b", gone: false })); // what picking it there saves
   await page.getByRole("option", { name: "Voice typing" }).click();
   await expect(cleanRow(page)).toContainText("Ollama on this Mac · qwen2.5:7b");
-  await expect(cleanRow(page).getByRole("button", { name: "Set", exact: true })).toBeVisible();
+  await expect(cleanRow(page).getByRole("button", { name: "Set shortcut", exact: true })).toBeVisible();
 });
 
 // Cleanup styles: only once there's a Fast model to run them. `window.__newer` marks which edited styles have a newer shipped text.

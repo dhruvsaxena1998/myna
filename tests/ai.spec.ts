@@ -69,7 +69,7 @@ test("adding OpenRouter needs a key that looks right; it sends text off this Mac
   await page.getByLabel("Key", { exact: true }).fill("sk-or-v1-abc");
   await page.getByRole("button", { name: "Add", exact: true }).click();
   const row = page.getByRole("listitem").filter({ hasText: "https://openrouter.ai/api/v1" });
-  await expect(row).toContainText("key in Keychain");
+  await expect(row).toContainText("Key in Keychain");
   await expect(row).toContainText("Sends text off this Mac");
 });
 

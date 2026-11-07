@@ -40,6 +40,8 @@
     {:else}<rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" />{/if}
   </svg>
 {/snippet}
+<!-- What ends it, with the shortcut's keycaps: the same words on every style that has words. -->
+{#snippet ends(hold: boolean)}{hold ? "Release" : "Press"} {#each keys as k}<kbd>{k}</kbd>{/each} {hold ? "to paste" : "again to paste"}{/snippet}
 {#snippet bars()}
   <span class="lvl" aria-hidden="true">{#each WEIGHTS as w}<i style:transform="scaleY({0.2 + 0.8 * level * w})"></i>{/each}</span>
 {/snippet}
@@ -51,7 +53,7 @@
     </span>
     <span class="lines">
       {#if pill.state === "listening"}<span class="t">Listening</span>
-        <span class="sub">{#if left !== null}{hint}{:else}{pill.hold ? "Release" : "Press"} {#each keys as k}<kbd>{k}</kbd>{/each} {pill.hold ? "to paste" : "again to paste"}{/if}</span>
+        <span class="sub">{#if left !== null}{hint}{:else}{@render ends(pill.hold)}{/if}</span>
       {:else if pill.state === "writing"}<span class="t">Writing…</span><span class="sub">On this Mac</span>
       {:else if pill.state === "cleaning"}<span class="t">Cleaning up…</span><span class="sub">With your Fast model</span>
       {:else if pill.state === "added"}<span class="t">Added</span><span class="sub">Where you were typing</span>
@@ -67,7 +69,7 @@
     {:else}
       {@render bars()}
       {#if quiet}<span class="sr">Listening</span>{#if left !== null}<span class="end" aria-label={hint}>{left}</span>{/if}
-      {:else}<span>Listening</span><span class="sub" class:end={left !== null}>{hint}</span>{/if}
+      {:else}<span>Listening</span><span class="sub" class:end={left !== null}>{#if left !== null}{hint}{:else}{@render ends(pill.hold)}{/if}</span>{/if}
     {/if}
   {:else if pill.state === "writing" || pill.state === "cleaning"}
     {#if style !== "capsule"}<span class="spin" aria-hidden="true"></span>{/if}<span class:sr={quiet}>{pill.state === "writing" ? "Writing…" : "Cleaning up…"}</span>

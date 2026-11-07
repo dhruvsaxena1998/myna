@@ -81,29 +81,14 @@
         placeholder={s.words.length ? "Add a word" : "Type a word, then a comma"} oninput={() => draft.includes(",") && add(draft)} {onkeydown} />
     </form>
   </div>
-  <p class="help after" id="dict-help">Press comma or Return to add a word. Press Backspace in an empty box to remove the last one. If Myna keeps mishearing a word, type it like Drove -&gt; Dhruv.</p>
+  <p class="help after" id="dict-help">Return or comma adds a word. To fix a word Myna mishears, type it as Drove -&gt; Dhruv.</p>
   <p class="err" role="status">{error}</p>
 </section>
 
 <style>
-  .group { margin-bottom: var(--sp-5); }
-  h2 { margin: 0 0 var(--sp-3); font-size: var(--fs-title3); line-height: var(--lh-title3); font-weight: var(--fw-semibold); }
-  .list { list-style: none; margin: 0; padding: 0; border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); }
-  .row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-3); align-items: center; padding: var(--sp-3) var(--sp-4); }
   .row + .row { box-shadow: inset 0 .5px 0 var(--line); }
-  .name { display: block; font-weight: var(--fw-semibold); }
-  .desc { display: block; margin-top: 2px; color: var(--text-2); }
-  /* Switch, 38×22 (DESIGN.md). */
-  .switch { appearance: none; width: 38px; height: 22px; margin: 0; border-radius: 11px; position: relative; flex: none; background: var(--fill-track);
-    transition: background var(--dur) var(--ease-out); }
-  .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, .3); transition: transform var(--dur) var(--ease-out); }
-  .switch:checked { background: var(--accent); }
-  .switch:checked::after { transform: translateX(16px); }
-  .switch:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-  .help { margin: var(--sp-1) 0 var(--sp-3); color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
   .help.after { margin: 6px 0 0; }
-  .chipin { display: flex; flex-wrap: wrap; align-items: center; align-content: flex-start; gap: 6px; min-height: 80px; box-sizing: border-box; padding: 10px 12px;
+  .chipin { display: flex; flex-wrap: wrap; align-items: center; align-content: flex-start; gap: 6px; min-height: var(--h-ctl-lg); box-sizing: border-box; padding: 6px 8px;
     border-radius: var(--r-lg); background: var(--fill-field); box-shadow: inset 0 0 0 .5px var(--line-strong); cursor: text; }
   .chipin:focus-within { box-shadow: inset 0 0 0 1.5px var(--accent); }
   /* Tag: capsule, 22px (DESIGN.md), lifted off the field like a control. */
@@ -116,6 +101,4 @@
   .chipin-f { flex: 1 0 160px; margin: 0; }
   input:not(.switch) { width: 100%; box-sizing: border-box; padding: 4px 2px; border: 0; background: none; outline: none; color: var(--text); font: inherit; }
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-  /* Reserved line so an error never shifts the page. */
-  .err { margin: var(--sp-1) 0 0; min-height: var(--lh-footnote); color: var(--danger-text); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
 </style>

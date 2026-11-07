@@ -21,8 +21,7 @@
   }
 </script>
 
-<section class="group" aria-labelledby="exp-h">
-  <h2 id="exp-h">Experimental features</h2>
+<section class="group" aria-label="Experimental features">
   <ul class="list">
     <li class="row">
       <span><label class="name" for="exp-on">Use experimental features</label><span class="desc" id="exp-d">New things we’re still working on. They may change. Turning this off turns them all off.</span></span>
@@ -70,20 +69,6 @@
 <p class="err" role="status">{error}</p>
 
 <style>
-  .group + .group { margin-top: var(--sp-5); }
-  h2 { margin: 0 0 var(--sp-3); font-size: var(--fs-title3); line-height: var(--lh-title3); font-weight: var(--fw-semibold); }
-  .list { list-style: none; margin: 0; padding: 0; border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); }
-  .row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-3); align-items: center; padding: var(--sp-3) var(--sp-4); }
-  .name { display: block; font-weight: var(--fw-semibold); }
-  .desc { display: block; margin-top: 2px; color: var(--text-2); }
-  /* Switch, 38×22 (DESIGN.md). */
-  .switch { appearance: none; width: 38px; height: 22px; margin: 0; border-radius: 11px; position: relative; flex: none; background: var(--fill-track);
-    transition: background var(--dur) var(--ease-out); }
-  .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, .3); transition: transform var(--dur) var(--ease-out); }
-  .switch:checked { background: var(--accent); }
-  .switch:checked::after { transform: translateX(16px); }
-  .switch:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   /* Opacity slider: 4px track, accent left of a 20px white knob; --v is the fill's width. */
   .slider { display: flex; align-items: center; gap: var(--sp-2); width: 260px; color: var(--text-2); }
   .slider:has(:disabled) { opacity: .45; }
@@ -95,6 +80,4 @@
   input[type="range"]:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: 10px; }
   .ticks { display: flex; justify-content: space-between; padding: 0 8px; margin-top: 2px; }
   .ticks i { width: 3px; height: 3px; border-radius: 50%; background: var(--text-3); }
-  /* Reserved line so an error never shifts the page. */
-  .err { margin: var(--sp-1) 0 0; min-height: var(--lh-footnote); color: var(--danger-text); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
 </style>

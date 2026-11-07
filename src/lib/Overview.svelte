@@ -33,12 +33,12 @@
   <div class="tile">
     <span class="label">Let go → pasted</span>
     <span class="big">{@render g(ov.med, dur(ov.med.v))}</span>
-    <span class="sub">median<br />p90 {@render g(ov.p90, dur(ov.p90.v))}</span>
+    <span class="sub">{#if shown(ov.med)}median<br />p90 {@render g(ov.p90, dur(ov.p90.v))}{:else}{why(ov.med.n)}{/if}</span>
   </div>
   <div class="tile">
     <span class="label">Cold starts</span>
     <span class="big">{@render g(ov.cold, pct(ov.cold))}</span>
-    <span class="sub">waited for the model<br />median wait {@render g(ov.wait, dur(ov.wait.v))}</span>
+    <span class="sub">{#if shown(ov.cold)}waited for the model<br />median wait {@render g(ov.wait, dur(ov.wait.v))}{:else}{why(ov.cold.n)}{/if}</span>
   </div>
   <div class="tile">
     <span class="label">Edits per 100 words</span>
@@ -72,10 +72,7 @@
     <table>
       <thead><tr>
         <th scope="col">Model</th><th scope="col" class="num">Dictations</th>
-        <th scope="col" class="num" title="Seconds of audio per second of speech-to-text, pasted dictations only">Speed</th>
         <th scope="col" class="num" title="Median · p90, pasted dictations only">Let go → pasted</th>
-        <th scope="col" class="num">Cold starts</th><th scope="col" class="num">Nothing heard</th><th scope="col" class="num">Failed</th>
-        <th scope="col" class="num" title="Median words per dictation">Words</th>
         <th scope="col" class="num" title="Median of each step, pasted dictations only">Where the time goes</th>
       </tr></thead>
       <tbody>
@@ -83,18 +80,15 @@
           {@const p = { kind: "model" as const, v: m.name }}
           <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
           <tr tabindex="0" class="act" aria-selected={on("model", m.name)} onclick={() => onpick(p)} onkeydown={(e) => key(e, p)}>
-            <th scope="row"><span class="mono">{m.name}</span></th>
+            <!-- Four columns fit the default window; the rest of the numbers ride on a second line. -->
+            <th scope="row"><span class="mname">{m.name}</span>
+              <span class="more"><span title="Seconds of audio per second of speech-to-text, pasted dictations only">Speed {@render g(m.speed, `${Math.round(m.speed.v)}×`)}</span> · Cold starts {@render g(m.cold, pct(m.cold))} · Nothing heard {@render g(m.nothing, pct(m.nothing))} · Failed {@render g(m.failed, pct(m.failed))} · <span title="Median words per dictation">Words {@render g(m.words, String(m.words.v))}</span></span></th>
             <td class="num">{m.n}</td>
-            <td class="num">{@render g(m.speed, `${Math.round(m.speed.v)}×`)}</td>
             <td class="num">{@render g(m.med, `${dur(m.med.v)} · ${dur(m.p90.v)}`)}</td>
-            <td class="num">{@render g(m.cold, pct(m.cold))}</td>
-            <td class="num">{@render g(m.nothing, pct(m.nothing))}</td>
-            <td class="num">{@render g(m.failed, pct(m.failed))}</td>
-            <td class="num">{@render g(m.words, String(m.words.v))}</td>
             <td class="num">{#if shown(m.steps)}{@render bar(STEPS.map(([l, c], i) => [l, m.steps.v[i], c]), STEPS.map(([l], i) => `${l} ${dur(m.steps.v[i])}`).join(", "))}{:else}{@render g(m.steps, "")}{/if}</td>
           </tr>
         {:else}
-          <tr><td colspan="9" class="empty-row">No dictations in this period</td></tr>
+          <tr><td colspan="4" class="empty-row">No dictations in this period</td></tr>
         {/each}
       </tbody>
     </table>
@@ -174,13 +168,14 @@
 
 <style>
   .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--sp-3); }
-  @media (max-width: 900px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  /* Two across when the panel is narrow: follows the panel (Traces' .overview), not the screen. */
+  @container overview (width < 640px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   .tile, .card { background: var(--bg-inset); border-radius: var(--r-lg); box-shadow: inset 0 0 0 .5px var(--line); padding: var(--sp-3) var(--sp-4); }
   /* Fixed rows: a dash and a real value, one line of split or two, take the same space. */
   .tile { display: grid; grid-template-rows: 16px 32px 50px; gap: 2px; }
   .label, .sub, .help { color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
   .help { margin: 0; }
-  .big { font-size: 24px; line-height: 32px; font-weight: var(--fw-semibold); }
+  .big { font-size: 26px; line-height: 32px; font-weight: var(--fw-semibold); }
   .sub .thin { margin: 4px 0 6px; }
   .split { display: block; font-variant-numeric: tabular-nums; }
   .gap { color: var(--text-3); cursor: help; }
@@ -225,7 +220,9 @@
   tr[aria-selected="true"] th { font-weight: var(--fw-semibold); }
   .other th { color: var(--text-2); }
   .empty-row { color: var(--text-3); text-align: center; }
-  .mono { font-family: var(--font-mono); font-size: 12px; }
+  .mname { display: block; overflow: hidden; text-overflow: ellipsis; }
+  .more { display: block; color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); font-weight: var(--fw-regular); font-variant-numeric: tabular-nums; }
+  th:has(.more) { height: auto; padding-block: var(--sp-2); max-width: none; white-space: normal; }
   .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; background: var(--kc); vertical-align: 1px; }
   [data-k="filler"] { --kc: var(--k-filler); } [data-k="repeat"] { --kc: var(--k-repeat); } [data-k="cutoff"] { --kc: var(--k-cutoff); }
   [data-k="number"] { --kc: var(--k-number); } [data-k="word"] { --kc: var(--k-word); }

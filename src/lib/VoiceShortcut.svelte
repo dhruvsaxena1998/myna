@@ -104,7 +104,8 @@
           <span class="desc">
             {#if recording === "clean"}Press the key or keys you want to use. Esc cancels.
             {:else if !fast}Fixes punctuation, grammar slips and self-corrections with AI before adding your words.<br /><span class="need">Needs an Endpoint</span> Set a Fast model on AI provider first.
-            {:else}Fixes punctuation, grammar slips and self-corrections with your Fast model, {fast.provider?.name ?? "Unknown provider"} · {fast.route.model}, before adding your words. If that takes over 3 seconds, Myna adds them as they are.<br /><HostPill off={fast.provider?.off_device ?? true} />{/if}
+            {:else}Fixes punctuation, grammar slips and self-corrections before adding your words. If that takes over 3 s, they go in as they are.
+              <span class="fast"><span class="model">{fast.provider?.name ?? "Unknown provider"} · <code>{fast.route.model}</code></span><HostPill off={fast.provider?.off_device ?? true} /></span>{/if}
           </span></span>
         {#if fast}{@render recorder("clean")}{:else}<button class="btn" onclick={setup}>Set up</button>{/if}
       </li>
@@ -135,52 +136,29 @@
       <button class="btn live" bind:this={btns[which]} aria-live="polite" onclick={() => record(null)}>Press a key…</button>
     {:else}
       {#if key}<span class="keys" aria-label="Current shortcut: {spoken(key)}">{#each keycaps(key) as k}<kbd>{k}</kbd>{/each}</span>
-      {:else}<span class="desc none">Not set</span>{/if}
-      <button class="btn" bind:this={btns[which]} onclick={() => record(which)}>{key ? "Change" : "Set"}</button>
+      {:else}<span class="keys" aria-label="No shortcut"><kbd class="empty">—</kbd></span>{/if}
+      <button class="btn" bind:this={btns[which]} onclick={() => record(which)}>{key ? "Change" : "Set shortcut"}</button>
       {#if key && which === "clean"}<button class="btn plain icon" title="Remove" onclick={() => save({ ...voice, clean: null })} aria-label="Remove the Dictate with cleanup shortcut"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" /></svg></button>{/if}
     {/if}
   </span>
 {/snippet}
 
 <style>
-  .group { margin-bottom: var(--sp-5); }
-  h2 { margin: 0 0 var(--sp-3); font-size: var(--fs-title3); line-height: var(--lh-title3); font-weight: var(--fw-semibold); }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-  .list { list-style: none; margin: 0; padding: 0; border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); }
-  .list > li + li { border-top: 1px solid var(--line); }
-  .row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-3); align-items: center; padding: var(--sp-3) var(--sp-4); }
-  .name { display: block; font-weight: var(--fw-semibold); }
-  .desc { display: block; margin-top: 2px; color: var(--text-2); }
   .hk { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); min-width: 180px; }
   .keys { display: inline-flex; gap: var(--sp-1); }
-  .none { margin: 0; }
+  kbd.empty { color: var(--text-3); }
+  /* The Fast model on its own line, beside where its text goes. */
+  .fast { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-top: var(--sp-1); }
+  .model { font-size: var(--fs-footnote); line-height: var(--lh-footnote); color: var(--text-3); }
+  .model code { font: 12px var(--font-mono); }
+  .fast :global(.pill) { margin: 0; }
   .need { display: inline-flex; align-items: center; height: 20px; margin-top: var(--sp-1); padding: 0 var(--sp-2); border-radius: var(--r-full); background: var(--fill-hover); color: var(--text-2); font-size: var(--fs-caption); font-weight: var(--fw-medium); }
   .desc :global(.pill) { margin-top: var(--sp-1); }
   kbd { min-width: 26px; height: 26px; padding: 0 var(--sp-2); box-sizing: border-box; display: inline-grid; place-items: center;
     border-radius: var(--r-md); background: var(--fill-field); box-shadow: inset 0 0 0 .5px var(--line-strong); font: inherit; }
-  .btn { display: inline-flex; align-items: center; justify-content: center; height: var(--h-ctl); padding: 0 14px; border: 0; border-radius: var(--r-full);
-    background: var(--fill-control); color: var(--text); font: inherit; box-shadow: inset 0 0 0 .5px var(--line-strong), var(--shadow-control); white-space: nowrap; }
   .btn.icon { width: var(--h-ctl); padding: 0; }
   .ic { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; }
   .btn.plain { background: none; box-shadow: none; color: var(--text-2); }
-  .btn:hover { background: color-mix(in srgb, var(--fill-control) 85%, var(--text)); }
   .btn.live { min-width: 150px; color: var(--accent-text); box-shadow: inset 0 0 0 2px var(--accent); }
-  .btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-  /* Switch, 38×22 (DESIGN.md). */
-  .switch { appearance: none; width: 38px; height: 22px; margin: 0; border-radius: 11px; position: relative; flex: none; background: var(--fill-track);
-    transition: background var(--dur) var(--ease-out); }
-  .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, .3); transition: transform var(--dur) var(--ease-out); }
-  .switch:checked { background: var(--accent); }
-  .switch:checked::after { transform: translateX(16px); }
-  .switch:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-  /* Segmented control: a capsule track with a raised thumb. */
-  .seg { display: inline-flex; gap: 2px; margin: 0; padding: 3px; border: 0; border-radius: var(--r-full); background: var(--fill-field); }
-  .seg label { position: relative; }
-  .seg input { position: absolute; inset: 0; margin: 0; opacity: 0; }
-  .seg span { display: flex; align-items: center; height: 26px; padding: 0 14px; border-radius: var(--r-full); color: var(--text-2); white-space: nowrap; }
-  .seg input:checked + span { background: var(--fill-control-on); color: var(--text); font-weight: var(--fw-medium); box-shadow: 0 0 0 .5px var(--line-strong), 0 1px 2px rgba(0, 0, 0, .1); }
-  .seg input:focus-visible + span { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
-  /* Reserved line so an error never shifts the page. */
-  .err { margin: var(--sp-1) 0 0; min-height: var(--lh-footnote); color: var(--danger-text); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
 </style>

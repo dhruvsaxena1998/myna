@@ -152,3 +152,12 @@ test("a bad signature: Close only", async ({ page }) => {
   await expect(buttons(page)).toHaveText(["Close"]);
   await expect(page.getByRole("button", { name: "Close" })).toBeFocused();
 });
+
+test("the default button has no focus ring until a key is pressed, then it does", async ({ page }) => {
+  await open(page, { state: "available", ...found });
+  const main = page.getByRole("button", { name: "Download and restart" });
+  await expect(main).toBeFocused();
+  await expect(main).toHaveCSS("outline-style", "none");
+  await page.keyboard.press("Shift");
+  await expect(main).not.toHaveCSS("outline-style", "none");
+});

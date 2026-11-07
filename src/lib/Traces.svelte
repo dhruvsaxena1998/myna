@@ -101,19 +101,6 @@
   <h1>Stats for nerds</h1>
   {#if !open}
     <span class="grow" data-tauri-drag-region></span>
-    <fieldset class="seg" aria-label="Period">
-      {#each PERIODS as [v, label]}
-        <label><input type="radio" name="period" value={v} bind:group={f.period} /><span data-l={label}>{label}</span></label>
-      {/each}
-    </fieldset>
-    <select class="select" aria-label="Model" bind:value={f.model}>
-      <option value="all">All models</option>
-      {#each models as m}<option value={m}>{m}</option>{/each}
-    </select>
-    <select class="select" aria-label="App" bind:value={f.app}>
-      <option value="all">All apps</option>
-      {#each apps as a}<option value={a}>{a}</option>{/each}
-    </select>
     <ClearAll count={traces.length} onclear={() => { traces = []; f.pick = null; onclear(); }} />
   {/if}
 </header>
@@ -122,7 +109,7 @@
 {#if open}
   {@const t = open.t}
   <div class="top">
-    <button class="back" onclick={() => (open = null)}>‹ All dictations</button>
+    <button class="back" onclick={() => (open = null)}><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6 8.5 12l6 6" /></svg>All dictations</button>
   </div>
   <div class="head">
     <div>
@@ -185,6 +172,21 @@
   {/if}
 {:else}
   <div class="overview">
+    <div class="filters">
+      <fieldset class="seg" aria-label="Period">
+        {#each PERIODS as [v, label]}
+          <label><input type="radio" name="period" value={v} bind:group={f.period} /><span data-l={label}>{label}</span></label>
+        {/each}
+      </fieldset>
+      <select class="select" aria-label="Model" bind:value={f.model}>
+        <option value="all">All models</option>
+        {#each models as m}<option value={m}>{m}</option>{/each}
+      </select>
+      <select class="select" aria-label="App" bind:value={f.app}>
+        <option value="all">All apps</option>
+        {#each apps as a}<option value={a}>{a}</option>{/each}
+      </select>
+    </div>
     <Overview {ov} pick={f.pick} {onpick} />
     <section aria-labelledby="list-h">
       <div class="lhead">
@@ -228,7 +230,9 @@
   .seg input:checked + span { background: var(--fill-control-on); color: var(--text); font-weight: var(--fw-medium); box-shadow: 0 0 0 .5px var(--line-strong), 0 1px 2px rgba(0, 0, 0, .1); }
   .seg input:focus-visible + span { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
   .select { max-width: 200px; }
-  .overview { display: grid; gap: var(--sp-3); align-content: start; max-width: 1000px; margin: 0 auto; }
+  /* minmax(0, 1fr): the tables' min-content width never pushes the cards past the panel; their .scroll scrolls instead. */
+  .overview { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-3); align-content: start; max-width: 1000px; margin: 0 auto; container: overview / inline-size; }
+  .filters { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
   .lhead { display: flex; align-items: center; gap: var(--sp-3); height: 32px; margin: var(--sp-3) 0 var(--sp-1); }
   .lhead h2 { margin: 0; }
   .n { font-weight: var(--fw-regular); color: var(--text-3); font-variant-numeric: tabular-nums; margin-left: 4px; }
@@ -248,16 +252,19 @@
   [data-k="filler"] { --kc: var(--k-filler); } [data-k="repeat"] { --kc: var(--k-repeat); } [data-k="cutoff"] { --kc: var(--k-cutoff); }
   [data-k="number"] { --kc: var(--k-number); } [data-k="word"] { --kc: var(--k-word); }
   .meta { color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); font-weight: var(--fw-regular, 400); }
-  .list { list-style: none; margin: 0; padding: 0; border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); }
-  .list li + li { box-shadow: 0 -.5px 0 var(--line); }
-  .row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: var(--sp-3); align-items: center; width: 100%; padding: var(--sp-3) var(--sp-4); border: 0; background: none; color: inherit; font: inherit; text-align: left; border-radius: var(--r-xl); }
+  .list { list-style: none; margin: 0; padding: 0; border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); overflow: hidden; }
+  .list li { position: relative; }
+  .list li + li::before { content: ""; position: absolute; top: 0; left: var(--sp-4); right: 0; height: 1px; transform: scaleY(.5); transform-origin: top; background: var(--line); }
+  .row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: var(--sp-3); align-items: center; width: 100%; padding: var(--sp-3) var(--sp-4); border: 0; background: none; color: inherit; font: inherit; text-align: left; }
   .row:hover { background: var(--fill-hover); }
-  .row:focus-visible, .back:focus-visible, .chip:focus-visible, .e:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+  .row:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; } /* inside: the list clips */
+  .back:focus-visible, .chip:focus-visible, .e:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   .t { display: grid; min-width: 0; } .name { font-weight: var(--fw-semibold); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .badge { font-size: var(--fs-caption); border-radius: var(--r-full); padding: 0 8px; height: 20px; display: inline-flex; align-items: center; background: var(--fill-hover); color: var(--text-2); font-weight: 500; white-space: nowrap; }
   .badge.bad { background: var(--caution-soft); color: var(--caution-text); }
   .top { margin-bottom: var(--sp-2); }
-  .back { border: 0; background: none; padding: 0; font: inherit; color: var(--accent-text); border-radius: var(--r-sm); }
+  .back { display: inline-flex; align-items: center; gap: 2px; min-height: 24px; margin-left: -4px; padding: 0 4px 0 0; border: 0; background: none; font: inherit; color: var(--accent-text); border-radius: var(--r-sm); }
+  .back .ic { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   .head { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--sp-3); }
   h2 { margin: 0; font-size: var(--fs-title3); line-height: var(--lh-title3); font-weight: var(--fw-semibold); }
   .reason { margin: 2px 0 var(--sp-2); min-height: var(--lh-footnote); }
@@ -271,13 +278,13 @@
   .legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: var(--sp-2); min-height: var(--lh-footnote); font-size: var(--fs-footnote); color: var(--text-2); }
   .legend span { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
   .legend span::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--c); }
-  .text { font-size: var(--fs-reading); line-height: 30px; margin-top: var(--sp-2); user-select: text; }
+  .text { font-size: var(--fs-reading); line-height: 28px; margin-top: var(--sp-2); user-select: text; }
   .note { margin: 4px 0 0; min-height: var(--lh-footnote); }
   .e { border-radius: 4px; padding: 1px; }
-  .e del { text-decoration-thickness: 1.5px; opacity: .75; } .e ins { text-decoration: none; font-weight: 600; }
-  .e[data-k] { background: color-mix(in srgb, var(--kc) 14%, transparent); box-shadow: inset 0 -2px 0 var(--kc); }
-  .e[data-k] del { color: var(--kc); }
-  .e.same { background: none; box-shadow: inset 0 -1.5px 0 color-mix(in srgb, var(--kc) 60%, transparent); }
+  /* One mark per edit: what went is struck in the rule's colour, what came is underlined in it. The tint only shows on hover or focus, to tie the edit to its chip. */
+  .e del { color: var(--text-3); text-decoration: line-through 1px var(--kc); } .e ins { text-decoration: underline 2px var(--kc); text-underline-offset: 4px; font-weight: var(--fw-medium); }
+  .e[data-k]:hover, .e[data-k]:focus-visible { background: color-mix(in srgb, var(--kc) 14%, transparent); }
+  .e.same { text-decoration: underline 1.5px color-mix(in srgb, var(--kc) 60%, transparent); text-underline-offset: 4px; }
   .e.dim { padding: 0; }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: var(--sp-3); }
   .chip { height: var(--h-ctl-sm, 24px); border-radius: var(--r-full); border: 0; padding: 0 10px 0 8px; display: inline-flex; align-items: center; gap: 6px; background: var(--fill-control); color: inherit;
