@@ -655,7 +655,14 @@ pub fn run() {
         .setup(|app| {
             app.set_activation_policy(ActivationPolicy::Accessory);
 
-            let dir = app.path().data_dir()?.join("Myna");
+            // Dev builds keep their own database, so a migration tried in dev never locks the installed Myna out
+            // ("written by a newer Myna"). Models stay shared: they're big, and their layout never changes.
+            let base = app.path().data_dir()?;
+            let dir = base.join(if cfg!(debug_assertions) { "Myna Dev" } else { "Myna" });
+            if cfg!(debug_assertions) && let Err(e) = storage::seed(&base.join("Myna"), &dir) {
+                eprintln!("{e}"); // dev starts empty instead
+            }
+            let models = base.join("Myna/models");
             let status = match storage::open(&dir) {
                 Ok(db) => {
                     let db = Arc::new(Mutex::new(db));
@@ -663,11 +670,11 @@ pub fn run() {
                     let tap_limit = std::time::Duration::from_secs(voice::TAP_LIMIT_SECS);
                     let second = std::time::Duration::from_secs(1);
                     let keys: Arc<dyn ai::Keys> = Arc::new(ai::Keychain);
-                    download::sweep(&dir.join("models")); // before any download can start
-                    app.manage(Session::new(world, db.clone(), keys.clone(), dir.join("models"), models::macos_major(), tap_limit, second));
+                    download::sweep(&models); // before any download can start
+                    app.manage(Session::new(world, db.clone(), keys.clone(), models.clone(), models::macos_major(), tap_limit, second));
                     app.manage(Data {
                         db,
-                        models_dir: dir.join("models"),
+                        models_dir: models,
                         macos: models::macos_major(),
                         downloads: Default::default(),
                         shortcut: Default::default(),

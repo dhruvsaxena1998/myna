@@ -27,4 +27,6 @@ An older Myna must keep working on data a newer Myna wrote (an update, a dev bui
 - **Other names a build looks up:** the Keychain service and account names, the models folder layout and the data folder path stay as they are.
 - **The update feed (`beta.json`, `stable.json`):** add fields only; an installed app reads the ones it knows.
 
+Dev builds (`pnpm tauri dev`) use their own data folder, `~/Library/Application Support/Myna Dev`, copied once from `Myna` on first launch, so trying a migration never touches the installed app's data. Models stay shared in `Myna/models`.
+
 Builds before the one that added this rule (up to 0.0.2-beta.7) still refuse a newer database, so a user on one of them who opens a newer data file sees "written by a newer Myna". Updating fixes it.
