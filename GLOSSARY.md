@@ -106,3 +106,13 @@ _Avoid_: stage, pass, phase
 **Trace**:
 The record of one dictation that reached speech-to-text, whether or not it was pasted: the speech model, the app in front, the audio length, how it ended, and the text after each step with the time that step took. It keeps no audio. Voice typing history and Stats for nerds both read it; deleting a history entry deletes its trace.
 _Avoid_: log, event, debug info
+
+## Learning
+
+**Correction**:
+A change the user makes to text Myna pasted, after the paste, inside the pasted part. Text typed before or after the pasted part is not a correction.
+_Avoid_: edit (a rule's change), feedback (a 👎)
+
+**Correction rate**:
+The share of a dictation's pasted text the user changed through corrections: 0% untouched, 100% rewritten.
+_Avoid_: accuracy, error rate

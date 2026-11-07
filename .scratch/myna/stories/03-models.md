@@ -36,6 +36,8 @@ One place to see, download, verify, pick and delete the on-device models for eac
 7. Fresh-install check (human)
 8. Apple Speech: Apple's built-in speech-to-text as a speech-to-text model on macOS 26+, so a user can dictate without downloading Parakeet (detail below)
 9. ONNX Runtime on demand: ship without it, download it with the first model that needs it (detail below)
+10. Whisper small, medium and large-v3 (#124); 11. Parakeet Unified English (#125)
+12. Find a model in a long list: speech-to-text models grouped by provider, Sort by (Recommended, Accuracy, Speed, Size) inside each provider, fuzzy search on the name; the chosen model never searches out of sight (map: `.scratch/model-list/map.md`)
 
 ## 03.8 Apple Speech
 
