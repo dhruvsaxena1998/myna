@@ -320,6 +320,10 @@ body.mb .win { height: calc(100vh - var(--mb-h) - 48px); }
 .hud-btn { height: 24px; padding: 0 10px; border: 0; border-radius: 12px; background: var(--hud-btn); color: var(--hud-fg); cursor: pointer; }
 .hud :focus-visible, .hud:focus-visible { outline: 2px solid #6AAEFF; outline-offset: 2px; }
 .dpill { position: fixed; bottom: var(--s5); left: 50%; transform: translateX(-50%); z-index: 70; }
+.dwrap { display: inline-flex; }
+.dask { position: absolute; left: calc(100% + 8px); bottom: 0; gap: 2px; padding: 0 4px; }
+.dask-b { height: 28px; min-width: 28px; display: grid; place-items: center; padding: 0 8px; border: 0; border-radius: 999px; background: none; color: inherit; font: inherit; }
+.dask-b:hover { background: rgba(255,255,255,.12); }
 .lvl { display: flex; align-items: center; gap: 2px; height: 16px; }
 .lvl i { width: 3px; height: 16px; border-radius: 2px; background: currentColor; animation: lvl .9s ease-in-out infinite; }
 .lvl i:nth-child(2) { animation-delay: .15s; } .lvl i:nth-child(3) { animation-delay: .3s; } .lvl i:nth-child(4) { animation-delay: .45s; } .lvl i:nth-child(5) { animation-delay: .6s; }
@@ -1001,7 +1005,7 @@ function STYLES_SAMPLE() { return [
   { id:'message', name:'Message', apps:['Slack','Messages','WhatsApp'], text:'Fix punctuation and capitals. Keep it casual and short. Never use emoji.', newer:true },
   { id:'email', name:'Email', apps:['Mail','Outlook'], text:null }
 ]; }
-S.set = { modules:S.modules, hotkey:'fn', mode:'hold', paste:'clipboard', pillStyle:'capsule', pillPlace:'bottom', dict:['Myna','Parakeet','Desert Ant','Drove → Dhruv'], keep:['oh'], fixes:[{ k:'a', kind:'alias', from:'Mina', to:'Myna', n:2 }, { k:'k', kind:'keep', to:'the', n:3 }], exported:false, lang:'en', rules:true, hotkeyClean:'', hotkey2:'', hotkeyClean2:'', styles:STYLES_SAMPLE(), styleOpen:null, cleanFail:false, hkErr:'',
+S.set = { modules:S.modules, hotkey:'fn', mode:'hold', paste:'clipboard', pillStyle:'capsule', pillPlace:'bottom', dict:['Myna','Parakeet','Desert Ant','Drove → Dhruv'], keep:['oh'], fixes:[{ k:'a', kind:'alias', from:'Mina', to:'Myna', n:2 }, { k:'k', kind:'keep', to:'the', n:3 }], exported:false, lang:'en', rules:true, hotkeyClean:'', hotkey2:'', hotkeyClean2:'', askRate:false, styles:STYLES_SAMPLE(), styleOpen:null, cleanFail:false, hkErr:'',
   capture:'shots', interval:'15', apps:{ meet:false, teams:false, zoom:false, slack:false }, ext:false, retention:'30', folder:true, dataPath:'~/Library/Application Support/Myna', dataMoved:false,
   meetKey:'ctrl-opt-m', appearance:'auto', accent:'blue', glass:'clear', liquid:false, liquidFrost:50, expOn:false, detect:true,
   diar:'who', updMode:'auto', updEvery:'launch', channel:'beta',
@@ -1999,7 +2003,7 @@ function settingsPage() {
         <div class="chipin" data-act="keep-focus">${x.keep.map(w => `<span class="tag">${esc(w)}<button data-act="keep-rm" data-w="${esc(w)}" aria-label="Remove ${esc(w)} from Never remove">${icon('x','ic-s')}</button></span>`).join('')}
           <form data-form="keep" class="chipin-f"><label class="sr-only" for="keep-in">Add words for Myna to never remove</label><input id="keep-in" maxlength="200" placeholder="${x.keep.length ? 'Add a word' : 'Type a word, then a comma'}" autocomplete="off"></form></div></section>`
       + (S.ai.fast ? stylesGroup() : '')
-      + sgroup('Feedback', [srow('Your feedback', 'Ratings and corrections stay on this Mac. Export saves them to a file you can look over and send us.', `<button class="btn" data-act="fb-export">Export…</button>`)], `<p class="help" role="status" style="min-height:1.4em">${x.exported ? 'Saved to Downloads' : ''}</p>`));
+      + sgroup('Feedback', [srow('Ask how it went', 'After each dictation the pill shows 👍 and 👎 for a few seconds. Clicking them doesn’t take you out of the app you’re typing in.', sw('askRate', 'Ask how it went')), srow('Your feedback', 'Ratings and corrections stay on this Mac. Export saves them to a file you can look over and send us.', `<button class="btn" data-act="fb-export">Export…</button>`)], `<p class="help" role="status" style="min-height:1.4em">${x.exported ? 'Saved to Downloads' : ''}</p>`));
     case 'meetings': return sgroup('Meeting notes', [
         srow('Use meeting notes', 'Record your calls and get notes, a summary and answers to your questions.', sw('modules.meetings', 'Use meeting notes'))
       ]) + (!S.modules.meetings ? '' : sgroup('Shortcut', [
@@ -2218,7 +2222,13 @@ function overlay() {
   const d = S.dictS;
   if (d.state === 'rec') h += `<div class="hud dpill" role="status" aria-label="Voice typing: listening"><span class="lvl" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><span>Listening</span>${d.clean ? '<span class="sub">With cleanup</span>' : ''}${d.hold ? '<span class="sub">Release to paste</span>' : '<button class="hud-btn" id="dict-done" data-act="dict-stop">Done</button>'}</div>`;
   if (d.state === 'proc') h += `<div class="hud dpill" role="status"><span>${d.clean ? 'Cleaning up…' : 'Writing…'}</span></div>`;
-  if (d.state === 'done') h += `<div class="hud dpill" role="status">${d.raw ? `${icon('alert','ic-s')}<span>Added without cleanup</span><span class="sub">AI took too long</span>` : `${icon('check','ic-s')}<span>${d.into ? 'Added to ' + d.into : 'Added where you were typing'}</span>`}</div>`;
+  if (d.state === 'done') {
+    const said = `${d.raw ? `${icon('alert','ic-s')}<span>Added without cleanup</span><span class="sub">AI took too long</span>` : `${icon('check','ic-s')}<span>${d.into ? 'Added to ' + d.into : 'Added where you were typing'}</span>`}`;
+    // Ask how it went (off by default): 👍/👎 beside the pill, not in it, so the pill doesn't move. Clicking keeps focus in the app being typed into.
+    const ask = !S.set.askRate ? '' : `<div class="hud dask">${d.rated === 'up' ? '<span>Thanks</span>' : d.rated === 'down' ? '<button class="dask-b" data-act="dict-fix">Fix it</button>'
+      : `<button class="dask-b" data-act="dict-rate" data-v="up" aria-label="Good dictation" title="Good dictation">${icon('thumb-up','ic-s')}</button><button class="dask-b" data-act="dict-rate" data-v="down" aria-label="Bad dictation" title="Bad dictation">${icon('thumb-down','ic-s')}</button>`}</div>`;
+    h += ask ? `<div class="dpill dwrap" role="status"><div class="hud">${said}</div>${ask}</div>` : `<div class="hud dpill" role="status">${said}</div>`;
+  }
   if (rec && !r.open) h += `<button class="hud mpill" id="rec-pill" data-act="rec-toggle" aria-expanded="false" aria-label="Meeting recording, show live notes"><span class="recdot" aria-hidden="true"></span><span>Recording</span><span class="od-nowrap" data-rec-time>${fmtDur(Date.now() - r.start)}</span><span class="sub">${r.muted ? 'Muted' : 'Mic live'}</span></button>`;
   if (rec && r.open) h += `<section class="mpanel" aria-label="Live meeting notes">
       <div class="mp-head"><span class="recdot" aria-hidden="true"></span><span class="t">Recording</span><time data-rec-time>${fmtDur(Date.now() - r.start)}</time><span class="help od-fill od-truncate">Google Meet · Chrome</span>
@@ -2261,7 +2271,8 @@ function stopDict() {
     S.clips.unshift({ id:'c' + Date.now(), text:DICT_SAMPLE, src: t ? (d.into === 'chat' ? 'Myna chat' : 'a text field') : 'the focused app', t:'Today ' + now() });
     d.raw = d.clean && S.set.cleanFail === 'slow';
     d.state = 'done'; if (S.view === 'clips') render(); else renderOverlay();
-    setTimeout(() => { if (S.dictS === d) { S.dictS = { state:null }; renderOverlay(); } }, d.raw ? 2600 : 1600);
+    d.clip = S.clips[0].id;
+    setTimeout(() => { if (S.dictS === d && !d.rated) { S.dictS = { state:null }; renderOverlay(); } }, S.set.askRate ? 4000 : d.raw ? 2600 : 1600);
   }, d.clean ? (S.set.cleanFail ? 3000 : 1300) : 700);
 }
 function startRec() {
@@ -2425,6 +2436,9 @@ document.addEventListener('click', e => {
     case 'style-reset': { const st = styleBy(el.dataset.id); st.text = null; st.newer = false; render(); $('#st-' + st.id).focus(); break; }
     case 'style-newer': { const st = styleBy(el.dataset.id); st.text = null; st.newer = false; render(); $('#st-' + st.id).focus(); break; }
     case 'style-app-rm': { const st = styleBy(el.dataset.id); st.apps = st.apps.filter(a => a !== el.dataset.a); render(); $(`[data-bind=style-app][data-id="${st.id}"]`).focus(); break; }
+    case 'dict-rate': { const d = S.dictS; d.rated = el.dataset.v; S.rate[d.clip] = d.rated; renderOverlay();
+      setTimeout(() => { if (S.dictS === d) { S.dictS = { state:null }; renderOverlay(); } }, d.rated === 'up' ? 1200 : 4000); break; }
+    case 'dict-fix': { const id = S.dictS.clip; S.dictS = { state:null }; S.mean = id; go('clips'); renderOverlay(); break; }
     case 'hk-clear': { const p = el.dataset.p; if (p === 'hotkeyClean') { S.set.hotkeyClean = S.set.hotkeyClean2; S.set.hotkeyClean2 = ''; } else S.set[p] = ''; render(); $('#hk-' + p)?.focus(); break; }
     case 'det-start': S.detect.state = null; startRec(); $('#rec-pill')?.focus(); break;
     case 'det-live': S.detect.state = null; startRec(); S.rec.open = true; renderOverlay(); $('#rec-hide')?.focus(); break;

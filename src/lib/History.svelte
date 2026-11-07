@@ -9,13 +9,18 @@
   import { when, type Row } from "./trace";
 
   // `rows`: every trace, so deleting one also leaves Stats for nerds. `said`: those that left text, the ones listed here.
-  let { rows = $bindable(), said, onclear }: { rows: Row[]; said: Row[]; onclear: () => void } = $props();
+  // `fix`: a dictation to open "What did you mean?" on, from Fix it on the pill.
+  let { rows = $bindable(), said, onclear, fix = $bindable(null) }: { rows: Row[]; said: Row[]; onclear: () => void; fix?: number | null } = $props();
   let q = $state("");
   let more = $state<Record<number, boolean>>({});
   let copied = $state<string | null>(null);
   let error = $state("");
   let search: HTMLInputElement;
   let panel = $state<number | null>(null); // the row whose "What did you mean?" is open
+  $effect(() => {
+    if (fix === null || !said.some((r) => r.id === fix)) return;
+    (q = ""), (panel = fix), (fix = null); // a search could hide the row
+  });
   let thumbs: Record<number, Thumbs> = {};
 
   const shown = $derived.by(() => {

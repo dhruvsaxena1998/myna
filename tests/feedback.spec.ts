@@ -136,3 +136,23 @@ test("a failed export says why", async ({ page }) => {
   await page.getByRole("button", { name: "Export…" }).click();
   await expect(page.getByText("Couldn't write the file")).toBeVisible();
 });
+
+test("Fix it on the pill opens history on that dictation's box, even from another page or a search", async ({ page }) => {
+  await history(page);
+  await page.getByRole("searchbox").fill("Send");
+  await page.getByRole("button", { name: "Your dictation" }).click();
+  await page.evaluate(() => (window as any).__emit("fix", 4));
+  const box = page.getByLabel("What did you mean?");
+  await expect(box).toBeFocused();
+  await expect(box).toHaveValue("Mina is here");
+  await expect(page.getByRole("heading", { name: "Voice typing history" })).toBeVisible();
+});
+
+test("Ask how it went is off until switched on, and saves with the other voice settings", async ({ page }) => {
+  await settings(page, "[]", `voice_set: () => {},`);
+  const ask = page.getByRole("switch", { name: "Ask how it went" });
+  await expect(ask).not.toBeChecked();
+  await ask.click();
+  await expect(ask).toBeChecked();
+  expect((await calls(page, "voice_set")).at(-1)).toMatchObject({ voice: { key: "Alt+Space", rate: true } });
+});

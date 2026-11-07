@@ -21,6 +21,15 @@
   // svelte-ignore state_referenced_locally
   let words = $state(data.words);
   let current = $state<"history" | "yours" | "nerds">("history");
+  let fix = $state<number | null>(null);
+  // Fix it on the pill: the dictation it rated 👎, with its "What did you mean?" open.
+  $effect(() => {
+    const un = listen<number>("fix", async ({ payload }) => {
+      rows = await invoke<Row[]>("traces_list").catch(() => rows);
+      (current = "history"), (fix = payload);
+    });
+    return () => void un.then((f) => f());
+  });
   // Stats for nerds is experimental: its entry shows only while it and Experimental features are on.
   const nerds = $derived(!!look?.experimental && look.nerds);
   const view = $derived(current === "nerds" && !nerds ? "history" : current);
@@ -94,7 +103,7 @@
     {:else if view === "nerds"}
       <Traces bind:traces={all} {words} onclear={() => (rows = [])} />
     {:else}
-      <History bind:rows {said} onclear={() => (all = [])} />
+      <History bind:rows {said} bind:fix onclear={() => (all = [])} />
     {/if}
   </main>
 </div>

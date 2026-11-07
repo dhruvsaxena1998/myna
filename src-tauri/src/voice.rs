@@ -30,6 +30,9 @@ pub struct Voice {
     pub clean2: Option<String>,
     pub mode: String,
     pub paste: String,
+    /// "Ask how it went": 👍/👎 on the pill after each dictation. Off unless turned on.
+    #[serde(default)]
+    pub rate: bool,
 }
 
 fn read(conn: &Connection, key: &str) -> Result<Option<String>, String> {
@@ -47,6 +50,7 @@ pub fn get(conn: &Connection) -> Result<Voice, String> {
         clean2: read(conn, "voice_key_clean_2")?.filter(|k| valid(k)),
         mode: read(conn, "voice_mode")?.filter(|m| MODES.contains(&m.as_str())).unwrap_or(MODES[0].into()),
         paste: read(conn, "voice_paste")?.filter(|m| PASTES.contains(&m.as_str())).unwrap_or(PASTES[0].into()),
+        rate: read(conn, "voice_rate")?.is_some_and(|v| v == "1"),
     })
 }
 
@@ -89,10 +93,10 @@ pub fn set(conn: &Connection, v: &Voice) -> Result<(), String> {
     if v.clean2.is_some() && v.clean.is_none() {
         return Err("Set the first Dictate with cleanup key before a second one.".into());
     }
-    let on = if v.on { "1" } else { "0" };
+    let (on, rate) = (if v.on { "1" } else { "0" }, if v.rate { "1" } else { "0" });
     let opt = |o: &Option<String>| o.clone().unwrap_or_default();
     let (clean, key2, clean2) = (opt(&v.clean), opt(&v.key2), opt(&v.clean2));
-    for (k, val) in [("voice_on", on), ("voice_key", &v.key), ("voice_key_clean", &clean), ("voice_key_2", &key2), ("voice_key_clean_2", &clean2), ("voice_mode", &v.mode), ("voice_paste", &v.paste)] {
+    for (k, val) in [("voice_on", on), ("voice_key", &v.key), ("voice_key_clean", &clean), ("voice_key_2", &key2), ("voice_key_clean_2", &clean2), ("voice_mode", &v.mode), ("voice_paste", &v.paste), ("voice_rate", rate)] {
         conn.execute("INSERT INTO setting(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2", [k, val])
             .map_err(|e| format!("Couldn't save voice typing's settings: {e}"))?;
     }
@@ -107,7 +111,7 @@ mod tests {
     fn defaults_to_on_holding_option_space_and_saves_only_valid_choices() {
         let tmp = tempfile::tempdir().unwrap();
         let conn = crate::storage::open(tmp.path()).unwrap();
-        let v = |on, key: &str, mode: &str| Voice { on, key: key.into(), clean: None, key2: None, clean2: None, mode: mode.into(), paste: "clipboard".into() };
+        let v = |on, key: &str, mode: &str| Voice { on, key: key.into(), clean: None, key2: None, clean2: None, mode: mode.into(), paste: "clipboard".into(), rate: false };
         assert_eq!(get(&conn), Ok(v(true, "Alt+Space", "hold")));
         set(&conn, &v(false, "Ctrl+Shift+KeyD", "tap")).unwrap();
         assert_eq!(get(&conn), Ok(v(false, "Ctrl+Shift+KeyD", "tap")));
@@ -141,7 +145,7 @@ mod tests {
     fn fn_alone_is_a_shortcut() {
         let tmp = tempfile::tempdir().unwrap();
         let conn = crate::storage::open(tmp.path()).unwrap();
-        let fn_key = Voice { on: true, key: "Fn".into(), clean: None, key2: None, clean2: None, mode: "tap".into(), paste: "clipboard".into() };
+        let fn_key = Voice { on: true, key: "Fn".into(), clean: None, key2: None, clean2: None, mode: "tap".into(), paste: "clipboard".into(), rate: false };
         set(&conn, &fn_key).unwrap();
         assert_eq!(get(&conn), Ok(fn_key));
     }
@@ -174,9 +178,11 @@ mod tests {
             conn.execute("INSERT INTO setting(key, value) VALUES (?1, ?2)", [k, val]).unwrap();
         }
         let v = get(&conn).unwrap();
-        assert_eq!((v.key2, v.clean2), (None, None));
+        assert_eq!((v.key2, v.clean2, v.rate), (None, None, false));
         // and what the Settings page of that build sends
         let old: Voice = serde_json::from_str(r#"{"on":true,"key":"Fn","clean":null,"mode":"hold","paste":"clipboard"}"#).unwrap();
-        assert_eq!((old.key2, old.clean2), (None, None));
+        assert_eq!((&old.key2, &old.clean2, old.rate), (&None, &None, false));
+        set(&conn, &Voice { rate: true, ..old }).unwrap();
+        assert!(get(&conn).unwrap().rate, "Ask how it went saves");
     }
 }

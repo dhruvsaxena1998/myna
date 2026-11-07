@@ -99,6 +99,7 @@
         "alwaysOnTop": true,
         "focus": false,
         "focusable": false,
+        "acceptFirstMouse": true,
         "visibleOnAllWorkspaces": true,
         "skipTaskbar": true
       }

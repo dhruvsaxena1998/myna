@@ -39,7 +39,8 @@ pub struct Step {
     pub edits: Option<String>,
 }
 
-pub fn save(conn: &Connection, t: &Trace) -> Result<(), String> {
+/// Returns the saved trace's id.
+pub fn save(conn: &Connection, t: &Trace) -> Result<i64, String> {
     let err = |e: rusqlite::Error| format!("Couldn't save the dictation's trace: {e}");
     let tx = conn.unchecked_transaction().map_err(err)?;
     tx.execute(
@@ -52,7 +53,8 @@ pub fn save(conn: &Connection, t: &Trace) -> Result<(), String> {
         tx.execute("INSERT INTO step(trace, kind, text, ms, settings, edits) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", (id, s.kind, &s.text, s.ms, &s.settings, &s.edits))
             .map_err(err)?;
     }
-    tx.commit().map_err(err)
+    tx.commit().map_err(err)?;
+    Ok(id)
 }
 
 /// One row of Voice typing history and Stats for nerds' list, newest first. `heard` is what speech-to-text wrote;

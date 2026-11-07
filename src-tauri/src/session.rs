@@ -25,6 +25,8 @@ pub enum Pill {
     Added,
     /// Added, but as the rules left it: `reason` says why the cleanup didn't count.
     Fallback { reason: String },
+    /// After Added or Fallback, with Ask how it went on: 👍/👎 for the saved dictation `trace`.
+    Ask { trace: i64 },
     /// Nothing.
     Idle,
     Error { title: String, hint: String },
@@ -282,17 +284,24 @@ impl Session {
                 Ok(fallback.map_or(Pill::Added, |reason| Pill::Fallback { reason: reason.into() }))
             };
             let result = run();
+            let mut saved = None;
             if let Some(mut t) = trace {
                 t.reason = result.as_ref().err().cloned();
-                if let Err(e) = trace::save(&s.db.lock().unwrap(), &t) {
-                    eprintln!("{e}");
+                match trace::save(&s.db.lock().unwrap(), &t) {
+                    Ok(id) => saved = Some(id),
+                    Err(e) => eprintln!("{e}"),
                 }
             }
+            let pasted = matches!(result, Ok(Pill::Added | Pill::Fallback { .. }));
             s.world.show(match result {
                 Ok(p) => p,
                 Err(e) if e == dictation::NO_AX => Pill::Error { title: "Needs Accessibility".into(), hint: pill::ALLOW.into() },
                 Err(e) => Pill::Error { title: "Couldn’t add your words".into(), hint: e },
             });
+            let ask = voice::get(&s.db.lock().unwrap()).is_ok_and(|v| v.rate);
+            if let (true, true, Some(trace)) = (pasted, ask, saved) {
+                s.world.show(Pill::Ask { trace });
+            }
             s.schedule_unload();
         });
     }
@@ -359,6 +368,7 @@ impl World for Mac {
             Pill::Cleaning => pill::show(&self.0, "cleaning"),
             Pill::Fallback { reason } => pill::fallback(&self.0, &reason),
             Pill::Added => pill::show(&self.0, "added"),
+            Pill::Ask { trace } => pill::ask(&self.0, trace),
             Pill::Idle => pill::show(&self.0, "idle"),
             Pill::Error { title, hint } => pill::error(&self.0, &title, &hint),
         }
@@ -757,6 +767,21 @@ mod tests {
         // The mic failing never reached speech-to-text: no trace.
         let failed = |why| traced("failed", Some(why), &[]);
         assert_eq!(traces(&s), [failed("Couldn't load Apple Speech: broken"), failed("The model choked.")]);
+    }
+
+    #[test]
+    fn ask_how_it_went_follows_a_pasted_dictation_only_when_switched_on() {
+        let (s, mac, _tmp) = session("hold");
+        assert_eq!(dictate(&s, &mac, false), [Pill::Writing, Pill::Added], "off by default");
+        let v = voice::get(&s.db.lock().unwrap()).unwrap();
+        voice::set(&s.db.lock().unwrap(), &voice::Voice { rate: true, ..v }).unwrap();
+        let id: i64 = s.db.lock().unwrap().query_row("SELECT max(id) FROM trace", [], |r| r.get(0)).unwrap();
+        dictate(&s, &mac, false);
+        // Ask comes just after Added, once the trace is saved.
+        mac.wait(|l| l.shown.iter().any(|p| matches!(p, Pill::Ask { .. })));
+        assert_eq!(mac.shown()[1..], [Pill::Writing, Pill::Added, Pill::Ask { trace: id + 1 }]);
+        mac.0.lock().unwrap().words = vec![" um"];
+        assert!(!dictate(&s, &mac, false).iter().any(|p| matches!(p, Pill::Ask { .. })), "nothing pasted, nothing to rate");
     }
 
     #[test]

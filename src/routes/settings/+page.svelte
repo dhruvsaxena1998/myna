@@ -109,7 +109,7 @@
             <Fixes initial={data.fixes} onadd={reloadRules} />
             {#if rules}<Words initial={rules} />
             {:else}<ErrorState title="Myna couldn't read your words" message={data.rules?.ok === false ? data.rules.error : ""} />{/if}
-            <Feedback />
+            <Feedback bind:voice />
             <!-- Styles only matter once there's a Fast model to run them. -->
             {#if ai?.fast && !ai.fast.gone}
               {#if data.cleanup?.ok}<CleanupStyles initial={data.cleanup.cleanup} />

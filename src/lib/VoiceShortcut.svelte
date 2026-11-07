@@ -1,7 +1,7 @@
 <!-- Voice typing's switch, its two shortcut recorders (Dictate, Dictate with cleanup), and how they start (prototype: the dictation page, `hotkeyRec` and `cleanRowHelp`). -->
 <script lang="ts" module>
   /** `key2` and `clean2`: an optional second key for each action, e.g. one on another keyboard. */
-  export type Voice = { on: boolean; key: string; clean: string | null; key2?: string | null; clean2?: string | null; mode: "hold" | "tap"; paste: "clipboard" | "type" };
+  export type Voice = { on: boolean; key: string; clean: string | null; key2?: string | null; clean2?: string | null; rate?: boolean; mode: "hold" | "tap"; paste: "clipboard" | "type" };
   /** Which shortcut the recorder is changing. */
   type Which = "key" | "key2" | "clean" | "clean2";
 </script>
