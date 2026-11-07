@@ -231,6 +231,46 @@ html { background: var(--bg-desk); color: var(--text); font: var(--fs-body)/var(
   background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='12' fill='none' stroke='%238E8E93' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 4.5 4 1.5 7 4.5M1 7.5 4 10.5 7 7.5'/%3E%3C/svg%3E") no-repeat right 12px center, var(--fill-control);
   box-shadow: inset 0 0 0 .5px var(--line-strong), var(--shadow-control); }
 .select:disabled { opacity: .45; }
+
+/* Settings grammar (DESIGN.md › Grouped list): one copy for every Settings page, under .prefs (the page's scroller).
+   Sections sit 24px apart; a section's reserved error line hangs inside that gap, so every gap is the same. */
+.prefs { display: flex; flex-direction: column; gap: var(--sp-5); }
+.prefs section { margin: 0; }
+.prefs h2 { margin: 0 0 var(--sp-2); font-size: var(--fs-title3); line-height: var(--lh-title3); font-weight: var(--fw-semibold); }
+.prefs h2:has(+ .help) { margin-bottom: var(--sp-1); }
+.prefs .help { margin: 0; color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
+.prefs h2 + .help { margin-bottom: var(--sp-3); }
+.prefs .help.after { margin-top: var(--sp-2); }
+.prefs .list { list-style: none; margin: 0; padding: 0; border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); }
+.prefs .list > li + li { border-top: 1px solid var(--line); }
+.prefs .row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-3); align-items: center; padding: var(--sp-3) var(--sp-4); }
+.prefs .name { display: block; font-weight: var(--fw-semibold); }
+.prefs .desc { display: block; margin-top: 2px; color: var(--text-2); }
+.prefs .err { margin: var(--sp-1) 0 0; min-height: var(--lh-footnote); color: var(--danger-text); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
+.prefs section > .err:last-child { margin-bottom: calc(-1 * (var(--sp-1) + var(--lh-footnote))); }
+/* A page-wide error line after the last section: 4px under it, not a whole gap. */
+.prefs > .err { margin-top: calc(var(--sp-1) - var(--sp-5)); }
+.prefs .add { display: flex; gap: var(--sp-2); margin-top: var(--sp-3); }
+/* Button: capsule, 30px (DESIGN.md). Variants stay with the component that uses them. */
+.prefs .btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-1h); height: var(--h-ctl); padding: 0 14px; border: 0; border-radius: var(--r-full);
+  background: var(--fill-control); color: var(--text); font: inherit; box-shadow: inset 0 0 0 .5px var(--line-strong), var(--shadow-control); white-space: nowrap; }
+.prefs .btn:hover:not(:disabled) { background: color-mix(in srgb, var(--fill-control) 85%, var(--text)); }
+.prefs .btn:disabled { color: var(--text-disabled); }
+/* Switch, 38×22. */
+.prefs .switch { appearance: none; width: 38px; height: 22px; margin: 0; border-radius: 11px; position: relative; flex: none; background: var(--fill-track);
+  transition: background var(--dur) var(--ease-out); }
+.prefs .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .3); transition: transform var(--dur) var(--ease-out); }
+.prefs .switch:checked { background: var(--accent); }
+.prefs .switch:checked::after { transform: translateX(16px); }
+/* Segmented control: a capsule track with a raised thumb. data-l on the label keeps room for the bold one, so choosing never widens it. */
+.prefs .seg { display: inline-flex; gap: 2px; margin: 0; padding: 3px; border: 0; border-radius: var(--r-full); background: var(--fill-field); }
+.prefs .seg label { position: relative; }
+.prefs .seg input { position: absolute; inset: 0; margin: 0; opacity: 0; }
+.prefs .seg span { display: grid; align-content: center; justify-items: center; height: 26px; padding: 0 14px; border-radius: var(--r-full); color: var(--text-2); white-space: nowrap; }
+.prefs .seg span::after { content: attr(data-l); height: 0; overflow: hidden; visibility: hidden; font-weight: var(--fw-medium); }
+.prefs .seg input:checked + span { background: var(--fill-control-on); color: var(--text); font-weight: var(--fw-medium); box-shadow: 0 0 0 .5px var(--line-strong), 0 1px 2px rgba(0, 0, 0, .1); }
+.prefs .seg input:focus-visible + span { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   :root[data-theme] { --mat-window: var(--bg-inset); --mat-sidebar: var(--bg-sidebar); --mat-menu: var(--bg-raised); --hud-bg: var(--hud-bg-solid); }
 }

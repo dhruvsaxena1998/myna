@@ -70,7 +70,7 @@
 
   <main>
     <header data-tauri-drag-region><h1>{page.title}</h1></header>
-    <div class="content">
+    <div class="content prefs">
       <!-- Every setting lives in the database, so if it failed to open, every page shows why. -->
       {#if !data.storage.ok}
         <ErrorState title="Myna couldn't open its data folder" message={data.storage.error} />

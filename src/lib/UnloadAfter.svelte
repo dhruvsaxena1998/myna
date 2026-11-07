@@ -24,20 +24,17 @@
   }
 </script>
 
-<div class="srow">
-  <span><label class="label" for="unload">Free up memory when idle</label>
-    <span class="hint" id="unload-h">The speech model uses 1–2 GB while loaded. Loading it again takes a few seconds.</span></span>
-  <select id="unload" class="select" aria-describedby="unload-h" value={secs} onchange={save}>
-    {#each CHOICES as [v, label]}<option value={v}>{label}</option>{/each}
-  </select>
-</div>
-<p class="err" role="status">{error}</p>
+<section aria-labelledby="unload-sec">
+  <h2 id="unload-sec">Memory</h2>
+  <ul class="list">
+    <li class="row">
+      <span><label class="name" for="unload">Free up memory when idle</label>
+        <span class="desc" id="unload-h">The speech model uses 1–2 GB while loaded. Loading it again takes a few seconds.</span></span>
+      <select id="unload" class="select" aria-describedby="unload-h" value={secs} onchange={save}>
+        {#each CHOICES as [v, label]}<option value={v}>{label}</option>{/each}
+      </select>
+    </li>
+  </ul>
+  <p class="err" role="status">{error}</p>
+</section>
 
-<style>
-  .srow { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); margin-top: var(--sp-3); padding: var(--sp-3) var(--sp-4);
-    border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); }
-  .label { display: block; font-weight: var(--fw-semibold); }
-  .hint { display: block; margin-top: 2px; color: var(--text-2); }
-  /* Reserved line so an error never shifts the page. */
-  .err { margin: var(--sp-1) 0 0; min-height: var(--lh-footnote); color: var(--danger-text); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
-</style>

@@ -118,17 +118,12 @@
 </section>
 
 <style>
-  .group { margin-bottom: var(--sp-5); }
-  h2 { margin: 0 0 var(--sp-1); font-size: var(--fs-title3); line-height: var(--lh-title3); font-weight: var(--fw-semibold); }
   .help { margin: 0 0 var(--sp-3); color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
   .field .help { margin: 0; }
-  .list { list-style: none; margin: 0; padding: 0; border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); }
   .srow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-3); align-items: center; padding: var(--sp-3) var(--sp-4); }
   li + li { box-shadow: inset 0 .5px 0 var(--line); }
   .style-li { padding: 0 var(--sp-4) var(--sp-4); box-shadow: none; }
   .od { min-width: 0; }
-  .name { display: block; font-weight: var(--fw-semibold); }
-  .desc { display: block; margin-top: 2px; color: var(--text-2); overflow-wrap: anywhere; }
   .style-ed { display: grid; gap: var(--sp-3); }
   .field { display: grid; gap: var(--sp-1); align-content: start; }
   .apps { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
@@ -145,13 +140,6 @@
   .ic { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; }
   .pill { display: inline-flex; align-items: center; height: 20px; padding: 0 var(--sp-2); border-radius: var(--r-full); background: var(--accent-soft); color: var(--accent-text); font-size: var(--fs-caption); font-weight: var(--fw-medium); }
   .newer { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); margin: 0; padding: 8px 12px; border-radius: 12px; background: var(--accent-soft); color: var(--accent-text); font-size: var(--fs-footnote); }
-  .acts, .add { display: flex; gap: var(--sp-2); }
-  .add { margin-top: var(--sp-2); }
-  .btn { display: inline-flex; align-items: center; justify-content: center; height: var(--h-ctl); padding: 0 14px; border: 0; border-radius: var(--r-full); background: var(--fill-control); color: var(--text); font: inherit; box-shadow: inset 0 0 0 .5px var(--line-strong); white-space: nowrap; }
-  .btn:hover:not(:disabled) { background: color-mix(in srgb, var(--fill-control) 85%, var(--text)); }
-  .btn:disabled { opacity: .4; }
-  .btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+  .acts { display: flex; gap: var(--sp-2); }
   .btn.danger { background: var(--danger); color: var(--on-solid); box-shadow: var(--shadow-solid); }
-  /* Reserved line so an error never shifts the page. */
-  .err { margin: var(--sp-1) 0 0; min-height: var(--lh-footnote); color: var(--danger-text); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
 </style>

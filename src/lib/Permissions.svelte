@@ -53,20 +53,9 @@
 </section>
 
 <style>
-  h2 { margin: 0; font-size: var(--fs-title3); line-height: var(--lh-title3); font-weight: var(--fw-semibold); }
-  .help { margin: var(--sp-1) 0 var(--sp-3); color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
   .fix { margin: var(--sp-2) 0 0; }
   .fix strong { color: var(--text-2); font-weight: var(--fw-semibold); }
-  .list { list-style: none; margin: 0; padding: 0; border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); }
-  .list > li + li { border-top: 1px solid var(--line); }
-  .row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-3); align-items: center; padding: var(--sp-3) var(--sp-4); }
-  .name { display: block; font-weight: var(--fw-semibold); }
-  .desc { display: block; margin-top: 2px; color: var(--text-2); }
   .state { display: flex; justify-content: flex-end; align-items: center; min-width: 190px; height: var(--h-ctl); }
   .ok { display: inline-flex; align-items: center; gap: var(--sp-1); color: var(--ok-text); font-weight: var(--fw-medium); }
   .ic { width: 14px; height: 14px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-  .btn { display: inline-flex; align-items: center; height: var(--h-ctl); padding: 0 14px; border: 0; border-radius: var(--r-full);
-    background: var(--fill-control); color: var(--text); font: inherit; box-shadow: inset 0 0 0 .5px var(--line-strong), var(--shadow-control); white-space: nowrap; }
-  .btn:hover { background: color-mix(in srgb, var(--fill-control) 85%, var(--text)); }
-  .btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 </style>

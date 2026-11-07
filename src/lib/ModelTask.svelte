@@ -147,14 +147,14 @@
 </section>
 
 <style>
-  .task + :global(.task) { margin-top: var(--sp-5); }
   .tools { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); margin-bottom: var(--sp-1); }
   .sort { display: flex; align-items: center; gap: var(--sp-2); color: var(--text-3); font-size: var(--fs-footnote); }
   .sort .select { width: auto; }
   .group { margin: var(--sp-3) 0 var(--sp-1); padding: 0 var(--sp-4); font-size: var(--fs-footnote); font-weight: var(--fw-semibold); color: var(--text-3); }
   .list + .group { margin-top: var(--sp-4); }
   /* Reserved line, so a search with no match never shifts the page. */
-  .none { margin: var(--sp-1) 0 0; min-height: var(--lh-footnote); color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
+  /* It shares the error line's slot under the list (a no-match and a failed save don't happen together), so the section gap stays 24px. */
+  .none { margin: var(--sp-1) 0 calc(-1 * (var(--sp-1) + var(--lh-footnote))); min-height: var(--lh-footnote); color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
   /* Same search field as Voice typing history (History.svelte). */
   .search { position: relative; display: flex; align-items: center; flex: 0 1 220px; min-width: 120px; }
   .search > .ic { position: absolute; left: 10px; color: var(--text-3); pointer-events: none; }
@@ -162,17 +162,13 @@
     box-shadow: inset 0 0 0 .5px var(--line-strong); color: var(--text); font: inherit; outline: none; -webkit-appearance: none; appearance: none; }
   .search input::-webkit-search-cancel-button { display: none; }
   .search input:focus-visible { box-shadow: inset 0 0 0 1.5px var(--accent); }
-  h2 { margin: 0; font-size: var(--fs-title3); line-height: var(--lh-title3); font-weight: var(--fw-semibold); }
-  .help { margin: var(--sp-1) 0 var(--sp-3); color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
   .list { container-type: inline-size; list-style: none; margin: 0; padding: 0; border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); }
-  .list > li + li { border-top: 1px solid var(--line); }
   .row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: var(--sp-3); align-items: start; padding: var(--sp-3) var(--sp-4); }
   .row input { margin: 3px 0 0; accent-color: var(--accent); }
   .row.blocked label, .row.blocked .rates { opacity: .55; }
   label { display: block; }
   .name { font-weight: var(--fw-semibold); }
   .vendor { color: var(--text-3); font-weight: var(--fw-regular); }
-  .desc { display: block; margin-top: 2px; color: var(--text-2); }
   .rates { display: flex; flex-direction: column; gap: var(--sp-1); padding-top: 2px; }
   .rate { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-footnote); color: var(--text-2); white-space: nowrap; }
   .rate-l { width: 56px; color: var(--text-3); }
@@ -185,19 +181,11 @@
   .ok { display: inline-flex; align-items: center; gap: var(--sp-1); color: var(--ok-text); font-weight: var(--fw-medium); }
   .ic { width: 14px; height: 14px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   .pill { display: inline-flex; align-items: center; height: 20px; padding: 0 var(--sp-2); border-radius: var(--r-full); font-size: var(--fs-caption); font-weight: var(--fw-medium); background: var(--fill-hover); color: var(--text-2); white-space: nowrap; }
-  .btn { display: inline-flex; align-items: center; gap: var(--sp-1h); height: var(--h-ctl); padding: 0 14px; border: 0; border-radius: var(--r-full);
-    background: var(--fill-control); color: var(--text); font: inherit; box-shadow: inset 0 0 0 .5px var(--line-strong), var(--shadow-control); white-space: nowrap; }
   .btn.quiet { background: none; box-shadow: none; color: var(--text-2); padding: 0 var(--sp-2); }
   .bar { width: 72px; height: 4px; border-radius: 2px; background: var(--line-strong); overflow: hidden; }
   .bar b { display: block; height: 100%; background: var(--accent); transform-origin: left; }
-  .btn:hover { background: color-mix(in srgb, var(--fill-control) 85%, var(--text)); }
   .btn:focus-visible, .row input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-  /* Narrow (the default Settings width): ratings and download sit under the description, as in the prototype. */
-  @container (width < 640px) {
     .row { grid-template-columns: auto minmax(0, 1fr); }
     .rates, .dl { grid-column: 2; justify-content: flex-start; }
     .rates { flex-direction: row; gap: var(--sp-3); }
-  }
-  /* Reserved line so an error never shifts the page. */
-  .err { margin: var(--sp-1) 0 0; min-height: var(--lh-footnote); color: var(--danger-text); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
 </style>
