@@ -81,7 +81,7 @@
         placeholder={s.words.length ? "Add a word" : "Type a word, then a comma"} oninput={() => draft.includes(",") && add(draft)} {onkeydown} />
     </form>
   </div>
-  <p class="help after" id="dict-help">Press comma or Return to add a word. Press Backspace in an empty box to remove the last one. If Myna keeps mishearing a word, type it like Drove -&gt; Dhruv.</p>
+  <p class="help after" id="dict-help">Return or comma adds a word. To fix a word Myna mishears, type it as Drove -&gt; Dhruv.</p>
   <p class="err" role="status">{error}</p>
 </section>
 

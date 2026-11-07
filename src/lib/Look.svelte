@@ -41,10 +41,10 @@
       {@render seg("theme", THEMES, "theme-l")}
     </li>
     <li class="row">
-      <span><span class="name" id="accent-l">Highlight colour</span><span class="desc">Used for buttons and selected items. Now: {ACCENTS.find(([v]) => v === look.accent)?.[1]}.</span></span>
+      <span><span class="name" id="accent-l">Highlight colour</span><span class="desc">Used for buttons and selected items.</span></span>
       <fieldset class="swatches" aria-labelledby="accent-l">
         {#each ACCENTS as [v, label]}
-          <label class="sw"><input type="radio" name="accent" value={v} checked={look.accent === v} onchange={() => save("accent", v)} /><span aria-hidden="true" style="--c: var(--sw-{v})"></span><span class="sr">{label}</span></label>
+          <label class="sw" title={label}><input type="radio" name="accent" value={v} checked={look.accent === v} onchange={() => save("accent", v)} /><span aria-hidden="true" style="--c: var(--sw-{v})"></span><span class="sr">{label}</span></label>
         {/each}
       </fieldset>
     </li>

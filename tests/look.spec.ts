@@ -33,7 +33,7 @@ test("shows the three rows with the saved choices", async ({ page }) => {
   await expect(page.getByRole("group", { name: "Theme" }).getByRole("radio", { name: "Dark" })).toBeChecked();
   await expect(page.getByRole("group", { name: "Highlight colour" }).getByRole("radio")).toHaveCount(8);
   await expect(page.getByRole("radio", { name: "Green" })).toBeChecked();
-  await expect(page.getByText("Used for buttons and selected items. Now: Green.")).toBeVisible();
+  await expect(page.getByText("Used for buttons and selected items.")).toBeVisible();
   await expect(page.getByRole("radio", { name: "Tinted" })).toBeChecked();
   await expect(page.getByText("The sidebar and menus take on a hint of your highlight colour.")).toBeVisible();
 });
@@ -46,7 +46,7 @@ test("each choice saves and restyles at once, without moving the rows", async ({
   await page.getByRole("radio", { name: "Graphite" }).check();
   await page.getByRole("radio", { name: "Clear" }).check();
   expect(await attrs(page)).toEqual({ theme: "light", accent: "graphite", glass: "clear" });
-  await expect(page.getByText("Now: Graphite.")).toBeVisible();
+  await expect(page.getByRole("radio", { name: "Graphite" })).toBeChecked();
   await expect(page.getByText("The sidebar and menus show a little of what’s behind them.")).toBeVisible();
   expect(await sets(page)).toEqual([
     L({ theme: "light", accent: "green", glass: "tinted" }),

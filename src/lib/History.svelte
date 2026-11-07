@@ -67,7 +67,7 @@
   <ClearAll count={rows.length} onclear={() => { rows = []; onclear(); }} />
 </header>
 <div class="content">
-  <p class="note">Everything you’ve said with voice typing, kept on this Mac. Newest first.</p>
+  <p class="note">Kept on this Mac, newest first.</p>
   <p class="err" role="status">{error}</p>
   {#if shown.length}
     <ul aria-label="Voice typing history">

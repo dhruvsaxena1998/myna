@@ -116,6 +116,10 @@ One family: the system font (`--font`). WebKit picks SF Pro Text or Display by s
 
 Plain and short. Say what happens: "Writing up your notes…", "Added where you were typing". No marketing adjectives, no exclamation marks. Sample content is always labelled "Sample data".
 
+- A row's description is a sentence and keeps its period, like macOS Settings. Headings, labels, buttons, pills and status words ("Not tested yet", "Coming later") don't.
+- Say a thing once. An explanation that applies to every row goes in the section's help line, not on each row.
+- Troubleshooting shows only when it applies: a hint for a stuck permission appears after the user has been to System Settings and come back, not before.
+
 ## Open decisions
 
 These are places where the prototype and the spec disagree. They need your call before the stories that touch them:

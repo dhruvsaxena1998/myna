@@ -104,7 +104,8 @@
           <span class="desc">
             {#if recording === "clean"}Press the key or keys you want to use. Esc cancels.
             {:else if !fast}Fixes punctuation, grammar slips and self-corrections with AI before adding your words.<br /><span class="need">Needs an Endpoint</span> Set a Fast model on AI provider first.
-            {:else}Fixes punctuation, grammar slips and self-corrections with your Fast model, {fast.provider?.name ?? "Unknown provider"} · {fast.route.model}, before adding your words. If that takes over 3 seconds, Myna adds them as they are.<br /><HostPill off={fast.provider?.off_device ?? true} />{/if}
+            {:else}Fixes punctuation, grammar slips and self-corrections before adding your words. If that takes over 3 s, they go in as they are.
+              <span class="fast"><span class="model">{fast.provider?.name ?? "Unknown provider"} · <code>{fast.route.model}</code></span><HostPill off={fast.provider?.off_device ?? true} /></span>{/if}
           </span></span>
         {#if fast}{@render recorder("clean")}{:else}<button class="btn" onclick={setup}>Set up</button>{/if}
       </li>
@@ -135,8 +136,8 @@
       <button class="btn live" bind:this={btns[which]} aria-live="polite" onclick={() => record(null)}>Press a key…</button>
     {:else}
       {#if key}<span class="keys" aria-label="Current shortcut: {spoken(key)}">{#each keycaps(key) as k}<kbd>{k}</kbd>{/each}</span>
-      {:else}<span class="desc none">Not set</span>{/if}
-      <button class="btn" bind:this={btns[which]} onclick={() => record(which)}>{key ? "Change" : "Set"}</button>
+      {:else}<span class="keys" aria-label="No shortcut"><kbd class="empty">—</kbd></span>{/if}
+      <button class="btn" bind:this={btns[which]} onclick={() => record(which)}>{key ? "Change" : "Set shortcut"}</button>
       {#if key && which === "clean"}<button class="btn plain icon" title="Remove" onclick={() => save({ ...voice, clean: null })} aria-label="Remove the Dictate with cleanup shortcut"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" /></svg></button>{/if}
     {/if}
   </span>
@@ -146,7 +147,12 @@
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   .hk { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); min-width: 180px; }
   .keys { display: inline-flex; gap: var(--sp-1); }
-  .none { margin: 0; }
+  kbd.empty { color: var(--text-3); }
+  /* The Fast model on its own line, beside where its text goes. */
+  .fast { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-top: var(--sp-1); }
+  .model { font-size: var(--fs-footnote); line-height: var(--lh-footnote); color: var(--text-3); }
+  .model code { font: 12px var(--font-mono); }
+  .fast :global(.pill) { margin: 0; }
   .need { display: inline-flex; align-items: center; height: 20px; margin-top: var(--sp-1); padding: 0 var(--sp-2); border-radius: var(--r-full); background: var(--fill-hover); color: var(--text-2); font-size: var(--fs-caption); font-weight: var(--fw-medium); }
   .desc :global(.pill) { margin-top: var(--sp-1); }
   kbd { min-width: 26px; height: 26px; padding: 0 var(--sp-2); box-sizing: border-box; display: inline-grid; place-items: center;

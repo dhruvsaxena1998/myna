@@ -210,7 +210,7 @@
 
 <section class="group" aria-labelledby="prov-h">
   <h2 id="prov-h">Providers</h2>
-  <p class="help">Where Myna sends text for an AI to answer. Servers on this Mac keep your words here; anything else, even another computer on your network, gets them.</p>
+  <p class="help">Servers on this Mac keep your words here. Anything else gets them, even another computer on your network. Test checks the address and key without spending anything.</p>
   {#if none && !adding}
     <div class="list empty">
       <h3>No AI providers yet</h3>
@@ -237,7 +237,7 @@
                 <button type="button" class="btn icon quiet" id="rm-{p.id}" aria-label="Remove {p.name}" onclick={() => (confirm = p.id)}><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" /></svg></button>
               </div>
               <div class="tline" aria-live="polite">
-                {#if !t}<span class="help">Not tested yet. Test checks the address and key; it spends nothing.</span>
+                {#if !t}<span class="help">Not tested yet</span>
                 {:else if t.st === "run"}<span class="help">Checking…</span>
                 {:else if t.st === "err"}<span class="terr">{t.msg}</span><button type="button" class="btn quiet sm" onclick={() => test(p)}>Retry</button>
                 {:else}<span class="help trunc">{testText(t)}</span>{/if}

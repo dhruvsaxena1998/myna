@@ -30,3 +30,16 @@ test("Accessibility refreshes when the user comes back from System Settings, wit
   await expect(row).toContainText("Allowed");
   expect(await row.getByText("So Myna can put").boundingBox()).toEqual(before);
 });
+
+test("the stale-entry hint shows only after a trip to System Settings that didn't turn Accessibility on", async ({ page }) => {
+  await open(page);
+  const row = page.getByRole("listitem").filter({ hasText: "Accessibility" });
+  await expect(row).not.toContainText("Still asking?");
+  await page.evaluate(() => (window as any).__emit("tauri://focus", null)); // focus without going to System Settings
+  await expect(row).not.toContainText("Still asking?");
+  await page.getByRole("button", { name: "Open System Settings for Accessibility" }).click();
+  await page.evaluate(() => (window as any).__emit("tauri://focus", null));
+  await expect(row).toContainText("Still asking? Remove Myna from the list with −, then open System Settings again.");
+  await page.evaluate(() => { (window as any).__perms.ax = true; (window as any).__emit("tauri://focus", null); });
+  await expect(row).not.toContainText("Still asking?");
+});
