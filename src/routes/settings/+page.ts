@@ -3,6 +3,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import type { Task } from "$lib/models";
 import type { Perms } from "$lib/Permissions.svelte";
 import type { Look } from "$lib/Pill.svelte";
+import type { Fix } from "$lib/feedback";
 import type { Rules } from "$lib/Words.svelte";
 import type { Voice } from "$lib/VoiceShortcut.svelte";
 import type { Cleanup } from "$lib/CleanupStyles.svelte";
@@ -44,6 +45,8 @@ export async function load() {
         (err) => ({ ok: false as const, error: String(err) }),
       )
     : null;
+  // Hidden when there are none, so a failed read just leaves the group out.
+  const fixes = storage.ok ? await invoke<Fix[]>("fixes_get").catch(() => [] as Fix[]) : [];
   const ai = storage.ok
     ? await invoke<Ai>("ai_get").then(
         (ai) => ({ ok: true as const, ai }),
@@ -62,5 +65,5 @@ export async function load() {
         (err) => ({ ok: false as const, error: String(err) }),
       )
     : null;
-  return { storage, version, models, perms, globe, look, voice, rules, ai, cleanup, updates };
+  return { storage, version, models, perms, globe, look, voice, rules, fixes, ai, cleanup, updates };
 }

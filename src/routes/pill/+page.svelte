@@ -5,6 +5,7 @@
   import { glassOn, type Look as Appearance } from "$lib/look";
 
   let { data } = $props();
+  const THUMB = '<path d="M4 11h3v9H4zM7 11l3.5-7a2 2 0 0 1 2 2v3.5h5.2a2 2 0 0 1 2 2.3l-1.1 6a2 2 0 0 1-2 1.7H7"/>'; // as Thumbs.svelte
 
   let look = $state<Look>({ style: "capsule", place: "bottom" });
   // Liquid Glass and what tints it; the layout already loaded them before first paint.
@@ -17,6 +18,27 @@
   let started = 0;
   let secs = $state(0);
   let hide: ReturnType<typeof setTimeout> | undefined;
+  // Ask how it went: 👍/👎 for the dictation just added, then "Fix it" after a 👎.
+  let ask = $state<{ trace: number; rated: "up" | "down" | null } | null>(null);
+  let askEl = $state<HTMLElement>();
+  const close = (after: number) => (clearTimeout(hide), (hide = setTimeout(() => ((on = false), (ask = null)), after)));
+  // The window takes the mouse only over these buttons (pill.rs `pill_hit`); the rest stays click-through.
+  $effect(() => {
+    if (!ask || !askEl) return void invoke("pill_hit", { rect: null });
+    const r = askEl.getBoundingClientRect();
+    invoke("pill_hit", { rect: [r.x, r.y, r.width, r.height] });
+  });
+  async function rate(rating: "up" | "down") {
+    if (!ask) return;
+    const trace = ask.trace;
+    ask = { trace, rated: rating };
+    await invoke("feedback_set", { trace, rating, corrected: null }).catch(() => {});
+    close(rating === "up" ? 1200 : 4000);
+  }
+  function fix() {
+    if (ask) invoke("dictation_fix", { trace: ask.trace });
+    close(0);
+  }
   // Tap mode counts down its last 30 s; the backend stops it at the limit.
   const left = $derived(pill.state === "listening" && pill.limit && !pill.hold && pill.limit - secs <= 30 ? Math.max(0, pill.limit - secs) : null);
 
@@ -26,6 +48,7 @@
     const un = [
       listen<Shown | { state: "idle" }>("dictation", ({ payload }) => {
         clearTimeout(hide);
+        ask = null;
         on = payload.state !== "idle";
         if (payload.state === "idle") return;
         if (payload.state === "listening") (wave = Array(WAVE).fill(0)), (started = Date.now()), (secs = 0);
@@ -35,6 +58,7 @@
         if (payload.state === "fallback") hide = setTimeout(() => (on = false), 2600);
         if (payload.state === "error") hide = setTimeout(() => (on = false), 4000);
       }),
+      listen<number>("dictation-ask", ({ payload }) => ((ask = { trace: payload, rated: null }), (on = true), close(4000))),
       listen<number>("dictation-level", ({ payload }) => (wave = [...wave.slice(1), payload])),
       listen<Look>("pill-look", ({ payload }) => (look = payload)),
       listen<Appearance>("look", ({ payload }) => (appearance = payload)),
@@ -44,7 +68,7 @@
 
   // Liquid Glass: tell the backend where the pill is drawn, so its native glass sits exactly behind it.
   function syncGlass() {
-    const hud = spot.firstElementChild as HTMLElement | null;
+    const hud = spot.querySelector<HTMLElement>(".hud");
     if (!appearance || !glassOn(appearance) || !hud) return void invoke("glass_set", { glass: [] });
     const r = hud.getBoundingClientRect(), css = getComputedStyle(hud);
     invoke("glass_set", { glass: [{ x: r.x, y: r.y, w: r.width, h: r.height, radius: Math.min(parseFloat(css.borderTopLeftRadius), r.height / 2), shown: on }] });
@@ -55,17 +79,41 @@
   });
   $effect(() => {
     const ro = new ResizeObserver(() => syncGlass()); // the pill's words change its width
-    ro.observe(spot.firstElementChild!);
+    ro.observe(spot.querySelector(".hud")!);
     return () => ro.disconnect();
   });
 </script>
 
 <!-- The window sits against the same screen edges (pill.rs `place`), so the pill keeps clear of the menubar and Dock. -->
 <div class="spot {look.place}" class:on role="status" bind:this={spot}>
+  <span class="anchor">
   <Pill style={look.style} {pill} {wave} {secs} {left} />
+  {#if ask}
+    <!-- Beside the pill, not in its row, so the pill doesn't move when this appears. Hovering keeps it up. -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="ask" bind:this={askEl} onmouseenter={() => clearTimeout(hide)} onmouseleave={() => close(1500)}>
+      {#if ask.rated === "up"}<span class="thanks">Thanks</span>
+      {:else if ask.rated === "down"}<button class="fix" onclick={fix}>Fix it</button>
+      {:else}
+        <button aria-label="Good dictation" title="Good dictation" onclick={() => rate("up")}><svg viewBox="0 0 24 24" aria-hidden="true">{@html THUMB}</svg></button>
+        <button aria-label="Bad dictation" title="Bad dictation" onclick={() => rate("down")}><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="rotate(180 12 12)">{@html THUMB}</g></svg></button>
+      {/if}
+    </div>
+  {/if}
+  </span>
 </div>
 
 <style>
+  .anchor { position: relative; display: inline-flex; }
+  .ask { position: absolute; bottom: 0; left: calc(100% + var(--sp-2)); height: var(--h-hud); display: flex; align-items: center; gap: 2px; padding: 0 var(--sp-1);
+    box-sizing: border-box; border-radius: var(--r-full); background: var(--hud-bg); color: var(--hud-fg); white-space: nowrap; }
+  .top .ask, .top-right .ask { bottom: auto; top: 0; }
+  .bottom-right .ask, .top-right .ask { left: auto; right: calc(100% + var(--sp-2)); }
+  .ask button { height: calc(var(--h-hud) - 8px); min-width: calc(var(--h-hud) - 8px); display: grid; place-items: center; padding: 0 var(--sp-2); border: 0; border-radius: var(--r-full);
+    background: none; color: inherit; font: inherit; cursor: default; }
+  .ask button:hover { background: var(--hud-fill); }
+  .ask svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .thanks, .fix { padding: 0 var(--sp-2); font-weight: var(--fw-medium); }
   .spot { position: fixed; z-index: var(--z-hud); display: flex;
     opacity: 0; visibility: hidden; translate: 0 8px;
     transition: opacity var(--dur-fast) var(--ease-in), translate var(--dur-fast) var(--ease-in), visibility 0s var(--dur-fast); }

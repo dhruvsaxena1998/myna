@@ -4,7 +4,9 @@
 //! breaks the paste. So the window is never shown that way: it stays ordered front, transparent and
 //! ignoring the mouse, and the page draws the pill only while there's something to show.
 
-use objc2_app_kit::{NSScreen, NSStatusWindowLevel, NSWindow, NSWindowCollectionBehavior as B};
+use objc2::ClassType;
+use objc2_app_kit::{NSEvent, NSPanel, NSScreen, NSStatusWindowLevel, NSWindow, NSWindowCollectionBehavior as B, NSWindowStyleMask};
+use std::sync::Mutex;
 use objc2_foundation::{MainThreadMarker, NSPoint};
 use rusqlite::{Connection, OptionalExtension};
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
@@ -51,6 +53,13 @@ pub fn ns(w: &WebviewWindow) -> Option<&NSWindow> {
 /// Puts the pill window on screen for good. Runs on the main thread, in setup.
 pub fn setup(w: &WebviewWindow) {
     let Some(ns) = ns(w) else { return };
+    // A non-activating panel: a click on 👍/👎 leaves the app being typed into frontmost and focused.
+    // Same as tauri-nspanel: swap the class, since only an NSPanel honours NonactivatingPanel.
+    // SAFETY: raw object_setClass, as tauri-nspanel does: tao's window class is 8 bytes bigger (its own ivar),
+    // which objc2's checked set_class refuses. The memory stays allocated; NSPanel just doesn't use it, and the
+    // pill is never closed or released.
+    unsafe { objc2::ffi::object_setClass((ns as *const NSWindow).cast_mut().cast(), NSPanel::class()) };
+    ns.setStyleMask(ns.styleMask() | NSWindowStyleMask::NonactivatingPanel);
     ns.setIgnoresMouseEvents(true);
     ns.setLevel(NSStatusWindowLevel);
     ns.setCollectionBehavior(B::CanJoinAllSpaces | B::FullScreenAuxiliary | B::Stationary | B::IgnoresCycle);
@@ -77,6 +86,46 @@ pub fn show(app: &AppHandle, state: &str) {
     let _ = app.emit_to("pill", "dictation", serde_json::json!({ "state": state }));
 }
 
+/// 👍/👎 on the pill for the dictation just saved.
+pub fn ask(app: &AppHandle, trace: i64) {
+    let _ = app.emit_to("pill", "dictation-ask", trace);
+}
+
+/// Where the pill's buttons are, in the window's CSS pixels from its top left: x, y, width, height.
+static HIT: Mutex<Option<[f64; 4]>> = Mutex::new(None);
+
+/// The page says where 👍/👎 are (`None` once they're gone). The window takes the mouse only while the
+/// pointer is over them, so the rest of it never blocks a click on the app underneath.
+#[tauri::command]
+pub fn pill_hit(app: AppHandle, rect: Option<[f64; 4]>) {
+    let start = std::mem::replace(&mut *HIT.lock().unwrap(), rect).is_none() && rect.is_some();
+    if !start {
+        return;
+    }
+    std::thread::spawn(move || loop {
+        let r = *HIT.lock().unwrap();
+        let a = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            let Some(w) = a.get_webview_window("pill") else { return };
+            let Some(ns) = ns(&w) else { return };
+            let ignore = !r.is_some_and(|r| inside(r, NSEvent::mouseLocation(), ns.frame()));
+            if ns.ignoresMouseEvents() != ignore {
+                ns.setIgnoresMouseEvents(ignore);
+            }
+        });
+        if r.is_none() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(40));
+    });
+}
+
+/// Whether the pointer (screen points, from the bottom left) is over `r` (CSS pixels from the window's top left).
+fn inside(r: [f64; 4], at: NSPoint, frame: objc2_foundation::NSRect) -> bool {
+    let (x, y) = (at.x - frame.origin.x, frame.size.height - (at.y - frame.origin.y));
+    x >= r[0] && x <= r[0] + r[2] && y >= r[1] && y <= r[1] + r[3]
+}
+
 /// Shows "Added without cleanup": the words went in as the rules left them, and `reason` says why.
 pub fn fallback(app: &AppHandle, reason: &str) {
     let _ = app.emit_to("pill", "dictation", serde_json::json!({ "state": "fallback", "reason": reason }));
@@ -100,6 +149,17 @@ pub fn level(app: &AppHandle, level: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_pointer_is_inside_only_over_the_buttons() {
+        use objc2_foundation::{NSRect, NSSize};
+        // A 720×100 window at (100, 50); the buttons 40×20 at 10 px from its top left.
+        let frame = NSRect::new(NSPoint::new(100.0, 50.0), NSSize::new(720.0, 100.0));
+        let r = [10.0, 10.0, 40.0, 20.0];
+        assert!(inside(r, NSPoint::new(120.0, 130.0), frame)); // 20 in, 20 down
+        assert!(!inside(r, NSPoint::new(120.0, 60.0), frame)); // near the bottom
+        assert!(!inside(r, NSPoint::new(200.0, 130.0), frame)); // right of them
+    }
 
     #[test]
     fn look_defaults_to_capsule_at_the_bottom_and_saves_only_listed_choices() {

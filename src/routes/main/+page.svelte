@@ -7,6 +7,7 @@
   import ErrorState from "$lib/ErrorState.svelte";
   import History from "$lib/History.svelte";
   import Traces from "$lib/Traces.svelte";
+  import Yours from "$lib/Yours.svelte";
   import { glassOn, syncGlass, type Look } from "$lib/look";
   import type { Row, Trace } from "$lib/trace";
   import type { Rules } from "$lib/Words.svelte";
@@ -19,7 +20,16 @@
   let all = $state<Trace[]>(data.all?.ok ? data.all.traces : []);
   // svelte-ignore state_referenced_locally
   let words = $state(data.words);
-  let current = $state<"history" | "nerds">("history");
+  let current = $state<"history" | "yours" | "nerds">("history");
+  let fix = $state<number | null>(null);
+  // Fix it on the pill: the dictation it rated 👎, with its "What did you mean?" open.
+  $effect(() => {
+    const un = listen<number>("fix", async ({ payload }) => {
+      rows = await invoke<Row[]>("traces_list").catch(() => rows);
+      (current = "history"), (fix = payload);
+    });
+    return () => void un.then((f) => f());
+  });
   // Stats for nerds is experimental: its entry shows only while it and Experimental features are on.
   const nerds = $derived(!!look?.experimental && look.nerds);
   const view = $derived(current === "nerds" && !nerds ? "history" : current);
@@ -65,6 +75,9 @@
     <button class="nav" aria-current={view === "history"} onclick={() => (current = "history")}>
       {@render icon('<rect x="5" y="5" width="14" height="16" rx="2"/><path d="M9 5V3.5h6V5M9 11h6M9 15h4"/>')}<span class="label">Voice typing history</span><span class="count">{said.length}</span>
     </button>
+    <button class="nav" aria-current={view === "yours"} onclick={() => (current = "yours")}>
+      {@render icon('<path d="M3 17l5-5 4 4 8-9"/><path d="M15 7h5v5"/>')}<span class="label">Your dictation</span>
+    </button>
     {#if nerds}
       <button class="nav" aria-current={view === "nerds"} onclick={() => (current = "nerds")}>
         {@render icon('<path d="M5 20V11M12 20V5M19 20v-6"/>')}<span class="label">Stats for nerds</span>
@@ -81,14 +94,16 @@
     {#if !data.storage.ok}
       <header data-tauri-drag-region><h1>Myna</h1></header>
       <div class="content"><ErrorState title="Myna couldn't open its data folder" message={data.storage.error} /></div>
-    {:else if !data.traces?.ok || (view === "nerds" && !data.all?.ok)}
+    {:else if !data.traces?.ok || ((view === "nerds" || view === "yours") && !data.all?.ok)}
       {@const failed = !data.traces?.ok ? data.traces : data.all}
-      <header data-tauri-drag-region><h1>{view === "nerds" ? "Stats for nerds" : "Voice typing history"}</h1></header>
+      <header data-tauri-drag-region><h1>{view === "nerds" ? "Stats for nerds" : view === "yours" ? "Your dictation" : "Voice typing history"}</h1></header>
       <div class="content"><ErrorState title="Myna couldn't read your dictations" message={failed?.ok === false ? failed.error : ""} /></div>
+    {:else if view === "yours"}
+      <Yours traces={all} />
     {:else if view === "nerds"}
       <Traces bind:traces={all} {words} onclear={() => (rows = [])} />
     {:else}
-      <History bind:rows {said} onclear={() => (all = [])} />
+      <History bind:rows {said} bind:fix onclear={() => (all = [])} />
     {/if}
   </main>
 </div>

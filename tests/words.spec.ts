@@ -4,7 +4,7 @@ import { fakeTauri } from "./tauri";
 async function open(page: Page, words: { spelling: string; heard: string | null }[], opts: { tidy?: boolean; fails?: boolean } = {}) {
   await fakeTauri(page, `{
     storage_status: () => "/tmp/Myna", models_list: () => [],
-    rules_get: () => ({ settings: { language: "de", tidy: ${opts.tidy ?? true}, words: ${JSON.stringify(words)} }, languages: [["en", "English"], ["de", "German"]] }),
+    rules_get: () => ({ settings: { language: "de", tidy: ${opts.tidy ?? true}, words: ${JSON.stringify(words)}, keep: [] }, languages: [["en", "English"], ["de", "German"]] }),
     rules_set: () => { if (${!!opts.fails}) throw "Couldn't save your words: disk full"; },
   }`);
   await page.goto("/settings");
@@ -30,7 +30,7 @@ test("the switch and the language save, and the help text follows the switch", a
   await expect(page.getByText("Pastes exactly what the model heard. Words to remember still apply.")).toBeVisible();
   await page.getByLabel("Language you speak").selectOption("en");
   const saved = await page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "rules_set").map((c: any) => c[1].rules));
-  expect(saved).toEqual([{ language: "de", tidy: false, words: [] }, { language: "en", tidy: false, words: [] }]);
+  expect(saved).toEqual([{ language: "de", tidy: false, words: [], keep: [] }, { language: "en", tidy: false, words: [], keep: [] }]);
 });
 
 test("comma and Return add words, skipping ones already there", async ({ page }) => {

@@ -1,16 +1,27 @@
 <!-- Voice typing history (docs/index.html `clipsView()`): what was said with voice typing, newest first, from the stored traces. -->
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import { tick } from "svelte";
   import ClearAll from "./ClearAll.svelte";
+  import Correct from "./Correct.svelte";
+  import { rate, type Rating } from "./feedback";
+  import Thumbs from "./Thumbs.svelte";
   import { when, type Row } from "./trace";
 
   // `rows`: every trace, so deleting one also leaves Stats for nerds. `said`: those that left text, the ones listed here.
-  let { rows = $bindable(), said, onclear }: { rows: Row[]; said: Row[]; onclear: () => void } = $props();
+  // `fix`: a dictation to open "What did you mean?" on, from Fix it on the pill.
+  let { rows = $bindable(), said, onclear, fix = $bindable(null) }: { rows: Row[]; said: Row[]; onclear: () => void; fix?: number | null } = $props();
   let q = $state("");
   let more = $state<Record<number, boolean>>({});
   let copied = $state<string | null>(null);
   let error = $state("");
   let search: HTMLInputElement;
+  let panel = $state<number | null>(null); // the row whose "What did you mean?" is open
+  $effect(() => {
+    if (fix === null || !said.some((r) => r.id === fix)) return;
+    (q = ""), (panel = fix), (fix = null); // a search could hide the row
+  });
+  const thumbs: Record<number, Thumbs> = $state({});
 
   const shown = $derived.by(() => {
     const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -28,6 +39,24 @@
     } catch (err) {
       error = String(err);
     }
+  }
+
+  const setRating = (id: number, rating: Rating) => (rows = rows.map((r) => (r.id === id ? { ...r, rating } : r)));
+  async function rateRow(r: Row, rating: Rating) {
+    error = "";
+    setRating(r.id, rating);
+    try {
+      await rate(r.id, rating, null);
+      panel = rating === "down" ? r.id : panel === r.id ? null : panel;
+    } catch (err) {
+      setRating(r.id, r.rating);
+      error = String(err);
+    }
+  }
+  async function close(id: number) {
+    panel = null;
+    await tick();
+    thumbs[id]?.focusDown();
   }
 
   async function remove(id: number) {
@@ -82,9 +111,11 @@
             {#if r.heard && r.heard !== text}
               <button class="icon" aria-label="Copy what I said" title="Copy what I said" onclick={() => copy(`raw-${r.id}`, r.heard!)}>{#if copied === `raw-${r.id}`}{@render copyIcon(`raw-${r.id}`)}{:else}{@render icon('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>')}{/if}</button>
             {/if}
+            <Thumbs bind:this={thumbs[r.id]} rating={r.rating} onrate={(v) => rateRow(r, v)} />
             <button class="icon" aria-label="Copy again" title="Copy again" onclick={() => copy(`text-${r.id}`, text)}>{@render copyIcon(`text-${r.id}`)}</button>
             <button class="icon" aria-label="Delete" title="Delete" onclick={() => remove(r.id)}>{@render icon('<path d="M7 7l10 10M17 7L7 17"/>')}</button>
           </div>
+          {#if panel === r.id}<Correct text={text} save={(c) => rate(r.id, "down", c)} onclose={() => close(r.id)} />{/if}
         </li>
       {/each}
     </ul>
@@ -113,7 +144,7 @@
   /* Same list as Stats for nerds (Traces.svelte `.list`). */
   /* The list clips its rows to its corners; rows are square, split by a hairline inset to the text. */
   ul { list-style: none; margin: 0; padding: 0; border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); overflow: hidden; }
-  li { position: relative; display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4); }
+  li { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4); }
   li + li::before { content: ""; position: absolute; top: 0; left: var(--sp-4); right: 0; height: 1px; transform: scaleY(.5); transform-origin: top; background: var(--line); }
   li:hover { background: var(--fill-hover); }
   .body { flex: 1; min-width: 0; display: grid; gap: 2px; }
@@ -123,7 +154,8 @@
   .link { border: 0; background: none; padding: 0; font: inherit; color: var(--accent-text); border-radius: var(--r-sm); }
   /* Space is kept while hidden, so a row never reflows on hover. */
   .acts { display: flex; gap: 2px; flex: none; opacity: 0; transition: opacity var(--dur) var(--ease-out); }
-  li:hover .acts, li:focus-within .acts { opacity: 1; }
+  /* A rated row keeps its rating in view. */
+  li:hover .acts, li:focus-within .acts, .acts:has(:global([aria-pressed="true"])) { opacity: 1; }
   .icon { width: var(--h-ctl); height: var(--h-ctl); display: grid; place-items: center; border: 0; border-radius: var(--r-md); background: none; color: var(--text-2); }
   .icon:hover { background: var(--fill-hover); }
   .icon:focus-visible, .link:focus-visible, .btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }

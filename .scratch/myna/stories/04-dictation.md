@@ -1,6 +1,6 @@
 # 04: Dictation
 
-**Status:** ready
+**Status:** done
 **GitHub:** milestone "04 · Dictation"
 **Spec stories:** 6–12, 15
 **Depends on:** 01, 03
@@ -19,11 +19,11 @@ Hold a hotkey, speak, release; text appears in the focused app.
 - As a user, I want filler words, stutters and repeats removed and spoken numbers written as digits by rules, and my Words to remember spelled my way.
 
 ## Done when
-- [ ] Default hotkey works; changing it in Settings takes effect without restart
-- [ ] Pill states: idle, recording, processing, error
-- [ ] Paste into Notes, a browser field and Terminal; clipboard restored
-- [ ] Rules cleanup and Words to remember covered by table tests on the model fixtures
-- [ ] Checked on the real app from a fresh install
+- [x] Default hotkey works; changing it in Settings takes effect without restart
+- [x] Pill states: idle, recording, processing, error
+- [x] Paste into Notes, a browser field and Terminal; clipboard restored
+- [x] Rules cleanup and Words to remember covered by table tests on the model fixtures
+- [x] Checked on the real app from a fresh install
 
 ## Decisions
 - Default hotkey is Option+Space, through tauri-plugin-global-shortcut. Onboarding (story 02) will ask which key to use, fn included.
@@ -41,8 +41,10 @@ Hold a hotkey, speak, release; text appears in the focused app.
 6. Typing fallback: paste method setting (paste, or type it out) and paste delay; checked in Notes, a browser field and Terminal
 7. Dictate with cleanup hotkey: starts unassigned and shows "Needs an Endpoint". Blocked by story 10
 8. Fresh-install check (human)
-9. Pill under the text cursor: a fifth position read through Accessibility, falling back to bottom centre where the app doesn't report a cursor
+9. ~~Pill under the text cursor~~: built, then removed (#104): most apps don't report the cursor, and Myna behaves the same in every app
 10. Your words on Voice typing, blocked by 5: the "Your words" group (Language you speak, Tidy up as I talk), heard-as aliases on the Words to remember chips, raw text in Voice typing history with "Copy what I said" (detail below)
+11. Voice typing history: store each dictation's trace (#81)
+12. A second key for Dictate and Dictate with cleanup (#123): "Add another key" on each shortcut row, for a second keyboard; no key serves twice; stored as new optional settings, so older builds just lose it
 
 ## Open questions for you
 - none
