@@ -34,11 +34,10 @@
   </fieldset>
 {/snippet}
 
-<section class="group" aria-labelledby="look-h">
-  <h2 id="look-h">Appearance</h2>
+<section class="group" aria-label="Look">
   <ul class="list">
     <li class="row">
-      <span><span class="name" id="theme-l">Appearance</span><span class="desc">Auto follows your Mac’s light or dark setting.</span></span>
+      <span><span class="name" id="theme-l">Theme</span><span class="desc">Auto follows your Mac.</span></span>
       {@render seg("theme", THEMES, "theme-l")}
     </li>
     <li class="row">

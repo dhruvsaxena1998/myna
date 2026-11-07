@@ -29,8 +29,8 @@ test("the saved look is applied before the page first shows", async ({ page }) =
 
 test("shows the three rows with the saved choices", async ({ page }) => {
   await open(page);
-  await expect(page.getByRole("heading", { name: "Appearance", exact: true })).toBeVisible();
-  await expect(page.getByRole("group", { name: "Appearance" }).getByRole("radio", { name: "Dark" })).toBeChecked();
+  await expect(page.getByText("Theme", { exact: true })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Theme" }).getByRole("radio", { name: "Dark" })).toBeChecked();
   await expect(page.getByRole("group", { name: "Highlight colour" }).getByRole("radio")).toHaveCount(8);
   await expect(page.getByRole("radio", { name: "Green" })).toBeChecked();
   await expect(page.getByText("Used for buttons and selected items. Now: Green.")).toBeVisible();

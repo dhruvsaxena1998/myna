@@ -209,7 +209,7 @@
 {/if}
 
 <section class="group" aria-labelledby="prov-h">
-  <h2 id="prov-h">AI providers</h2>
+  <h2 id="prov-h">Providers</h2>
   <p class="help">Where Myna sends text for an AI to answer. Servers on this Mac keep your words here; anything else, even another computer on your network, gets them.</p>
   {#if none && !adding}
     <div class="list empty">

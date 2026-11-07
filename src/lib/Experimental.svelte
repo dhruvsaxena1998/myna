@@ -21,8 +21,7 @@
   }
 </script>
 
-<section class="group" aria-labelledby="exp-h">
-  <h2 id="exp-h">Experimental features</h2>
+<section class="group" aria-label="Experimental features">
   <ul class="list">
     <li class="row">
       <span><label class="name" for="exp-on">Use experimental features</label><span class="desc" id="exp-d">New things we’re still working on. They may change. Turning this off turns them all off.</span></span>

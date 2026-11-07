@@ -39,8 +39,7 @@
   let shown = $derived(error || (upd.s.state === "error" ? upd.s.message : ""));
 </script>
 
-<section aria-labelledby="about-h">
-  <h2 id="about-h">Myna</h2>
+<section aria-label="Myna">
   <ul class="list">
     <li class="row">
       <span><span class="name">Version</span><span class="desc">{version}{#if import.meta.env.VITE_BUILD} · {import.meta.env.VITE_BUILD}{/if}</span></span>
