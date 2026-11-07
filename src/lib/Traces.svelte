@@ -233,7 +233,6 @@
   /* minmax(0, 1fr): the tables' min-content width never pushes the cards past the panel; their .scroll scrolls instead. */
   .overview { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-3); align-content: start; max-width: 1000px; margin: 0 auto; container: overview / inline-size; }
   .filters { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
-  .filters .grow { flex: 1; }
   .lhead { display: flex; align-items: center; gap: var(--sp-3); height: 32px; margin: var(--sp-3) 0 var(--sp-1); }
   .lhead h2 { margin: 0; }
   .n { font-weight: var(--fw-regular); color: var(--text-3); font-variant-numeric: tabular-nums; margin-left: 4px; }
