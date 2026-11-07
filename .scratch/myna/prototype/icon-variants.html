@@ -1,0 +1,161 @@
+<!doctype html>
+<!-- PROTOTYPE, throwaway. Question: what should Myna's menu bar icon and app icon be?
+     Today: tray.png is three bars, the app icon is still Tauri's default.
+     Open in a browser. ←/→ variant, G all side by side, T theme. -->
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<title>PROTOTYPE · Myna icons</title>
+<style>
+  :root { --font: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; --bg: #F5F5F7; --panel: #FFFFFF; --text: #1D1D1F; --text-2: #6E6E73; --line: rgba(0,0,0,.08); color-scheme: light; }
+  :root[data-theme="dark"] { --bg: #1C1C1E; --panel: #2A2A2C; --text: #F5F5F7; --text-2: #A1A1A6; --line: rgba(255,255,255,.10); color-scheme: dark; }
+  body { margin: 0; font: 13px/18px var(--font); background: var(--bg); color: var(--text); -webkit-font-smoothing: antialiased; }
+  main { max-width: 1040px; margin: 0 auto; padding: 28px 24px 90px; }
+  h1 { font-size: 22px; line-height: 28px; margin: 0; font-weight: 600; }
+  h2 { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-2); margin: 28px 0 10px; font-weight: 600; }
+  .note { color: var(--text-2); margin: 4px 0 0; max-width: 680px; }
+  .panel { background: var(--panel); border-radius: 12px; box-shadow: inset 0 0 0 .5px var(--line); padding: 18px; }
+  .row { display: flex; gap: 18px; align-items: flex-end; flex-wrap: wrap; }
+  .cap { font-size: 11px; color: var(--text-2); text-align: center; margin-top: 6px; }
+
+  /* menu bar: real size, then zoomed so the pixels show */
+  .bars { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .wall { border-radius: 10px; overflow: hidden; height: 120px; position: relative; }
+  .wall.l { background: linear-gradient(160deg, #8fb2d8, #d9b791 60%, #efd4ad); }
+  .wall.d { background: linear-gradient(160deg, #0f1a2e, #2d2440 55%, #4a3550); }
+  .mb { height: 24px; display: flex; align-items: center; justify-content: flex-end; gap: 16px; padding: 0 12px; font-size: 13px; font-weight: 500; }
+  .wall.l .mb { background: rgba(255,255,255,.4); color: #000; }
+  .wall.d .mb { background: rgba(0,0,0,.35); color: #fff; }
+  .mb svg { display: block; }
+  .mb .on { border-radius: 5px; padding: 3px 5px; margin: 0 -5px; }
+  .wall.l .mb .on { background: rgba(0,0,0,.12); } .wall.d .mb .on { background: rgba(255,255,255,.2); }
+  .zoom { position: absolute; left: 14px; bottom: 12px; display: flex; gap: 10px; }
+  .zoom div { border-radius: 8px; padding: 6px; }
+  .wall.l .zoom div { background: rgba(255,255,255,.45); color: #000; } .wall.d .zoom div { background: rgba(0,0,0,.4); color: #fff; }
+  .zoom svg { width: 72px; height: 72px; display: block; image-rendering: pixelated; }
+
+  .icon { display: block; filter: drop-shadow(0 2px 3px rgba(0,0,0,.18)) drop-shadow(0 8px 16px rgba(0,0,0,.12)); }
+  .dock { margin-top: 12px; height: 110px; border-radius: 10px; background: linear-gradient(160deg, #8fb2d8, #d9b791 60%, #efd4ad); display: flex; align-items: flex-end; justify-content: center; padding-bottom: 8px; }
+  [data-theme="dark"] .dock { background: linear-gradient(160deg, #0f1a2e, #2d2440 55%, #4a3550); }
+  .dock .tray { display: flex; gap: 8px; padding: 6px 8px; border-radius: 22px; background: rgba(255,255,255,.3); backdrop-filter: blur(20px); }
+  [data-theme="dark"] .dock .tray { background: rgba(60,60,70,.45); }
+  .dock .other { width: 56px; height: 56px; border-radius: 13px; background: rgba(255,255,255,.6); }
+  [data-theme="dark"] .dock .other { background: rgba(255,255,255,.18); }
+
+  /* all-variants grid */
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .card { cursor: pointer; }
+  .card:hover { box-shadow: inset 0 0 0 1.5px #0A64D8; }
+  .card .mini { display: flex; gap: 8px; margin-top: 12px; }
+  .card .mini span { flex: 1; height: 24px; border-radius: 6px; display: flex; align-items: center; justify-content: center; }
+  .card .mini .l { background: #e9e4dc; color: #000; } .card .mini .d { background: #2b2838; color: #fff; }
+  .card b { display: block; margin-top: 10px; }
+
+  .bar { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); display: flex; gap: 4px; padding: 5px; border-radius: 999px; background: rgba(28,28,30,.82); color: #F5F5F7; backdrop-filter: blur(20px); box-shadow: 0 10px 30px rgba(0,0,0,.3); }
+  .bar button { all: unset; cursor: pointer; padding: 5px 12px; border-radius: 999px; font-size: 12px; }
+  .bar button[aria-pressed="true"] { background: rgba(255,255,255,.2); }
+</style>
+</head>
+<body>
+<main id="app"></main>
+<nav class="bar" id="bar"></nav>
+<script>
+// Each variant: glyph = 18×18 template (one colour, macOS tints it), app = 1024×1024 icon art drawn inside the squircle.
+// Myna = the talking bird: black head, yellow beak, yellow patch behind the eye.
+const SQ = 'M285 100h454a185 185 0 0 1 185 185v454a185 185 0 0 1-185 185H285a185 185 0 0 1-185-185V285a185 185 0 0 1 185-185z'; // macOS grid: 824 tile, ~22% corner
+// Round 2: flat (no gradients), 2–3 colours, one idea each. Round 1 (bird head, bubble, m, eye patch, bars) was too cartoonish / generic.
+const INK = '#1F2A44', PAPER = '#F4F1EA', EMBER = '#E8572A';
+const tile = c => `<path d="${SQ}" fill="${c}"/>`;
+const V = [
+  { name: 'G · Caret wave', note: 'Sound bars settle into a text cursor: what you say lands where you type. That is Myna\'s whole job in one mark.',
+    glyph: () => `<path d="M2.5 7.5v3M5 5.5v7M7.5 7v4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      <path d="M13 3v12M11.25 3h3.5M11.25 15h3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>`,
+    app: () => `${tile(PAPER)}<path d="M290 452v120M380 372v280M470 432v160" stroke="${INK}" stroke-width="56" stroke-linecap="round"/>
+      <path d="M660 290v444M592 290h136M592 734h136" fill="none" stroke="${EMBER}" stroke-width="56" stroke-linecap="round"/>` },
+
+  { name: 'L · Said, then written', note: 'Three lines of a note: the first is still a wave, the next two are already text. The "writing up your notes" side of Myna.',
+    glyph: () => `<path d="M3 5q1.5-2.2 3 0t3 0 3 0 3 0M3 9.5h12M3 14h8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>`,
+    app: () => `${tile(PAPER)}<path d="M300 380q53-80 106 0t106 0 106 0 106 0" fill="none" stroke="${EMBER}" stroke-width="56" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M300 530h424M300 680h300" stroke="${INK}" stroke-width="56" stroke-linecap="round"/>` },
+
+  // Round 3: variations on G and L, the two the user liked.
+  { name: 'G2 · Settling', note: 'G on ink: the bars get shorter towards the cursor, so the voice visibly settles into text.',
+    glyph: () => `<path d="M2.5 4.5v9M5.25 6.5v5M8 8v2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      <path d="M13 3v12M11.25 3h3.5M11.25 15h3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>`,
+    app: () => `${tile(INK)}<path d="M290 352v320M380 412v200M470 472v80" stroke="${PAPER}" stroke-width="56" stroke-linecap="round"/>
+      <path d="M660 290v444M592 290h136M592 734h136" fill="none" stroke="${EMBER}" stroke-width="56" stroke-linecap="round"/>` },
+
+  { name: 'G3 · Plain caret', note: 'G with the macOS caret (one line, no serifs). Quieter, and a bit cleaner at menu bar size.',
+    glyph: () => `<path d="M2.5 7.5v3M5 5.5v7M7.5 7v4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M13 3v12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>`,
+    app: () => `${tile(PAPER)}<path d="M290 452v120M380 372v280M470 432v160" stroke="${INK}" stroke-width="56" stroke-linecap="round"/>
+      <path d="M660 290v444" stroke="${EMBER}" stroke-width="72" stroke-linecap="round"/>` },
+
+  { name: 'GL · Note with cursor', note: 'G and L together: a wave, a line of text, and a short line with the cursor still there. Myna is writing.',
+    glyph: () => `<path d="M3 5q1.5-2.2 3 0t3 0 3 0 3 0M3 9.5h12M3 14h5.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M11.5 12.25v3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>`,
+    app: () => `${tile(PAPER)}<path d="M300 380q53-80 106 0t106 0 106 0 106 0" fill="none" stroke="${EMBER}" stroke-width="56" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M300 530h424M300 680h220" stroke="${INK}" stroke-width="56" stroke-linecap="round"/><path d="M620 620v120" stroke="${EMBER}" stroke-width="56" stroke-linecap="round"/>` },
+
+  { name: 'L2 · Two lines', note: 'L cut down to a wave over one line of text. Bolder, so it holds up at 16px and in the menu bar.',
+    glyph: () => `<path d="M3 6.5q1.5-2.6 3 0t3 0 3 0 3 0M3 12.5h12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`,
+    app: () => `${tile(PAPER)}<path d="M300 420q53-100 106 0t106 0 106 0 106 0" fill="none" stroke="${EMBER}" stroke-width="64" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M300 620h424" stroke="${INK}" stroke-width="64" stroke-linecap="round"/>` },
+
+  { name: 'L3 · Ink note', note: 'L on ink, so it stands out in a light Dock and next to a lot of white app icons.',
+    glyph: () => `<path d="M3 5q1.5-2.2 3 0t3 0 3 0 3 0M3 9.5h12M3 14h8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>`,
+    app: () => `${tile(INK)}<path d="M300 380q53-80 106 0t106 0 106 0 106 0" fill="none" stroke="${EMBER}" stroke-width="56" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M300 530h424M300 680h300" stroke="${PAPER}" stroke-width="56" stroke-linecap="round"/>` },
+
+  { name: 'N · One line', note: 'A single line: a wave flattens into text and ends at the cursor. The whole flow, left to right.',
+    glyph: () => `<path d="M2 9q1.2-2.8 2.4 0t2.4 0H10.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M14 4v10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>`,
+    app: () => `${tile(PAPER)}<path d="M240 512q60-140 120 0t120 0H600" fill="none" stroke="${INK}" stroke-width="56" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M720 330v364" stroke="${EMBER}" stroke-width="64" stroke-linecap="round"/>` },
+];
+
+let uid = 0;
+const glyph = (v, px = 18) => `<svg width="${px}" height="${px}" viewBox="0 0 18 18">${v.glyph('g' + uid++)}</svg>`;
+const app = (v, px) => `<svg class="icon" width="${px}" height="${px}" viewBox="0 0 1024 1024">${v.app('a' + uid++)}</svg>`;
+// Neighbours in the menu bar, so size and weight can be judged against system glyphs.
+const wifi = `<svg width="17" height="17" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2.5 7.5a9 9 0 0 1 13 0M5 10.2a5.5 5.5 0 0 1 8 0"/><circle cx="9" cy="13" r="1.2" fill="currentColor" stroke="none"/></svg>`;
+const batt = `<svg width="26" height="17" viewBox="0 0 26 18" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1.5" y="4.5" width="20" height="9" rx="2.6"/><rect x="3.3" y="6.3" width="13" height="5.4" rx="1.2" fill="currentColor" stroke="none"/><path d="M23.5 7.5v3" stroke-linecap="round"/></svg>`;
+const cc = `<svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3.5" width="14" height="4.5" rx="2.25"/><rect x="2" y="10" width="14" height="4.5" rx="2.25"/><circle cx="5.5" cy="5.75" r="1" fill="currentColor"/><circle cx="12.5" cy="12.25" r="1" fill="currentColor"/></svg>`;
+const menubar = v => `${wifi}${batt}<span class="on">${glyph(v)}</span>${glyph(v)}${cc}<span>Fri 6 Nov 10:41</span>`;
+
+const params = new URLSearchParams(location.search);
+let i = Math.max(0, V.findIndex(v => v.name.split(' · ')[0] === (params.get('v') || 'G').toUpperCase()));
+let all = params.has('all');
+
+function render() {
+  const v = V[i];
+  history.replaceState(null, '', `?${all ? 'all' : 'v=' + v.name.split(' · ')[0]}`);
+  document.getElementById('app').innerHTML = all ? `
+    <h1>All variants</h1><p class="note">Click one to open it.</p><h2>Menu bar and app icon</h2>
+    <div class="grid">${V.map((v, k) => `<div class="panel card" data-k="${k}">
+      ${app(v, 128)}<div class="mini"><span class="l">${glyph(v)}</span><span class="d">${glyph(v)}</span></div><b>${v.name}</b></div>`).join('')}</div>` : `
+    <h1>${v.name}</h1><p class="note">${v.note}</p>
+    <h2>Menu bar · real size, then zoomed</h2>
+    <div class="bars">${['l', 'd'].map(t => `<div class="wall ${t}"><div class="mb">${menubar(v)}</div>
+      <div class="zoom"><div>${glyph(v, 72)}</div></div></div>`).join('')}</div>
+    <p class="note" style="margin-top:8px">The menu bar shows the icon twice: once highlighted (menu open), once at rest.</p>
+    <h2>App icon</h2>
+    <div class="panel"><div class="row">${[256, 128, 64, 32, 16].map(s => `<div>${app(v, s)}<div class="cap">${s}</div></div>`).join('')}</div>
+      <div class="dock"><div class="tray"><i class="other"></i><i class="other"></i>${app(v, 56)}<i class="other"></i><i class="other"></i></div></div></div>`;
+  document.querySelectorAll('.card').forEach(c => c.onclick = () => { i = +c.dataset.k; all = false; render(); });
+  document.getElementById('bar').innerHTML = V.map((v, k) => `<button data-k="${k}" aria-pressed="${!all && k === i}">${v.name.split(' · ')[0]}</button>`).join('')
+    + `<button data-all aria-pressed="${all}">All</button><button data-theme>Theme</button>`;
+  document.querySelectorAll('#bar button').forEach(b => b.onclick = () => {
+    if (b.hasAttribute('data-theme')) return theme();
+    all = b.hasAttribute('data-all'); if (!all) i = +b.dataset.k; render();
+  });
+}
+const theme = () => { const r = document.documentElement; r.dataset.theme = r.dataset.theme === 'dark' ? 'light' : 'dark'; };
+addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight') { i = (i + 1) % V.length; all = false; render(); }
+  if (e.key === 'ArrowLeft') { i = (i + V.length - 1) % V.length; all = false; render(); }
+  if (e.key === 'g' || e.key === 'G') { all = !all; render(); }
+  if (e.key === 't' || e.key === 'T') theme();
+});
+render();
+</script>
+</body>
+</html>
