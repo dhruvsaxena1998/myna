@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "version": "2026-11-10",
+  "buttons": ["#microphone-button", "button[data-tid='toggle-mute']"],
+  "label": "\\b(un)?mute\\b",
+  "labelFlags": "i",
+  "pressed": "unmuted",
+  "captions": "[data-tid='closed-captions-renderer']",
+  "line": "[data-tid='closed-caption-message'], .ui-chat__item",
+  "author": "[data-tid='author'], .ui-chat__message__author",
+  "words": "[data-tid='closed-caption-text'], .ui-chat__message__content"
+}

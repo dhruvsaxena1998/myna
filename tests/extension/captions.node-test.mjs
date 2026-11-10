@@ -2,7 +2,10 @@
 // live captions, not a saved page: replace it with the real thing when we have it.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { newCaptions, readCaptions } from "../../extension/selectors.js";
+import { newCaptions, readCaptions, useRules, validate } from "../../extension/selectors.js";
+import { readFileSync } from "node:fs";
+
+useRules(validate(JSON.parse(readFileSync(new URL("../../extension/selectors.json", import.meta.url)))));
 
 const text = (t) => ({ textContent: t });
 /** A caption box of `[name, words]` lines, answering the selectors the TEAMS table uses. */

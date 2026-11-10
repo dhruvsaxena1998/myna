@@ -1,5 +1,18 @@
 // Runs on the Teams web pages: tells Myna (through the service worker) whether the mute button says muted.
-const { readPage, readCaptions, newCaptions } = await import(chrome.runtime.getURL("selectors.js"));
+const { readPage, readCaptions, newCaptions, useRules, validate } = await import(chrome.runtime.getURL("selectors.js"));
+
+// The worker hands over the table in force (a fresher one arrives as a message); one that doesn't compile here falls
+// back to the bundled file. shortcut: Myna is still told the worker's version then; the worker has no DOM to check with.
+const compiles = (s) => {
+  try {
+    document.createDocumentFragment().querySelector(s);
+    return true;
+  } catch {
+    return false;
+  }
+};
+const load = async (data) => useRules(validate(data, compiles) ?? validate(await (await fetch(chrome.runtime.getURL("selectors.json"))).json(), compiles));
+await load(await chrome.runtime.sendMessage({ type: "selectors-get" }).catch(() => null));
 
 let last;
 function report(force) {
@@ -34,6 +47,9 @@ new MutationObserver(() => {
   timer = setTimeout(() => (report(), scanCaptions()), 250);
 }).observe(document, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["aria-pressed", "aria-label", "title", "data-state"] });
 
-chrome.runtime.onMessage.addListener((m) => m?.type === "announce" && (report(true), (told = false), scanCaptions()));
+chrome.runtime.onMessage.addListener((m) => {
+  if (m?.type === "announce") (report(true), (told = false), scanCaptions());
+  else if (m?.type === "selectors") load(m.data).then(() => (report(true), (told = false), scanCaptions()));
+});
 addEventListener("pagehide", () => (last = "unknown", chrome.runtime.sendMessage({ type: "mute", state: "unknown", at: Date.now() }).catch(() => {})));
 report(true);

@@ -2,7 +2,10 @@
 // and were not saved from a real call: replace them with the real ones when we have them.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readMute, readPage } from "../../extension/selectors.js";
+import { readMute, readPage, useRules, validate } from "../../extension/selectors.js";
+import { readFileSync } from "node:fs";
+
+useRules(validate(JSON.parse(readFileSync(new URL("../../extension/selectors.json", import.meta.url)))));
 
 /** A page of buttons, each `{ id?, attrs }`; answers the two selector shapes the table uses. */
 const page = (...buttons) => {

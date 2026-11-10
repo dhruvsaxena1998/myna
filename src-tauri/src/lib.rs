@@ -477,7 +477,7 @@ async fn meeting_set(app: AppHandle, d: tauri::State<'_, Data>, notes: meeting::
 /// The browser add-on's state for Settings: whether it's connected, and the code to type into it.
 #[tauri::command]
 fn addon_get(a: tauri::State<addon::Addon>) -> Result<serde_json::Value, String> {
-    Ok(serde_json::json!({ "connected": a.connected(), "code": a.code()? }))
+    Ok(serde_json::json!({ "connected": a.connected(), "code": a.code()?, "selectors": a.selectors() }))
 }
 
 /// Cuts the add-on off and returns the new code.
