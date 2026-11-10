@@ -1,4 +1,4 @@
-import { PORTS, REPLACED, WRONG_CODE, hello, parse, ping } from "./messages.js";
+import { PORTS, REPLACED, WRONG_CODE, hello, mute, parse, ping } from "./messages.js";
 
 // The service worker sleeps, so everything here can start over: the status lives in storage, and an alarm
 // reconnects after a nap.
@@ -33,6 +33,7 @@ function tryPort(i, code) {
     ws = s;
     delay = 1000;
     setStatus("connected");
+    announce();
   };
   s.onclose = (e) => {
     if (welcome) {
@@ -49,6 +50,19 @@ function tryPort(i, code) {
     tryPort(i + 1, code); // not Myna here, or Myna isn't running: try the next port
   };
 }
+
+// Asks the Teams tabs for the mute button's state again: what they said while Myna wasn't listening was dropped.
+async function announce() {
+  for (const tab of await chrome.tabs.query({ url: chrome.runtime.getManifest().host_permissions })) {
+    chrome.tabs.sendMessage(tab.id, { type: "announce" }).catch(() => {});
+  }
+}
+
+// From a Teams tab's content script. Only ours, and only the three states.
+chrome.runtime.onMessage.addListener((m, sender) => {
+  if (sender.id !== chrome.runtime.id || m?.type !== "mute" || !["muted", "unmuted", "unknown"].includes(m.state) || !Number.isFinite(m.at)) return;
+  if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(mute(m.state, m.at)));
+});
 
 function retry() {
   clearTimeout(timer);

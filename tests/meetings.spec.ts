@@ -11,13 +11,14 @@ const MEETINGS = `(() => {
     { id: 2, title: "Untitled meeting", started: at(3, 10, 0), duration_ms: 28 * 60000, source_app: "Google Meet", state: "done", failure: null },
   ];
 })()`;
-const SEGMENTS = `[{ speaker: "Me", start_ms: 12000, text: "Okay, let's start." }, { speaker: "Them", start_ms: 75000, text: "Launch is still the 18th." }]`;
+const line = (id: number, speaker: string, start_ms: number, text: string, flags = {}) => ({ id, speaker, start_ms, text, muted: false, included: false, hidden: false, ...flags });
+const SEGMENTS = JSON.stringify([line(1, "Me", 12000, "Okay, let's start."), line(2, "Them", 75000, "Launch is still the 18th.")]);
 
 async function open(page: Page, extra = "", meetings = MEETINGS, on = true) {
   await fakeTauri(page, `{
     storage_status: () => "/tmp/Myna", meetings_list: () => ${meetings}, meeting_get: () => ({ on: ${on}, key: "Ctrl+Alt+KeyM" }),
     meeting_page: ({ id }) => ({ ...${MEETINGS}.find((m) => m.id === id), segments: id === 5 ? ${SEGMENTS} : [] }),
-    text_copy: () => {}, meeting_toggle: () => {}, meeting_retry: () => {}, meeting_set: () => {}, ${extra}
+    text_copy: () => {}, meeting_text: () => "Me 00:12\\nOkay, let's start.\\n\\nThem 01:15\\nLaunch is still the 18th.", meeting_toggle: () => {}, meeting_retry: () => {}, meeting_set: () => {}, ${extra}
   }`);
   await page.goto("/main");
   await expect(page.getByRole("heading", { name: "All meetings" })).toBeVisible();
@@ -105,6 +106,41 @@ test("a meeting opens as a page with its transcript, Copy, and a way back", asyn
   expect(await calls(page, "text_copy")).toEqual([{ text: "Me 00:12\nOkay, let's start.\n\nThem 01:15\nLaunch is still the 18th." }]);
   await page.getByRole("button", { name: "Back to meetings" }).click();
   await expect(page.getByRole("heading", { name: "All meetings" })).toBeVisible();
+});
+
+// Two muted lines in a row, one said and kept, and a line between that was never muted.
+const MUTED = JSON.stringify([
+  line(1, "Me", 12000, "Okay, let's start."),
+  line(2, "Me", 20000, "", { muted: true, hidden: true }),
+  line(3, "Me", 25000, "", { muted: true, hidden: true }),
+  line(4, "Them", 30000, "Go on."),
+  line(5, "Me", 40000, "I said this muted but keep it.", { muted: true, included: true }),
+]);
+
+test("lines said while muted collapse into one row, Include keeps them with a marker, and Copy asks the backend", async ({ page }) => {
+  await open(page, `meeting_page: () => ({ ...${MEETINGS}[0], segments: window.__lines ?? ${MUTED} }),
+    segments_include: ({ ids }) => { window.__lines = ${MUTED}.map((l) => ids.includes(l.id) ? { ...l, hidden: false, included: true, text: "Said muted, kept." } : l); }`);
+  await page.getByRole("button", { name: "Untitled meeting" }).first().click();
+  const row = page.locator(".seg").filter({ hasText: "Said while muted · left out" });
+  await expect(row).toHaveCount(1);
+  await expect(row).toContainText("Me00:20");
+  await expect(page.locator(".seg")).toHaveCount(4);
+  await expect(page.locator(".seg").filter({ hasText: "I said this muted but keep it." })).toContainText("Said while muted");
+  await row.getByRole("button", { name: "Include" }).click();
+  expect(await calls(page, "segments_include")).toEqual([{ ids: [2, 3] }]);
+  await expect(page.getByText("Said muted, kept.")).toHaveCount(2);
+  await expect(page.getByText("Said while muted · left out")).toBeHidden();
+  await page.getByRole("button", { name: "Copy" }).click();
+  expect(await calls(page, "meeting_text")).toEqual([{ id: 5 }]);
+});
+
+test("the live card says how the mic is while the add-on mirrors it", async ({ page }) => {
+  await open(page);
+  await emit(page, "meeting-running", { id: 6, started: Date.now(), source: "Microsoft Teams", mic: "live" });
+  const card = page.getByRole("region", { name: "Meeting recording in progress" });
+  await expect(card).toContainText("Mic live · mirrored from Teams");
+  await emit(page, "meeting-running", { id: 6, started: Date.now(), source: "Microsoft Teams", mic: "muted" });
+  await expect(card).toContainText("Muted · mirrored from Teams");
 });
 
 test("meeting-open, from the pill or the menubar, goes to that meeting from any view", async ({ page }) => {

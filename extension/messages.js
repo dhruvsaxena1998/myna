@@ -8,7 +8,7 @@ export const WRONG_CODE = 4001;
 export const REPLACED = 4002;
 
 export const hello = (code) => ({ v: V, type: "hello", code });
-// Defined now so both sides agree; later tickets send them.
+// `mute` comes from the Teams content script (through the worker); `caption` is for 07.4.
 export const mute = (state, at) => ({ v: V, type: "mute", state, at }); // state: "unmuted" | "muted" | "unknown"
 export const caption = (speaker, at) => ({ v: V, type: "caption", speaker, at });
 export const ping = () => ({ v: V, type: "ping" });

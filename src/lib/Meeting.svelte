@@ -1,9 +1,9 @@
 <!-- One meeting (docs/index.html `detail()`): its transcript is the document until summaries arrive, then it moves to the side panel. -->
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import { clock, dayHead, meta, plain, writing, type Page, type Progress } from "./meetings";
+  import { clock, dayHead, groups, meta, writing, type Page, type Progress } from "./meetings";
 
-  let { page, progress, onback, onretry }: { page: Page; progress?: Progress; onback: () => void; onretry: (id: number) => void } = $props();
+  let { page, progress, onback, onretry, oninclude }: { page: Page; progress?: Progress; onback: () => void; onretry: (id: number) => void; oninclude: (ids: number[]) => void } = $props();
   let copied = $state(false);
   let error = $state("");
   let timer: ReturnType<typeof setTimeout>;
@@ -11,7 +11,8 @@
   async function copy() {
     error = "";
     try {
-      await invoke("text_copy", { text: plain(page.segments) });
+      // The backend decides what leaves the meeting: lines said while muted stay out.
+      await invoke("text_copy", { text: await invoke("meeting_text", { id: page.id }) });
       copied = true;
       clearTimeout(timer);
       timer = setTimeout(() => (copied = false), 1500);
@@ -38,8 +39,14 @@
     <p class="err" role="status">{error}</p>
     {#if page.segments.length}
       <div class="transcript">
-        {#each page.segments as l}
-          <div class="seg"><div class="who"><b>{l.speaker}</b><time>{clock(l.start_ms)}</time></div><p>{l.text}</p></div>
+        {#each groups(page.segments) as g}
+          {#if "left" in g}
+            <div class="seg"><div class="who"><b>Me</b><time>{clock(g.left[0].start_ms)}</time></div>
+              <p class="left"><span>Said while muted · left out</span><button class="btn small" onclick={() => oninclude(g.left.map((l) => l.id))}>Include</button></p></div>
+          {:else}
+            <div class="seg"><div class="who"><b>{g.line.speaker}</b><time>{clock(g.line.start_ms)}</time></div>
+              <p>{g.line.text}{#if g.line.included}<span class="mark">Said while muted</span>{/if}</p></div>
+          {/if}
         {/each}
       </div>
     {:else if page.state === "failed"}
@@ -72,6 +79,9 @@
   .who b { display: block; font-weight: var(--fw-semibold); }
   .who time { display: block; color: var(--text-3); font-size: var(--fs-footnote); font-variant-numeric: tabular-nums; }
   .seg p { margin: 0; font-size: var(--fs-reading); line-height: var(--lh-reading); overflow-wrap: anywhere; }
+  .left { display: flex; align-items: center; gap: var(--sp-2); color: var(--text-3); font-size: var(--fs-footnote); }
+  .btn.small { height: 24px; padding: 0 10px; font-size: var(--fs-footnote); }
+  .mark { display: block; color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
   .say { margin: var(--sp-4) 0 var(--sp-3); color: var(--text-2); }
   .say.fail { color: var(--danger-text); }
 </style>
