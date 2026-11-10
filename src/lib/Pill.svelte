@@ -6,6 +6,8 @@
   export type Shown =
     | { state: "listening"; hold: boolean; key: string; limit?: number }
     | { state: "writing" | "cleaning" | "added" }
+    /** A meeting is recording (capsule only); `secs` is how long. */
+    | { state: "recording" }
     /** Added as the rules left it: `reason` says why the cleanup didn't count. */
     | { state: "fallback"; reason: string }
     | { state: "error"; title: string; hint: string };
@@ -59,6 +61,8 @@
       {:else if pill.state === "added"}<span class="t">Added</span><span class="sub">Where you were typing</span>
       {:else if note}<span class="t">{note.title}</span><span class="sub">{note.hint}</span>{/if}
     </span>
+  {:else if pill.state === "recording"}
+    <span class="recdot" aria-hidden="true"></span><span>Recording</span><time>{clock}</time><span class="sub">Mic live</span>
   {:else if note}
     {@render icon("warn")}<span>{note.title}</span><span class="sub">{note.hint}</span>
   {:else if pill.state === "listening"}
@@ -90,6 +94,10 @@
   .lvl { display: flex; align-items: center; gap: 2px; height: 16px; }
   .lvl i { width: 3px; height: 16px; border-radius: 2px; background: currentColor; transition: transform 80ms linear; }
 
+  .recdot { width: 8px; height: 8px; border-radius: 50%; background: var(--rec); flex: none; animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+  @media (prefers-reduced-motion: reduce) { .recdot { animation: none; } }
+  time { font-variant-numeric: tabular-nums; }
   /* Capsule: 40px, bars and words. */
   .capsule { height: var(--h-hud); padding: 0 var(--sp-4); border-radius: var(--r-full); }
   /* Orb: a 32px blob with no words while things go well; errors grow it into a capsule. */

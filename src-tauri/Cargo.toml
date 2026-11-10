@@ -41,6 +41,7 @@ objc2-core-foundation = { version = "0.3", default-features = false, features = 
 text2num = { version = "2.8.0", default-features = false, features = ["en", "std"] }
 tauri-plugin-updater = "2.14.1"
 semver = "1"
+hound = "3.5"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
@@ -52,6 +53,5 @@ panic = "abort"
 strip = true
 
 [dev-dependencies]
-hound = "3.5"
 tauri = { version = "2", features = ["test"] }
 tempfile = "3.27.0"

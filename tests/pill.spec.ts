@@ -8,7 +8,7 @@ async function open(page: Page, look = { style: "capsule", place: "bottom" }) {
   await fakeTauri(page, `{ pill_look_get: () => (${JSON.stringify(look)}) }`);
   await page.clock.install();
   await page.goto("/pill");
-  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(7); // the layout's and the page's "look" too
+  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(8); // the layout's and the page's "look" too
 }
 const emit = (page: Page, event: string, payload: unknown) => page.evaluate(([e, p]) => (window as any).__emit(e, p), [event, payload] as const);
 const say = (page: Page, state: string, hold = true) => emit(page, "dictation", state === "listening" ? { state, hold, key: "Alt+Space", limit: 300 } : { state });
@@ -169,7 +169,7 @@ async function openGlass(page: Page, look: object) {
   await fakeTauri(page, `{ look_get: () => (${JSON.stringify({ theme: "auto", accent: "green", glass: "clear", liquid: true, experimental: true, ...look })}) }`);
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/pill");
-  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(7);
+  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(8);
 }
 const lastGlass = (page: Page) => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "glass_set").at(-1)?.[1].glass?.[0] ?? null);
 

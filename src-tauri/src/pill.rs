@@ -98,6 +98,11 @@ pub fn show(app: &AppHandle, state: &str) {
     let _ = app.emit_to("pill", "dictation", serde_json::json!({ "state": state }));
 }
 
+/// Shows the meeting recording pill, for a meeting that started at `started` (unix ms), or hides it.
+pub fn meeting(app: &AppHandle, started: Option<i64>) {
+    let _ = app.emit_to("pill", "meeting", serde_json::json!({ "started": started }));
+}
+
 /// 👍/👎 on the pill for the dictation just saved.
 pub fn ask(app: &AppHandle, trace: i64) {
     let _ = app.emit_to("pill", "dictation-ask", trace);

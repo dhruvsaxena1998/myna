@@ -24,6 +24,8 @@ const MIGRATIONS: &[&str] = &[
     "CREATE TABLE keep_word(word TEXT PRIMARY KEY COLLATE NOCASE);
      CREATE TABLE feedback(trace INTEGER PRIMARY KEY REFERENCES trace(id), rating TEXT NOT NULL, corrected TEXT, created INTEGER NOT NULL);
      CREATE TABLE fix_dismissed(key TEXT PRIMARY KEY, seen INTEGER NOT NULL);",
+    "CREATE TABLE meeting(id INTEGER PRIMARY KEY, started INTEGER NOT NULL, duration_ms INTEGER, source_app TEXT,
+        title TEXT NOT NULL DEFAULT 'Untitled meeting', state TEXT NOT NULL);",
 ];
 const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
 

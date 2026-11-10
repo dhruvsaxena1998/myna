@@ -5,6 +5,7 @@ import type { Perms } from "$lib/Permissions.svelte";
 import type { Look } from "$lib/Pill.svelte";
 import type { Fix } from "$lib/feedback";
 import type { Rules } from "$lib/Words.svelte";
+import type { Notes } from "$lib/MeetingNotes.svelte";
 import type { Voice } from "$lib/VoiceShortcut.svelte";
 import type { Cleanup } from "$lib/CleanupStyles.svelte";
 import type { Ai } from "$lib/AiProviders.svelte";
@@ -39,6 +40,12 @@ export async function load() {
         (err) => ({ ok: false as const, error: String(err) }),
       )
     : null;
+  const notes = storage.ok
+    ? await invoke<Notes>("meeting_get").then(
+        (notes) => ({ ok: true as const, notes }),
+        (err) => ({ ok: false as const, error: String(err) }),
+      )
+    : null;
   const rules = storage.ok
     ? await invoke<Rules>("rules_get").then(
         (rules) => ({ ok: true as const, rules }),
@@ -65,5 +72,5 @@ export async function load() {
         (err) => ({ ok: false as const, error: String(err) }),
       )
     : null;
-  return { storage, version, models, perms, globe, look, voice, rules, fixes, ai, cleanup, updates };
+  return { storage, version, models, perms, globe, look, voice, notes, rules, fixes, ai, cleanup, updates };
 }
