@@ -14,6 +14,7 @@ export const caption = (name, at, text) => ({ v: V, type: "caption", name, at, .
 export const captions = (state) => ({ v: V, type: "captions", state }); // state: "unavailable"
 // `tab` brackets the binary audio frames (see audio.js); Myna answers a meeting's end with `stop-tab`.
 export const tab = (state, title) => ({ v: V, type: "tab", state, title }); // state: "start" | "stop"
+export const selectors = (version) => ({ v: V, type: "selectors", version }); // which selector table the add-on reads Teams with
 export const ping = () => ({ v: V, type: "ping" });
 
 /** A message from Myna, or null if it isn't one this version understands. */

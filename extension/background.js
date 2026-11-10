@@ -1,5 +1,5 @@
-import { PORTS, REPLACED, WRONG_CODE, caption, captions, hello, mute, parse, ping, tab as tabMsg } from "./messages.js";
-import { isTeams } from "./selectors.js";
+import { PORTS, REPLACED, WRONG_CODE, caption, captions, hello, mute, parse, ping, selectors as selectorsMsg, tab as tabMsg } from "./messages.js";
+import { fetchRemote, isTeams, pick } from "./selectors.js";
 
 // The service worker sleeps, so everything here can start over: the status lives in storage, and an alarm
 // reconnects after a nap.
@@ -37,6 +37,7 @@ function tryPort(i, code) {
     delay = 1000;
     setStatus("connected");
     announce();
+    publish();
   };
   s.onclose = (e) => {
     if (welcome) {
@@ -60,6 +61,30 @@ async function announce() {
   for (const tab of await chrome.tabs.query({ url: chrome.runtime.getManifest().host_permissions })) {
     chrome.tabs.sendMessage(tab.id, { type: "announce" }).catch(() => {});
   }
+}
+
+// The selector table in force (raw data): the daily-fetched one in storage, else the bundled file.
+const DAY = 24 * 60 * 60 * 1000;
+async function current() {
+  const { selectors } = await chrome.storage.local.get("selectors");
+  return pick(selectors, await (await fetch(chrome.runtime.getURL("selectors.json"))).json());
+}
+
+// Tells Myna and every Teams tab which table is in force.
+async function publish() {
+  const data = await current();
+  if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(selectorsMsg(String(data.version))));
+  for (const tab of await chrome.tabs.query({ url: chrome.runtime.getManifest().host_permissions })) {
+    chrome.tabs.sendMessage(tab.id, { type: "selectors", data }).catch(() => {});
+  }
+}
+
+// At most once a day unless `force`; a failed or invalid fetch keeps whatever is stored.
+async function refresh(force) {
+  const { selectorsAt = 0 } = await chrome.storage.local.get("selectorsAt");
+  if (!force && Date.now() - selectorsAt < DAY) return;
+  const data = await fetchRemote();
+  if (data) await chrome.storage.local.set({ selectors: data, selectorsAt: Date.now() });
 }
 
 // The Teams tab being captured, if any. The worker owns the one socket (a second would replace it), so the offscreen
@@ -95,8 +120,12 @@ setTab(null);
 chrome.offscreen.closeDocument().catch(() => {});
 
 // From our own pages: a Teams tab's content script (mute), the popup, the offscreen document.
-chrome.runtime.onMessage.addListener((m, sender) => {
+chrome.runtime.onMessage.addListener((m, sender, reply) => {
   if (sender.id !== chrome.runtime.id) return;
+  if (m?.type === "selectors-get") {
+    current().then(reply, () => reply(null));
+    return true;
+  }
   if (m?.type === "mute") {
     if (["muted", "unmuted", "unknown"].includes(m.state) && Number.isFinite(m.at) && ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(mute(m.state, m.at)));
   } else if (m?.type === "caption") {
@@ -120,16 +149,21 @@ function retry() {
   delay = Math.min(delay * 2, 30000);
 }
 
-chrome.runtime.onStartup.addListener(connect);
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onStartup.addListener(() => (connect(), refresh()));
+chrome.runtime.onInstalled.addListener(async () => {
   chrome.alarms.create("myna", { periodInMinutes: 0.5 });
   connect();
+  await chrome.storage.local.remove("selectors"); // the bundled file may be newer than what an older version cached
+  refresh(true);
 });
+chrome.alarms.get("selectors").then((a) => a ?? chrome.alarms.create("selectors", { periodInMinutes: 24 * 60 }));
 // Wakes a sleeping worker; also a message every 30 s keeps an open socket from being cut as idle.
-chrome.alarms.onAlarm.addListener(() => (ws ? ws.send(JSON.stringify(ping())) : connect()));
+chrome.alarms.onAlarm.addListener((a) => (a.name === "selectors" ? refresh() : ws ? ws.send(JSON.stringify(ping())) : connect()));
 // A new code from the popup starts over.
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== "local" || !changes.code) return;
+  if (area !== "local") return;
+  if (changes.selectors) publish();
+  if (!changes.code) return;
   ws?.close();
   ws = null;
   trying = false;

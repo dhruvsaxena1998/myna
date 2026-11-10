@@ -6,16 +6,19 @@
 
   let connected = $state(false);
   let code = $state("");
+  let selectors = $state<string | null>(null);
   let steps = $state(false);
   let copied = $state(false);
   let error = $state("");
   let timer: ReturnType<typeof setTimeout>;
 
   onMount(() => {
-    invoke<{ connected: boolean; code: string }>("addon_get").then((a) => ({ connected, code } = a), (e) => (error = String(e)));
+    const load = (all: boolean) => invoke<{ connected: boolean; code: string; selectors: string | null }>("addon_get").then((a) => (all ? ({ connected, code, selectors } = a) : (selectors = a.selectors)), (e) => (error = String(e)));
+    load(true);
+    // Myna fires this again when the add-on reports its selector version, so ask again for it.
     const off = listen<boolean>("addon-status", (e) => {
       connected = e.payload;
-      if (connected) steps = false;
+      if (connected) (steps = false), load(false);
     });
     return () => void off.then((f) => f());
   });
@@ -46,7 +49,7 @@
   <h2 id="addon-h">Browser add-on</h2>
   <ul class="list">
     <li class="row">
-      <span><span class="name">Status</span><span class="desc">{connected ? "Connected. Myna can see when you’re muted in Teams, and who is talking." : "Not connected. Install the Myna add-on in your browser, then connect it here."}</span></span>
+      <span><span class="name">Status</span><span class="desc">{connected ? `Connected${selectors ? ` · selectors ${selectors}` : ""}. Myna can see when you’re muted in Teams, and who is talking.` : "Not connected. Install the Myna add-on in your browser, then connect it here."}</span></span>
       {#if connected}
         <button class="btn" onclick={disconnect}>Disconnect</button>
       {:else}

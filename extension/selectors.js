@@ -1,19 +1,68 @@
-// Where Teams' mute button is and how to read it: the one table to edit when Teams' markup changes (07.5 will
-// fetch it instead of shipping it). UNVERIFIED: written from memory of new Teams (v2) on the web, not from the page.
-export const TEAMS = {
-  // Tried in order; the first that exists is the button.
-  buttons: ["#microphone-button", "button[data-tid='toggle-mute']"],
-  // No known button: the one button on the page whose label says mute. Two or more is a guess, so it's unknown.
-  label: /\b(un)?mute\b/i,
-  // What `aria-pressed="true"` means on the button. Only used when there's no label wording or data-state to go by.
-  pressed: "unmuted",
-  // Live captions. UNVERIFIED guesses, like the rest: the container is where Teams draws captions; each item in it is
-  // one caption line, with the speaker's name and the words inside. Swap these three lines when real markup is known.
-  captions: "[data-tid='closed-captions-renderer']",
-  line: "[data-tid='closed-caption-message'], .ui-chat__item",
-  author: "[data-tid='author'], .ui-chat__message__author",
-  words: "[data-tid='closed-caption-text'], .ui-chat__message__content",
+// How to read Teams' page: the logic here, the selectors in selectors.json. The service worker fetches a newer
+// selectors.json from the repo once a day (see background.js); every Teams tab is handed the one in force.
+// The mute button rules are checked against a real Teams web call (2026-11-10); the caption rules are still unverified.
+
+const SCHEMA = 1; // bump with any change to the shape below that an older add-on couldn't read
+const MAX_BYTES = 64 * 1024;
+const MAX_SELECTOR = 300;
+const SELECTORS = ["captions", "line", "author", "words"];
+
+const text = (v, max = MAX_SELECTOR) => typeof v === "string" && v.length > 0 && v.length <= max;
+
+/**
+ * The selector table in `data` (parsed JSON) ready to use, or null if it isn't one this add-on understands. It is only
+ * ever data: the label's regex is compiled from a short string with whitelisted flags, nothing is evaluated.
+ * `compiles(selector)` says whether a selector is valid CSS; the worker has no DOM, so it passes a syntax check.
+ */
+export function validate(data, compiles = () => true) {
+  try {
+    if (data?.schema !== SCHEMA) return null;
+    const version = typeof data.version === "number" ? String(data.version) : data.version;
+    if (!/^[\w.-]{1,32}$/.test(version)) return null;
+    const { buttons, label, labelFlags = "", pressed } = data;
+    if (!Array.isArray(buttons) || !buttons.length || buttons.length > 10 || !buttons.every((b) => text(b))) return null;
+    if (!SELECTORS.every((k) => text(data[k])) || ![...buttons, ...SELECTORS.map((k) => data[k])].every(compiles)) return null;
+    if (!text(label, 200) || !/^[ims]{0,3}$/.test(labelFlags) || (pressed !== "muted" && pressed !== "unmuted")) return null;
+    return { version, buttons, label: new RegExp(label, labelFlags), pressed, ...Object.fromEntries(SELECTORS.map((k) => [k, data[k]])) };
+  } catch {
+    return null; // a bad regex, a selector that throws
+  }
+}
+
+/** Remote file text to a validated table, or null when it's too big, isn't JSON or isn't a table we understand. */
+export const parseRemote = (raw, compiles) => {
+  if (typeof raw !== "string" || raw.length > MAX_BYTES) return null;
+  try {
+    return validate(JSON.parse(raw), compiles);
+  } catch {
+    return null;
+  }
 };
+
+/** A cheap CSS syntax check for the worker: only characters selectors use, balanced brackets and quotes. */
+export const looksLikeCss = (s) => /^[\w\s#.,>+~*:()[\]='"^$|-]+$/.test(s) && [...s].filter((c) => c === "[").length === [...s].filter((c) => c === "]").length && (s.match(/'/g) ?? []).length % 2 === 0 && (s.match(/"/g) ?? []).length % 2 === 0;
+
+export const REMOTE = "https://raw.githubusercontent.com/dhruvsaxena1998/myna/main/extension/selectors.json";
+
+/** The newest table from the repo as raw data, or null if it can't be had or isn't valid: the caller keeps what it has. */
+export async function fetchRemote(get = fetch) {
+  try {
+    const r = await get(REMOTE, { cache: "no-cache", credentials: "omit" });
+    if (!r.ok) return null;
+    const raw = await r.text();
+    return parseRemote(raw, looksLikeCss) && JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+/** The table to use: `cached` (raw data from storage) if it is still valid, else `bundled`. */
+export const pick = (cached, bundled) => (validate(cached, looksLikeCss) ? cached : bundled);
+
+// The table in force. Starts empty: the content script sets the bundled one before anything is read.
+// shortcut: module state rather than an argument everywhere; fine while a page has one table.
+let TEAMS = null;
+export const useRules = (r) => (TEAMS = r);
 
 /** The state from a button's attributes (plain strings, null when absent): "muted", "unmuted" or "unknown", never a guess. */
 export function readMute({ label, dataState, pressed }, rules = TEAMS) {

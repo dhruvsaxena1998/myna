@@ -2,10 +2,11 @@ import { expect, test, type Page } from "@playwright/test";
 import { fakeTauri } from "./tauri";
 
 // `meeting_set` fails for Ctrl+Alt+N, like a shortcut another app holds. Asking for System Audio allows it.
-async function open(page: Page, notes: { on: boolean; key: string; keep_teams?: boolean } = { on: false, key: "Ctrl+Alt+KeyM" }, audio = "allowed") {
+async function open(page: Page, notes: { on: boolean; key: string; keep_teams?: boolean } = { on: false, key: "Ctrl+Alt+KeyM" }, audio = "allowed", addon = { connected: false, code: "MYNA-4F7Q-K2", selectors: null as string | null }) {
   await fakeTauri(page, `{
     storage_status: () => "/tmp/Myna", models_list: () => [],
     meeting_get: () => (${JSON.stringify(notes)}),
+    addon_get: () => (${JSON.stringify(addon)}),
     addon_disconnect: () => "MYNA-NEW1-23", addon_folder: () => {}, text_copy: () => {},
     meeting_set: ({ notes }) => { if (notes.key === "Ctrl+Alt+KeyN") throw "Another app is using that shortcut. Pick a different one."; },
     permissions_state: () => ({ ...(window.__perms ??= { mic: "allowed", ax: true, audio: ${JSON.stringify(audio)} }) }),
@@ -181,6 +182,12 @@ test("Browser add-on: not connected shows the steps, connected flips live, Disco
   await expect(group).toContainText("Not connected.");
   await expect(group).toContainText("MYNA-NEW1-23");
   expect(await calls(page, "addon_disconnect")).toHaveLength(1);
+});
+
+test("Browser add-on: Connected shows the selector version the add-on reports", async ({ page }) => {
+  await open(page, { on: true, key: "Ctrl+Alt+KeyM" }, "allowed", { connected: true, code: "MYNA-4F7Q-K2", selectors: "2026-11-10" });
+  const group = page.getByRole("region", { name: "Browser add-on" });
+  await expect(group).toContainText("Connected · selectors 2026-11-10.");
 });
 
 test("Browser add-on: Copy puts the code on the clipboard", async ({ page }) => {

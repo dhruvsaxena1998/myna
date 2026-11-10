@@ -1,8 +1,10 @@
-// Run with `pnpm test:extension`. The snippets are what the rules in extension/selectors.js expect of Teams' markup,
-// and were not saved from a real call: replace them with the real ones when we have them.
+// Run with `pnpm test:extension`. Most snippets are what the rules expect; "real Teams markup" is from a real call.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readMute, readPage } from "../../extension/selectors.js";
+import { readMute, readPage, useRules, validate } from "../../extension/selectors.js";
+import { readFileSync } from "node:fs";
+
+useRules(validate(JSON.parse(readFileSync(new URL("../../extension/selectors.json", import.meta.url)))));
 
 /** A page of buttons, each `{ id?, attrs }`; answers the two selector shapes the table uses. */
 const page = (...buttons) => {
@@ -43,6 +45,13 @@ test("with no known button, one button named mute is used and two are not", () =
   assert.equal(readPage(page(other, { attrs: { "aria-label": "Unmute" } })), "muted");
   assert.equal(readPage(page({ attrs: { "aria-label": "Mute" } }, { attrs: { "aria-label": "Mute all" } })), "unknown");
   assert.equal(readPage(page(other)), "unknown", "not in a call");
+});
+
+// From a real Teams web call in Chrome (2026-11-10), trimmed to the attributes the rules read.
+test("real Teams markup: the mic button muted and unmuted", () => {
+  const mic = (label, state) => page({ id: "microphone-button", attrs: { "aria-label": label, "data-state": state, "data-inp": "microphone-button" } });
+  assert.equal(readPage(mic("Unmute mic", "mic-off")), "muted");
+  assert.equal(readPage(mic("Mute mic", "mic-volume-renderer")), "unmuted");
 });
 
 test("only Teams' own https pages are Teams", async () => {

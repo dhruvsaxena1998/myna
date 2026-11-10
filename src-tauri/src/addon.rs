@@ -59,6 +59,8 @@ pub enum Msg {
     Hello { code: String },
     Welcome,
     Ping,
+    /// Which selector table the add-on reads Teams with (a date or number as text), sent on connect and when it changes.
+    Selectors { version: String },
     Mute { state: MuteState, at: i64 },
     /// Teams' live captions showed `name` speaking at `at` (unix ms, the add-on's clock); `text` is optional.
     Caption { name: String, at: i64, #[serde(default)] text: Option<String> },
@@ -152,6 +154,8 @@ struct State {
     /// Set to stop the listener thread, and where it listens; None when not running.
     stop: Option<(Arc<AtomicBool>, SocketAddr)>,
     conn: Option<Kill>,
+    /// The connected add-on's selector version, if it said.
+    selectors: Option<String>,
 }
 
 struct Shared {
@@ -263,6 +267,11 @@ impl Shared {
                 // `ping` and unknown types need nothing.
                 Ok(Message::Text(t)) => match decode(&t) {
                     Some(Msg::Mute { state, at }) => (self.on_mute)(state, at),
+                    Some(Msg::Selectors { version }) => {
+                        let v: String = version.chars().filter(|c| !c.is_control()).take(32).collect();
+                        self.st.lock().unwrap().selectors = (!v.is_empty()).then_some(v);
+                        (self.notify)(true); // Settings asks again for what it shows
+                    }
                     Some(m @ (Msg::Caption { .. } | Msg::Captions { .. })) => (self.on_caption)(m),
                     Some(Msg::Tab { state: TabState::Start, .. }) => {
                         stream = Some(Stream { started: Instant::now(), last: None, samples: 0 });
@@ -291,6 +300,7 @@ impl Shared {
         let mut st = self.st.lock().unwrap();
         if st.conn.as_ref().is_some_and(|k| Arc::ptr_eq(k, &kill)) {
             st.conn = None;
+            st.selectors = None;
             drop(st);
             (self.notify)(false);
         }
@@ -316,6 +326,11 @@ impl Addon {
 
     pub fn connected(&self) -> bool {
         self.me.st.lock().unwrap().conn.is_some()
+    }
+
+    /// The selector version the connected add-on says it uses.
+    pub fn selectors(&self) -> Option<String> {
+        self.me.st.lock().unwrap().selectors.clone()
     }
 
     /// Cuts the add-on off: a new code, so the old one is useless, and the connection closed. Returns the new code.
@@ -433,6 +448,17 @@ mod tests {
         hello(&mut ws, &a.code().unwrap());
         assert!(welcomed(&mut ws));
         ws
+    }
+
+    #[test]
+    fn the_selector_version_is_kept_while_connected() {
+        let (a, addr, _tmp) = addon();
+        assert_eq!(a.selectors(), None);
+        let mut ws = connect(&a, addr);
+        ws.send(Message::text(encode(&Msg::Selectors { version: "2026-11-10".into() }))).unwrap();
+        wait("the version", || a.selectors().as_deref() == Some("2026-11-10"));
+        drop(ws);
+        wait("forgotten on disconnect", || a.selectors().is_none());
     }
 
     #[test]
@@ -673,6 +699,7 @@ mod tests {
     fn messages_are_versioned_and_unknown_ones_ignored() {
         assert_eq!(decode(r#"{"v":1,"type":"hello","code":"X"}"#), Some(Msg::Hello { code: "X".into() }));
         assert_eq!(decode(r#"{"v":1,"type":"mute","state":"muted","at":5}"#), Some(Msg::Mute { state: MuteState::Muted, at: 5 }));
+        assert_eq!(decode(r#"{"v":1,"type":"selectors","version":"2026-11-10"}"#), Some(Msg::Selectors { version: "2026-11-10".into() }));
         assert_eq!(decode(r#"{"v":2,"type":"hello","code":"X"}"#), None);
         assert_eq!(decode(r#"{"v":1,"type":"dance"}"#), None);
         assert_eq!(decode("nonsense"), None);
