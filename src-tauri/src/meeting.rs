@@ -226,8 +226,14 @@ const SLACK: u64 = RATE as u64 / 4;
 /// This long with an app on the call and only digital silence: Myna can't hear it (macOS hands a denied tap zeros).
 const DEAF: u64 = RATE as u64 * 20;
 
+/// This long without a tab frame and the process tap takes over again.
+const TAB_QUIET: u64 = RATE as u64 * 2;
+/// A tab frame this far (ms) past where the last one ended means the capture skipped: that much silence.
+const TAB_GAP_MS: i64 = 250;
+
 /// The Them track: its file, on the meeting clock (16 kHz samples since mic.wav's first), so sample N in
 /// them.wav is sample N in mic.wav.
+#[derive(Default)]
 struct Track {
     wav: Option<Wav>,
     since_flush: usize,
@@ -238,6 +244,10 @@ struct Track {
     /// Anything but digital silence since.
     heard: bool,
     failed: bool,
+    /// While the Teams tab's sound flows: where its last frame ended, in capture ms and on the meeting clock.
+    tab: Option<(i64, u64)>,
+    /// What the process tap heard meanwhile (about the last 2 s), for when the tab stream stops short.
+    held: Vec<(u64, Vec<f32>)>,
 }
 
 impl Track {
@@ -266,6 +276,48 @@ impl Track {
         }
     }
 
+    /// A tab frame of `samples` captured at `ts` (unix ms), arrived at `now` on the meeting clock. Frames that follow
+    /// each other are laid end to end, whatever the network did to their arrival; a capture time that jumps ahead
+    /// is silence; the first frame, or the first after the stream went quiet, is placed by its arrival.
+    fn put_tab(&mut self, now: u64, ts: i64, samples: &[f32]) {
+        let n = samples.len() as u64;
+        let end = match self.tab {
+            Some((last, end)) if now < end + TAB_QUIET => {
+                let gap = ts - last;
+                if gap > TAB_GAP_MS { end + gap as u64 * RATE as u64 / 1000 + n } else { end + n }
+            }
+            _ => now.saturating_sub(n).max(self.written()) + n, // never over what the tap already wrote
+        };
+        self.tab = Some((ts + n as i64 * 1000 / RATE as i64, end));
+        self.put(end, samples);
+    }
+
+    /// The process tap heard `samples` ending at `end`. It's kept, not written, while the tab stream is flowing.
+    fn tap(&mut self, end: u64, samples: &[f32]) {
+        match self.tab {
+            Some((_, t)) if end < t + TAB_QUIET => {
+                self.held.retain(|(e, _)| e + TAB_QUIET + SLACK >= end);
+                self.held.push((end, samples.to_vec()));
+            }
+            _ => {
+                self.resume();
+                self.put(end, samples);
+            }
+        }
+    }
+
+    /// The tab stream is over (or is taken to be): what the tap heard after it is written.
+    fn resume(&mut self) {
+        self.tab = None;
+        for (end, s) in std::mem::take(&mut self.held) {
+            let start = end.saturating_sub(s.len() as u64);
+            let skip = (self.written().saturating_sub(start) as usize).min(s.len());
+            if skip < s.len() {
+                self.put(end, &s[skip..]);
+            }
+        }
+    }
+
     /// Myna can't hear the other people: listening failed, or an app has been on the call a while in digital silence.
     fn deaf(&self) -> bool {
         self.failed || self.app_at.is_some_and(|a| !self.heard && self.end >= a + DEAF)
@@ -279,6 +331,8 @@ struct Active {
     wav: Arc<Mutex<Option<Wav>>>,
     stop_them: Option<Stop>,
     them: Arc<Mutex<Track>>,
+    /// The meeting clock's start, once the mic has its first sample.
+    origin: Arc<OnceLock<Instant>>,
 }
 
 /// Speech-to-text for a stretch of 16 kHz mono audio, times in seconds from its start. The app's is the
@@ -391,7 +445,7 @@ impl Meetings {
         let open = || -> Result<Active, String> {
             std::fs::create_dir_all(&folder).map_err(|e| format!("Couldn't create {}: {e}", folder.display()))?;
             let wav = Arc::new(Mutex::new(Some(create(folder.join("mic.wav"))?)));
-            let them = Arc::new(Mutex::new(Track { wav: Some(create(folder.join("them.wav"))?), since_flush: 0, app_at: None, end: 0, heard: false, failed: false }));
+            let them = Arc::new(Mutex::new(Track { wav: Some(create(folder.join("them.wav"))?), ..Default::default() }));
             // The meeting clock starts with the mic's first sample.
             let origin = Arc::new(OnceLock::<Instant>::new());
             let (w, o) = (wav.clone(), origin.clone());
@@ -403,19 +457,19 @@ impl Meetings {
                 }
             };
             let stop = self.mic.open(Box::new(on))?;
-            let (t, db) = (them.clone(), self.db.clone());
+            let (t, db, clock) = (them.clone(), self.db.clone(), origin.clone());
             let ear = move |h: Heard| {
                 let mut t = t.lock().unwrap();
                 match h {
                     // Before the mic's first sample there's no meeting clock yet; that's a moment at most.
                     Heard::Audio(at, samples) => {
                         if let Some(o) = origin.get() {
-                            t.put(on_clock(*o, at), samples)
+                            t.tap(on_clock(*o, at), samples)
                         }
                     }
                     Heard::Apps(apps) if t.app_at.is_none() && !apps.is_empty() => {
                         t.app_at = Some(origin.get().map_or(0, |o| on_clock(*o, Instant::now())));
-                        let _ = db.lock().unwrap().execute("UPDATE meeting SET source_app = ?1 WHERE id = ?2", (&apps[0], id));
+                        let _ = db.lock().unwrap().execute("UPDATE meeting SET source_app = ?1 WHERE id = ?2 AND source_app IS NULL", (&apps[0], id)); // the Teams tab, if named, stays the source
                     }
                     Heard::Apps(_) => {}
                     Heard::Failed(e) => {
@@ -429,7 +483,7 @@ impl Meetings {
                 eprintln!("meeting: can't hear the call: {e}");
                 them.lock().unwrap().failed = true;
             });
-            Ok(Active { id, started: now, stop, wav, stop_them: stop_them.ok(), them })
+            Ok(Active { id, started: now, stop, wav, stop_them: stop_them.ok(), them, origin: clock })
         };
         match open() {
             Ok(a) => {
@@ -445,6 +499,29 @@ impl Meetings {
                 let _ = std::fs::remove_dir_all(&folder);
                 Err(e)
             }
+        }
+    }
+
+    /// The Teams tab's sound starts coming: it's the source from here on. False if nothing is recording.
+    pub fn tab_start(&self, source: &str) -> bool {
+        let Some((id, _)) = self.running() else { return false };
+        let _ = self.db.lock().unwrap().execute("UPDATE meeting SET source_app = ?1 WHERE id = ?2", (source, id));
+        true
+    }
+
+    /// A tab frame (see `Track::put_tab`); dropped when nothing is recording or the meeting clock hasn't started.
+    pub fn tab_audio(&self, at: Instant, ts: i64, samples: &[f32]) {
+        let slot = self.active.lock().unwrap();
+        let Some(a) = slot.as_ref() else { return };
+        if let Some(o) = a.origin.get() {
+            a.them.lock().unwrap().put_tab(on_clock(*o, at), ts, samples);
+        }
+    }
+
+    /// The tab stream ended: the process tap is the Them track again.
+    pub fn tab_stop(&self) {
+        if let Some(a) = self.active.lock().unwrap().as_ref() {
+            a.them.lock().unwrap().resume();
         }
     }
 
@@ -536,6 +613,7 @@ impl Meetings {
         let ms = wav.len() as i64 * 1000 / RATE as i64;
         // Both tracks last the whole meeting: Them is silence after the call's last sound, or all of it if no app joined.
         let mut them = a.them.lock().unwrap();
+        them.resume();
         them.pad(wav.len() as u64);
         let them = them.wav.take().ok_or("The recording was already closed.")?;
         wav.finalize().map_err(|e| format!("Couldn't finish the recording: {e}"))?;
@@ -728,7 +806,7 @@ mod tests {
     fn track() -> (tempfile::TempDir, Track) {
         let tmp = tempfile::tempdir().unwrap();
         let wav = create(tmp.path().join("them.wav")).unwrap();
-        (tmp, Track { wav: Some(wav), since_flush: 0, app_at: None, end: 0, heard: false, failed: false })
+        (tmp, Track { wav: Some(wav), ..Default::default() })
     }
 
     #[test]
@@ -747,6 +825,70 @@ mod tests {
         let loud = |a: u64, b: u64| s[a as usize..b as usize].iter().all(|v| *v != 0);
         let quiet = |a: u64, b: u64| s[a as usize..b as usize].iter().all(|v| *v == 0);
         assert!(quiet(0, r) && loud(r, 3 * r) && quiet(3 * r, 5 * r) && loud(5 * r, 6 * r));
+    }
+
+    fn finish(t: &mut Track, dir: &std::path::Path) -> Vec<i16> {
+        t.wav.take().unwrap().finalize().unwrap();
+        samples(dir.join("them.wav"))
+    }
+
+    #[test]
+    fn tab_frames_follow_each_other_whatever_their_arrival_and_a_gap_in_capture_time_is_silence() {
+        let (tmp, mut t) = track();
+        let (r, f) = (RATE as u64, 1600);
+        t.put_tab(2 * r, 1000, &[0.5; 1600]); // the first one is placed by arrival: a second and a half of silence before it
+        t.put_tab(2 * r + 3000, 1100, &[0.5; 1600]); // late, then...
+        t.put_tab(2 * r + 3100, 1200, &[0.5; 1600]); // ...bunched up: still end to end
+        assert_eq!(t.written(), 2 * r + 2 * f);
+        t.put_tab(2 * r + 4000, 2100, &[0.5; 1600]); // 800 ms of the capture never arrived
+        assert_eq!(t.written(), 2 * r + 3 * f + 800 * 16);
+        let s = finish(&mut t, tmp.path());
+        let loud = |a: u64, b: u64| s[a as usize..b as usize].iter().all(|v| *v != 0);
+        let quiet = |a: u64, b: u64| s[a as usize..b as usize].iter().all(|v| *v == 0);
+        assert!(quiet(0, 2 * r - f) && loud(2 * r - f, 2 * r + 2 * f) && quiet(2 * r + 2 * f, 2 * r + 2 * f + 800 * 16) && loud(2 * r + 2 * f + 800 * 16, 2 * r + 3 * f + 800 * 16));
+    }
+
+    #[test]
+    fn the_tap_is_held_while_the_tab_flows_and_takes_over_without_a_hole_when_it_stops_short() {
+        let (tmp, mut t) = track();
+        let (r, f) = (RATE as u64, 1600);
+        t.tap(r, &[0.25; 16000]); // before the tab: the tap writes
+        for i in 0..10 {
+            t.put_tab(r + f * (i + 1), i as i64 * 100, &[0.5; 1600]); // a second of tab, from 1 s to 2 s
+        }
+        assert_eq!(t.written(), 2 * r);
+        // The tap keeps hearing everything, tab's sound included; none of it is written while the tab is live.
+        for i in 1..30 {
+            t.tap(r + f * i, &[0.25; 1600]);
+        }
+        // Frames stopped at 2 s; the first tap chunk 2 s later (4 s) finds the stream gone, and the tap's sound since comes out.
+        assert_eq!(t.written(), 2 * r, "held until the tab was declared gone");
+        t.tap(r + f * 30, &[0.25; 1600]);
+        assert_eq!(t.written(), 4 * r, "no hole from the tab's last frame to the tap's next sound");
+        let s = finish(&mut t, tmp.path());
+        assert!(s[..r as usize].iter().all(|v| *v == 8191));
+        assert!(s[r as usize..2 * r as usize].iter().all(|v| *v == 16383), "the tab's second is the tab's, not the tap's");
+        assert!(s[2 * r as usize..].iter().all(|v| *v == 8191));
+    }
+
+    #[test]
+    fn a_meeting_takes_the_tab_as_its_source_and_them_lasts_the_whole_meeting() {
+        let tmp = tempfile::tempdir().unwrap();
+        let m = meetings_with(tmp.path(), Fake(RATE as usize * 4), Call(vec![(0.0, Event::Apps("Google Chrome"))]));
+        assert!(!m.tab_start("Teams (Chrome tab)"), "nothing recording");
+        let id = m.start(1_000).unwrap();
+        assert!(m.tab_start("Teams (Chrome tab)"));
+        let now = Instant::now();
+        for i in 0..5u32 {
+            m.tab_audio(now - Duration::from_millis(100 * (5 - i as u64)), 5000 + 100 * i as i64, &[0.5; 1600]);
+        }
+        m.tab_stop();
+        m.stop().unwrap();
+        let (mic, them) = (samples(tmp.path().join(format!("meetings/{id}/mic.wav"))), samples(tmp.path().join(format!("meetings/{id}/them.wav"))));
+        assert_eq!(them.len(), mic.len());
+        assert_eq!(them.iter().filter(|v| **v != 0).count(), 5 * 1600);
+        let src: Option<String> = m.db.lock().unwrap().query_row("SELECT source_app FROM meeting WHERE id = ?1", [id], |r| r.get(0)).unwrap();
+        assert_eq!(src.as_deref(), Some("Teams (Chrome tab)"), "Chrome on the mic doesn't take it back");
     }
 
     #[test]

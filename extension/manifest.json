@@ -5,7 +5,7 @@
   "description": "Lets Myna see your Teams call: mute state, the call tab's sound and who is talking.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAv+UiwwKnssFzYW5njoGMBWjNL3R62pP2AwX3tQs3ThoIkeuus92t1O/ez1D3mt7uh63/pHC5cfsM/igJDrAEpb1zhiMcuqUCcM/nHWoIyTitG7+olkjAH4YyY8rmHYqeuI2cIIJ14YsSJ1ESmUyGU4MzSnBZAZl7FVX6E2W2Fz5VM0uoSbr0UKNQCDeA1g0QS+tvoV58ProT3Lt6+/3O2+l+SUqtpyVJuV4z7HyAv4eDdeVoNDjK6qaydXOCQ5Hue26B36EO1UBlfyDrUGBybv8Ozc3/RlqgPLvuRCSNgDEi3ANncGQ4feVYg/mRC9Qvj7V7X/ym4EkYu9vJwxqKswIDAQAB",
   "minimum_chrome_version": "116",
-  "permissions": ["storage", "alarms"],
+  "permissions": ["storage", "alarms", "tabCapture", "offscreen"],
   "host_permissions": ["https://teams.microsoft.com/*", "https://teams.live.com/*", "https://teams.cloud.microsoft/*"],
   "content_scripts": [{ "matches": ["https://teams.microsoft.com/*", "https://teams.live.com/*", "https://teams.cloud.microsoft/*"], "js": ["content.js"], "run_at": "document_idle" }],
   "web_accessible_resources": [{ "resources": ["selectors.js"], "matches": ["https://teams.microsoft.com/*", "https://teams.live.com/*", "https://teams.cloud.microsoft/*"] }],

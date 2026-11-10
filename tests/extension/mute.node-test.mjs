@@ -44,3 +44,10 @@ test("with no known button, one button named mute is used and two are not", () =
   assert.equal(readPage(page({ attrs: { "aria-label": "Mute" } }, { attrs: { "aria-label": "Mute all" } })), "unknown");
   assert.equal(readPage(page(other)), "unknown", "not in a call");
 });
+
+test("only Teams' own https pages are Teams", async () => {
+  const { isTeams } = await import("../../extension/selectors.js");
+  assert.ok(isTeams("https://teams.microsoft.com/v2/?meetingjoin=true"));
+  assert.ok(isTeams("https://teams.live.com/"));
+  for (const u of ["http://teams.microsoft.com/", "https://teams.microsoft.com.evil.com/", "https://example.com/teams.microsoft.com", "nonsense"]) assert.ok(!isTeams(u), u);
+});
