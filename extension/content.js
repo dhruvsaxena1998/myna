@@ -1,4 +1,6 @@
 // Runs on the Teams web pages: tells Myna (through the service worker) whether the mute button says muted.
+// Content scripts run as classic scripts, where a top-level await is a syntax error: the whole script sits in an async function.
+(async () => {
 const { readPage, readCaptions, newCaptions, useRules, validate } = await import(chrome.runtime.getURL("selectors.js"));
 
 // The worker hands over the table in force (a fresher one arrives as a message); one that doesn't compile here falls
@@ -53,3 +55,4 @@ chrome.runtime.onMessage.addListener((m) => {
 });
 addEventListener("pagehide", () => (last = "unknown", chrome.runtime.sendMessage({ type: "mute", state: "unknown", at: Date.now() }).catch(() => {})));
 report(true);
+})();

@@ -1,6 +1,6 @@
 // How to read Teams' page: the logic here, the selectors in selectors.json. The service worker fetches a newer
 // selectors.json from the repo once a day (see background.js); every Teams tab is handed the one in force.
-// UNVERIFIED: the bundled selectors were written from memory of new Teams (v2) on the web, not from the page.
+// The mute button rules are checked against a real Teams web call (2026-11-10); the caption rules are still unverified.
 
 const SCHEMA = 1; // bump with any change to the shape below that an older add-on couldn't read
 const MAX_BYTES = 64 * 1024;
