@@ -39,6 +39,7 @@ async function open(page: Page, experimental = true) {
     trace_get: ({ id }) => ${SAMPLES}.find((t) => t.id === id),
   }`);
   await page.goto("/main");
+  await page.getByRole("navigation", { name: "Sidebar" }).getByRole("button", { name: /^Voice typing history/ }).click(); // Meetings is the first view
   await expect(page.getByRole("heading", { name: "Voice typing history" })).toBeVisible(); // mounted: events land
 }
 const nerdsNav = (page: Page) => page.getByRole("navigation", { name: "Sidebar" }).getByRole("button", { name: "Stats for nerds" });
@@ -89,6 +90,7 @@ test("lists traces newest first with title, app, time and outcome", async ({ pag
 test("an empty list says so", async ({ page }) => {
   await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", models_list: () => [], look_get: () => ({ theme: "auto", accent: "blue", glass: "clear", liquid: null, experimental: true, nerds: true }), traces_list: () => [] }`);
   await page.goto("/main");
+  await page.getByRole("navigation", { name: "Sidebar" }).getByRole("button", { name: /^Voice typing history/ }).click(); // Meetings is the first view
   await nerdsNav(page).click();
   await expect(page.getByText("No dictations yet")).toBeVisible();
 });

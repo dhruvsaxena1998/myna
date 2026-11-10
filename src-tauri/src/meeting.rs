@@ -503,6 +503,70 @@ impl Meetings {
     }
 }
 
+/// A meeting as the Meetings list shows it.
+#[derive(serde::Serialize, Debug, PartialEq)]
+pub struct Row {
+    pub id: i64,
+    pub title: String,
+    pub started: i64,
+    pub duration_ms: Option<i64>,
+    pub source_app: Option<String>,
+    /// "recorded", "transcribing", "done" or "failed".
+    pub state: String,
+    pub failure: Option<String>,
+}
+
+#[derive(serde::Serialize, Debug, PartialEq)]
+pub struct Line {
+    pub speaker: String,
+    pub start_ms: i64,
+    pub text: String,
+}
+
+/// One meeting and what was said in it, for its page.
+#[derive(serde::Serialize, Debug, PartialEq)]
+pub struct Page {
+    #[serde(flatten)]
+    pub meeting: Row,
+    pub segments: Vec<Line>,
+}
+
+/// Every meeting, newest first. The one still recording isn't in it: the list shows it as its live card.
+pub fn list(db: &Connection) -> Result<Vec<Row>, String> {
+    let sql = "SELECT id, title, started, duration_ms, source_app, state, failure FROM meeting WHERE state <> 'recording' ORDER BY started DESC, id DESC";
+    let rows = db.prepare(sql).and_then(|mut q| {
+        q.query_map([], |r| Ok(Row { id: r.get(0)?, title: r.get(1)?, started: r.get(2)?, duration_ms: r.get(3)?, source_app: r.get(4)?, state: r.get(5)?, failure: r.get(6)? })).and_then(|r| r.collect())
+    });
+    rows.map_err(|e| format!("Couldn't read your meetings: {e}"))
+}
+
+pub fn page(db: &Connection, id: i64) -> Result<Page, String> {
+    let meeting = list(db)?.into_iter().find(|m| m.id == id).ok_or("That meeting isn't there anymore.")?;
+    let segments = db.prepare("SELECT speaker, start_ms, text FROM segment WHERE meeting = ?1 ORDER BY start_ms, id").and_then(|mut q| {
+        q.query_map([id], |r| Ok(Line { speaker: r.get(0)?, start_ms: r.get(1)?, text: r.get(2)? })).and_then(|r| r.collect())
+    });
+    Ok(Page { meeting, segments: segments.map_err(|e| format!("Couldn't read the meeting: {e}"))? })
+}
+
+/// "Today 14:05", "Yesterday 09:00" or "3 Nov 14:05", on this Mac's clock: the menubar's Recent items.
+pub fn when(ms: i64, now: i64) -> String {
+    // The local day number and broken-down time of `ms`.
+    let local = |ms: i64| {
+        let t = (ms / 1000) as libc::time_t;
+        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+        unsafe { libc::localtime_r(&t, &mut tm) };
+        ((t as i64 + tm.tm_gmtoff as i64).div_euclid(86_400), tm)
+    };
+    let ((day, tm), (today, _)) = (local(ms), local(now));
+    const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    let at = format!("{:02}:{:02}", tm.tm_hour, tm.tm_min);
+    match today - day {
+        0 => format!("Today {at}"),
+        1 => format!("Yesterday {at}"),
+        _ => format!("{} {} {at}", tm.tm_mday, MONTHS[tm.tm_mon as usize % 12]),
+    }
+}
+
 /// "mm:ss", like the design's `fmtDur`.
 pub fn clock(ms: i64) -> String {
     let s = ms.max(0) / 1000;
@@ -807,5 +871,34 @@ mod tests {
     #[test]
     fn the_clock_reads_like_the_design() {
         assert_eq!((clock(0), clock(61_999), clock(3_725_000)), ("00:00".into(), "01:01".into(), "62:05".into()));
+    }
+
+    #[test]
+    fn list_is_newest_first_without_the_recording_and_page_has_the_lines_in_order() {
+        let tmp = tempfile::tempdir().unwrap();
+        let m = meetings(tmp.path(), Fake(0));
+        let db = m.db.lock().unwrap();
+        for (started, state) in [(10, "done"), (30, "recording"), (20, "failed")] {
+            db.execute("INSERT INTO meeting(started, state, failure) VALUES (?1, ?2, ?3)", (started, state, (state == "failed").then_some("No model."))).unwrap();
+        }
+        for (start, who, text) in [(900, "Them", "b"), (100, "Me", "a")] {
+            db.execute("INSERT INTO segment(meeting, start_ms, end_ms, speaker, text) VALUES (1, ?1, 0, ?2, ?3)", (start, who, text)).unwrap();
+        }
+        let rows = list(&db).unwrap();
+        assert_eq!(rows.iter().map(|r| (r.id, r.state.as_str())).collect::<Vec<_>>(), [(3, "failed"), (1, "done")]);
+        assert_eq!(rows[0].failure.as_deref(), Some("No model."));
+        let p = page(&db, 1).unwrap();
+        assert_eq!(p.segments.iter().map(|l| (l.speaker.as_str(), l.start_ms, l.text.as_str())).collect::<Vec<_>>(), [("Me", 100, "a"), ("Them", 900, "b")]);
+        assert_eq!(p.meeting.title, "Untitled meeting");
+        assert!(page(&db, 2).is_err(), "still recording: no page");
+        assert!(page(&db, 99).is_err());
+    }
+
+    #[test]
+    fn when_says_today_and_yesterday() {
+        let now = 1_700_000_000_000;
+        assert!(when(now, now).starts_with("Today "));
+        assert!(when(now - 86_400_000, now).starts_with("Yesterday "));
+        assert!(!when(now - 5 * 86_400_000, now).contains("day"));
     }
 }

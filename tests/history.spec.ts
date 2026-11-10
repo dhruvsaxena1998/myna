@@ -18,6 +18,7 @@ async function open(page: Page, rows = ROWS) {
     text_copy: () => {}, trace_delete: () => {}, traces_clear: () => {}, settings_open: () => {},
   }`);
   await page.goto("/main");
+  await page.getByRole("navigation", { name: "Sidebar" }).getByRole("button", { name: /^Voice typing history/ }).click(); // Meetings is the first view
   await expect(page.getByRole("heading", { name: "Voice typing history" })).toBeVisible(); // mounted: keys and events land
 }
 const calls = (page: Page, cmd: string) => page.evaluate((cmd) => (window as any).__calls.filter(([c]: [string]) => c === cmd).map(([, a]: [string, unknown]) => a), cmd);
@@ -26,7 +27,7 @@ const list = (page: Page) => page.getByRole("list", { name: "Voice typing histor
 
 test("the sidebar has Voice typing history with its count and Settings, and nothing that isn't built yet", async ({ page }) => {
   await open(page);
-  await expect(nav(page).getByRole("button")).toHaveText(["Voice typing history2", "Your dictation", "Settings⌘,"]);
+  await expect(nav(page).getByRole("button")).toHaveText(["All meetings0", "Voice typing history2", "Your dictation", "Settings⌘,"]);
   await expect(nav(page).getByRole("button", { name: "Voice typing history" })).toHaveAttribute("aria-current", "true");
 });
 
@@ -59,6 +60,7 @@ test("Delete removes the dictation's trace and the row, and the count follows", 
 test("a failed delete keeps the row and says why", async ({ page }) => {
   await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", traces_list: () => ${ROWS}, trace_delete: () => { throw "Couldn't delete the dictation: disk full"; } }`);
   await page.goto("/main");
+  await page.getByRole("navigation", { name: "Sidebar" }).getByRole("button", { name: /^Voice typing history/ }).click(); // Meetings is the first view
   await list(page).nth(0).getByRole("button", { name: "Delete" }).click();
   await expect(page.getByRole("status").filter({ hasText: "disk full" })).toBeVisible();
   await expect(list(page)).toHaveCount(2);
@@ -145,6 +147,7 @@ test("Delete all clears the history, and Clear all waits for the next dictation"
 test("a failed Clear all keeps the history and says why", async ({ page }) => {
   await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", traces_list: () => ${ROWS}, traces_clear: () => { throw "Couldn't clear the history: disk full"; } }`);
   await page.goto("/main");
+  await page.getByRole("navigation", { name: "Sidebar" }).getByRole("button", { name: /^Voice typing history/ }).click(); // Meetings is the first view
   await page.getByRole("button", { name: "Clear all" }).click();
   await page.getByRole("button", { name: "Delete all" }).click();
   await expect(page.getByRole("alertdialog")).toContainText("disk full");
