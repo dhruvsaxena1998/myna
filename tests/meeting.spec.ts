@@ -69,7 +69,7 @@ test("the recording pill shows Recording, the timer and Mic live, and goes when 
   await fakeTauri(page, `{}`);
   await page.clock.install({ time: 100_000 });
   await page.goto("/pill");
-  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(8);
+  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(9);
   const pill = page.getByRole("status");
   await expect(pill).toBeHidden();
   await emit(page, "meeting", { started: 100_000 - 65_000 });
@@ -78,4 +78,62 @@ test("the recording pill shows Recording, the timer and Mic live, and goes when 
   await expect(pill).toHaveText("Recording1:06Mic live");
   await emit(page, "meeting", { started: null });
   await expect(pill).toBeHidden();
+});
+
+test("after Stop the pill shows the notes being written with progress, then Notes saved, which goes away", async ({ page }) => {
+  await fakeTauri(page, `{}`);
+  await page.clock.install({ time: 100_000 });
+  await page.goto("/pill");
+  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(9);
+  const pill = page.getByRole("status");
+  await emit(page, "meeting-notes", { id: 7, state: "transcribing", progress: 0, error: null });
+  await expect(pill).toHaveText("Writing up your notes…0%");
+  await emit(page, "meeting-notes", { id: 7, state: "transcribing", progress: 0.42, error: null });
+  await expect(pill).toHaveText("Writing up your notes…42%");
+  await expect(pill.locator(".bar i")).toHaveAttribute("style", /width: 42%/);
+  await emit(page, "meeting-notes", { id: 7, state: "done", progress: 1, error: null });
+  await expect(pill).toContainText("Notes saved");
+  await page.clock.runFor(7500);
+  await expect(pill).toBeVisible();
+  await page.clock.runFor(1000);
+  await expect(pill).toBeHidden();
+});
+
+test("Open on Notes saved opens the meeting, and the dismiss button just closes it", async ({ page }) => {
+  await fakeTauri(page, `{ meeting_open: () => {} }`);
+  await page.goto("/pill");
+  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(9);
+  await emit(page, "meeting-notes", { id: 7, state: "done", progress: 1, error: null });
+  await page.getByRole("button", { name: "Open" }).click();
+  expect(await calls(page, "meeting_open")).toEqual([{ id: 7 }]);
+  await expect(page.getByRole("status")).toBeHidden();
+  await emit(page, "meeting-notes", { id: 8, state: "done", progress: 1, error: null });
+  await page.getByRole("button", { name: "Dismiss" }).click();
+  await expect(page.getByRole("status")).toBeHidden();
+  expect(await calls(page, "meeting_open")).toHaveLength(1);
+});
+
+test("a failure says why and stays; Try again asks the backend and the pill follows its progress", async ({ page }) => {
+  await fakeTauri(page, `{ meeting_retry: () => {} }`);
+  await page.clock.install({ time: 100_000 });
+  await page.goto("/pill");
+  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(9);
+  const pill = page.getByRole("status");
+  await emit(page, "meeting-notes", { id: 7, state: "failed", progress: 0, error: "Download Parakeet v3 in Settings › Speech models" });
+  await expect(pill).toHaveText("Couldn’t write up your notesDownload Parakeet v3 in Settings › Speech modelsTry again");
+  await page.clock.runFor(60_000);
+  await expect(pill).toBeVisible();
+  await pill.getByRole("button", { name: "Try again" }).click();
+  expect(await calls(page, "meeting_retry")).toEqual([{ id: 7 }]);
+  await emit(page, "meeting-notes", { id: 7, state: "transcribing", progress: 0, error: null });
+  await expect(pill).toHaveText("Writing up your notes…0%");
+});
+
+test("a retry the backend refuses shows its reason", async ({ page }) => {
+  await fakeTauri(page, `{ meeting_retry: () => { throw "That meeting isn't waiting to be tried again."; } }`);
+  await page.goto("/pill");
+  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(9);
+  await emit(page, "meeting-notes", { id: 7, state: "failed", progress: 0, error: "x" });
+  await page.getByRole("button", { name: "Try again" }).click();
+  await expect(page.getByRole("status")).toContainText("That meeting isn't waiting to be tried again.");
 });

@@ -26,6 +26,9 @@ const MIGRATIONS: &[&str] = &[
      CREATE TABLE fix_dismissed(key TEXT PRIMARY KEY, seen INTEGER NOT NULL);",
     "CREATE TABLE meeting(id INTEGER PRIMARY KEY, started INTEGER NOT NULL, duration_ms INTEGER, source_app TEXT,
         title TEXT NOT NULL DEFAULT 'Untitled meeting', state TEXT NOT NULL);",
+    "CREATE TABLE segment(id INTEGER PRIMARY KEY, meeting INTEGER NOT NULL REFERENCES meeting(id), start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL,
+        speaker TEXT NOT NULL, text TEXT NOT NULL);
+     ALTER TABLE meeting ADD COLUMN failure TEXT;",
 ];
 const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
 
