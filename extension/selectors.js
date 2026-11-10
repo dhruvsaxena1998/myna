@@ -32,3 +32,15 @@ export function readPage(root, rules = TEAMS) {
   const named = [...root.querySelectorAll("button")].filter((b) => rules.label.test(`${b.getAttribute("aria-label") ?? ""} ${b.getAttribute("title") ?? ""}`));
   return named.length === 1 ? readMute(attrs(named[0]), rules) : "unknown";
 }
+
+const HOSTS = ["teams.microsoft.com", "teams.live.com", "teams.cloud.microsoft"]; // as in manifest.json
+
+/** Whether `url` is a Teams web page. */
+export function isTeams(url) {
+  try {
+    const u = new URL(url);
+    return u.protocol === "https:" && HOSTS.includes(u.hostname);
+  } catch {
+    return false;
+  }
+}

@@ -546,6 +546,24 @@ fn on_mute(app: &AppHandle, state: addon::MuteState, at: i64) {
     let _ = app.emit("meeting-running", Some(running_json(&app.state::<Data>().db.lock().unwrap(), id, started, m.muted())));
 }
 
+/// The add-on streams the Teams tab's sound (07.3): a start begins a meeting if none is recording.
+fn on_tab(app: &AppHandle, t: addon::Tab) {
+    let m = app.state::<meeting::Meetings>();
+    match t {
+        addon::Tab::Audio { at, ts, samples } => m.tab_audio(at, ts, &samples),
+        addon::Tab::Stop => m.tab_stop(),
+        addon::Tab::Start => {
+            if m.running().is_none() {
+                start_meeting(app);
+            }
+            if m.tab_start("Teams (Chrome tab)") {
+                let Some((id, started)) = m.running() else { return };
+                let _ = app.emit("meeting-running", Some(running_json(&app.state::<Data>().db.lock().unwrap(), id, started, m.muted())));
+            }
+        }
+    }
+}
+
 /// "Start notes" and "Stop" in the Meetings list: what the shortcut does.
 #[tauri::command]
 fn meeting_toggle(app: AppHandle) {
@@ -839,6 +857,9 @@ fn start_meeting(app: &AppHandle) {
 
 /// Stops the recording, keeps it, and starts writing it up.
 fn stop_meeting(app: &AppHandle) {
+    if let Some(a) = app.try_state::<addon::Addon>() {
+        a.stop_tab();
+    }
     match app.state::<meeting::Meetings>().stop() {
         Ok(Some(id)) => write_up_meeting(app, id),
         Ok(None) => {}
@@ -1002,12 +1023,13 @@ pub fn run() {
                     let handle = app.handle().clone();
                     let on_drop = handle.clone();
                     let for_mute = handle.clone();
+                    let for_tab = handle.clone();
                     app.manage(addon::Addon::new(db.clone(), addon::ORIGIN, &addon::PORTS, move |connected| {
                         let _ = handle.emit("addon-status", connected);
                         if !connected {
                             on_mute(&on_drop, addon::MuteState::Unknown, now_ms()); // Myna can't see the button anymore
                         }
-                    }, move |state, at| on_mute(&for_mute, state, at)));
+                    }, move |state, at| on_mute(&for_mute, state, at), move |t| on_tab(&for_tab, t)));
                     app.manage(Data {
                         db,
                         models_dir: models,

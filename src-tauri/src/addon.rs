@@ -1,13 +1,15 @@
 //! The channel to Myna's browser add-on (07.1): a WebSocket on 127.0.0.1 while Meeting notes is on.
 //! Only the add-on's own origin gets in, and its first message must carry the connection code.
-//! The messages are in `Msg`; `extension/messages.js` is the other copy.
+//! The messages are in `Msg`; `extension/messages.js` is the other copy. The Teams tab's sound (07.3) comes as
+//! binary frames: 4 bytes sequence (u32), 8 bytes capture time (i64, unix ms), then 16 kHz mono Int16 samples, all
+//! little-endian; `extension/audio.js` is the other copy.
 
 use rusqlite::{Connection, OptionalExtension};
 use std::io::ErrorKind;
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tungstenite::protocol::frame::coding::CloseCode;
 use tungstenite::protocol::{CloseFrame, WebSocketConfig};
 use tungstenite::{Error, Message};
@@ -16,8 +18,12 @@ use tungstenite::{Error, Message};
 pub const ORIGIN: &str = "chrome-extension://kojbonfiabdccghdeaifapdiagcdhnmk";
 /// Myna takes the first free one; the add-on tries them in this order.
 pub const PORTS: [u16; 4] = [47821, 47822, 47823, 47824];
-/// Text messages and frames; audio (07.3) gets its own cap when it comes.
+/// Text messages, and everything before the connection code is right.
 const MAX: usize = 16 * 1024;
+/// A binary audio frame, header included: about two seconds of audio, where the add-on sends a tenth of one.
+const AUDIO_MAX: usize = 64 * 1024;
+const HEADER: usize = 12;
+const AUDIO_RATE: f64 = 16_000.0;
 const HELLO_WITHIN: Duration = Duration::from_secs(5);
 /// How often a connection looks up from reading to see whether it was told to go.
 const TICK: Duration = Duration::from_millis(250);
@@ -57,6 +63,61 @@ pub enum Msg {
     Ping,
     Mute { state: MuteState, at: i64 },
     Caption { speaker: String, at: i64 },
+    /// The Teams tab's sound starts or stops coming as binary frames. `title` is the tab's, for the add-on's own use.
+    Tab { state: TabState, #[serde(default)] title: String },
+    /// Myna to the add-on: the meeting is over, stop capturing.
+    StopTab,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum TabState {
+    Start,
+    Stop,
+}
+
+/// What the tab stream does, as the meeting hears it.
+#[derive(Debug, PartialEq)]
+pub enum Tab {
+    Start,
+    Stop,
+    /// A frame: when it arrived, when it was captured (unix ms, the add-on's clock), and its samples.
+    Audio { at: Instant, ts: i64, samples: Vec<f32> },
+}
+
+/// A frame's sequence number, capture time and samples; None if it isn't one.
+pub fn decode_frame(b: &[u8]) -> Option<(u32, i64, Vec<f32>)> {
+    let (head, pcm) = b.split_at_checked(HEADER)?;
+    if pcm.is_empty() || pcm.len() % 2 != 0 {
+        return None;
+    }
+    let seq = u32::from_le_bytes(head[..4].try_into().ok()?);
+    let ts = i64::from_le_bytes(head[4..].try_into().ok()?);
+    Some((seq, ts, pcm.as_chunks::<2>().0.iter().map(|c| i16::from_le_bytes(*c) as f32 / 32768.0).collect()))
+}
+
+/// One connection's tab stream, from `tab start`.
+struct Stream {
+    started: Instant,
+    last: Option<u32>,
+    samples: u64,
+}
+
+impl Stream {
+    /// The frame's audio, None if it repeats or trails one already taken; Err(close code) if it isn't a frame or the stream sends faster than it plays.
+    fn take(&mut self, b: &[u8]) -> Result<Option<(i64, Vec<f32>)>, u16> {
+        let (seq, ts, samples) = decode_frame(b).ok_or(1003u16)?;
+        self.samples += samples.len() as u64;
+        // Real time plus a 5 s head start and half again for catching up; a firehose is a bug or an attack.
+        if self.samples as f64 > (self.started.elapsed().as_secs_f64() * 1.5 + 5.0) * AUDIO_RATE {
+            return Err(1008);
+        }
+        if self.last.is_some_and(|l| seq <= l) {
+            return Ok(None);
+        }
+        self.last = Some(seq);
+        Ok(Some((ts, samples)))
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -92,6 +153,10 @@ struct Shared {
     notify: Box<dyn Fn(bool) + Send + Sync>,
     /// The mute button's state and when the add-on saw it (unix ms), from the authenticated connection only.
     on_mute: Box<dyn Fn(MuteState, i64) + Send + Sync>,
+    /// The tab stream, from the authenticated connection only.
+    on_tab: Box<dyn Fn(Tab) + Send + Sync>,
+    /// Set to tell the connection to send `stop-tab`.
+    stop_tab: AtomicBool,
     st: Mutex<State>,
 }
 
@@ -165,8 +230,14 @@ impl Shared {
             old.store(REPLACED, Ordering::SeqCst); // the older browser is told, so the two don't keep taking turns
         }
         let _ = ws.get_ref().set_read_timeout(Some(TICK));
+        // Audio frames only after the code was right.
+        ws.set_config(|c| {
+            c.max_message_size = Some(AUDIO_MAX);
+            c.max_frame_size = Some(AUDIO_MAX);
+        });
         let _ = ws.send(Message::text(encode(&Msg::Welcome)));
         (self.notify)(true);
+        let mut stream: Option<Stream> = None;
 
         loop {
             match kill.load(Ordering::SeqCst) {
@@ -175,19 +246,37 @@ impl Shared {
                 WRONG_CODE => break close(&mut ws, 4001),
                 _ => break close(&mut ws, 4002),
             }
+            if self.stop_tab.swap(false, Ordering::SeqCst) {
+                let _ = ws.send(Message::text(encode(&Msg::StopTab)));
+            }
             match ws.read() {
+                Ok(Message::Text(t)) if t.len() > MAX => break close(&mut ws, 1009),
                 // Later tickets route `caption` here; `ping` and unknown types need nothing.
-                Ok(Message::Text(t)) => {
-                    if let Some(Msg::Mute { state, at }) = decode(&t) {
-                        (self.on_mute)(state, at);
+                Ok(Message::Text(t)) => match decode(&t) {
+                    Some(Msg::Mute { state, at }) => (self.on_mute)(state, at),
+                    Some(Msg::Tab { state: TabState::Start, .. }) => {
+                        stream = Some(Stream { started: Instant::now(), last: None, samples: 0 });
+                        (self.on_tab)(Tab::Start);
+                    }
+                    Some(Msg::Tab { state: TabState::Stop, .. }) if stream.take().is_some() => (self.on_tab)(Tab::Stop),
+                    _ => {}
+                },
+                Ok(Message::Binary(b)) => {
+                    let Some(s) = stream.as_mut() else { break close(&mut ws, 1003) }; // no `tab start`: not audio we asked for
+                    match s.take(&b) {
+                        Ok(Some((ts, samples))) => (self.on_tab)(Tab::Audio { at: Instant::now(), ts, samples }),
+                        Ok(None) => {}
+                        Err(code) => break close(&mut ws, code),
                     }
                 }
-                Ok(Message::Binary(_)) => break close(&mut ws, 1003), // audio comes in 07.3, with its own cap
                 Ok(Message::Close(_)) => break drop(ws.flush()),
                 Ok(_) => {}
                 Err(Error::Io(e)) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
                 Err(_) => break,
             }
+        }
+        if stream.is_some() {
+            (self.on_tab)(Tab::Stop); // the process tap takes over again
         }
         let mut st = self.st.lock().unwrap();
         if st.conn.as_ref().is_some_and(|k| Arc::ptr_eq(k, &kill)) {
@@ -199,8 +288,15 @@ impl Shared {
 }
 
 impl Addon {
-    pub fn new(db: Arc<Mutex<Connection>>, origin: &'static str, ports: &[u16], notify: impl Fn(bool) + Send + Sync + 'static, on_mute: impl Fn(MuteState, i64) + Send + Sync + 'static) -> Self {
-        Addon { ports: ports.to_vec(), me: Arc::new(Shared { db, origin, notify: Box::new(notify), on_mute: Box::new(on_mute), st: Default::default() }) }
+    pub fn new(db: Arc<Mutex<Connection>>, origin: &'static str, ports: &[u16], notify: impl Fn(bool) + Send + Sync + 'static, on_mute: impl Fn(MuteState, i64) + Send + Sync + 'static, on_tab: impl Fn(Tab) + Send + Sync + 'static) -> Self {
+        Addon { ports: ports.to_vec(), me: Arc::new(Shared { db, origin, notify: Box::new(notify), on_mute: Box::new(on_mute), on_tab: Box::new(on_tab), stop_tab: AtomicBool::new(false), st: Default::default() }) }
+    }
+
+    /// Tells the add-on the meeting is over, so it stops capturing the tab.
+    pub fn stop_tab(&self) {
+        if self.me.st.lock().unwrap().conn.is_some() {
+            self.me.stop_tab.store(true, Ordering::SeqCst);
+        }
     }
 
     /// The connection code, made the first time it's asked for.
@@ -273,7 +369,7 @@ mod tests {
     fn addon() -> (Addon, SocketAddr, tempfile::TempDir) {
         let tmp = tempfile::tempdir().unwrap();
         let db = Arc::new(Mutex::new(crate::storage::open(tmp.path()).unwrap()));
-        let a = Addon::new(db, ORIGIN, &[0], |_| {}, |_, _| {});
+        let a = Addon::new(db, ORIGIN, &[0], |_| {}, |_, _| {}, |_| {});
         let addr = a.start().unwrap();
         (a, addr, tmp)
     }
@@ -335,7 +431,7 @@ mod tests {
         let db = Arc::new(Mutex::new(crate::storage::open(tmp.path()).unwrap()));
         let got = Arc::new(Mutex::new(vec![]));
         let g = got.clone();
-        let a = Addon::new(db, ORIGIN, &[0], |_| {}, move |s, at| g.lock().unwrap().push((s, at)));
+        let a = Addon::new(db, ORIGIN, &[0], |_| {}, move |s, at| g.lock().unwrap().push((s, at)), |_| {});
         let addr = a.start().unwrap();
         let mut stranger = dial(addr, Some(ORIGIN)).unwrap();
         stranger.send(Message::text(encode(&Msg::Mute { state: MuteState::Muted, at: 1 }))).unwrap();
@@ -401,6 +497,104 @@ mod tests {
         ws.send(Message::binary(vec![0u8; 8])).unwrap();
         assert_eq!(closed(&mut ws), Some(1003));
         wait("dropped", || !a.connected());
+    }
+
+    fn frame(seq: u32, ts: i64, n: usize) -> Message {
+        let mut b = seq.to_le_bytes().to_vec();
+        b.extend(ts.to_le_bytes());
+        b.extend(std::iter::repeat_n([0x00, 0x40], n).flatten()); // 0.5
+        Message::binary(b)
+    }
+
+    fn tab(state: TabState) -> Message {
+        Message::text(encode(&Msg::Tab { state, title: "Standup".into() }))
+    }
+
+    type Heard = Arc<Mutex<Vec<(&'static str, i64, usize)>>>;
+
+    /// An add-on with a connection, and the tab events Myna heard from it as (kind, ts, samples).
+    fn tabbed() -> (Addon, Client, Heard, tempfile::TempDir) {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Mutex::new(crate::storage::open(tmp.path()).unwrap()));
+        let got = Arc::new(Mutex::new(vec![]));
+        let g = got.clone();
+        let a = Addon::new(db, ORIGIN, &[0], |_| {}, |_, _| {}, move |t| {
+            g.lock().unwrap().push(match t {
+                Tab::Start => ("start", 0, 0),
+                Tab::Stop => ("stop", 0, 0),
+                Tab::Audio { ts, samples, .. } => ("audio", ts, samples.len()),
+            })
+        });
+        let addr = a.start().unwrap();
+        let ws = connect(&a, addr);
+        (a, ws, got, tmp)
+    }
+
+    #[test]
+    fn tab_frames_in_order_reach_myna_and_repeats_and_stale_ones_are_dropped() {
+        let (a, mut ws, got, _t) = tabbed();
+        ws.send(tab(TabState::Start)).unwrap();
+        for (seq, ts) in [(0, 1000), (1, 1100), (1, 1100), (0, 1000), (3, 1300)] {
+            ws.send(frame(seq, ts, 1600)).unwrap(); // seq 2 was lost: the capture time shows the gap
+        }
+        ws.send(tab(TabState::Stop)).unwrap();
+        wait("heard", || got.lock().unwrap().len() == 5);
+        assert_eq!(*got.lock().unwrap(), [("start", 0, 0), ("audio", 1000, 1600), ("audio", 1100, 1600), ("audio", 1300, 1600), ("stop", 0, 0)]);
+        assert!(a.connected());
+    }
+
+    #[test]
+    fn audio_before_tab_start_or_after_tab_stop_closes_the_socket() {
+        let (_a, mut ws, got, _t) = tabbed();
+        ws.send(frame(0, 1, 160)).unwrap();
+        assert_eq!(closed(&mut ws), Some(1003));
+        assert!(got.lock().unwrap().is_empty());
+        let (_a, mut ws, _got, _t) = tabbed();
+        ws.send(tab(TabState::Start)).unwrap();
+        ws.send(tab(TabState::Stop)).unwrap();
+        ws.send(frame(0, 1, 160)).unwrap();
+        assert_eq!(closed(&mut ws), Some(1003));
+    }
+
+    #[test]
+    fn a_stranger_cant_send_audio() {
+        let (_a, addr, _t) = addon();
+        let mut ws = dial(addr, Some(ORIGIN)).unwrap();
+        ws.send(tab(TabState::Start)).unwrap();
+        ws.send(frame(0, 1, 160)).unwrap();
+        assert!(closed(&mut ws).is_some());
+    }
+
+    #[test]
+    fn an_oversized_frame_a_malformed_one_and_a_firehose_are_refused() {
+        let (_a, mut ws, got, _t) = tabbed();
+        ws.send(tab(TabState::Start)).unwrap();
+        ws.send(Message::binary(vec![0u8; AUDIO_MAX + 1])).unwrap();
+        assert!(closed(&mut ws).is_some());
+        wait("stop", || got.lock().unwrap().last().is_some_and(|e| e.0 == "stop"));
+        let (_a, mut ws, _got, _t) = tabbed();
+        ws.send(tab(TabState::Start)).unwrap();
+        ws.send(Message::binary(vec![0u8; HEADER + 3])).unwrap();
+        assert_eq!(closed(&mut ws), Some(1003), "an odd byte is half a sample");
+        let (_a, mut ws, got, _t) = tabbed();
+        ws.send(tab(TabState::Start)).unwrap();
+        // A full-size frame is two seconds of audio; five of them at once is ten seconds in no time.
+        for seq in 0..5 {
+            let _ = ws.send(frame(seq, seq as i64, (AUDIO_MAX - HEADER) / 2)); // the socket may already be shut
+        }
+        assert_eq!(closed(&mut ws), Some(1008));
+        assert!(got.lock().unwrap().iter().filter(|e| e.0 == "audio").count() < 5);
+    }
+
+    #[test]
+    fn a_dropped_connection_ends_the_tab_stream_and_stop_tab_reaches_the_addon() {
+        let (a, mut ws, got, _t) = tabbed();
+        ws.send(tab(TabState::Start)).unwrap();
+        a.stop_tab();
+        let told = (0..3).any(|_| matches!(ws.read(), Ok(Message::Text(t)) if decode(&t) == Some(Msg::StopTab)));
+        assert!(told);
+        drop(ws);
+        wait("stop", || got.lock().unwrap().last().is_some_and(|e| e.0 == "stop"));
     }
 
     #[test]

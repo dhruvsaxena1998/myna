@@ -11,6 +11,8 @@ export const hello = (code) => ({ v: V, type: "hello", code });
 // `mute` comes from the Teams content script (through the worker); `caption` is for 07.4.
 export const mute = (state, at) => ({ v: V, type: "mute", state, at }); // state: "unmuted" | "muted" | "unknown"
 export const caption = (speaker, at) => ({ v: V, type: "caption", speaker, at });
+// `tab` brackets the binary audio frames (see audio.js); Myna answers a meeting's end with `stop-tab`.
+export const tab = (state, title) => ({ v: V, type: "tab", state, title }); // state: "start" | "stop"
 export const ping = () => ({ v: V, type: "ping" });
 
 /** A message from Myna, or null if it isn't one this version understands. */
