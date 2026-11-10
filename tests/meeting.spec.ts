@@ -6,6 +6,7 @@ async function open(page: Page, notes = { on: false, key: "Ctrl+Alt+KeyM" }, aud
   await fakeTauri(page, `{
     storage_status: () => "/tmp/Myna", models_list: () => [],
     meeting_get: () => (${JSON.stringify(notes)}),
+    addon_disconnect: () => "MYNA-NEW1-23", addon_folder: () => {}, text_copy: () => {},
     meeting_set: ({ notes }) => { if (notes.key === "Ctrl+Alt+KeyN") throw "Another app is using that shortcut. Pick a different one."; },
     permissions_state: () => ({ ...(window.__perms ??= { mic: "allowed", ax: true, audio: ${JSON.stringify(audio)} }) }),
     permission_ask: ({ kind }) => { if (kind === "audio" && window.__perms.audio === "ask") window.__perms.audio = "allowed"; },
@@ -136,4 +137,36 @@ test("a retry the backend refuses shows its reason", async ({ page }) => {
   await emit(page, "meeting-notes", { id: 7, state: "failed", progress: 0, error: "x" });
   await page.getByRole("button", { name: "Try again" }).click();
   await expect(page.getByRole("status")).toContainText("That meeting isn't waiting to be tried again.");
+});
+
+test("Browser add-on: not connected shows the steps, connected flips live, Disconnect gives a new code", async ({ page }) => {
+  await open(page, { on: true, key: "Ctrl+Alt+KeyM" });
+  const group = page.getByRole("region", { name: "Browser add-on" });
+  await expect(group).toContainText("Not connected.");
+  await expect(group).toContainText("MYNA-4F7Q-K2");
+  await group.getByRole("button", { name: "Connect" }).click();
+  await expect(group).toContainText("Load unpacked");
+  await group.getByRole("button", { name: "Show folder" }).click();
+  expect(await calls(page, "addon_folder")).toHaveLength(1);
+
+  await emit(page, "addon-status", true);
+  await expect(group).toContainText("Connected.");
+  await expect(group).not.toContainText("Load unpacked");
+  await group.getByRole("button", { name: "Disconnect" }).click();
+  await expect(group).toContainText("Not connected.");
+  await expect(group).toContainText("MYNA-NEW1-23");
+  expect(await calls(page, "addon_disconnect")).toHaveLength(1);
+});
+
+test("Browser add-on: Copy puts the code on the clipboard", async ({ page }) => {
+  await open(page, { on: true, key: "Ctrl+Alt+KeyM" });
+  const group = page.getByRole("region", { name: "Browser add-on" });
+  await group.getByRole("button", { name: "Copy" }).click();
+  await expect(group.getByRole("button", { name: "Copied" })).toBeVisible();
+  expect(await calls(page, "text_copy")).toEqual([{ text: "MYNA-4F7Q-K2" }]);
+});
+
+test("Browser add-on: hidden while meeting notes are off", async ({ page }) => {
+  await open(page);
+  await expect(page.getByRole("region", { name: "Browser add-on" })).toBeHidden();
 });

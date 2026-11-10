@@ -1,3 +1,4 @@
+mod addon;
 mod ai;
 mod apple;
 mod cleanup;
@@ -472,6 +473,29 @@ async fn meeting_set(app: AppHandle, d: tauri::State<'_, Data>, notes: meeting::
     Ok(())
 }
 
+/// The browser add-on's state for Settings: whether it's connected, and the code to type into it.
+#[tauri::command]
+fn addon_get(a: tauri::State<addon::Addon>) -> Result<serde_json::Value, String> {
+    Ok(serde_json::json!({ "connected": a.connected(), "code": a.code()? }))
+}
+
+/// Cuts the add-on off and returns the new code.
+#[tauri::command]
+fn addon_disconnect(a: tauri::State<addon::Addon>) -> Result<String, String> {
+    a.disconnect()
+}
+
+/// Shows the add-on's folder in Finder: the repo's in dev builds, the app bundle's in release builds.
+#[tauri::command]
+fn addon_folder(app: AppHandle) -> Result<(), String> {
+    let dir = if cfg!(debug_assertions) {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../extension")
+    } else {
+        app.path().resource_dir().map_err(|e| e.to_string())?.join("extension")
+    };
+    std::process::Command::new("open").arg(&dir).spawn().map(drop).map_err(|e| format!("Couldn't open {}: {e}", dir.display()))
+}
+
 /// Try again on a meeting whose notes failed. Its progress and result come as `meeting-notes` events.
 #[tauri::command]
 fn meeting_retry(app: AppHandle, id: i64) -> Result<(), String> {
@@ -695,6 +719,16 @@ fn sync_meeting(app: &AppHandle) -> Result<(), String> {
         *have = want;
     }
     drop(have);
+    // The add-on's socket is open only while notes are on.
+    if let Some(a) = app.try_state::<addon::Addon>() {
+        if n.on {
+            if let Err(e) = a.start() {
+                eprintln!("browser add-on: {e}");
+            }
+        } else {
+            a.stop();
+        }
+    }
     if let Some(m) = app.try_state::<MeetItem>() {
         let _ = m.item.set_accelerator((!n.key.is_empty()).then_some(n.key.as_str()));
         let _ = m.item.set_enabled(n.on);
@@ -902,7 +936,7 @@ fn open_update(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![pill::pill_hit, dictation_fix, fix_take, debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, meeting_get, meeting_set, meeting_retry, meeting_open, meetings_list, meeting_page, meeting_running, meeting_toggle, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
+        .invoke_handler(tauri::generate_handler![pill::pill_hit, dictation_fix, fix_take, debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, meeting_get, meeting_set, addon_get, addon_disconnect, addon_folder, meeting_retry, meeting_open, meetings_list, meeting_page, meeting_running, meeting_toggle, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::Updates::default())
         .setup(|app| {
@@ -926,6 +960,10 @@ pub fn run() {
                     download::sweep(&models); // before any download can start
                     app.manage(Session::new(world, db.clone(), keys.clone(), models.clone(), models::macos_major(), tap_limit, second));
                     app.manage(meeting::Meetings::new(db.clone(), dir.clone(), Box::new(meeting::Cpal), Box::new(meeting::Tap)));
+                    let handle = app.handle().clone();
+                    app.manage(addon::Addon::new(db.clone(), addon::ORIGIN, &addon::PORTS, move |connected| {
+                        let _ = handle.emit("addon-status", connected);
+                    }));
                     app.manage(Data {
                         db,
                         models_dir: models,

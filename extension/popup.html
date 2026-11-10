@@ -1,0 +1,17 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>
+  body { width: 280px; margin: 0; padding: 14px; font: 13px/1.4 system-ui, sans-serif; }
+  h1 { margin: 0 0 8px; font-size: 14px; }
+  input { box-sizing: border-box; width: 100%; padding: 6px 8px; font: 13px ui-monospace, monospace; text-transform: uppercase; }
+  button { margin-top: 8px; padding: 5px 12px; }
+  #status { margin: 10px 0 0; }
+</style>
+<h1>Myna</h1>
+<form id="f">
+  <label for="code">Connection code, from Myna’s Settings</label>
+  <input id="code" maxlength="12" placeholder="MYNA-XXXX-XX" autocomplete="off" spellcheck="false">
+  <button>Connect</button>
+</form>
+<p id="status" role="status"></p>
+<script type="module" src="popup.js"></script>
