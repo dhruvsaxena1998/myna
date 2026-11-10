@@ -523,12 +523,27 @@ fn meeting_page(d: tauri::State<Data>, id: i64) -> Result<meeting::Page, String>
 #[tauri::command]
 fn meeting_running(d: tauri::State<Data>, m: tauri::State<meeting::Meetings>) -> Option<serde_json::Value> {
     let (id, started) = m.running()?;
-    Some(running_json(&d.db.lock().unwrap(), id, started))
+    Some(running_json(&d.db.lock().unwrap(), id, started, m.muted()))
 }
 
-fn running_json(db: &rusqlite::Connection, id: i64, started: i64) -> serde_json::Value {
+/// `mic`: "live" or "muted" while the add-on mirrors the mute button, else null.
+fn running_json(db: &rusqlite::Connection, id: i64, started: i64, muted: Option<bool>) -> serde_json::Value {
     let source: Option<String> = db.query_row("SELECT source_app FROM meeting WHERE id = ?1", [id], |r| r.get(0)).ok().flatten();
-    serde_json::json!({ "id": id, "started": started, "source": source })
+    serde_json::json!({ "id": id, "started": started, "source": source, "mic": mic_word(muted) })
+}
+
+fn mic_word(muted: Option<bool>) -> Option<&'static str> {
+    muted.map(|m| if m { "muted" } else { "live" })
+}
+
+/// The add-on saw the Teams mute button change (or dropped, which is `Unknown`): the timeline, then the pill, menu and live card.
+fn on_mute(app: &AppHandle, state: addon::MuteState, at: i64) {
+    let m = app.state::<meeting::Meetings>();
+    m.mute(state, at, now_ms());
+    let Some((id, started)) = m.running() else { return };
+    show_menu_recording(app, Some((id, started)));
+    pill::meeting(app, Some(started), mic_word(m.muted()));
+    let _ = app.emit("meeting-running", Some(running_json(&app.state::<Data>().db.lock().unwrap(), id, started, m.muted())));
 }
 
 /// "Start notes" and "Stop" in the Meetings list: what the shortcut does.
@@ -742,6 +757,18 @@ fn show_menu_recording(app: &AppHandle, running: Option<(i64, i64)>) {
     let clock = running.map(|(_, started)| meeting::clock(now_ms() - started));
     if let Some(m) = app.try_state::<MeetItem>() {
         let _ = m.item.set_text(clock.as_ref().map_or("Start meeting notes".into(), |c| format!("Stop recording  {c}")));
+        // The note says how the mic is while recording; sync_meeting puts the usual words back.
+        match (&clock, app.state::<meeting::Meetings>().muted()) {
+            (Some(_), Some(muted)) => {
+                let _ = m.note.set_text(if muted { "Muted · mirrored from Teams" } else { "Mic live · mirrored from Teams" });
+            }
+            (Some(_), None) => {
+                let _ = m.note.set_text("Mic live");
+            }
+            (None, _) => {
+                let _ = sync_meeting(app);
+            }
+        }
     }
     // shortcut: a tray title is plain text, so the dot is the red emoji; draw a red icon if that looks off.
     if let Some(t) = app.tray_by_id("myna") {
@@ -777,8 +804,8 @@ fn start_meeting(app: &AppHandle) {
     };
     let running = m.running();
     show_menu_recording(app, running);
-    let _ = app.emit("meeting-running", running.map(|(id, started)| running_json(&d.db.lock().unwrap(), id, started)));
-    pill::meeting(app, running.map(|(_, s)| s));
+    let _ = app.emit("meeting-running", running.map(|(id, started)| running_json(&d.db.lock().unwrap(), id, started, m.muted())));
+    pill::meeting(app, running.map(|(_, s)| s), mic_word(m.muted()));
     if let Ok(look) = pill::look(&d.db.lock().unwrap()) {
         pill::place(app, look.place);
     }
@@ -819,7 +846,19 @@ fn stop_meeting(app: &AppHandle) {
     }
     show_menu_recording(app, None);
     let _ = app.emit("meeting-running", None::<()>);
-    pill::meeting(app, None);
+    pill::meeting(app, None, None);
+}
+
+/// The transcript as Copy and the AI features may see it: muted lines left out. See `meeting::outgoing`.
+#[tauri::command]
+fn meeting_text(d: tauri::State<Data>, id: i64) -> Result<String, String> {
+    meeting::outgoing(&d.db.lock().unwrap(), id)
+}
+
+/// "Include" on a collapsed run of muted lines: keeps them, marked.
+#[tauri::command]
+fn segments_include(d: tauri::State<Data>, ids: Vec<i64>) -> Result<(), String> {
+    meeting::include(&d.db.lock().unwrap(), &ids)
 }
 
 /// Writes up meeting `id` on its own thread. `meeting-notes` says how it's going to every window: the pill, and
@@ -936,7 +975,7 @@ fn open_update(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![pill::pill_hit, dictation_fix, fix_take, debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, meeting_get, meeting_set, addon_get, addon_disconnect, addon_folder, meeting_retry, meeting_open, meetings_list, meeting_page, meeting_running, meeting_toggle, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
+        .invoke_handler(tauri::generate_handler![pill::pill_hit, dictation_fix, fix_take, debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, meeting_get, meeting_set, meeting_text, segments_include, addon_get, addon_disconnect, addon_folder, meeting_retry, meeting_open, meetings_list, meeting_page, meeting_running, meeting_toggle, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::Updates::default())
         .setup(|app| {
@@ -961,9 +1000,14 @@ pub fn run() {
                     app.manage(Session::new(world, db.clone(), keys.clone(), models.clone(), models::macos_major(), tap_limit, second));
                     app.manage(meeting::Meetings::new(db.clone(), dir.clone(), Box::new(meeting::Cpal), Box::new(meeting::Tap)));
                     let handle = app.handle().clone();
+                    let on_drop = handle.clone();
+                    let for_mute = handle.clone();
                     app.manage(addon::Addon::new(db.clone(), addon::ORIGIN, &addon::PORTS, move |connected| {
                         let _ = handle.emit("addon-status", connected);
-                    }));
+                        if !connected {
+                            on_mute(&on_drop, addon::MuteState::Unknown, now_ms()); // Myna can't see the button anymore
+                        }
+                    }, move |state, at| on_mute(&for_mute, state, at)));
                     app.manage(Data {
                         db,
                         models_dir: models,

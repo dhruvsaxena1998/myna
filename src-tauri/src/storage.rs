@@ -29,6 +29,10 @@ const MIGRATIONS: &[&str] = &[
     "CREATE TABLE segment(id INTEGER PRIMARY KEY, meeting INTEGER NOT NULL REFERENCES meeting(id), start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL,
         speaker TEXT NOT NULL, text TEXT NOT NULL);
      ALTER TABLE meeting ADD COLUMN failure TEXT;",
+    // `mute`: NULL (no add-on, or an older Myna's row) means unmuted, else 'muted' | 'unmuted' | 'unknown'.
+    "CREATE TABLE mute_event(id INTEGER PRIMARY KEY, meeting INTEGER NOT NULL REFERENCES meeting(id), at_ms INTEGER NOT NULL, state TEXT NOT NULL, source TEXT NOT NULL);
+     ALTER TABLE segment ADD COLUMN mute TEXT;
+     ALTER TABLE segment ADD COLUMN included INTEGER NOT NULL DEFAULT 0;",
 ];
 const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
 

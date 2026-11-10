@@ -1,6 +1,7 @@
 //! Meeting notes: on or off with its shortcut, and a recording kept on disk as a meeting: `mic.wav` (Me) and
 //! `them.wav` (the apps using the mic). The audio reaches it only through `Mic` and `Them`, so tests drive it with fakes.
 
+use crate::addon::MuteState;
 use crate::runtime::{RATE, Segment};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rusqlite::{Connection, OptionalExtension};
@@ -20,6 +21,9 @@ pub struct Notes {
     pub on: bool,
     /// An accelerator, the form both the global shortcut and the menu read; "" for none.
     pub key: String,
+    /// Keep what I say while muted in Teams, instead of leaving it out. Read when a meeting is shown, so it works on old meetings too.
+    #[serde(default)]
+    pub keep_teams: bool,
 }
 
 fn read(conn: &Connection, key: &str) -> Result<Option<String>, String> {
@@ -32,6 +36,7 @@ pub fn get(conn: &Connection) -> Result<Notes, String> {
     Ok(Notes {
         on: read(conn, "meeting_on")?.is_some_and(|v| v == "1"),
         key: read(conn, "meeting_key")?.filter(|k| KEYS.contains(&k.as_str())).unwrap_or(KEYS[0].into()),
+        keep_teams: read(conn, "meeting_keep_teams")?.is_some_and(|v| v == "1"),
     })
 }
 
@@ -39,7 +44,7 @@ pub fn set(conn: &Connection, n: &Notes) -> Result<(), String> {
     if !KEYS.contains(&n.key.as_str()) {
         return Err(format!("{} isn't one of the choices.", n.key));
     }
-    for (k, v) in [("meeting_on", if n.on { "1" } else { "0" }), ("meeting_key", n.key.as_str())] {
+    for (k, v) in [("meeting_on", if n.on { "1" } else { "0" }), ("meeting_key", n.key.as_str()), ("meeting_keep_teams", if n.keep_teams { "1" } else { "0" })] {
         conn.execute("INSERT INTO setting(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2", [k, v])
             .map_err(|e| format!("Couldn't save meeting notes' settings: {e}"))?;
     }
@@ -326,6 +331,8 @@ pub struct Meetings {
     /// One meeting is transcribed at a time.
     job: Mutex<()>,
     chunk: usize,
+    /// The mirrored mute state last heard, recording or not, so a meeting starts knowing it. `Unknown` once the add-on drops.
+    mirrored: Mutex<Option<MuteState>>,
 }
 
 /// `at` on the meeting clock that starts at `origin`.
@@ -335,12 +342,34 @@ fn on_clock(origin: Instant, at: Instant) -> u64 {
 
 impl Meetings {
     pub fn new(db: Arc<Mutex<Connection>>, dir: PathBuf, mic: Box<dyn Mic>, them: Box<dyn Them>) -> Self {
-        Meetings { db, dir, mic, them, active: Default::default(), job: Default::default(), chunk: CHUNK }
+        Meetings { db, dir, mic, them, active: Default::default(), job: Default::default(), chunk: CHUNK, mirrored: Default::default() }
     }
 
     /// Whether Myna can't hear the other people on the call (the mic records regardless).
     pub fn deaf(&self) -> bool {
         self.active.lock().unwrap().as_ref().is_some_and(|a| a.them.lock().unwrap().deaf())
+    }
+
+    /// The mic as the add-on mirrors it: `Some(true)` muted, `Some(false)` live, None when Myna isn't seeing it.
+    pub fn muted(&self) -> Option<bool> {
+        match (*self.mirrored.lock().unwrap())? {
+            MuteState::Muted => Some(true),
+            MuteState::Unmuted => Some(false),
+            MuteState::Unknown => None,
+        }
+    }
+
+    /// The add-on saw the mute button in `state` at `at` (unix ms); `now` is the clock now. Kept on the timeline only while recording.
+    pub fn mute(&self, state: MuteState, at: i64, now: i64) {
+        *self.mirrored.lock().unwrap() = Some(state);
+        if let Some((id, started)) = self.running() {
+            // The add-on's clock is only trusted to within the meeting: never before it began or after now.
+            self.mark(id, (at.min(now) - started).max(0), state);
+        }
+    }
+
+    fn mark(&self, id: i64, at_ms: i64, state: MuteState) {
+        let _ = self.db.lock().unwrap().execute("INSERT INTO mute_event(meeting, at_ms, state, source) VALUES (?1, ?2, ?3, 'teams')", (id, at_ms, state.as_str()));
     }
 
     /// The recording in progress: its id and when it started (unix ms).
@@ -405,6 +434,10 @@ impl Meetings {
         match open() {
             Ok(a) => {
                 *slot = Some(a);
+                drop(slot);
+                if let Some(s) = *self.mirrored.lock().unwrap() {
+                    self.mark(id, 0, s); // what the button said when the meeting began
+                }
                 Ok(id)
             }
             Err(e) => {
@@ -441,12 +474,23 @@ impl Meetings {
         done
     }
 
+    /// The meeting's mute changes, in time order, ms from its start.
+    fn timeline(&self, id: i64) -> Result<Vec<(i64, MuteState)>, String> {
+        let db = self.db.lock().unwrap();
+        let rows = db.prepare("SELECT at_ms, state FROM mute_event WHERE meeting = ?1 ORDER BY at_ms, id").and_then(|mut q| {
+            q.query_map([id], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))).and_then(|r| r.collect::<Result<Vec<_>, _>>())
+        });
+        let rows = rows.map_err(|e| format!("Couldn't read the mute timeline: {e}"))?;
+        Ok(rows.into_iter().map(|(at, s)| (at, match s.as_str() { "muted" => MuteState::Muted, "unmuted" => MuteState::Unmuted, _ => MuteState::Unknown })).collect())
+    }
+
     fn write_up(&self, id: i64, stt: &dyn Stt, progress: &mut dyn FnMut(f32)) -> Result<(), String> {
         let folder = self.dir.join("meetings").join(id.to_string());
         let mic = wav_samples(&folder.join("mic.wav"))?;
         // The call's track may never have been made (the meeting ended as it started).
         let them = if folder.join("them.wav").exists() { wav_samples(&folder.join("them.wav"))? } else { vec![] };
         let rate = RATE as f64;
+        let events = self.timeline(id)?;
         let pieces: Vec<_> = [("Me", &mic), ("Them", &them)].into_iter().flat_map(|(who, s)| cuts(s, self.chunk).into_iter().map(move |(a, b)| (who, &s[a..b], a))).collect();
         // shortcut: both tracks sit in memory as 16-bit samples (115 MB an hour each); stream from disk past a few hours.
         let mut said: Vec<(f64, f64, &str, String)> = vec![];
@@ -470,7 +514,9 @@ impl Meetings {
             let tx = db.transaction()?;
             tx.execute("DELETE FROM segment WHERE meeting = ?1", [id])?; // a retry starts clean
             for (start, end, who, text) in &said {
-                tx.execute("INSERT INTO segment(meeting, start_ms, end_ms, speaker, text) VALUES (?1, ?2, ?3, ?4, ?5)", (id, (start * 1000.0).round() as i64, (end * 1000.0).round() as i64, who, text))?;
+                let (start, end) = ((start * 1000.0).round() as i64, (end * 1000.0).round() as i64);
+                let mute = if *who == "Me" { mute_of(&events, start, end).map(MuteState::as_str) } else { None };
+                tx.execute("INSERT INTO segment(meeting, start_ms, end_ms, speaker, text, mute) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", (id, start, end, who, text, mute))?;
             }
             // A meeting cut off by a crash never got its length.
             tx.execute("UPDATE meeting SET state = 'done', failure = NULL, duration_ms = COALESCE(duration_ms, ?2) WHERE id = ?1", (id, mic.len() as i64 * 1000 / RATE as i64))?;
@@ -516,11 +562,41 @@ pub struct Row {
     pub failure: Option<String>,
 }
 
+/// The state of the mute button over a stretch of speech, from the timeline: the state that covers more than half
+/// of it, else `Unknown` (shown, never hidden). Before the first change it's `Unknown`. None when the add-on never
+/// reported, so a meeting without it has no marks.
+// shortcut: a line is judged whole; a long line that's half muted is shown, not split. Split at the change if that proves too coarse.
+fn mute_of(events: &[(i64, MuteState)], start: i64, end: i64) -> Option<MuteState> {
+    if events.is_empty() {
+        return None;
+    }
+    let end = end.max(start + 1); // a zero-length line still falls somewhere
+    let mut over = [0i64; 3];
+    let slot = |s: MuteState| match s { MuteState::Unmuted => 0, MuteState::Muted => 1, MuteState::Unknown => 2 };
+    let (mut from, mut state) = (i64::MIN / 2, MuteState::Unknown);
+    for (t, s) in events.iter().copied().chain([(i64::MAX / 2, MuteState::Unknown)]) {
+        over[slot(state)] += (end.min(t) - start.max(from)).max(0);
+        (from, state) = (t, s);
+    }
+    Some(match over {
+        [u, _, _] if u * 2 > end - start => MuteState::Unmuted,
+        [_, m, _] if m * 2 > end - start => MuteState::Muted,
+        _ => MuteState::Unknown,
+    })
+}
+
 #[derive(serde::Serialize, Debug, PartialEq)]
 pub struct Line {
+    pub id: i64,
     pub speaker: String,
     pub start_ms: i64,
+    /// Empty when `hidden`: what's left out never leaves the backend.
     pub text: String,
+    /// Said while the add-on showed the mic muted.
+    pub muted: bool,
+    pub included: bool,
+    /// Muted, not included, and not kept by the setting: collapsed on the page, out of Copy and anything sent to an AI.
+    pub hidden: bool,
 }
 
 /// One meeting and what was said in it, for its page.
@@ -542,10 +618,36 @@ pub fn list(db: &Connection) -> Result<Vec<Row>, String> {
 
 pub fn page(db: &Connection, id: i64) -> Result<Page, String> {
     let meeting = list(db)?.into_iter().find(|m| m.id == id).ok_or("That meeting isn't there anymore.")?;
-    let segments = db.prepare("SELECT speaker, start_ms, text FROM segment WHERE meeting = ?1 ORDER BY start_ms, id").and_then(|mut q| {
-        q.query_map([id], |r| Ok(Line { speaker: r.get(0)?, start_ms: r.get(1)?, text: r.get(2)? })).and_then(|r| r.collect())
-    });
-    Ok(Page { meeting, segments: segments.map_err(|e| format!("Couldn't read the meeting: {e}"))? })
+    Ok(Page { meeting, segments: lines(db, id)? })
+}
+
+fn lines(db: &Connection, id: i64) -> Result<Vec<Line>, String> {
+    let keep = get(db)?.keep_teams;
+    db.prepare("SELECT id, speaker, start_ms, text, mute, included FROM segment WHERE meeting = ?1 ORDER BY start_ms, id")
+        .and_then(|mut q| {
+            q.query_map([id], |r| {
+                let (mute, included): (Option<String>, bool) = (r.get(4)?, r.get(5)?);
+                let muted = mute.as_deref() == Some("muted");
+                let hidden = muted && !included && !keep;
+                Ok(Line { id: r.get(0)?, speaker: r.get(1)?, start_ms: r.get(2)?, text: if hidden { String::new() } else { r.get(3)? }, muted, included, hidden })
+            })
+            .and_then(|r| r.collect())
+        })
+        .map_err(|e| format!("Couldn't read the meeting: {e}"))
+}
+
+/// The one way a meeting's words leave it, for Copy and for anything sent to an AI provider: "Me 00:12\nwhat was said",
+/// a blank line between. Lines said while muted are left out unless included or kept.
+pub fn outgoing(db: &Connection, id: i64) -> Result<String, String> {
+    Ok(lines(db, id)?.iter().filter(|l| !l.hidden).map(|l| format!("{} {}\n{}", l.speaker, clock(l.start_ms), l.text)).collect::<Vec<_>>().join("\n\n"))
+}
+
+/// Keeps these lines in the notes, with their "said while muted" marker.
+pub fn include(db: &Connection, ids: &[i64]) -> Result<(), String> {
+    for id in ids {
+        db.execute("UPDATE segment SET included = 1 WHERE id = ?1", [id]).map_err(|e| format!("Couldn't keep that line: {e}"))?;
+    }
+    Ok(())
 }
 
 /// "Today 14:05", "Yesterday 09:00" or "3 Nov 14:05", on this Mac's clock: the menubar's Recent items.
@@ -817,6 +919,82 @@ mod tests {
     }
 
     #[test]
+    fn me_lines_get_their_mute_state_from_the_timeline_and_them_never_do() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (m, id) = two_tracks(tmp.path());
+        let marks = |m: &Meetings| -> Vec<(String, Option<String>)> {
+            let db = m.db.lock().unwrap();
+            let mut q = db.prepare("SELECT speaker, mute FROM segment WHERE meeting = ?1 ORDER BY start_ms").unwrap();
+            q.query_map([id], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect()
+        };
+        m.transcribe(id, &Count::default(), &mut |_| {}).unwrap();
+        assert!(marks(&m).iter().all(|(_, s)| s.is_none()), "no add-on, no marks");
+        for (at, s) in [(0, "unmuted"), (1900, "muted"), (3000, "unmuted"), (5000, "unknown")] {
+            m.db.lock().unwrap().execute("INSERT INTO mute_event(meeting, at_ms, state, source) VALUES (?1, ?2, ?3, 'teams')", (id, at, s)).unwrap();
+        }
+        m.transcribe(id, &Count::default(), &mut |_| {}).unwrap(); // Me lines at 100, 1950, 3500 and 5050 ms
+        let me: Vec<_> = marks(&m).into_iter().map(|(who, s)| (who, s.unwrap_or_default())).collect();
+        let want = |who: &str, s: &str| (who.to_string(), s.to_string());
+        assert_eq!(me, [want("Me", "unmuted"), want("Them", ""), want("Me", "muted"), want("Them", ""), want("Me", "unmuted"), want("Me", "unknown")]);
+    }
+
+    #[test]
+    fn a_line_is_muted_when_more_than_half_of_it_is_and_the_edges_fall_as_documented() {
+        use MuteState::*;
+        let tl = [(0, Unmuted), (1000, Muted), (2000, Unmuted)];
+        assert_eq!(mute_of(&[], 0, 100), None);
+        assert_eq!(mute_of(&tl, 1100, 1900), Some(Muted));
+        assert_eq!(mute_of(&tl, 900, 1100), Some(Unknown), "half and half is shown");
+        assert_eq!(mute_of(&tl, 600, 1300), Some(Unmuted), "300 of 700 muted");
+        assert_eq!(mute_of(&tl, 500, 1100), Some(Unmuted), "100 of 600 muted");
+        assert_eq!(mute_of(&tl, 1000, 1999), Some(Muted), "starts on the change");
+        assert_eq!(mute_of(&tl, 0, 1000), Some(Unmuted), "ends on the change");
+        assert_eq!(mute_of(&tl, 1500, 1500), Some(Muted), "a zero-length line sits in the state it starts in");
+        assert_eq!(mute_of(&tl, 1950, 2050), Some(Unknown), "50 muted, 50 unmuted");
+        assert_eq!(mute_of(&[(500, Muted)], 0, 400), Some(Unknown), "before the first report nothing is known");
+    }
+
+    #[test]
+    fn the_mirrored_state_is_timelined_only_while_recording_and_a_drop_is_unknown() {
+        let tmp = tempfile::tempdir().unwrap();
+        let m = meetings(tmp.path(), Fake(0));
+        m.mute(MuteState::Muted, 500, 500); // not recording: remembered, not kept
+        assert_eq!(m.muted(), Some(true));
+        let id = m.start(1000).unwrap(); // starts knowing what the button said
+        m.mute(MuteState::Unmuted, 3000, 3100);
+        m.mute(MuteState::Muted, 1_000_000, 4000); // a clock from the future is held to now
+        m.mute(MuteState::Unknown, 5000, 5000); // the add-on dropped
+        assert_eq!(m.muted(), None);
+        let rows: Vec<(i64, String)> = {
+            let db = m.db.lock().unwrap();
+            let mut q = db.prepare("SELECT at_ms, state FROM mute_event WHERE meeting = ?1 ORDER BY id").unwrap();
+            q.query_map([id], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect()
+        };
+        assert_eq!(rows, [(0, "muted".into()), (2000, "unmuted".into()), (3000, "muted".into()), (4000, "unknown".into())]);
+    }
+
+    #[test]
+    fn muted_lines_stay_out_of_what_leaves_the_meeting_until_included_or_kept() {
+        let tmp = tempfile::tempdir().unwrap();
+        let m = meetings(tmp.path(), Fake(0));
+        let db = m.db.lock().unwrap();
+        db.execute("INSERT INTO meeting(started, state) VALUES (1, 'done')", []).unwrap();
+        for (start, who, text, mute) in [(1000, "Me", "hello", None), (2000, "Me", "secret", Some("muted")), (3000, "Them", "right", None), (4000, "Me", "maybe", Some("unknown"))] {
+            db.execute("INSERT INTO segment(meeting, start_ms, end_ms, speaker, text, mute) VALUES (1, ?1, 0, ?2, ?3, ?4)", (start, who, text, mute)).unwrap();
+        }
+        let out = |db: &Connection| outgoing(db, 1).unwrap();
+        assert_eq!(out(&db), "Me 00:01\nhello\n\nThem 00:03\nright\n\nMe 00:04\nmaybe");
+        let p = page(&db, 1).unwrap();
+        assert!(p.segments[1].hidden && p.segments[1].text.is_empty(), "the words don't even reach the page");
+        include(&db, &[p.segments[1].id]).unwrap(); // survives a reopen: it's in the file
+        assert!(out(&db).contains("secret") && page(&db, 1).unwrap().segments[1].included);
+        db.execute("UPDATE segment SET included = 0", []).unwrap();
+        assert!(!out(&db).contains("secret"));
+        set(&db, &Notes { on: true, key: KEYS[0].into(), keep_teams: true }).unwrap();
+        assert!(out(&db).contains("secret"), "the setting keeps muted lines, old meetings too");
+    }
+
+    #[test]
     fn a_failure_keeps_the_audio_and_the_reason_and_try_again_finishes() {
         let tmp = tempfile::tempdir().unwrap();
         let (m, id) = two_tracks(tmp.path());
@@ -860,12 +1038,14 @@ mod tests {
     fn settings_default_off_and_save_only_listed_keys() {
         let tmp = tempfile::tempdir().unwrap();
         let conn = crate::storage::open(tmp.path()).unwrap();
-        let n = |on, key: &str| Notes { on, key: key.into() };
+        let n = |on, key: &str| Notes { on, key: key.into(), keep_teams: false };
         assert_eq!(get(&conn), Ok(n(false, "Ctrl+Alt+KeyM")));
         set(&conn, &n(true, "")).unwrap();
         assert_eq!(get(&conn), Ok(n(true, "")));
         assert!(set(&conn, &n(true, "Alt+Space")).is_err());
         assert_eq!(get(&conn), Ok(n(true, "")));
+        set(&conn, &Notes { keep_teams: true, ..n(true, "") }).unwrap();
+        assert!(get(&conn).unwrap().keep_teams);
     }
 
     #[test]

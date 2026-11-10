@@ -49,6 +49,14 @@
     return () => void un.then((f) => f());
   });
   const refresh = () => invoke<Row_[]>("meetings_list").then((r) => (meetings = r), () => {});
+  async function include(ids: number[]) {
+    try {
+      await invoke("segments_include", { ids });
+      if (page) await openMeeting(page.id); // reload: the included lines' words come from the backend
+    } catch (err) {
+      meetingError = String(err);
+    }
+  }
   async function openMeeting(id: number) {
     try {
       page = await invoke<Page>("meeting_page", { id });
@@ -90,7 +98,7 @@
   // The meeting's source shows once Myna hears the call.
   $effect(() => {
     if (!running) return;
-    const t = setInterval(() => invoke<Running>("meeting_running").then((r) => r && r.id === running?.id && r.source !== running.source && (running = r), () => {}), 2000);
+    const t = setInterval(() => invoke<Running>("meeting_running").then((r) => r && r.id === running?.id && (r.source !== running.source || r.mic !== running.mic) && (running = r), () => {}), 2000);
     return () => clearInterval(t);
   });
 
@@ -168,7 +176,7 @@
       <header data-tauri-drag-region><h1>All meetings</h1></header>
       <div class="content"><ErrorState title="Myna couldn't read your meetings" message={data.meetings.error} /></div>
     {:else if view === "meetings" && page}
-      <Meeting {page} progress={progress[page.id]} onback={() => (page = null)} onretry={retry} />
+      <Meeting {page} progress={progress[page.id]} onback={() => (page = null)} onretry={retry} oninclude={include} />
     {:else if view === "meetings"}
       <Meetings {meetings} {running} {progress} on={notes.on} error={meetingError} onenable={enable} onopen={openMeeting} onretry={retry}
         onstart={() => invoke("meeting_toggle")} onstop={() => invoke("meeting_toggle")} />

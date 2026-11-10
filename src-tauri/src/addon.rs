@@ -28,7 +28,7 @@ const WRONG_CODE: u8 = 2;
 const REPLACED: u8 = 3;
 const ALPHABET: &[u8; 32] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no I, O, 0, 1
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum MuteState {
     Unmuted,
@@ -36,8 +36,18 @@ pub enum MuteState {
     Unknown,
 }
 
+impl MuteState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            MuteState::Unmuted => "unmuted",
+            MuteState::Muted => "muted",
+            MuteState::Unknown => "unknown",
+        }
+    }
+}
+
 /// A message on the wire is `{"v":1,"type":...}` plus these fields. A type not listed fails to parse and is ignored.
-// `Mute` and `Caption` are for 07.2 and 07.4.
+// `Caption` is for 07.4.
 #[allow(dead_code)]
 #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
@@ -80,6 +90,8 @@ struct Shared {
     db: Arc<Mutex<Connection>>,
     origin: &'static str,
     notify: Box<dyn Fn(bool) + Send + Sync>,
+    /// The mute button's state and when the add-on saw it (unix ms), from the authenticated connection only.
+    on_mute: Box<dyn Fn(MuteState, i64) + Send + Sync>,
     st: Mutex<State>,
 }
 
@@ -164,8 +176,12 @@ impl Shared {
                 _ => break close(&mut ws, 4002),
             }
             match ws.read() {
-                // Later tickets route `mute` and `caption` here; `ping` and unknown types need nothing.
-                Ok(Message::Text(t)) => drop(decode(&t)),
+                // Later tickets route `caption` here; `ping` and unknown types need nothing.
+                Ok(Message::Text(t)) => {
+                    if let Some(Msg::Mute { state, at }) = decode(&t) {
+                        (self.on_mute)(state, at);
+                    }
+                }
                 Ok(Message::Binary(_)) => break close(&mut ws, 1003), // audio comes in 07.3, with its own cap
                 Ok(Message::Close(_)) => break drop(ws.flush()),
                 Ok(_) => {}
@@ -183,8 +199,8 @@ impl Shared {
 }
 
 impl Addon {
-    pub fn new(db: Arc<Mutex<Connection>>, origin: &'static str, ports: &[u16], notify: impl Fn(bool) + Send + Sync + 'static) -> Self {
-        Addon { ports: ports.to_vec(), me: Arc::new(Shared { db, origin, notify: Box::new(notify), st: Default::default() }) }
+    pub fn new(db: Arc<Mutex<Connection>>, origin: &'static str, ports: &[u16], notify: impl Fn(bool) + Send + Sync + 'static, on_mute: impl Fn(MuteState, i64) + Send + Sync + 'static) -> Self {
+        Addon { ports: ports.to_vec(), me: Arc::new(Shared { db, origin, notify: Box::new(notify), on_mute: Box::new(on_mute), st: Default::default() }) }
     }
 
     /// The connection code, made the first time it's asked for.
@@ -257,7 +273,7 @@ mod tests {
     fn addon() -> (Addon, SocketAddr, tempfile::TempDir) {
         let tmp = tempfile::tempdir().unwrap();
         let db = Arc::new(Mutex::new(crate::storage::open(tmp.path()).unwrap()));
-        let a = Addon::new(db, ORIGIN, &[0], |_| {});
+        let a = Addon::new(db, ORIGIN, &[0], |_| {}, |_, _| {});
         let addr = a.start().unwrap();
         (a, addr, tmp)
     }
@@ -311,6 +327,23 @@ mod tests {
         hello(&mut ws, &a.code().unwrap());
         assert!(welcomed(&mut ws));
         ws
+    }
+
+    #[test]
+    fn mute_messages_reach_myna_only_from_a_connection_that_said_hello() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Mutex::new(crate::storage::open(tmp.path()).unwrap()));
+        let got = Arc::new(Mutex::new(vec![]));
+        let g = got.clone();
+        let a = Addon::new(db, ORIGIN, &[0], |_| {}, move |s, at| g.lock().unwrap().push((s, at)));
+        let addr = a.start().unwrap();
+        let mut stranger = dial(addr, Some(ORIGIN)).unwrap();
+        stranger.send(Message::text(encode(&Msg::Mute { state: MuteState::Muted, at: 1 }))).unwrap();
+        assert!(closed(&mut stranger).is_some());
+        let mut ws = connect(&a, addr);
+        ws.send(Message::text(encode(&Msg::Mute { state: MuteState::Muted, at: 7 }))).unwrap();
+        wait("heard", || !got.lock().unwrap().is_empty());
+        assert_eq!(*got.lock().unwrap(), [(MuteState::Muted, 7)]);
     }
 
     #[test]

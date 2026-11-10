@@ -8,10 +8,27 @@ export type Meeting = {
   state: "recorded" | "transcribing" | "done" | "failed";
   failure: string | null;
 };
-export type Line = { speaker: "Me" | "Them"; start_ms: number; text: string };
+/** `hidden`: said while muted and left out; its `text` is empty. `included`: kept by the user, shown with a marker. */
+export type Line = { id: number; speaker: "Me" | "Them"; start_ms: number; text: string; muted: boolean; included: boolean; hidden: boolean };
 export type Page = Meeting & { segments: Line[] };
 /** The recording in progress, or none. */
-export type Running = { id: number; started: number; source: string | null } | null;
+/** `mic`: "live" or "muted" while the browser add-on mirrors the mute button, else null. */
+export type Running = { id: number; started: number; source: string | null; mic: "live" | "muted" | null } | null;
+
+/** Runs of lines that are left out show as one row; the rest show as they are. */
+export function groups(lines: Line[]): ({ line: Line } | { left: Line[] })[] {
+  const out: ({ line: Line } | { left: Line[] })[] = [];
+  for (const line of lines) {
+    const last = out.at(-1);
+    if (!line.hidden) out.push({ line });
+    else if (last && "left" in last) last.left.push(line);
+    else out.push({ left: [line] });
+  }
+  return out;
+}
+
+/** The pill, menu and live card's words for the mic; plain "Mic live" when the add-on isn't mirroring. */
+export const mic = (m: "live" | "muted" | null) => (m === "muted" ? "Muted · mirrored from Teams" : m === "live" ? "Mic live · mirrored from Teams" : "Mic live");
 /** `meeting-notes`: how writing up a meeting is going. */
 export type Progress = { id: number; state: "transcribing" | "done" | "failed"; progress: number; error: string | null };
 
@@ -44,6 +61,3 @@ export function length(ms: number) {
 
 /** "11:00 · 42 min · Google Meet", leaving out what isn't known. */
 export const meta = (m: Meeting) => [hm(m.started), m.duration_ms === null ? "" : length(m.duration_ms), m.source_app ?? ""].filter(Boolean).join(" · ");
-
-/** The transcript as plain text: "Me 00:12\nwhat was said", a blank line between. */
-export const plain = (lines: Line[]) => lines.map((l) => `${l.speaker} ${clock(l.start_ms)}\n${l.text}`).join("\n\n");

@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { fakeTauri } from "./tauri";
 
 // `meeting_set` fails for Ctrl+Alt+N, like a shortcut another app holds. Asking for System Audio allows it.
-async function open(page: Page, notes = { on: false, key: "Ctrl+Alt+KeyM" }, audio = "allowed") {
+async function open(page: Page, notes: { on: boolean; key: string; keep_teams?: boolean } = { on: false, key: "Ctrl+Alt+KeyM" }, audio = "allowed") {
   await fakeTauri(page, `{
     storage_status: () => "/tmp/Myna", models_list: () => [],
     meeting_get: () => (${JSON.stringify(notes)}),
@@ -24,6 +24,18 @@ test("off by default: just the switch, and turning it on saves and shows the sho
   await sw.click();
   await expect(page.getByLabel("Start or stop notes")).toHaveValue("Ctrl+Alt+KeyM");
   expect(await calls(page, "meeting_set")).toEqual([{ notes: { on: true, key: "Ctrl+Alt+KeyM" } }]);
+});
+
+test("Keep my voice when I'm muted has a Teams switch that saves with the other settings", async ({ page }) => {
+  await open(page, { on: false, key: "Ctrl+Alt+KeyM", keep_teams: false });
+  await expect(page.getByText("Keep my voice when I’m muted")).toBeHidden();
+  await page.getByRole("switch", { name: "Use meeting notes" }).click();
+  await expect(page.getByRole("heading", { name: "Keep my voice when I’m muted" })).toBeVisible();
+  const keep = page.getByRole("switch", { name: "Keep my voice when muted in Microsoft Teams on the web" });
+  await expect(keep).not.toBeChecked();
+  await keep.click();
+  await expect(keep).toBeChecked();
+  expect((await calls(page, "meeting_set")).at(-1)).toEqual({ notes: { on: true, key: "Ctrl+Alt+KeyM", keep_teams: true } });
 });
 
 test("the shortcut can be changed, or removed", async ({ page }) => {
@@ -65,6 +77,19 @@ test("no permission rows while notes are off", async ({ page }) => {
 });
 
 const emit = (page: Page, event: string, payload: unknown) => page.evaluate(([e, p]) => (window as any).__emit(e, p), [event, payload] as const);
+
+test("the recording pill says Muted or Mic live, mirrored from Teams, only while mirroring", async ({ page }) => {
+  await fakeTauri(page, `{}`);
+  await page.goto("/pill");
+  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(9);
+  const pill = page.getByRole("status");
+  await emit(page, "meeting", { started: Date.now(), mic: "live" });
+  await expect(pill).toContainText("Mic live · mirrored from Teams");
+  await emit(page, "meeting", { started: Date.now(), mic: "muted" });
+  await expect(pill).toContainText("Muted · mirrored from Teams");
+  await emit(page, "meeting", { started: Date.now(), mic: null });
+  await expect(pill).toHaveText(/Recording\d+:\d+Mic live$/);
+});
 
 test("the recording pill shows Recording, the timer and Mic live, and goes when it stops", async ({ page }) => {
   await fakeTauri(page, `{}`);
