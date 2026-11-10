@@ -67,6 +67,27 @@ public func vozFree() {
     loaded = nil
 }
 
+/// Words grouped into sentence-ish segments: a new one after a pause over 0.8 s or a word that ends a sentence.
+/// No word timestamps: the whole text as one segment.
+private func sentences(_ words: [Word], fallback: String, duration: Double) -> [[String: Any]] {
+    var out: [[String: Any]] = []
+    var run: [Word] = []
+    func flush() {
+        guard let first = run.first, let last = run.last else { return }
+        let text = run.map { $0.text.trimmingCharacters(in: .whitespaces) }.joined(separator: " ")
+        if !text.isEmpty { out.append(["start": first.start, "end": last.end, "text": text]) }
+        run = []
+    }
+    for w in words {
+        if let last = run.last, w.start - last.end > 0.8 { flush() }
+        run.append(w)
+        if let c = w.text.trimmingCharacters(in: .whitespaces).last, ".?!".contains(c) { flush() }
+    }
+    flush()
+    let text = fallback.trimmingCharacters(in: .whitespacesAndNewlines)
+    return out.isEmpty && !text.isEmpty ? [["start": 0, "end": duration, "text": text]] : out
+}
+
 /// 16 kHz mono samples and a JSON array of words to prefer in; `{"segments": [...]}` or `{"error": "…"}` out.
 @_cdecl("myna_voz_transcribe")
 public func vozTranscribe(_ samples: UnsafePointer<Float>, _ count: Int, _ vocabulary: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar> {
@@ -76,10 +97,7 @@ public func vozTranscribe(_ samples: UnsafePointer<Float>, _ count: Int, _ vocab
         guard let voz = loaded else { return json(["error": "Voz isn't loaded."]) }
         do {
             let r = try await voz.transcribe(samples: audio, vocabulary: words)
-            let text = r.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            // shortcut: one segment for the whole clip; split on the word timestamps when meetings need them.
-            let segs: [[String: Any]] = text.isEmpty ? [] : [["start": r.words.first?.start ?? 0, "end": r.words.last?.end ?? r.duration, "text": text]]
-            return json(["segments": segs])
+            return json(["segments": sentences(r.words, fallback: r.text, duration: r.duration)])
         } catch {
             return say(error)
         }

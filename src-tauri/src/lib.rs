@@ -466,6 +466,23 @@ async fn meeting_set(app: AppHandle, d: tauri::State<'_, Data>, notes: meeting::
     Ok(())
 }
 
+/// Try again on a meeting whose notes failed. Its progress and result come as `meeting-notes` events.
+#[tauri::command]
+fn meeting_retry(app: AppHandle, id: i64) -> Result<(), String> {
+    if !app.state::<meeting::Meetings>().failed(id) {
+        return Err("That meeting isn't waiting to be tried again.".into());
+    }
+    write_up_meeting(&app, id);
+    Ok(())
+}
+
+/// "Open" on the pill's "Notes saved". The meeting page is the main window's (05.4): it listens for `meeting-open`.
+#[tauri::command]
+fn meeting_open(app: AppHandle, id: i64) {
+    open_main(&app);
+    let _ = app.emit_to("main", "meeting-open", id);
+}
+
 /// Whether the 🌐 key is set to Do Nothing, so fn only starts voice typing.
 #[tauri::command]
 fn globe_ok() -> bool {
@@ -721,13 +738,34 @@ fn start_meeting(app: &AppHandle) {
     });
 }
 
-/// Stops the recording and keeps it.
+/// Stops the recording, keeps it, and starts writing it up.
 fn stop_meeting(app: &AppHandle) {
-    if let Err(e) = app.state::<meeting::Meetings>().stop() {
-        notify::send("Couldn’t save the recording", &e);
+    match app.state::<meeting::Meetings>().stop() {
+        Ok(Some(id)) => write_up_meeting(app, id),
+        Ok(None) => {}
+        Err(e) => notify::send("Couldn’t save the recording", &e),
     }
     show_menu_recording(app, None);
     pill::meeting(app, None);
+}
+
+/// Writes up meeting `id` on its own thread. `meeting-notes` says how it's going to every window: the pill, and
+/// 05.4's list card. state is "transcribing" (with progress 0 to 1), "done" or "failed" (with the reason).
+fn write_up_meeting(app: &AppHandle, id: i64) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let say = |state: &str, progress: f32, error: Option<&str>| {
+            let _ = app.emit("meeting-notes", serde_json::json!({ "id": id, "state": state, "progress": progress, "error": error }));
+        };
+        say("transcribing", 0.0, None);
+        let session = app.state::<Arc<Session>>();
+        let done = app.state::<meeting::Meetings>().transcribe(id, &**session, &mut |p| say("transcribing", p, None));
+        session.schedule_unload(); // the model idles out like after a dictation
+        match done {
+            Ok(()) => say("done", 1.0, None),
+            Err(e) => say("failed", 0.0, Some(&e)),
+        }
+    });
 }
 
 /// Puts "Start voice typing with cleanup" in the menu under "Start voice typing" while a Fast model is set, and takes it out when not.
@@ -790,7 +828,7 @@ fn open_update(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![pill::pill_hit, dictation_fix, fix_take, debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, meeting_get, meeting_set, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
+        .invoke_handler(tauri::generate_handler![pill::pill_hit, dictation_fix, fix_take, debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, meeting_get, meeting_set, meeting_retry, meeting_open, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::Updates::default())
         .setup(|app| {
@@ -917,6 +955,12 @@ pub fn run() {
             }
             if !failed && let Err(e) = sync_meeting(app.handle()) {
                 eprintln!("meeting notes: {e}");
+            }
+            // Meetings the app died or quit in the middle of: finish and write them up.
+            if !failed {
+                for id in app.state::<meeting::Meetings>().unfinished() {
+                    write_up_meeting(app.handle(), id);
+                }
             }
             if failed {
                 open_window(app.handle(), "settings"); // never fail silently: Settings shows the error

@@ -1,7 +1,7 @@
 //! Meeting notes: on or off with its shortcut, and a recording kept on disk as a meeting: `mic.wav` (Me) and
 //! `them.wav` (the apps using the mic). The audio reaches it only through `Mic` and `Them`, so tests drive it with fakes.
 
-use crate::runtime::RATE;
+use crate::runtime::{RATE, Segment};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rusqlite::{Connection, OptionalExtension};
 use std::ffi::{CStr, c_char, c_void};
@@ -276,6 +276,46 @@ struct Active {
     them: Arc<Mutex<Track>>,
 }
 
+/// Speech-to-text for a stretch of 16 kHz mono audio, times in seconds from its start. The app's is the
+/// dictation model (`Session`), so a meeting never loads a second copy.
+pub trait Stt: Send + Sync {
+    fn transcribe(&self, audio: &[f32]) -> Result<Vec<Segment>, String>;
+}
+
+/// The most audio in one call: Parakeet takes about 4 to 5 minutes (`runtime.rs`).
+const CHUNK: usize = 4 * 60 * RATE as usize;
+/// Quieter than this (about -46 dB) all through a chunk is not speech: not worth the model's time.
+const QUIET: i16 = 160;
+
+/// Where to cut `samples` into pieces of at most `max`: at the quietest tenth of a second in the last quarter
+/// before the limit, so a word isn't split.
+fn cuts(samples: &[i16], max: usize) -> Vec<(usize, usize)> {
+    let (mut out, mut from) = (vec![], 0);
+    while samples.len() - from > max {
+        let (win, end) = (RATE as usize / 10, from + max);
+        let energy = |a: usize| samples[a..a + win].iter().map(|s| (*s as i64).pow(2)).sum::<i64>();
+        let at = (end.saturating_sub(max / 4).max(from)..=end - win).step_by(win).min_by_key(|a| energy(*a)).unwrap_or(end - win);
+        let cut = at + win / 2;
+        out.push((from, cut));
+        from = cut;
+    }
+    out.push((from, samples.len()));
+    out
+}
+
+/// Sixteen kHz mono samples of a track. An unfinished file reads up to the last flush, which is what a crash keeps.
+fn wav_samples(path: &std::path::Path) -> Result<Vec<i16>, String> {
+    // A crash before the first flush leaves no header at all: nothing was kept.
+    if std::fs::metadata(path).map_or(0, |m| m.len()) < 44 {
+        return Ok(vec![]);
+    }
+    let r = hound::WavReader::open(path).map_err(|e| format!("Couldn't read {}: {e}", path.display()))?;
+    r.into_samples::<i16>().collect::<Result<_, _>>().map_err(|e| format!("Couldn't read {}: {e}", path.display()))
+}
+
+/// Meetings that still need writing up: cut off while recording (a crash or quit), or while transcribing.
+const UNFINISHED: &str = "('recording', 'recorded', 'transcribing')";
+
 pub struct Meetings {
     db: Arc<Mutex<Connection>>,
     /// The data folder: each meeting gets `meetings/<id>/` in it.
@@ -283,6 +323,9 @@ pub struct Meetings {
     mic: Box<dyn Mic>,
     them: Box<dyn Them>,
     active: Mutex<Option<Active>>,
+    /// One meeting is transcribed at a time.
+    job: Mutex<()>,
+    chunk: usize,
 }
 
 /// `at` on the meeting clock that starts at `origin`.
@@ -292,7 +335,7 @@ fn on_clock(origin: Instant, at: Instant) -> u64 {
 
 impl Meetings {
     pub fn new(db: Arc<Mutex<Connection>>, dir: PathBuf, mic: Box<dyn Mic>, them: Box<dyn Them>) -> Self {
-        Meetings { db, dir, mic, them, active: Default::default() }
+        Meetings { db, dir, mic, them, active: Default::default(), job: Default::default(), chunk: CHUNK }
     }
 
     /// Whether Myna can't hear the other people on the call (the mic records regardless).
@@ -370,6 +413,70 @@ impl Meetings {
                 Err(e)
             }
         }
+    }
+
+    /// The meetings a launch must finish: the app died or quit before they were written up.
+    pub fn unfinished(&self) -> Vec<i64> {
+        let db = self.db.lock().unwrap();
+        let Ok(mut q) = db.prepare(&format!("SELECT id FROM meeting WHERE state IN {UNFINISHED} ORDER BY id")) else { return vec![] };
+        q.query_map([], |r| r.get(0)).map(|r| r.flatten().collect()).unwrap_or_default()
+    }
+
+    /// Whether a failed meeting can be tried again.
+    pub fn failed(&self, id: i64) -> bool {
+        let state: Option<String> = self.db.lock().unwrap().query_row("SELECT state FROM meeting WHERE id = ?1", [id], |r| r.get(0)).optional().unwrap_or(None);
+        state.is_some_and(|s| s == "failed")
+    }
+
+    /// Writes up meeting `id` from its two tracks: Me from the mic, Them from the call, merged by time. `progress`
+    /// gets 0 to 1 as chunks finish. Fails, with the reason kept in the meeting, without touching the audio.
+    pub fn transcribe(&self, id: i64, stt: &dyn Stt, progress: &mut dyn FnMut(f32)) -> Result<(), String> {
+        let _one = self.job.lock().unwrap();
+        let set = |sql: &str, p: &[&dyn rusqlite::ToSql]| self.db.lock().unwrap().execute(sql, p).map(drop).map_err(|e| format!("Couldn't save the meeting: {e}"));
+        set("UPDATE meeting SET state = 'transcribing', failure = NULL WHERE id = ?1", &[&id])?;
+        let done = self.write_up(id, stt, progress);
+        if let Err(e) = &done {
+            let _ = set("UPDATE meeting SET state = 'failed', failure = ?1 WHERE id = ?2", &[e, &id]);
+        }
+        done
+    }
+
+    fn write_up(&self, id: i64, stt: &dyn Stt, progress: &mut dyn FnMut(f32)) -> Result<(), String> {
+        let folder = self.dir.join("meetings").join(id.to_string());
+        let mic = wav_samples(&folder.join("mic.wav"))?;
+        // The call's track may never have been made (the meeting ended as it started).
+        let them = if folder.join("them.wav").exists() { wav_samples(&folder.join("them.wav"))? } else { vec![] };
+        let rate = RATE as f64;
+        let pieces: Vec<_> = [("Me", &mic), ("Them", &them)].into_iter().flat_map(|(who, s)| cuts(s, self.chunk).into_iter().map(move |(a, b)| (who, &s[a..b], a))).collect();
+        // shortcut: both tracks sit in memory as 16-bit samples (115 MB an hour each); stream from disk past a few hours.
+        let mut said: Vec<(f64, f64, &str, String)> = vec![];
+        for (i, (who, audio, at)) in pieces.iter().enumerate() {
+            progress(i as f32 / pieces.len() as f32);
+            if audio.iter().all(|s| s.abs() < QUIET) {
+                continue;
+            }
+            let audio: Vec<f32> = audio.iter().map(|s| *s as f32 / 32768.0).collect();
+            for s in stt.transcribe(&audio)? {
+                let text = s.text.trim();
+                let off = *at as f64 / rate;
+                if !text.is_empty() {
+                    said.push((off + s.start as f64, off + s.end as f64, who, text.into()));
+                }
+            }
+        }
+        said.sort_by(|a, b| a.0.total_cmp(&b.0)); // stable: Me before Them when they start together
+        let mut db = self.db.lock().unwrap();
+        let save = |db: &mut Connection| -> rusqlite::Result<()> {
+            let tx = db.transaction()?;
+            tx.execute("DELETE FROM segment WHERE meeting = ?1", [id])?; // a retry starts clean
+            for (start, end, who, text) in &said {
+                tx.execute("INSERT INTO segment(meeting, start_ms, end_ms, speaker, text) VALUES (?1, ?2, ?3, ?4, ?5)", (id, (start * 1000.0).round() as i64, (end * 1000.0).round() as i64, who, text))?;
+            }
+            // A meeting cut off by a crash never got its length.
+            tx.execute("UPDATE meeting SET state = 'done', failure = NULL, duration_ms = COALESCE(duration_ms, ?2) WHERE id = ?1", (id, mic.len() as i64 * 1000 / RATE as i64))?;
+            tx.commit()
+        };
+        save(&mut db).map_err(|e| format!("Couldn't save the notes: {e}"))
     }
 
     /// Stops the recording and keeps it: the audio is finished and the meeting is marked recorded.
@@ -577,6 +684,112 @@ mod tests {
         // The app dies here: no stop, no finalize.
         let r = hound::WavReader::open(tmp.path().join(format!("meetings/{id}/mic.wav"))).unwrap();
         assert!(r.len() >= RATE, "flushed once a second: {}", r.len());
+    }
+
+    /// A ±0.5 square wave for `secs` seconds, or silence: every tenth of a second of it carries the same energy.
+    fn wave(loud: bool, secs: f64) -> Vec<i16> {
+        (0..(secs * RATE as f64) as usize).map(|i| if !loud { 0 } else if (i / 50) % 2 == 0 { 16_000 } else { -16_000 }).collect()
+    }
+
+    fn write_track(dir: &std::path::Path, id: i64, name: &str, pieces: &[(bool, f64)]) {
+        let folder = dir.join(format!("meetings/{id}"));
+        std::fs::create_dir_all(&folder).unwrap();
+        let mut w = create(folder.join(name)).unwrap();
+        for (loud, secs) in pieces {
+            wave(*loud, *secs).into_iter().for_each(|s| w.write_sample(s).unwrap());
+        }
+        w.finalize().unwrap();
+    }
+
+    /// Says "1", "2", ... for each stretch of audio it's given, 0.1 s in, and counts what it was fed.
+    #[derive(Default)]
+    struct Count(Mutex<Vec<usize>>, Option<usize>);
+    impl Stt for Count {
+        fn transcribe(&self, audio: &[f32]) -> Result<Vec<Segment>, String> {
+            let mut calls = self.0.lock().unwrap();
+            calls.push(audio.len());
+            if self.1 == Some(calls.len()) {
+                return Err("The model fell over.".into());
+            }
+            Ok(vec![Segment { start: 0.1, end: 0.2, text: format!(" {} ", calls.len()) }])
+        }
+    }
+
+    fn said(m: &Meetings, id: i64) -> Vec<(i64, String, String)> {
+        let db = m.db.lock().unwrap();
+        let mut q = db.prepare("SELECT start_ms, speaker, text FROM segment WHERE meeting = ?1 ORDER BY id").unwrap();
+        q.query_map([id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(Result::unwrap).collect()
+    }
+
+    fn state(m: &Meetings, id: i64) -> (String, Option<String>) {
+        m.db.lock().unwrap().query_row("SELECT state, failure FROM meeting WHERE id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?))).unwrap()
+    }
+
+    /// Chunks of 2 s. The mic cuts in its quiet gap at 1.85 s, then where a window first ties (3.4 s, 4.95 s);
+    /// the call is silent until 3 s, so its first chunk and its last are skipped.
+    fn two_tracks(tmp: &std::path::Path) -> (Meetings, i64) {
+        let mut m = meetings(tmp, Fake(0));
+        m.chunk = 2 * RATE as usize;
+        let id = m.db.lock().unwrap().query_row("INSERT INTO meeting(started, state) VALUES (1, 'recorded') RETURNING id", [], |r| r.get(0)).unwrap();
+        write_track(tmp, id, "mic.wav", &[(true, 1.8), (false, 0.4), (true, 3.8)]);
+        write_track(tmp, id, "them.wav", &[(false, 3.0), (true, 1.0), (false, 2.0)]);
+        (m, id)
+    }
+
+    #[test]
+    fn me_and_them_are_merged_by_time_across_chunks_and_silence_is_skipped() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (m, id) = two_tracks(tmp.path());
+        let stt = Count::default();
+        let mut seen = vec![];
+        m.transcribe(id, &stt, &mut |p| seen.push(p)).unwrap();
+        assert_eq!(stt.0.lock().unwrap().len(), 6, "four chunks of Me and two of Them; two silent ones never reached the model");
+        let line = |ms: i64, who: &str, n: &str| (ms, who.to_string(), n.to_string());
+        assert_eq!(said(&m, id), [line(100, "Me", "1"), line(1650, "Them", "5"), line(1950, "Me", "2"), line(3200, "Them", "6"), line(3500, "Me", "3"), line(5050, "Me", "4")]);
+        assert_eq!(state(&m, id), ("done".into(), None));
+        assert!(seen.windows(2).all(|w| w[0] <= w[1]) && seen[0] == 0.0 && *seen.last().unwrap() < 1.0, "{seen:?}");
+        let ms: i64 = m.db.lock().unwrap().query_row("SELECT duration_ms FROM meeting", [], |r| r.get(0)).unwrap();
+        assert_eq!(ms, 6_000, "a meeting without a length gets the mic's");
+    }
+
+    #[test]
+    fn a_failure_keeps_the_audio_and_the_reason_and_try_again_finishes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (m, id) = two_tracks(tmp.path());
+        assert_eq!(m.transcribe(id, &Count(Default::default(), Some(2)), &mut |_| {}), Err("The model fell over.".into()));
+        assert_eq!(state(&m, id), ("failed".into(), Some("The model fell over.".into())));
+        assert!(said(&m, id).is_empty() && m.failed(id));
+        assert!(tmp.path().join(format!("meetings/{id}/mic.wav")).exists() && tmp.path().join(format!("meetings/{id}/them.wav")).exists());
+        assert!(m.unfinished().is_empty(), "a failed one waits for Try again, not for the next launch");
+        m.transcribe(id, &Count::default(), &mut |_| {}).unwrap();
+        assert_eq!((state(&m, id), said(&m, id).len(), m.failed(id)), (("done".into(), None), 6, false));
+        m.transcribe(id, &Count::default(), &mut |_| {}).unwrap();
+        assert_eq!(said(&m, id).len(), 6, "writing up again replaces the notes");
+    }
+
+    #[test]
+    fn a_meeting_cut_off_mid_recording_is_found_and_written_up_on_the_next_launch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let m = meetings(tmp.path(), Fake(RATE as usize * 3));
+        let id = m.start(1).unwrap();
+        // The app dies here: no stop, no finalize. The next launch opens the same folder.
+        let next = meetings(tmp.path(), Fake(0));
+        assert_eq!(next.unfinished(), [id]);
+        let stt = Count::default();
+        next.transcribe(id, &stt, &mut |_| {}).unwrap();
+        assert_eq!(*stt.0.lock().unwrap(), [RATE as usize * 3], "the flushed mic audio; the call was silent");
+        assert_eq!((said(&next, id).len(), state(&next, id)), (1, ("done".into(), None)));
+        assert!(next.unfinished().is_empty());
+    }
+
+    #[test]
+    fn cuts_land_in_the_quiet_and_never_exceed_the_limit() {
+        let tone: Vec<i16> = [wave(true, 1.0), wave(false, 0.4), wave(true, 1.0)].concat();
+        let max = 1.5 * RATE as f64;
+        let c = cuts(&tone, max as usize);
+        assert_eq!(c.len(), 2);
+        assert!(c[0].1 > (1.0 * RATE as f64) as usize && c[0].1 < (1.4 * RATE as f64) as usize, "{c:?}");
+        assert_eq!(cuts(&tone, 10 * RATE as usize), [(0, tone.len())]);
     }
 
     #[test]

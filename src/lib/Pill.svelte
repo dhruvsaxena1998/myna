@@ -8,6 +8,10 @@
     | { state: "writing" | "cleaning" | "added" }
     /** A meeting is recording (capsule only); `secs` is how long. */
     | { state: "recording" }
+    /** A finished meeting: being written up (`progress` 0 to 1), saved, or failed with `reason` (capsule only). */
+    | { state: "notes"; progress: number }
+    | { state: "notes-saved" }
+    | { state: "notes-failed"; reason: string }
     /** Added as the rules left it: `reason` says why the cleanup didn't count. */
     | { state: "fallback"; reason: string }
     | { state: "error"; title: string; hint: string };
@@ -18,10 +22,12 @@
 </script>
 
 <script lang="ts">
+  import type { Snippet } from "svelte";
   import { keycaps } from "./shortcut";
   // `wave` is the recent mic levels, 0 to 1, oldest first; its last one drives the bars and the ring.
   // `left`: seconds until tap mode stops by itself, during the last 30; otherwise null.
-  let { style, pill, wave, secs, left = null }: { style: Style; pill: Shown; wave: number[]; secs: number; left?: number | null } = $props();
+  // `actions`: buttons at the end of the capsule (the meeting notes' Open, Try again and dismiss).
+  let { style, pill, wave, secs, left = null, actions }: { style: Style; pill: Shown; wave: number[]; secs: number; left?: number | null; actions?: Snippet } = $props();
   const level = $derived(wave.at(-1) ?? 0);
   const WEIGHTS = [0.5, 0.8, 1, 0.75, 0.45]; // the middle bars move most
   // What needs words even on the orb: an error, or a fallback.
@@ -35,9 +41,10 @@
   const hint = $derived(pill.state !== "listening" ? "" : left !== null ? `Adding in ${left} s` : pill.hold ? "Release to paste" : "Press again to paste");
 </script>
 
-{#snippet icon(kind: "check" | "warn" | "mic")}
+{#snippet icon(kind: "check" | "warn" | "mic" | "x")}
   <svg class="ic" viewBox="0 0 24 24" aria-hidden="true">
     {#if kind === "check"}<path d="M5 12.5l4.5 4.5L19 7.5" />
+    {:else if kind === "x"}<path d="M6 6l12 12M18 6 6 18" />
     {:else if kind === "warn"}<path d="M12 4 2.5 20h19zM12 10v4.5M12 17.2v.1" />
     {:else}<rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" />{/if}
   </svg>
@@ -63,6 +70,12 @@
     </span>
   {:else if pill.state === "recording"}
     <span class="recdot" aria-hidden="true"></span><span>Recording</span><time>{clock}</time><span class="sub">Mic live</span>
+  {:else if pill.state === "notes"}
+    <span>Writing up your notes…</span><span class="bar" aria-hidden="true"><i style:width="{Math.round(pill.progress * 100)}%"></i></span><time>{Math.round(pill.progress * 100)}%</time>
+  {:else if pill.state === "notes-saved"}
+    {@render icon("check")}<span>Notes saved</span>{@render actions?.()}
+  {:else if pill.state === "notes-failed"}
+    {@render icon("warn")}<span>Couldn’t write up your notes</span><span class="sub">{pill.reason}</span>{@render actions?.()}
   {:else if note}
     {@render icon("warn")}<span>{note.title}</span><span class="sub">{note.hint}</span>
   {:else if pill.state === "listening"}
@@ -98,6 +111,9 @@
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
   @media (prefers-reduced-motion: reduce) { .recdot { animation: none; } }
   time { font-variant-numeric: tabular-nums; }
+  /* Writing up the notes: a thin bar that fills. */
+  .bar { width: 64px; height: 3px; flex: none; border-radius: 2px; overflow: hidden; background: var(--hud-fill); }
+  .bar i { display: block; height: 100%; background: var(--hud-fg); transition: width var(--dur) var(--ease-out); }
   /* Capsule: 40px, bars and words. */
   .capsule { height: var(--h-hud); padding: 0 var(--sp-4); border-radius: var(--r-full); }
   /* Orb: a 32px blob with no words while things go well; errors grow it into a capsule. */

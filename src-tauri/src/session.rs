@@ -307,6 +307,20 @@ impl Session {
     }
 }
 
+/// A meeting's audio goes through the dictation's loaded model, one chunk at a time: the lock is let go between
+/// chunks, so a dictation waits for at most the chunk in progress.
+impl crate::meeting::Stt for Session {
+    fn transcribe(&self, audio: &[f32]) -> Result<Vec<runtime::Segment>, String> {
+        self.unload_gen.fetch_add(1, Ordering::SeqCst); // a pending unload must not fire between chunks
+        let id = self.active_stt()?;
+        let mut slot = self.transcriber.lock().unwrap();
+        self.load(&mut slot, &id)?;
+        let model = slot.as_mut().unwrap().1.as_mut();
+        model.bias(""); // the last dictation's words are not this meeting's
+        model.transcribe(audio)
+    }
+}
+
 impl Session {
     /// Dictate with cleanup's step: the Fast model's cleanup of `text`, or `text` itself and why. Also the model's name.
     fn cleanup(&self, text: &str, words: &rules::Settings, app: Option<&str>) -> (Option<String>, cleanup::Outcome) {

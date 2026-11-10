@@ -22,7 +22,28 @@
   // A meeting recording: its start time, or null. Its pill shares the dictation pill's spot, so it steps aside while dictation shows.
   let meetStarted = $state<number | null>(null);
   let meetSecs = $state(0);
-  const meeting = $derived(meetStarted !== null && !on);
+  // A finished meeting's notes: being written up, saved, or failed. Shown in the same spot once the recording is over.
+  let notes = $state<{ id: number; state: "transcribing" | "done" | "failed"; progress: number; error: string | null } | null>(null);
+  let notesEl = $state<HTMLElement>();
+  let notesHide: ReturnType<typeof setTimeout> | undefined;
+  const meeting = $derived((meetStarted !== null || notes !== null) && !on);
+  const shown = $derived<Shown | null>(
+    meetStarted !== null ? { state: "recording" }
+    : !notes ? null
+    : notes.state === "transcribing" ? { state: "notes", progress: notes.progress }
+    : notes.state === "done" ? { state: "notes-saved" }
+    : { state: "notes-failed", reason: notes.error ?? "Something went wrong." },
+  );
+  const dismiss = () => (clearTimeout(notesHide), (notes = null));
+  function openNotes() {
+    if (notes) invoke("meeting_open", { id: notes.id }); // the main window shows it (05.4)
+    dismiss();
+  }
+  async function retry() {
+    if (!notes) return;
+    const id = notes.id;
+    await invoke("meeting_retry", { id }).catch((e) => (notes = { id, state: "failed", progress: 0, error: String(e) }));
+  }
   let hide: ReturnType<typeof setTimeout> | undefined;
   // Ask how it went: 👍/👎 for the dictation just added, then "Fix it" after a 👎.
   let ask = $state<{ trace: number; rated: "up" | "down" | null } | null>(null);
@@ -30,8 +51,9 @@
   const close = (after: number) => (clearTimeout(hide), (hide = setTimeout(() => ((on = false), (ask = null)), after)));
   // The window takes the mouse only over these buttons (pill.rs `pill_hit`); the rest stays click-through.
   $effect(() => {
-    if (!ask || !askEl) return void invoke("pill_hit", { rect: null });
-    const r = askEl.getBoundingClientRect();
+    const el = ask ? askEl : notesEl;
+    if (!el) return void invoke("pill_hit", { rect: null });
+    const r = el.getBoundingClientRect();
     invoke("pill_hit", { rect: [r.x, r.y, r.width, r.height] });
   });
   async function rate(rating: "up" | "down") {
@@ -68,6 +90,11 @@
         if (payload.state === "error") hide = setTimeout(() => (on = false), 4000);
       }),
       listen<{ started: number | null }>("meeting", ({ payload }) => ((meetStarted = payload.started), (meetSecs = payload.started === null ? 0 : Math.max(0, Math.floor((Date.now() - payload.started) / 1000))))),
+      listen<NonNullable<typeof notes>>("meeting-notes", ({ payload }) => {
+        clearTimeout(notesHide);
+        notes = payload;
+        if (payload.state === "done") notesHide = setTimeout(() => (notes = null), 8000); // a failure stays until it's dealt with
+      }),
       listen<number>("dictation-ask", ({ payload }) => ((ask = { trace: payload, rated: null }), (on = true), close(4000))),
       // Over the buttons (pill.rs tells us; the page can't see the pointer leave): up to 8 s, then 1.5 s after leaving. Never for good.
       listen<boolean>("pill-hover", ({ payload }) => ask && ask.rated !== "up" && close(payload ? 8000 : 1500)),
@@ -96,13 +123,13 @@
     invoke("glass_set", { glass });
   }
   $effect(() => {
-    void [appearance && glassOn(appearance), appearance?.glass, appearance?.accent, look.style, look.place, on, meeting, meetStarted, ask?.rated, askEl]; // any of these moves or restyles the glass (the backend picks the tint)
+    void [appearance && glassOn(appearance), appearance?.glass, appearance?.accent, look.style, look.place, on, meeting, meetStarted, notes?.state, ask?.rated, askEl]; // any of these moves or restyles the glass (the backend picks the tint)
     syncGlass();
   });
   $effect(() => {
     const ro = new ResizeObserver(() => syncGlass()); // the pill's words change its width
     ro.observe(spot.querySelector(".hud")!);
-    void meetStarted; // the pill is drawn only while recording
+    void [meetStarted, notes?.state]; // the pill is drawn only while recording or showing notes
     const mh = meetSpot.querySelector(".hud");
     if (mh) ro.observe(mh);
     return () => ro.disconnect();
@@ -127,12 +154,28 @@
   {/if}
   </span>
 </div>
-<!-- Not clickable yet: live notes will open from it. -->
+<!-- The recording isn't clickable yet (live notes will open from it); the written-up notes have buttons. -->
 <div class="spot {look.place}" class:on={meeting} role="status" bind:this={meetSpot}>
-  {#if meetStarted !== null}<Pill style="capsule" pill={{ state: "recording" }} {wave} secs={meetSecs} />{/if}
+  {#if shown}
+    <Pill style="capsule" pill={shown} {wave} secs={meetSecs}>
+      {#snippet actions()}
+        <span class="acts" bind:this={notesEl}>
+          {#if notes?.state === "failed"}<button class="act" onclick={retry}>Try again</button>
+          {:else}<button class="act" onclick={openNotes}>Open</button>{/if}
+          <button class="act x" aria-label="Dismiss" onclick={dismiss}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button>
+        </span>
+      {/snippet}
+    </Pill>
+  {/if}
 </div>
 
 <style>
+  .acts { display: flex; gap: 2px; margin-right: -8px; }
+  .act { height: 24px; padding: 0 10px; border: 0; border-radius: 12px; background: var(--hud-fill); color: var(--hud-fg); font: inherit; cursor: default; }
+  .act:hover { background: color-mix(in srgb, var(--hud-fg) 22%, transparent); }
+  .act:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+  .act.x { width: 24px; padding: 0; display: grid; place-items: center; background: none; color: var(--hud-2); }
+  .act.x svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: var(--ic-stroke); stroke-linecap: round; }
   /* A grid, not flex: WebKit sizes a flex wrapper without the card's 280px minimum, so the card overflowed it
      (under the segment, and off the window at the right). */
   .anchor { position: relative; display: inline-grid; flex: none; --seg-r: var(--r-full); }
