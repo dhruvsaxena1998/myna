@@ -1,4 +1,4 @@
-import { PORTS, REPLACED, WRONG_CODE, hello, mute, parse, ping, tab as tabMsg } from "./messages.js";
+import { PORTS, REPLACED, WRONG_CODE, caption, captions, hello, mute, parse, ping, tab as tabMsg } from "./messages.js";
 import { isTeams } from "./selectors.js";
 
 // The service worker sleeps, so everything here can start over: the status lives in storage, and an alarm
@@ -99,6 +99,12 @@ chrome.runtime.onMessage.addListener((m, sender) => {
   if (sender.id !== chrome.runtime.id) return;
   if (m?.type === "mute") {
     if (["muted", "unmuted", "unknown"].includes(m.state) && Number.isFinite(m.at) && ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(mute(m.state, m.at)));
+  } else if (m?.type === "caption") {
+    if (typeof m.name === "string" && m.name.trim() && Number.isFinite(m.at) && ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(caption(m.name.trim().slice(0, 80), m.at, typeof m.text === "string" ? m.text.trim().slice(0, 300) : undefined)));
+    }
+  } else if (m?.type === "captions") {
+    if (m.state === "unavailable" && ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(captions("unavailable")));
   } else if (m?.type === "record-tab") {
     if (Number.isInteger(m.tabId) && typeof m.streamId === "string") startTab(m.tabId, String(m.title ?? ""), m.streamId);
   } else if (m?.type === "stop-tab-click" || m?.type === "tab-ended") {

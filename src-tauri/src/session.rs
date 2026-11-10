@@ -321,6 +321,17 @@ impl crate::meeting::Stt for Session {
     }
 }
 
+/// The Them track is told apart by the active diarization model, loaded for the meeting and dropped after.
+impl crate::meeting::Voices for Session {
+    fn diarize(&self, audio: &[f32]) -> Result<Vec<runtime::Turn>, String> {
+        let tasks = models::list(&self.db.lock().unwrap(), &self.models_dir, self.macos, &self.world.speech())?;
+        let diar = tasks.into_iter().find(|t| t.id == "diar").ok_or("No voice task.")?;
+        let installed = |id: &str| diar.models.iter().any(|m| m.id == id && m.installed);
+        let mut d = runtime::pick_diarizer(diar.active.as_deref().unwrap_or("sortformer"), &installed, &|id| runtime::diarizer(id, &self.models_dir))?;
+        d.diarize(audio)
+    }
+}
+
 impl Session {
     /// Dictate with cleanup's step: the Fast model's cleanup of `text`, or `text` itself and why. Also the model's name.
     fn cleanup(&self, text: &str, words: &rules::Settings, app: Option<&str>) -> (Option<String>, cleanup::Outcome) {

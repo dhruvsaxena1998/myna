@@ -8,9 +8,10 @@ export const WRONG_CODE = 4001;
 export const REPLACED = 4002;
 
 export const hello = (code) => ({ v: V, type: "hello", code });
-// `mute` comes from the Teams content script (through the worker); `caption` is for 07.4.
+// `mute`, `caption` and `captions` come from the Teams content script (through the worker).
 export const mute = (state, at) => ({ v: V, type: "mute", state, at }); // state: "unmuted" | "muted" | "unknown"
-export const caption = (speaker, at) => ({ v: V, type: "caption", speaker, at });
+export const caption = (name, at, text) => ({ v: V, type: "caption", name, at, ...(text ? { text } : {}) });
+export const captions = (state) => ({ v: V, type: "captions", state }); // state: "unavailable"
 // `tab` brackets the binary audio frames (see audio.js); Myna answers a meeting's end with `stop-tab`.
 export const tab = (state, title) => ({ v: V, type: "tab", state, title }); // state: "start" | "stop"
 export const ping = () => ({ v: V, type: "ping" });

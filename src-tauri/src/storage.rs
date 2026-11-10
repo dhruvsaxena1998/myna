@@ -33,6 +33,12 @@ const MIGRATIONS: &[&str] = &[
     "CREATE TABLE mute_event(id INTEGER PRIMARY KEY, meeting INTEGER NOT NULL REFERENCES meeting(id), at_ms INTEGER NOT NULL, state TEXT NOT NULL, source TEXT NOT NULL);
      ALTER TABLE segment ADD COLUMN mute TEXT;
      ALTER TABLE segment ADD COLUMN included INTEGER NOT NULL DEFAULT 0;",
+    // `segment.label` is the Them line's display name ("Speaker 2", or a caption's name); `speaker` stays 'Me' | 'Them' for older builds.
+    // `meeting.note`: why voices weren't told apart, shown on the page. `meeting.captions`: 'unavailable' when the add-on couldn't read them.
+    "CREATE TABLE caption_event(id INTEGER PRIMARY KEY, meeting INTEGER NOT NULL REFERENCES meeting(id), at_ms INTEGER NOT NULL, name TEXT NOT NULL, text TEXT);
+     ALTER TABLE segment ADD COLUMN label TEXT;
+     ALTER TABLE meeting ADD COLUMN note TEXT;
+     ALTER TABLE meeting ADD COLUMN captions TEXT;",
 ];
 const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
 

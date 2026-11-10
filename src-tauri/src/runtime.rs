@@ -17,7 +17,6 @@ pub struct Segment {
     pub text: String,
 }
 
-#[cfg_attr(not(test), allow(dead_code))] // first caller is Meetings (story 05)
 #[derive(Debug, Clone, PartialEq)]
 pub struct Turn {
     pub start: f32,
@@ -31,7 +30,6 @@ pub trait Transcriber: Send {
     fn bias(&mut self, _words: &str) {}
 }
 
-#[cfg_attr(not(test), allow(dead_code))] // first caller is Meetings (story 05)
 pub trait Diarizer: Send {
     fn diarize(&mut self, audio: &[f32]) -> Result<Vec<Turn>, String>;
 }
@@ -63,7 +61,6 @@ pub fn transcriber(id: &str, models_dir: &Path) -> Result<Box<dyn Transcriber>, 
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))] // first caller is Meetings (story 05)
 /// Loads the diarization model `id` from `models_dir/<id>/`.
 pub fn diarizer(id: &str, models_dir: &Path) -> Result<Box<dyn Diarizer>, String> {
     let m = models::find(id).ok_or_else(|| format!("Unknown model {id}"))?;
@@ -76,6 +73,23 @@ pub fn diarizer(id: &str, models_dir: &Path) -> Result<Box<dyn Diarizer>, String
         }
         _ => Err(format!("{} can't run in Myna yet", m.name)),
     }
+}
+
+type Loaded = Result<Box<dyn Diarizer>, String>;
+
+/// The diarizer for a meeting: the active model if it's downloaded and loads, else Sortformer (Who isn't runnable yet).
+/// Err says to download one when none is, or why the last one tried didn't load.
+pub fn pick_diarizer(active: &str, installed: &dyn Fn(&str) -> bool, load: &dyn Fn(&str) -> Loaded) -> Loaded {
+    let mut err = "Download a voice model in Settings › Speech models".to_string();
+    for id in [active, "sortformer"] {
+        if installed(id) {
+            match load(id) {
+                Ok(d) => return Ok(d),
+                Err(e) => err = e,
+            }
+        }
+    }
+    Err(err)
 }
 
 fn first_file(m: &models::Model, dir: &Path) -> PathBuf {
@@ -149,7 +163,6 @@ impl Transcriber for AppleSpeech {
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))] // first caller is Meetings (story 05)
 struct Sort(Sortformer);
 
 impl Diarizer for Sort {
@@ -210,6 +223,20 @@ mod tests {
         let (p, s) = both(tmp.path());
         assert!(p.starts_with(&format!("{parakeet} didn't start")) && p.ends_with("Download it again."), "{p}");
         assert!(s.starts_with(&format!("{sortformer} didn't start")) && s.ends_with("Download it again."), "{s}");
+    }
+
+    #[test]
+    fn the_diarizer_falls_back_to_sortformer_and_says_when_there_is_none() {
+        let turn = Turn { start: 0.0, end: 1.0, speaker: 0 };
+        let load = |id: &str| -> Loaded {
+            if id == "who" { Err("Who can't run yet".into()) } else { Ok(Box::new(Fake(vec![Turn { speaker: 7, ..turn.clone() }]))) }
+        };
+        let pick = |active: &str, there: &'static [&'static str]| pick_diarizer(active, &|id| there.contains(&id), &load).map(|mut d| d.diarize(&[]).unwrap()[0].speaker);
+        assert_eq!(pick("who", &["who", "sortformer"]), Ok(7), "the active one won't load");
+        assert_eq!(pick("who", &["sortformer"]), Ok(7), "the active one isn't downloaded");
+        assert_eq!(pick("sortformer", &["sortformer"]), Ok(7));
+        assert_eq!(pick("who", &["who"]).err().unwrap(), "Who can't run yet");
+        assert_eq!(pick("who", &[]).err().unwrap(), "Download a voice model in Settings › Speech models");
     }
 
     #[test]

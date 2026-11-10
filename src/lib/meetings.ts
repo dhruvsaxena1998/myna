@@ -7,9 +7,11 @@ export type Meeting = {
   source_app: string | null;
   state: "recorded" | "transcribing" | "done" | "failed";
   failure: string | null;
+  /** Worth knowing about a finished meeting, like why voices weren't told apart. */
+  note: string | null;
 };
 /** `hidden`: said while muted and left out; its `text` is empty. `included`: kept by the user, shown with a marker. */
-export type Line = { id: number; speaker: "Me" | "Them"; start_ms: number; text: string; muted: boolean; included: boolean; hidden: boolean };
+export type Line = { id: number; speaker: string; /* "Me", a caption name, "Speaker 2"…, or "Them" when voices weren't told apart */ start_ms: number; text: string; muted: boolean; included: boolean; hidden: boolean };
 export type Page = Meeting & { segments: Line[] };
 /** The recording in progress, or none. */
 /** `mic`: "live" or "muted" while the browser add-on mirrors the mute button, else null. */

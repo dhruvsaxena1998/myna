@@ -5,10 +5,10 @@ import { fakeTauri } from "./tauri";
 const MEETINGS = `(() => {
   const at = (days, h, m) => { const d = new Date(); d.setDate(d.getDate() - days); d.setHours(h, m, 0, 0); return d.getTime(); };
   return [
-    { id: 5, title: "Untitled meeting", started: at(0, 11, 0), duration_ms: 42 * 60000, source_app: "Google Meet", state: "done", failure: null },
-    { id: 4, title: "Untitled meeting", started: at(0, 9, 30), duration_ms: 5 * 60000, source_app: null, state: "failed", failure: "The model fell over." },
-    { id: 3, title: "Untitled meeting", started: at(1, 15, 30), duration_ms: 35 * 60000, source_app: "Microsoft Teams", state: "done", failure: null },
-    { id: 2, title: "Untitled meeting", started: at(3, 10, 0), duration_ms: 28 * 60000, source_app: "Google Meet", state: "done", failure: null },
+    { id: 5, title: "Untitled meeting", started: at(0, 11, 0), duration_ms: 42 * 60000, source_app: "Google Meet", state: "done", failure: null, note: null },
+    { id: 4, title: "Untitled meeting", started: at(0, 9, 30), duration_ms: 5 * 60000, source_app: null, state: "failed", failure: "The model fell over.", note: null },
+    { id: 3, title: "Untitled meeting", started: at(1, 15, 30), duration_ms: 35 * 60000, source_app: "Microsoft Teams", state: "done", failure: null, note: null },
+    { id: 2, title: "Untitled meeting", started: at(3, 10, 0), duration_ms: 28 * 60000, source_app: "Google Meet", state: "done", failure: null, note: null },
   ];
 })()`;
 const line = (id: number, speaker: string, start_ms: number, text: string, flags = {}) => ({ id, speaker, start_ms, text, muted: false, included: false, hidden: false, ...flags });
@@ -60,7 +60,7 @@ test("Start notes starts, the live card shows the recording, and Stop ends it", 
 });
 
 test("after Stop the card says it is writing up the notes, then the meeting joins the list in place", async ({ page }) => {
-  let fresh = `{ id: 6, title: "Untitled meeting", started: Date.now(), duration_ms: 60000, source_app: null, state: "recorded", failure: null }`;
+  let fresh = `{ id: 6, title: "Untitled meeting", started: Date.now(), duration_ms: 60000, source_app: null, state: "recorded", failure: null, note: null }`;
   await open(page, `meetings_list: () => ${MEETINGS}.concat(window.__fresh ? [window.__fresh] : []).sort((a, b) => b.started - a.started)`);
   await page.evaluate((f) => ((window as any).__fresh = new Function(`return (${f})`)()), fresh);
   await emit(page, "meeting-notes", { id: 6, state: "transcribing", progress: 0, error: null });
@@ -149,4 +149,17 @@ test("meeting-open, from the pill or the menubar, goes to that meeting from any 
   await emit(page, "meeting-open", 5);
   await expect(page.getByText("Launch is still the 18th.")).toBeVisible();
   expect(await calls(page, "meeting_page")).toEqual([{ id: 5 }]);
+});
+
+test("the other side's lines show their speaker names, and a note says why voices weren't told apart", async ({ page }) => {
+  const named = JSON.stringify([line(1, "Me", 12000, "Okay, let's start."), line(2, "Ana Ruiz", 30000, "Go on."), line(3, "Speaker 3", 40000, "Launch is the 18th.")]);
+  await open(page, `meeting_page: () => ({ ...${MEETINGS}[0], note: window.__note ?? null, segments: ${named} })`);
+  await page.getByRole("button", { name: "Untitled meeting" }).first().click();
+  await expect(page.locator(".seg").nth(1)).toContainText("Ana Ruiz00:30");
+  await expect(page.locator(".seg").nth(2)).toContainText("Speaker 300:40");
+  await expect(page.locator(".note")).toHaveCount(0);
+  await page.evaluate(() => ((window as any).__note = "Couldn't tell voices apart: Download Sortformer in Settings › Speech models"));
+  await page.getByRole("button", { name: "Back to meetings" }).click();
+  await page.getByRole("button", { name: "Untitled meeting" }).first().click();
+  await expect(page.locator(".note")).toHaveText("Couldn't tell voices apart: Download Sortformer in Settings › Speech models");
 });
