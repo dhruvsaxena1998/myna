@@ -1,0 +1,49 @@
+/** A meeting as `meetings_list` returns it. `state`: recorded and transcribing are still being written up. */
+export type Meeting = {
+  id: number;
+  title: string;
+  started: number;
+  duration_ms: number | null;
+  source_app: string | null;
+  state: "recorded" | "transcribing" | "done" | "failed";
+  failure: string | null;
+};
+export type Line = { speaker: "Me" | "Them"; start_ms: number; text: string };
+export type Page = Meeting & { segments: Line[] };
+/** The recording in progress, or none. */
+export type Running = { id: number; started: number; source: string | null } | null;
+/** `meeting-notes`: how writing up a meeting is going. */
+export type Progress = { id: number; state: "transcribing" | "done" | "failed"; progress: number; error: string | null };
+
+export const writing = (m: Meeting) => m.state === "recorded" || m.state === "transcribing";
+
+const WEEKDAY = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const day = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+
+/** The day heading and the date beside it, like the design: Today / Yesterday / weekday, else just the date. */
+export function dayHead(ms: number, now = new Date()): [string, string] {
+  const d = new Date(ms);
+  const days = Math.round((day(now) - day(d)) / 864e5);
+  const date = d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  if (days === 0 || days === 1) return [days ? "Yesterday" : "Today", `${d.toLocaleDateString("en-GB", { weekday: "short" })} ${date}`];
+  return days < 7 ? [WEEKDAY[d.getDay()], date] : [`${date} ${d.getFullYear()}`, ""];
+}
+
+export const hm = (ms: number) => new Date(ms).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+
+/** "mm:ss". */
+export function clock(ms: number) {
+  const s = Math.floor(Math.max(0, ms) / 1000);
+  return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+}
+
+export function length(ms: number) {
+  const m = Math.max(1, Math.round(ms / 60000));
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""}`;
+}
+
+/** "11:00 · 42 min · Google Meet", leaving out what isn't known. */
+export const meta = (m: Meeting) => [hm(m.started), m.duration_ms === null ? "" : length(m.duration_ms), m.source_app ?? ""].filter(Boolean).join(" · ");
+
+/** The transcript as plain text: "Me 00:12\nwhat was said", a blank line between. */
+export const plain = (lines: Line[]) => lines.map((l) => `${l.speaker} ${clock(l.start_ms)}\n${l.text}`).join("\n\n");

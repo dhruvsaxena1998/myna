@@ -62,6 +62,12 @@ struct MeetItem {
     note: MenuItem<Wry>,
 }
 
+/// The last meetings under "Recent" in the menubar menu. Tauri menus can't hide an item, so they go in and out.
+struct Recent {
+    menu: Menu<Wry>,
+    shown: Mutex<Vec<tauri::menu::MenuItemKind<Wry>>>,
+}
+
 /// "Start voice typing with cleanup": in the menu only while a Fast model is set (`sync_clean_item`).
 struct CleanItem {
     item: MenuItem<Wry>,
@@ -476,6 +482,37 @@ fn meeting_retry(app: AppHandle, id: i64) -> Result<(), String> {
     Ok(())
 }
 
+/// Every meeting, newest first, for the Meetings list.
+#[tauri::command]
+fn meetings_list(d: tauri::State<Data>) -> Result<Vec<meeting::Row>, String> {
+    meeting::list(&d.db.lock().unwrap())
+}
+
+/// One meeting and its transcript, for its page.
+#[tauri::command]
+fn meeting_page(d: tauri::State<Data>, id: i64) -> Result<meeting::Page, String> {
+    meeting::page(&d.db.lock().unwrap(), id)
+}
+
+/// The recording in progress, `{ id, started, source }` (source: the app on the call, once heard), for the Meetings
+/// list's live card; none when not recording.
+#[tauri::command]
+fn meeting_running(d: tauri::State<Data>, m: tauri::State<meeting::Meetings>) -> Option<serde_json::Value> {
+    let (id, started) = m.running()?;
+    Some(running_json(&d.db.lock().unwrap(), id, started))
+}
+
+fn running_json(db: &rusqlite::Connection, id: i64, started: i64) -> serde_json::Value {
+    let source: Option<String> = db.query_row("SELECT source_app FROM meeting WHERE id = ?1", [id], |r| r.get(0)).ok().flatten();
+    serde_json::json!({ "id": id, "started": started, "source": source })
+}
+
+/// "Start notes" and "Stop" in the Meetings list: what the shortcut does.
+#[tauri::command]
+fn meeting_toggle(app: AppHandle) {
+    toggle_meeting(&app);
+}
+
 /// "Open" on the pill's "Notes saved". The meeting page is the main window's (05.4): it listens for `meeting-open`.
 #[tauri::command]
 fn meeting_open(app: AppHandle, id: i64) {
@@ -706,6 +743,7 @@ fn start_meeting(app: &AppHandle) {
     };
     let running = m.running();
     show_menu_recording(app, running);
+    let _ = app.emit("meeting-running", running.map(|(id, started)| running_json(&d.db.lock().unwrap(), id, started)));
     pill::meeting(app, running.map(|(_, s)| s));
     if let Ok(look) = pill::look(&d.db.lock().unwrap()) {
         pill::place(app, look.place);
@@ -746,6 +784,7 @@ fn stop_meeting(app: &AppHandle) {
         Err(e) => notify::send("Couldn’t save the recording", &e),
     }
     show_menu_recording(app, None);
+    let _ = app.emit("meeting-running", None::<()>);
     pill::meeting(app, None);
 }
 
@@ -765,7 +804,42 @@ fn write_up_meeting(app: &AppHandle, id: i64) {
             Ok(()) => say("done", 1.0, None),
             Err(e) => say("failed", 0.0, Some(&e)),
         }
+        sync_recent(&app);
     });
+}
+
+/// Puts the last 3 meetings in the menu under "Recent", or takes the section out when there are none.
+fn sync_recent(app: &AppHandle) {
+    let (Some(r), Some(d)) = (app.try_state::<Recent>(), app.try_state::<Data>()) else { return };
+    // Read first: the menu calls wait on the main thread, which mustn't wait on this lock.
+    let rows = meeting::list(&d.db.lock().unwrap()).unwrap_or_default();
+    let mut shown = r.shown.lock().unwrap();
+    for old in shown.drain(..) {
+        let _ = r.menu.remove(&old);
+    }
+    if rows.is_empty() {
+        return;
+    }
+    let now = now_ms();
+    let mut items: Vec<tauri::menu::MenuItemKind<Wry>> = vec![];
+    if let Ok(h) = MenuItemBuilder::with_id("recent", "Recent").enabled(false).build(app) {
+        items.push(tauri::menu::MenuItemKind::MenuItem(h));
+    }
+    for m in rows.iter().take(3) {
+        let label = format!("{}  ·  {}", m.title, meeting::when(m.started, now));
+        if let Ok(i) = MenuItemBuilder::with_id(format!("recent-{}", m.id), label).build(app) {
+            items.push(tauri::menu::MenuItemKind::MenuItem(i));
+        }
+    }
+    if let Ok(s) = PredefinedMenuItem::separator(app) {
+        items.push(tauri::menu::MenuItemKind::Predefined(s));
+    }
+    // Before "Open Myna", which the update item at the top doesn't move.
+    let at = r.menu.items().ok().and_then(|i| i.iter().position(|x| x.id().as_ref() == "open")).unwrap_or(0);
+    for (n, i) in items.iter().enumerate() {
+        let _ = r.menu.insert(i, at + n);
+    }
+    *shown = items;
 }
 
 /// Puts "Start voice typing with cleanup" in the menu under "Start voice typing" while a Fast model is set, and takes it out when not.
@@ -828,7 +902,7 @@ fn open_update(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![pill::pill_hit, dictation_fix, fix_take, debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, meeting_get, meeting_set, meeting_retry, meeting_open, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
+        .invoke_handler(tauri::generate_handler![pill::pill_hit, dictation_fix, fix_take, debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, meeting_get, meeting_set, meeting_retry, meeting_open, meetings_list, meeting_page, meeting_running, meeting_toggle, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::Updates::default())
         .setup(|app| {
@@ -907,6 +981,7 @@ pub fn run() {
             // Not in the menu until a Fast model is set; sync_clean_item adds it.
             let clean_item = MenuItemBuilder::with_id("dictate-clean", "Start voice typing with cleanup").enabled(false).build(app)?;
             app.manage(CleanItem { item: clean_item, menu: menu.clone() });
+            app.manage(Recent { menu: menu.clone(), shown: Default::default() });
             // Tauri menus can't hide an item, so the update item and its separator go in and out at the top.
             let (update_item, update_sep) = (MenuItemBuilder::with_id("update", "").build(app)?, PredefinedMenuItem::separator(app)?);
             let (h, m) = (app.handle().clone(), menu.clone());
@@ -937,6 +1012,11 @@ pub fn run() {
                     "dictate" => app.state::<Arc<Session>>().toggle(false),
                     "dictate-clean" => app.state::<Arc<Session>>().toggle(true),
                     "meeting" => toggle_meeting(app),
+                    id if id.starts_with("recent-") => {
+                        if let Ok(id) = id["recent-".len()..].parse() {
+                            meeting_open(app.clone(), id);
+                        }
+                    }
                     "open" => open_main(app),
                     "settings" => open_window(app, "settings"),
                     "update" => open_update(app),
@@ -958,6 +1038,7 @@ pub fn run() {
             }
             // Meetings the app died or quit in the middle of: finish and write them up.
             if !failed {
+                sync_recent(app.handle());
                 for id in app.state::<meeting::Meetings>().unfinished() {
                     write_up_meeting(app.handle(), id);
                 }

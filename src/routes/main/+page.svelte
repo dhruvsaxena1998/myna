@@ -1,4 +1,4 @@
-<!-- The main window (docs/index.html `app()`): only what's built so far. Meetings, Chat, Folders and Tags join the sidebar with their stories. -->
+<!-- The main window (docs/index.html `app()`): only what's built so far. Chat, Folders and Tags join the sidebar with their stories. -->
 <script lang="ts">
   let { data } = $props();
   import { invoke } from "@tauri-apps/api/core";
@@ -6,6 +6,10 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import ErrorState from "$lib/ErrorState.svelte";
   import History from "$lib/History.svelte";
+  import Meeting from "$lib/Meeting.svelte";
+  import Meetings from "$lib/Meetings.svelte";
+  import type { Notes } from "$lib/MeetingNotes.svelte";
+  import { writing, type Meeting as Row_, type Page, type Progress, type Running } from "$lib/meetings";
   import Traces from "$lib/Traces.svelte";
   import Yours from "$lib/Yours.svelte";
   import { glassOn, syncGlass, type Look } from "$lib/look";
@@ -20,7 +24,16 @@
   let all = $state<Trace[]>(data.all?.ok ? data.all.traces : []);
   // svelte-ignore state_referenced_locally
   let words = $state(data.words);
-  let current = $state<"history" | "yours" | "nerds">("history");
+  // svelte-ignore state_referenced_locally
+  let meetings = $state<Row_[]>(data.meetings?.ok ? data.meetings.rows : []);
+  // svelte-ignore state_referenced_locally
+  let notes = $state<Notes>(data.notes);
+  // svelte-ignore state_referenced_locally
+  let running = $state<Running>(data.running);
+  let progress = $state<Record<number, Progress>>({});
+  let page = $state<Page | null>(null); // the open meeting, loaded before the view swaps so it never pops in
+  let meetingError = $state("");
+  let current = $state<"meetings" | "history" | "yours" | "nerds">("meetings");
   let fix = $state<number | null>(null);
   // Fix it on the pill: the dictation it rated 👎, with its "What did you mean?" open. The backend holds it until
   // taken, so a "fix" event missed while the page reloaded or slept still lands on load or on focus.
@@ -35,6 +48,52 @@
     const un = listen<number>("fix", takeFix);
     return () => void un.then((f) => f());
   });
+  const refresh = () => invoke<Row_[]>("meetings_list").then((r) => (meetings = r), () => {});
+  async function openMeeting(id: number) {
+    try {
+      page = await invoke<Page>("meeting_page", { id });
+      meetingError = "";
+    } catch (err) {
+      (page = null), (meetingError = String(err));
+    }
+    current = "meetings";
+  }
+  async function enable() {
+    try {
+      await invoke("meeting_set", { notes: { ...notes, on: true } });
+      notes = { ...notes, on: true };
+    } catch (err) {
+      meetingError = String(err);
+    }
+  }
+  async function retry(id: number) {
+    try {
+      await invoke("meeting_retry", { id });
+    } catch (err) {
+      meetingError = String(err);
+    }
+  }
+  $effect(() => {
+    const un = [
+      // The pill's Open and the menubar's Recent.
+      listen<number>("meeting-open", ({ payload }) => openMeeting(payload)),
+      listen<Running>("meeting-running", ({ payload }) => (running = payload)),
+      listen<Progress>("meeting-notes", ({ payload }) => {
+        const was = progress[payload.id]?.state;
+        progress[payload.id] = payload;
+        if (was === payload.state && payload.state === "transcribing") return;
+        refresh().then(() => void (page?.id === payload.id && openMeeting(payload.id)));
+      }),
+    ];
+    return () => un.forEach((u) => void u.then((f) => f()));
+  });
+  // The meeting's source shows once Myna hears the call.
+  $effect(() => {
+    if (!running) return;
+    const t = setInterval(() => invoke<Running>("meeting_running").then((r) => r && r.id === running?.id && r.source !== running.source && (running = r), () => {}), 2000);
+    return () => clearInterval(t);
+  });
+
   // Stats for nerds is experimental: its entry shows only while it and Experimental features are on.
   const nerds = $derived(!!look?.experimental && look.nerds);
   const view = $derived(current === "nerds" && !nerds ? "history" : current);
@@ -58,6 +117,8 @@
       takeFix();
       if (data.traces?.ok) invoke<Row[]>("traces_list").then((r) => (rows = r), () => {});
       if (data.all?.ok) invoke<Trace[]>("traces_all").then((r) => (all = r), () => {});
+      refresh();
+      invoke<Notes>("meeting_get").then((n) => (notes = n), () => {});
       invoke<Rules>("rules_get").then((r) => (words = r.settings.words), () => {});
     });
     return () => void off.then((f) => f());
@@ -78,6 +139,9 @@
 <div class="window">
   <nav class="sidebar" aria-label="Sidebar">
     <div class="titlebar" data-tauri-drag-region></div>
+    <button class="nav" aria-current={view === "meetings"} onclick={() => ((current = "meetings"), (page = null))}>
+      {@render icon('<rect x="4" y="5" width="16" height="15" rx="2.5"/><path d="M4 10h16M9 3.5v3M15 3.5v3"/>')}<span class="label">All meetings</span><span class="count">{meetings.filter((m) => !writing(m)).length}</span>
+    </button>
     <button class="nav" aria-current={view === "history"} onclick={() => (current = "history")}>
       {@render icon('<rect x="5" y="5" width="14" height="16" rx="2"/><path d="M9 5V3.5h6V5M9 11h6M9 15h4"/>')}<span class="label">Voice typing history</span><span class="count">{said.length}</span>
     </button>
@@ -100,6 +164,14 @@
     {#if !data.storage.ok}
       <header data-tauri-drag-region><h1>Myna</h1></header>
       <div class="content"><ErrorState title="Myna couldn't open its data folder" message={data.storage.error} /></div>
+    {:else if view === "meetings" && data.meetings?.ok === false}
+      <header data-tauri-drag-region><h1>All meetings</h1></header>
+      <div class="content"><ErrorState title="Myna couldn't read your meetings" message={data.meetings.error} /></div>
+    {:else if view === "meetings" && page}
+      <Meeting {page} progress={progress[page.id]} onback={() => (page = null)} onretry={retry} />
+    {:else if view === "meetings"}
+      <Meetings {meetings} {running} {progress} on={notes.on} error={meetingError} onenable={enable} onopen={openMeeting} onretry={retry}
+        onstart={() => invoke("meeting_toggle")} onstop={() => invoke("meeting_toggle")} />
     {:else if !data.traces?.ok || ((view === "nerds" || view === "yours") && !data.all?.ok)}
       {@const failed = !data.traces?.ok ? data.traces : data.all}
       <header data-tauri-drag-region><h1>{view === "nerds" ? "Stats for nerds" : view === "yours" ? "Your dictation" : "Voice typing history"}</h1></header>

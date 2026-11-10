@@ -9,6 +9,7 @@ const calls = (page: Page, cmd: string) => page.evaluate((cmd) => (window as any
 async function history(page: Page, extra = "") {
   await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", traces_list: () => ${ROWS}, fixes_get: () => [], ${extra} }`);
   await page.goto("/main");
+  await page.getByRole("navigation", { name: "Sidebar" }).getByRole("button", { name: /^Voice typing history/ }).click(); // Meetings is the first view
   await expect(page.getByRole("heading", { name: "Voice typing history" })).toBeVisible();
 }
 const row = (page: Page, i: number) => page.getByRole("list", { name: "Voice typing history" }).getByRole("listitem").nth(i);
@@ -76,6 +77,7 @@ test("the opened trace in Stats for nerds has the same 👍/👎", async ({ page
   await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", traces_list: () => [{ id: 4, started: Date.now(), app: "Slack", outcome: "pasted", rating: null, heard: "Mina is here", text: "Mina is here" }], traces_all: () => [${trace}], trace_get: () => ${trace}, look_get: () => ({ theme: "auto", accent: "blue", glass: "clear", liquid: null, experimental: true, nerds: true }),
     rules_get: () => ({ settings: { language: "en", tidy: true, words: [], keep: [] }, languages: [] }), fixes_get: () => [] }`);
   await page.goto("/main");
+  await page.getByRole("navigation", { name: "Sidebar" }).getByRole("button", { name: /^Voice typing history/ }).click(); // Meetings is the first view
   await expect(page.getByRole("heading", { name: "Voice typing history" })).toBeVisible();
   await page.getByRole("navigation", { name: "Sidebar" }).getByRole("button", { name: "Stats for nerds" }).click();
   await page.getByRole("list", { name: "Dictations" }).getByRole("button").first().click();
