@@ -1,6 +1,6 @@
 //! The channel to Myna's browser add-on (07.1): a WebSocket on 127.0.0.1 while Meeting notes is on.
 //! Only the add-on's own origin gets in, and its first message must carry the connection code.
-//! The messages are in `Msg`; `extension/messages.js` is the other copy. The Teams tab's sound (07.3) comes as
+//! The messages are in `Msg` (`stop-tab` is the one hyphenated name); `extension/messages.js` is the other copy. The Teams tab's sound (07.3) comes as
 //! binary frames: 4 bytes sequence (u32), 8 bytes capture time (i64, unix ms), then 16 kHz mono Int16 samples, all
 //! little-endian; `extension/audio.js` is the other copy.
 
@@ -68,7 +68,8 @@ pub enum Msg {
     Captions { state: CaptionsState },
     /// The Teams tab's sound starts or stops coming as binary frames. `title` is the tab's, for the add-on's own use.
     Tab { state: TabState, #[serde(default)] title: String },
-    /// Myna to the add-on: the meeting is over, stop capturing.
+    /// Myna to the add-on: the meeting is over, stop capturing. Hyphenated on the wire, as the add-on listens for it.
+    #[serde(rename = "stop-tab")]
     StopTab,
 }
 
@@ -451,6 +452,24 @@ mod tests {
     }
 
     #[test]
+    fn stop_tab_goes_out_as_the_name_the_addon_listens_for() {
+        assert_eq!(encode(&Msg::StopTab), r#"{"v":1,"type":"stop-tab"}"#);
+        assert_eq!(decode(r#"{"v":1,"type":"stop-tab"}"#), Some(Msg::StopTab));
+        let names = [
+            Msg::Hello { code: "X".into() },
+            Msg::Welcome,
+            Msg::Ping,
+            Msg::Selectors { version: "1".into() },
+            Msg::Mute { state: MuteState::Muted, at: 1 },
+            Msg::Caption { name: "A".into(), at: 1, text: None },
+            Msg::Captions { state: CaptionsState::Unavailable },
+            Msg::Tab { state: TabState::Start, title: String::new() },
+        ]
+        .map(|m| serde_json::from_str::<serde_json::Value>(&encode(&m)).unwrap()["type"].as_str().unwrap().to_owned());
+        assert_eq!(names, ["hello", "welcome", "ping", "selectors", "mute", "caption", "captions", "tab"]);
+    }
+
+    #[test]
     fn the_selector_version_is_kept_while_connected() {
         let (a, addr, _tmp) = addon();
         assert_eq!(a.selectors(), None);
@@ -645,7 +664,7 @@ mod tests {
         let (a, mut ws, got, _t) = tabbed();
         ws.send(tab(TabState::Start)).unwrap();
         a.stop_tab();
-        let told = (0..3).any(|_| matches!(ws.read(), Ok(Message::Text(t)) if decode(&t) == Some(Msg::StopTab)));
+        let told = (0..3).any(|_| matches!(ws.read(), Ok(Message::Text(t)) if t.as_str() == r#"{"v":1,"type":"stop-tab"}"#));
         assert!(told);
         drop(ws);
         wait("stop", || got.lock().unwrap().last().is_some_and(|e| e.0 == "stop"));
