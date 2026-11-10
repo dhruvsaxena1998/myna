@@ -1,6 +1,8 @@
-<!-- What macOS lets Myna use for voice typing (prototype: obPerms rows). Onboarding (story 02) reuses this. -->
+<!-- What macOS lets Myna use (prototype: obPerms rows): voice typing's, or meeting notes'. Onboarding (story 02) reuses this. -->
 <script lang="ts" module>
-  export type Perms = { mic: "ask" | "allowed" | "denied"; ax: boolean };
+  /** `audio` is "unknown" when macOS gives no way to check; it asks the first time a meeting records. */
+  export type Perms = { mic: "ask" | "allowed" | "denied"; ax: boolean; audio: "ask" | "allowed" | "denied" | "unknown" };
+  type Kind = "mic" | "ax" | "audio";
 </script>
 
 <script lang="ts">
@@ -8,7 +10,7 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { onMount } from "svelte";
 
-  let { initial }: { initial: Perms } = $props();
+  let { initial, kinds = ["mic", "ax"] }: { initial: Perms; kinds?: Kind[] } = $props();
 
   let perms = $derived(initial); // assignable: refreshed on focus and after asking
   const refresh = async () => (perms = await invoke<Perms>("permissions_state"));
@@ -24,25 +26,28 @@
     return () => void off.then((f) => f());
   });
 
-  async function ask(kind: "mic" | "ax") {
+  async function ask(kind: Kind) {
     if (kind === "ax") opened = true;
     await invoke("permission_ask", { kind });
     await refresh();
   }
 
-  const rows = $derived([
-    { kind: "mic" as const, title: "Microphone", desc: "So Myna can hear you.", ok: perms.mic === "allowed", popup: perms.mic === "ask" },
-    { kind: "ax" as const, title: "Accessibility", desc: "So Myna can put your words into the app you’re using.", ok: perms.ax, popup: false },
-  ]);
+  const rows = $derived(
+    [
+      { kind: "mic" as const, title: "Microphone", desc: "So Myna can hear you.", ok: perms.mic === "allowed", popup: perms.mic === "ask" },
+      { kind: "ax" as const, title: "Accessibility", desc: "So Myna can put your words into the app you’re using.", ok: perms.ax, popup: false },
+      { kind: "audio" as const, title: "Screen & System Audio Recording", desc: "So Myna can hear the other people on a call.", ok: perms.audio === "allowed", popup: perms.audio === "ask" },
+    ].filter((r) => kinds.includes(r.kind)),
+  );
 </script>
 
 <section aria-labelledby="perm-h">
   <h2 id="perm-h">Permissions</h2>
-  <p class="help">Your Mac asks once for each. For Accessibility, switch Myna on in System Settings, then come back.</p>
+  <p class="help">Your Mac asks once for each.{#if kinds.includes("ax")} For Accessibility, switch Myna on in System Settings, then come back.{/if}</p>
   <ul class="list">
     {#each rows as r (r.kind)}
       <li class="row">
-        <span><span class="name">{r.title}</span><span class="desc">{r.desc}</span>{#if r.kind === "ax" && back && !r.ok}<span class="desc">Still asking? Remove Myna from the list with −, then open System Settings again.</span>{/if}</span>
+        <span><span class="name">{r.title}</span><span class="desc">{r.desc}</span>{#if r.kind === "ax" && back && !r.ok}<span class="desc">Still asking? Remove Myna from the list with −, then open System Settings again.</span>{/if}{#if r.kind === "audio" && perms.audio === "unknown"}<span class="desc">Myna can’t check this one. Your Mac asks the first time you record a meeting.</span>{/if}</span>
         <!-- Fixed width so Allowed and the buttons swap without moving the text. -->
         <span class="state">
           {#if r.ok}

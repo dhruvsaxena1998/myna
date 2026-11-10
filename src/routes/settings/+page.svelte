@@ -121,7 +121,7 @@
           {/if}
         {/if}
       {:else if page.id === "meetings"}
-        {#if notes}<MeetingNotes bind:notes />
+        {#if notes}<MeetingNotes bind:notes perms={data.perms} />
         {:else}<ErrorState title="Myna couldn't read meeting notes' settings" message={data.notes?.ok === false ? data.notes.error : ""} />{/if}
       {:else if page.id === "about"}
         {#if data.updates?.ok}<About version={data.version} path={data.storage.path} prefs={data.updates.prefs} status={data.updates.status} />
