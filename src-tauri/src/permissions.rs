@@ -1,4 +1,4 @@
-//! Microphone and Accessibility: what macOS allows Myna, and asking for it.
+//! Microphone, Accessibility and System Audio: what macOS allows Myna, and asking for it.
 //! In `tauri dev` the binary is unbundled, so macOS asks on behalf of the app that launched it (the terminal).
 
 use block2::RcBlock;
@@ -17,14 +17,47 @@ pub enum Mic {
     Denied,
 }
 
+/// Recording other apps' sound (Screen & System Audio Recording), for a meeting's Them track.
+#[derive(Serialize, Debug, Clone, Copy, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum Audio {
+    Ask,
+    Allowed,
+    Denied,
+    /// macOS has no public way to tell; it asks the first time a meeting records.
+    Unknown,
+}
+
 #[derive(Serialize)]
 pub struct State {
     pub mic: Mic,
     pub ax: bool,
+    pub audio: Audio,
 }
 
 pub fn state() -> State {
-    State { mic: mic(), ax: ax() }
+    State { mic: mic(), ax: ax(), audio: audio() }
+}
+
+unsafe extern "C" {
+    fn myna_audio_capture_state() -> isize;
+    fn myna_audio_capture_ask() -> bool;
+}
+
+pub fn audio() -> Audio {
+    match unsafe { myna_audio_capture_state() } {
+        0 => Audio::Allowed,
+        1 => Audio::Denied,
+        2 => Audio::Ask,
+        _ => Audio::Unknown,
+    }
+}
+
+/// macOS's pop-up the first time; after that, or when Myna can't ask, the System Settings pane.
+pub fn ask_audio() {
+    if audio() != Audio::Ask || !unsafe { myna_audio_capture_ask() } {
+        open_pane("Privacy_ScreenCapture"); // "Screen & System Audio Recording"
+    }
 }
 
 pub fn mic() -> Mic {

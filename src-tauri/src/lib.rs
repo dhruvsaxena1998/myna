@@ -224,12 +224,13 @@ fn permissions_state() -> permissions::State {
     permissions::state()
 }
 
-/// Asks macOS for `kind` ("mic" or "ax"); answers once there's a new state to read.
+/// Asks macOS for `kind` ("mic", "ax" or "audio"); answers once there's a new state to read.
 #[tauri::command]
 async fn permission_ask(kind: String) {
     match (kind.as_str(), permissions::mic()) {
         ("mic", permissions::Mic::Ask) => permissions::ask_mic(),
         ("mic", _) => permissions::open_pane("Privacy_Microphone"),
+        ("audio", _) => permissions::ask_audio(),
         _ => permissions::ask_ax(),
     }
 }
@@ -694,14 +695,28 @@ fn start_meeting(app: &AppHandle) {
     }
     let app = app.clone();
     std::thread::spawn(move || {
+        // Said once per meeting, over the recording pill; the mic keeps recording either way.
+        let mut warned = false;
+        let mut warn = |app: &AppHandle| {
+            if !std::mem::replace(&mut warned, true) {
+                pill::error(app, "Myna can’t hear the other people on the call", "Your mic is still recording. Allow System Audio in Settings › Meeting notes.");
+            }
+        };
+        if permissions::audio() == permissions::Audio::Denied {
+            warn(&app);
+        }
         // The elapsed time, until this recording ends.
         loop {
             std::thread::sleep(std::time::Duration::from_secs(1));
-            let running = app.state::<meeting::Meetings>().running();
+            let m = app.state::<meeting::Meetings>();
+            let running = m.running();
             if running.is_none_or(|(i, _)| i != id) {
                 break;
             }
             show_menu_recording(&app, running);
+            if m.deaf() {
+                warn(&app);
+            }
         }
     });
 }
@@ -798,7 +813,7 @@ pub fn run() {
                     let keys: Arc<dyn ai::Keys> = Arc::new(ai::Keychain);
                     download::sweep(&models); // before any download can start
                     app.manage(Session::new(world, db.clone(), keys.clone(), models.clone(), models::macos_major(), tap_limit, second));
-                    app.manage(meeting::Meetings::new(db.clone(), dir.clone(), Box::new(meeting::Cpal)));
+                    app.manage(meeting::Meetings::new(db.clone(), dir.clone(), Box::new(meeting::Cpal), Box::new(meeting::Tap)));
                     app.manage(Data {
                         db,
                         models_dir: models,

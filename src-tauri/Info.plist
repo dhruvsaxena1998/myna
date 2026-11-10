@@ -4,5 +4,7 @@
 <dict>
   <key>NSMicrophoneUsageDescription</key>
   <string>Myna listens while you hold the voice typing key, and turns what you say into text on this Mac.</string>
+  <key>NSAudioCaptureUsageDescription</key>
+  <string>So Myna can hear the other people on a call. Only the apps using your microphone are recorded, on this Mac.</string>
 </dict>
 </plist>

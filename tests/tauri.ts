@@ -19,7 +19,7 @@ export async function fakeTauri(page: Page, handlers: string) {
         if (cmd === "plugin:event|unlisten") return;
         if (cmd === "plugin:window|hide") return;
         if (["pill_hit", "dictation_fix", "feedback_set", "fix_take"].includes(cmd) && !(cmd in h)) return cmd === "feedback_set" ? [] : cmd === "fix_take" ? null : undefined;
-        if (cmd === "permissions_state" && !(cmd in h)) return { mic: "allowed", ax: true };
+        if (cmd === "permissions_state" && !(cmd in h)) return { mic: "allowed", ax: true, audio: "allowed" };
         if (cmd === "stt_unload_get" && !(cmd in h)) return 300;
         if (cmd === "pill_look_get" && !(cmd in h)) return { style: "capsule", place: "bottom" };
         if (cmd === "look_get" && !(cmd in h)) return { theme: "auto", accent: "blue", glass: "clear", liquid: null, experimental: false, nerds: false };

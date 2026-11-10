@@ -1,4 +1,4 @@
-<!-- Meeting notes' switch and its shortcut (prototype: the meetings page, `case 'meetings'`). -->
+<!-- Meeting notes' switch, its shortcut and permissions (prototype: the meetings page, `case 'meetings'`). -->
 <script lang="ts" module>
   /** `key` is an accelerator, or "" for no shortcut. */
   export type Notes = { on: boolean; key: string };
@@ -6,8 +6,9 @@
 
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import Permissions, { type Perms } from "$lib/Permissions.svelte";
 
-  let { notes = $bindable() }: { notes: Notes } = $props();
+  let { notes = $bindable(), perms }: { notes: Notes; perms: Perms } = $props();
   let error = $state("");
   const KEYS: [string, string][] = [["Ctrl+Alt+KeyM", "⌃⌥M"], ["Ctrl+Alt+KeyN", "⌃⌥N"], ["", "No shortcut"]];
 
@@ -48,6 +49,7 @@
     </ul>
     <p class="err" role="status">{error}</p>
   </section>
+  <Permissions initial={perms} kinds={["mic", "audio"]} />
 {/if}
 
 <style>
