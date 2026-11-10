@@ -15,6 +15,7 @@
   import Fixes from "$lib/Fixes.svelte";
   import Feedback from "$lib/Feedback.svelte";
   import VoiceShortcut from "$lib/VoiceShortcut.svelte";
+  import MeetingNotes, { type Notes } from "$lib/MeetingNotes.svelte";
   import CleanupStyles from "$lib/CleanupStyles.svelte";
 
   // Every page is listed from day one; unbuilt ones say what will live there.
@@ -22,7 +23,7 @@
   const pages = [
     { id: "look", icon: '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16z" fill="currentColor"/>', title: "Look & appearance", soon: "Light or dark, highlight colour, see-through panels." },
     { id: "dictation", icon: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>', title: "Voice typing", soon: "Turn voice typing on, pick its shortcut, and words to remember." },
-    { id: "meetings", icon: '<circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="16.5" cy="9" r="2.5"/><path d="M16.5 14.5a4 4 0 0 1 4 4.5"/>', title: "Meeting notes", soon: "Notes from your calls: noticing a call, taking notes, and keeping your voice when you’re muted." },
+    { id: "meetings", icon: '<circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="16.5" cy="9" r="2.5"/><path d="M16.5 14.5a4 4 0 0 1 4 4.5"/>', title: "Meeting notes", soon: "" },
     { id: "models", icon: '<path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2"/>', title: "Speech models", soon: "Speech-to-text and voice models." },
     { id: "ai", icon: '<rect x="4" y="4" width="16" height="7" rx="2"/><rect x="4" y="13" width="16" height="7" rx="2"/><path d="M8 7.5h.01M8 16.5h.01"/>', title: "AI provider", soon: "Providers for summaries and chat, and which model does what." },
     { id: "decide", icon: '<path d="M12 20v-6L6 8M12 14l6-6M6 4v4h4M18 4v4h-4"/>', title: "Decision provider", soon: "Which model makes Myna’s small choices, like the folder a meeting goes in." },
@@ -35,6 +36,7 @@
   const page = $derived(pages.find((p) => p.id === current)!);
   // Shared by the shortcut rows and the pill preview, which shows the same hint as the real pill.
   let voice = $derived(data.voice?.ok ? data.voice.voice : null); // assignable: saves update it
+  let notes = $derived(data.notes?.ok ? data.notes.notes : null); // assignable: saves update it
   // Shared by Look & appearance and Experimental features (Liquid Glass): one look, saved whole.
   // Adding a fix changes it behind Words' back, so read it again.
   let rules = $derived(data.rules?.ok ? data.rules.rules : null);
@@ -118,6 +120,9 @@
             <Permissions initial={data.perms} />
           {/if}
         {/if}
+      {:else if page.id === "meetings"}
+        {#if notes}<MeetingNotes bind:notes />
+        {:else}<ErrorState title="Myna couldn't read meeting notes' settings" message={data.notes?.ok === false ? data.notes.error : ""} />{/if}
       {:else if page.id === "about"}
         {#if data.updates?.ok}<About version={data.version} path={data.storage.path} prefs={data.updates.prefs} status={data.updates.status} />
         {:else}<ErrorState title="Myna couldn't read the update settings" message={data.updates?.ok === false ? data.updates.error : ""} />{/if}

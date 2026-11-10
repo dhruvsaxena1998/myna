@@ -177,7 +177,7 @@ test("Liquid Glass Opacity: a slider that previews live, saves the new frost, an
 test("a page that isn't built yet says so, with what will live there", async ({ page }) => {
   await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", models_list: () => [] }`);
   await page.goto("/settings");
-  await page.getByRole("option", { name: "Meeting notes" }).click();
+  await page.getByRole("option", { name: "Decision provider" }).click();
   await expect(page.getByRole("heading", { name: "Not in this version yet" })).toBeVisible();
   await expect(page.getByText("Coming later")).toBeVisible();
 });

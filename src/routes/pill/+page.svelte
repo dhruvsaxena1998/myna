@@ -12,12 +12,17 @@
   // Liquid Glass and what tints it; the layout already loaded them before first paint.
   let appearance = $derived<Appearance | null>(data.appearance.ok ? data.appearance.look : null); // assignable: the "look" event updates it
   let spot: HTMLElement;
+  let meetSpot: HTMLElement;
   // What the pill last said; kept while it fades out so the text doesn't vanish first.
   let pill = $state<Shown>({ state: "listening", hold: true, key: "Alt+Space" });
   let on = $state(false);
   let wave = $state<number[]>(Array(WAVE).fill(0));
   let started = 0;
   let secs = $state(0);
+  // A meeting recording: its start time, or null. Its pill shares the dictation pill's spot, so it steps aside while dictation shows.
+  let meetStarted = $state<number | null>(null);
+  let meetSecs = $state(0);
+  const meeting = $derived(meetStarted !== null && !on);
   let hide: ReturnType<typeof setTimeout> | undefined;
   // Ask how it went: 👍/👎 for the dictation just added, then "Fix it" after a 👎.
   let ask = $state<{ trace: number; rated: "up" | "down" | null } | null>(null);
@@ -45,7 +50,10 @@
 
   $effect(() => {
     invoke<Look>("pill_look_get").then((l) => (look = l), () => {}); // the default look until it answers
-    const tick = setInterval(() => pill.state === "listening" && (secs = Math.floor((Date.now() - started) / 1000)), 250);
+    const tick = setInterval(() => {
+      if (pill.state === "listening") secs = Math.floor((Date.now() - started) / 1000);
+      if (meetStarted !== null) meetSecs = Math.max(0, Math.floor((Date.now() - meetStarted) / 1000));
+    }, 250);
     const un = [
       listen<Shown | { state: "idle" }>("dictation", ({ payload }) => {
         clearTimeout(hide);
@@ -59,6 +67,7 @@
         if (payload.state === "fallback") hide = setTimeout(() => (on = false), 2600);
         if (payload.state === "error") hide = setTimeout(() => (on = false), 4000);
       }),
+      listen<{ started: number | null }>("meeting", ({ payload }) => ((meetStarted = payload.started), (meetSecs = payload.started === null ? 0 : Math.max(0, Math.floor((Date.now() - payload.started) / 1000))))),
       listen<number>("dictation-ask", ({ payload }) => ((ask = { trace: payload, rated: null }), (on = true), close(4000))),
       // Over the buttons (pill.rs tells us; the page can't see the pointer leave): up to 8 s, then 1.5 s after leaving. Never for good.
       listen<boolean>("pill-hover", ({ payload }) => ask && ask.rated !== "up" && close(payload ? 8000 : 1500)),
@@ -75,6 +84,11 @@
     if (!appearance || !glassOn(appearance) || !hud) return void invoke("glass_set", { glass: [] });
     const r = hud.getBoundingClientRect(), css = getComputedStyle(hud);
     const glass = [{ x: r.x, y: r.y, w: r.width, h: r.height, radius: Math.min(parseFloat(css.borderTopLeftRadius), r.height / 2), shown: on }];
+    const mh = meetSpot.querySelector<HTMLElement>(".hud");
+    if (mh) {
+      const m = mh.getBoundingClientRect();
+      glass.push({ x: m.x, y: m.y, w: m.width, h: m.height, radius: m.height / 2, shown: meeting });
+    }
     if (ask && askEl) {
       const a = askEl.getBoundingClientRect();
       glass.push({ x: a.x, y: a.y, w: a.width, h: a.height, radius: Math.min(parseFloat(getComputedStyle(askEl).borderTopLeftRadius), a.height / 2), shown: on });
@@ -82,12 +96,15 @@
     invoke("glass_set", { glass });
   }
   $effect(() => {
-    void [appearance && glassOn(appearance), appearance?.glass, appearance?.accent, look.style, look.place, on, ask?.rated, askEl]; // any of these moves or restyles the glass (the backend picks the tint)
+    void [appearance && glassOn(appearance), appearance?.glass, appearance?.accent, look.style, look.place, on, meeting, meetStarted, ask?.rated, askEl]; // any of these moves or restyles the glass (the backend picks the tint)
     syncGlass();
   });
   $effect(() => {
     const ro = new ResizeObserver(() => syncGlass()); // the pill's words change its width
     ro.observe(spot.querySelector(".hud")!);
+    void meetStarted; // the pill is drawn only while recording
+    const mh = meetSpot.querySelector(".hud");
+    if (mh) ro.observe(mh);
     return () => ro.disconnect();
   });
 </script>
@@ -109,6 +126,10 @@
     </div>
   {/if}
   </span>
+</div>
+<!-- Not clickable yet: live notes will open from it. -->
+<div class="spot {look.place}" class:on={meeting} role="status" bind:this={meetSpot}>
+  {#if meetStarted !== null}<Pill style="capsule" pill={{ state: "recording" }} {wave} secs={meetSecs} />{/if}
 </div>
 
 <style>

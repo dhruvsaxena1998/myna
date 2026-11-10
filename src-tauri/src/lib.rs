@@ -6,6 +6,7 @@ mod download;
 mod feedback;
 mod fnkey;
 mod look;
+mod meeting;
 mod models;
 mod notify;
 mod permissions;
@@ -46,12 +47,20 @@ struct Data {
     shortcut: Mutex<Vec<String>>,
     /// Set while Settings records a new shortcut, so pressing the old one types into the recorder.
     paused: AtomicBool,
+    /// The meeting notes shortcut registered with macOS right now.
+    meeting_shortcut: Mutex<Option<String>>,
     /// API keys for AI providers: the Keychain.
     keys: Arc<dyn ai::Keys>,
 }
 
 /// "Start voice typing" in the menubar menu, which shows the shortcut.
 struct VoiceItem(MenuItem<Wry>);
+
+/// "Start meeting notes" (or "Stop recording") in the menubar menu, and the note under it.
+struct MeetItem {
+    item: MenuItem<Wry>,
+    note: MenuItem<Wry>,
+}
 
 /// "Start voice typing with cleanup": in the menu only while a Fast model is set (`sync_clean_item`).
 struct CleanItem {
@@ -434,6 +443,28 @@ fn voice_pause(app: AppHandle, d: tauri::State<Data>, paused: bool) -> Result<()
     sync_shortcut(&app)
 }
 
+#[tauri::command]
+fn meeting_get(d: tauri::State<Data>) -> Result<meeting::Notes, String> {
+    meeting::get(&d.db.lock().unwrap())
+}
+
+/// Saves meeting notes' settings and registers the shortcut at once, like `voice_set`. Turning notes off stops a
+/// recording in progress first, and keeps it.
+#[tauri::command]
+async fn meeting_set(app: AppHandle, d: tauri::State<'_, Data>, notes: meeting::Notes) -> Result<(), String> {
+    let was = meeting::get(&d.db.lock().unwrap())?;
+    meeting::set(&d.db.lock().unwrap(), &notes)?;
+    if let Err(e) = sync_meeting(&app) {
+        meeting::set(&d.db.lock().unwrap(), &was)?;
+        let _ = sync_meeting(&app);
+        return Err(e);
+    }
+    if !notes.on {
+        stop_meeting(&app);
+    }
+    Ok(())
+}
+
 /// Whether the 🌐 key is set to Do Nothing, so fn only starts voice typing.
 #[tauri::command]
 fn globe_ok() -> bool {
@@ -589,6 +620,101 @@ fn sync_shortcut(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Registers the meeting notes shortcut while they're on, and sets the menu item and its note to match.
+fn sync_meeting(app: &AppHandle) -> Result<(), String> {
+    let d = app.state::<Data>();
+    let n = meeting::get(&d.db.lock().unwrap())?;
+    let want = (n.on && !n.key.is_empty()).then(|| n.key.clone());
+    let mut have = d.meeting_shortcut.lock().unwrap();
+    if *have != want {
+        let gs = app.global_shortcut();
+        if let Some(k) = &want {
+            gs.register(k.as_str()).map_err(|e| {
+                eprintln!("meeting notes: couldn't use {k}: {e}");
+                "Another app is using that shortcut. Pick a different one.".to_string()
+            })?;
+        }
+        if let Some(k) = have.as_ref() {
+            let _ = gs.unregister(k.as_str());
+        }
+        *have = want;
+    }
+    drop(have);
+    if let Some(m) = app.try_state::<MeetItem>() {
+        let _ = m.item.set_accelerator((!n.key.is_empty()).then_some(n.key.as_str()));
+        let _ = m.item.set_enabled(n.on);
+        let _ = m.note.set_text(if n.on { "Records whichever app is using your microphone." } else { "Meeting notes are off. Turn them on in Settings." });
+    }
+    Ok(())
+}
+
+/// The menu item's words and the menubar icon's red dot and timer, for a recording that started at `running.1`, or none.
+fn show_menu_recording(app: &AppHandle, running: Option<(i64, i64)>) {
+    let clock = running.map(|(_, started)| meeting::clock(now_ms() - started));
+    if let Some(m) = app.try_state::<MeetItem>() {
+        let _ = m.item.set_text(clock.as_ref().map_or("Start meeting notes".into(), |c| format!("Stop recording  {c}")));
+    }
+    // shortcut: a tray title is plain text, so the dot is the red emoji; draw a red icon if that looks off.
+    if let Some(t) = app.tray_by_id("myna") {
+        let _ = t.set_title(clock.map(|c| format!("🔴 {c}")));
+    }
+}
+
+/// The shortcut, or the menu item: start meeting notes, or stop if recording. Off the main thread, since the mic takes a moment.
+fn toggle_meeting(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        if app.state::<meeting::Meetings>().running().is_some() {
+            stop_meeting(&app);
+        } else {
+            start_meeting(&app);
+        }
+    });
+}
+
+fn start_meeting(app: &AppHandle) {
+    let (d, m) = (app.state::<Data>(), app.state::<meeting::Meetings>());
+    if !meeting::get(&d.db.lock().unwrap()).is_ok_and(|n| n.on) {
+        return;
+    }
+    match permissions::mic() {
+        permissions::Mic::Allowed => {}
+        permissions::Mic::Ask => return permissions::ask_mic(), // macOS's pop-up; the next press records
+        permissions::Mic::Denied => return notify::send("Needs the Microphone", pill::ALLOW),
+    }
+    let id = match m.start(now_ms()) {
+        Ok(id) => id,
+        Err(e) => return notify::send("Couldn’t start meeting notes", &e),
+    };
+    let running = m.running();
+    show_menu_recording(app, running);
+    pill::meeting(app, running.map(|(_, s)| s));
+    if let Ok(look) = pill::look(&d.db.lock().unwrap()) {
+        pill::place(app, look.place);
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        // The elapsed time, until this recording ends.
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            let running = app.state::<meeting::Meetings>().running();
+            if running.is_none_or(|(i, _)| i != id) {
+                break;
+            }
+            show_menu_recording(&app, running);
+        }
+    });
+}
+
+/// Stops the recording and keeps it.
+fn stop_meeting(app: &AppHandle) {
+    if let Err(e) = app.state::<meeting::Meetings>().stop() {
+        notify::send("Couldn’t save the recording", &e);
+    }
+    show_menu_recording(app, None);
+    pill::meeting(app, None);
+}
+
 /// Puts "Start voice typing with cleanup" in the menu under "Start voice typing" while a Fast model is set, and takes it out when not.
 /// Tauri menus can't hide an item, so it goes in and out like the update item.
 fn sync_clean_item(app: &AppHandle) {
@@ -649,7 +775,7 @@ fn open_update(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![pill::pill_hit, dictation_fix, fix_take, debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
+        .invoke_handler(tauri::generate_handler![pill::pill_hit, dictation_fix, fix_take, debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, meeting_get, meeting_set, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::Updates::default())
         .setup(|app| {
@@ -672,6 +798,7 @@ pub fn run() {
                     let keys: Arc<dyn ai::Keys> = Arc::new(ai::Keychain);
                     download::sweep(&models); // before any download can start
                     app.manage(Session::new(world, db.clone(), keys.clone(), models.clone(), models::macos_major(), tap_limit, second));
+                    app.manage(meeting::Meetings::new(db.clone(), dir.clone(), Box::new(meeting::Cpal)));
                     app.manage(Data {
                         db,
                         models_dir: models,
@@ -679,11 +806,19 @@ pub fn run() {
                         downloads: Default::default(),
                         shortcut: Default::default(),
                         paused: Default::default(),
+                        meeting_shortcut: Default::default(),
                         keys,
                     });
                     app.handle().plugin(
                         tauri_plugin_global_shortcut::Builder::new()
                             .with_handler(|app, shortcut, e| {
+                                let meeting = app.state::<Data>().meeting_shortcut.lock().unwrap().clone();
+                                if meeting.is_some_and(|k| k.parse::<Shortcut>().ok().as_ref() == Some(shortcut)) {
+                                    if e.state() == ShortcutState::Pressed {
+                                        toggle_meeting(app);
+                                    }
+                                    return;
+                                }
                                 let clean = voice::get(&app.state::<Data>().db.lock().unwrap())
                                     .is_ok_and(|v| v.keys().iter().any(|(k, c)| *c && k.parse::<Shortcut>().ok().as_ref() == Some(shortcut)));
                                 app.state::<Arc<Session>>().key(e.state() == ShortcutState::Pressed, clean)
@@ -710,8 +845,12 @@ pub fn run() {
             let quit_item = MenuItemBuilder::with_id("quit", "Quit Myna").accelerator("Cmd+Q").build(app)?;
             // The shortcut and enabled state are set by sync_shortcut below.
             let voice_item = MenuItemBuilder::with_id("dictate", "Start voice typing").enabled(false).build(app)?;
-            let menu = MenuBuilder::new(app).item(&voice_item).separator().item(&open_item).item(&settings_item).separator().item(&quit_item).build()?;
+            // Tauri menus have no section headers, so the section is the item and its note under it.
+            let meet_item = MenuItemBuilder::with_id("meeting", "Start meeting notes").enabled(false).build(app)?;
+            let meet_note = MenuItemBuilder::with_id("meeting-note", "Meeting notes are off. Turn them on in Settings.").enabled(false).build(app)?;
+            let menu = MenuBuilder::new(app).item(&voice_item).separator().item(&meet_item).item(&meet_note).separator().item(&open_item).item(&settings_item).separator().item(&quit_item).build()?;
             app.manage(VoiceItem(voice_item));
+            app.manage(MeetItem { item: meet_item, note: meet_note });
             // Not in the menu until a Fast model is set; sync_clean_item adds it.
             let clean_item = MenuItemBuilder::with_id("dictate-clean", "Start voice typing with cleanup").enabled(false).build(app)?;
             app.manage(CleanItem { item: clean_item, menu: menu.clone() });
@@ -744,16 +883,25 @@ pub fn run() {
                 .on_menu_event(|app, e| match e.id().as_ref() {
                     "dictate" => app.state::<Arc<Session>>().toggle(false),
                     "dictate-clean" => app.state::<Arc<Session>>().toggle(true),
+                    "meeting" => toggle_meeting(app),
                     "open" => open_main(app),
                     "settings" => open_window(app, "settings"),
                     "update" => open_update(app),
-                    "quit" => app.exit(0),
+                    "quit" => {
+                        if app.try_state::<meeting::Meetings>().is_some() {
+                            stop_meeting(app); // saved, not cut off
+                        }
+                        app.exit(0)
+                    }
                     _ => {}
                 })
                 .build(app)?;
 
             if !failed && let Err(e) = sync_shortcut(app.handle()) {
                 eprintln!("dictation: {e}"); // Voice typing still shows the saved shortcut; picking it again says why
+            }
+            if !failed && let Err(e) = sync_meeting(app.handle()) {
+                eprintln!("meeting notes: {e}");
             }
             if failed {
                 open_window(app.handle(), "settings"); // never fail silently: Settings shows the error
