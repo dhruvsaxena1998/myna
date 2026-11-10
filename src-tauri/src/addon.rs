@@ -53,8 +53,6 @@ impl MuteState {
 }
 
 /// A message on the wire is `{"v":1,"type":...}` plus these fields. A type not listed fails to parse and is ignored.
-// `Caption` is for 07.4.
-#[allow(dead_code)]
 #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Msg {
@@ -62,11 +60,20 @@ pub enum Msg {
     Welcome,
     Ping,
     Mute { state: MuteState, at: i64 },
-    Caption { speaker: String, at: i64 },
+    /// Teams' live captions showed `name` speaking at `at` (unix ms, the add-on's clock); `text` is optional.
+    Caption { name: String, at: i64, #[serde(default)] text: Option<String> },
+    /// The add-on expects captions but can't find them on the page.
+    Captions { state: CaptionsState },
     /// The Teams tab's sound starts or stops coming as binary frames. `title` is the tab's, for the add-on's own use.
     Tab { state: TabState, #[serde(default)] title: String },
     /// Myna to the add-on: the meeting is over, stop capturing.
     StopTab,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum CaptionsState {
+    Unavailable,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq)]
@@ -153,6 +160,8 @@ struct Shared {
     notify: Box<dyn Fn(bool) + Send + Sync>,
     /// The mute button's state and when the add-on saw it (unix ms), from the authenticated connection only.
     on_mute: Box<dyn Fn(MuteState, i64) + Send + Sync>,
+    /// `Caption` and `Captions` messages, from the authenticated connection only.
+    on_caption: Box<dyn Fn(Msg) + Send + Sync>,
     /// The tab stream, from the authenticated connection only.
     on_tab: Box<dyn Fn(Tab) + Send + Sync>,
     /// Set to tell the connection to send `stop-tab`.
@@ -251,9 +260,10 @@ impl Shared {
             }
             match ws.read() {
                 Ok(Message::Text(t)) if t.len() > MAX => break close(&mut ws, 1009),
-                // Later tickets route `caption` here; `ping` and unknown types need nothing.
+                // `ping` and unknown types need nothing.
                 Ok(Message::Text(t)) => match decode(&t) {
                     Some(Msg::Mute { state, at }) => (self.on_mute)(state, at),
+                    Some(m @ (Msg::Caption { .. } | Msg::Captions { .. })) => (self.on_caption)(m),
                     Some(Msg::Tab { state: TabState::Start, .. }) => {
                         stream = Some(Stream { started: Instant::now(), last: None, samples: 0 });
                         (self.on_tab)(Tab::Start);
@@ -288,8 +298,8 @@ impl Shared {
 }
 
 impl Addon {
-    pub fn new(db: Arc<Mutex<Connection>>, origin: &'static str, ports: &[u16], notify: impl Fn(bool) + Send + Sync + 'static, on_mute: impl Fn(MuteState, i64) + Send + Sync + 'static, on_tab: impl Fn(Tab) + Send + Sync + 'static) -> Self {
-        Addon { ports: ports.to_vec(), me: Arc::new(Shared { db, origin, notify: Box::new(notify), on_mute: Box::new(on_mute), on_tab: Box::new(on_tab), stop_tab: AtomicBool::new(false), st: Default::default() }) }
+    pub fn new(db: Arc<Mutex<Connection>>, origin: &'static str, ports: &[u16], notify: impl Fn(bool) + Send + Sync + 'static, on_mute: impl Fn(MuteState, i64) + Send + Sync + 'static, on_caption: impl Fn(Msg) + Send + Sync + 'static, on_tab: impl Fn(Tab) + Send + Sync + 'static) -> Self {
+        Addon { ports: ports.to_vec(), me: Arc::new(Shared { db, origin, notify: Box::new(notify), on_mute: Box::new(on_mute), on_caption: Box::new(on_caption), on_tab: Box::new(on_tab), stop_tab: AtomicBool::new(false), st: Default::default() }) }
     }
 
     /// Tells the add-on the meeting is over, so it stops capturing the tab.
@@ -369,7 +379,7 @@ mod tests {
     fn addon() -> (Addon, SocketAddr, tempfile::TempDir) {
         let tmp = tempfile::tempdir().unwrap();
         let db = Arc::new(Mutex::new(crate::storage::open(tmp.path()).unwrap()));
-        let a = Addon::new(db, ORIGIN, &[0], |_| {}, |_, _| {}, |_| {});
+        let a = Addon::new(db, ORIGIN, &[0], |_| {}, |_, _| {}, |_| {}, |_| {});
         let addr = a.start().unwrap();
         (a, addr, tmp)
     }
@@ -431,7 +441,7 @@ mod tests {
         let db = Arc::new(Mutex::new(crate::storage::open(tmp.path()).unwrap()));
         let got = Arc::new(Mutex::new(vec![]));
         let g = got.clone();
-        let a = Addon::new(db, ORIGIN, &[0], |_| {}, move |s, at| g.lock().unwrap().push((s, at)), |_| {});
+        let a = Addon::new(db, ORIGIN, &[0], |_| {}, move |s, at| g.lock().unwrap().push((s, at)), |_| {}, |_| {});
         let addr = a.start().unwrap();
         let mut stranger = dial(addr, Some(ORIGIN)).unwrap();
         stranger.send(Message::text(encode(&Msg::Mute { state: MuteState::Muted, at: 1 }))).unwrap();
@@ -440,6 +450,24 @@ mod tests {
         ws.send(Message::text(encode(&Msg::Mute { state: MuteState::Muted, at: 7 }))).unwrap();
         wait("heard", || !got.lock().unwrap().is_empty());
         assert_eq!(*got.lock().unwrap(), [(MuteState::Muted, 7)]);
+    }
+
+    #[test]
+    fn caption_messages_reach_myna_only_from_a_connection_that_said_hello() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Mutex::new(crate::storage::open(tmp.path()).unwrap()));
+        let got = Arc::new(Mutex::new(vec![]));
+        let g = got.clone();
+        let a = Addon::new(db, ORIGIN, &[0], |_| {}, |_, _| {}, move |m| g.lock().unwrap().push(m), |_| {});
+        let addr = a.start().unwrap();
+        let mut stranger = dial(addr, Some(ORIGIN)).unwrap();
+        stranger.send(Message::text(r#"{"v":1,"type":"caption","name":"Eve","at":1}"#)).unwrap();
+        assert!(closed(&mut stranger).is_some());
+        let mut ws = connect(&a, addr);
+        ws.send(Message::text(r#"{"v":1,"type":"caption","name":"Ana","at":7,"text":"hi"}"#)).unwrap();
+        ws.send(Message::text(r#"{"v":1,"type":"captions","state":"unavailable"}"#)).unwrap();
+        wait("heard", || got.lock().unwrap().len() == 2);
+        assert_eq!(*got.lock().unwrap(), [Msg::Caption { name: "Ana".into(), at: 7, text: Some("hi".into()) }, Msg::Captions { state: CaptionsState::Unavailable }]);
     }
 
     #[test]
@@ -518,7 +546,7 @@ mod tests {
         let db = Arc::new(Mutex::new(crate::storage::open(tmp.path()).unwrap()));
         let got = Arc::new(Mutex::new(vec![]));
         let g = got.clone();
-        let a = Addon::new(db, ORIGIN, &[0], |_| {}, |_, _| {}, move |t| {
+        let a = Addon::new(db, ORIGIN, &[0], |_| {}, |_, _| {}, |_| {}, move |t| {
             g.lock().unwrap().push(match t {
                 Tab::Start => ("start", 0, 0),
                 Tab::Stop => ("stop", 0, 0),

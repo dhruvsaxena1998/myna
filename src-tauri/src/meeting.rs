@@ -3,6 +3,7 @@
 
 use crate::addon::MuteState;
 use crate::runtime::{RATE, Segment};
+use crate::speakers;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rusqlite::{Connection, OptionalExtension};
 use std::ffi::{CStr, c_char, c_void};
@@ -341,6 +342,12 @@ pub trait Stt: Send + Sync {
     fn transcribe(&self, audio: &[f32]) -> Result<Vec<Segment>, String>;
 }
 
+/// Tells the voices apart in the Them track, as turns in seconds from its start. The app's picks the active diarization
+/// model (falling back to Sortformer); Err says why there are no turns, and the transcript stays without them.
+pub trait Voices: Send + Sync {
+    fn diarize(&self, audio: &[f32]) -> Result<Vec<crate::runtime::Turn>, String>;
+}
+
 /// The most audio in one call: Parakeet takes about 4 to 5 minutes (`runtime.rs`).
 const CHUNK: usize = 4 * 60 * RATE as usize;
 /// Quieter than this (about -46 dB) all through a chunk is not speech: not worth the model's time.
@@ -373,6 +380,7 @@ fn wav_samples(path: &std::path::Path) -> Result<Vec<i16>, String> {
 }
 
 /// Meetings that still need writing up: cut off while recording (a crash or quit), or while transcribing.
+const MAX_CAPTIONS: i64 = 20_000;
 const UNFINISHED: &str = "('recording', 'recorded', 'transcribing')";
 
 pub struct Meetings {
@@ -424,6 +432,28 @@ impl Meetings {
 
     fn mark(&self, id: i64, at_ms: i64, state: MuteState) {
         let _ = self.db.lock().unwrap().execute("INSERT INTO mute_event(meeting, at_ms, state, source) VALUES (?1, ?2, ?3, 'teams')", (id, at_ms, state.as_str()));
+    }
+
+    /// Teams' captions showed `name` speaking at `at` (unix ms); `now` is the clock now. Kept only while recording, trimmed and capped.
+    pub fn caption(&self, name: &str, at: i64, text: Option<&str>, now: i64) {
+        let Some((id, started)) = self.running() else { return };
+        let cap = |s: &str, n| s.trim().chars().take(n).collect::<String>();
+        let (name, text) = (cap(name, 80), text.map(|t| cap(t, 300)).filter(|t| !t.is_empty()));
+        if name.is_empty() {
+            return;
+        }
+        // The add-on's clock is held to the meeting, like the mute timeline. A meeting keeps at most MAX_CAPTIONS: a long call is a few thousand.
+        let _ = self.db.lock().unwrap().execute(
+            "INSERT INTO caption_event(meeting, at_ms, name, text) SELECT ?1, ?2, ?3, ?4 WHERE (SELECT COUNT(*) FROM caption_event WHERE meeting = ?1) < ?5",
+            (id, (at.min(now) - started).max(0), name, text, MAX_CAPTIONS),
+        );
+    }
+
+    /// The add-on can't find Teams' captions: the page says so instead of guessing at names.
+    pub fn captions_unavailable(&self) {
+        if let Some((id, _)) = self.running() {
+            let _ = self.db.lock().unwrap().execute("UPDATE meeting SET captions = 'unavailable' WHERE id = ?1", [id]);
+        }
     }
 
     /// The recording in progress: its id and when it started (unix ms).
@@ -539,12 +569,12 @@ impl Meetings {
     }
 
     /// Writes up meeting `id` from its two tracks: Me from the mic, Them from the call, merged by time. `progress`
-    /// gets 0 to 1 as chunks finish. Fails, with the reason kept in the meeting, without touching the audio.
-    pub fn transcribe(&self, id: i64, stt: &dyn Stt, progress: &mut dyn FnMut(f32)) -> Result<(), String> {
+    /// gets 0 to 1 as chunks finish, the last step being telling the voices on Them apart. Fails, with the reason kept in the meeting, without touching the audio.
+    pub fn transcribe(&self, id: i64, stt: &dyn Stt, who: &dyn Voices, progress: &mut dyn FnMut(f32)) -> Result<(), String> {
         let _one = self.job.lock().unwrap();
         let set = |sql: &str, p: &[&dyn rusqlite::ToSql]| self.db.lock().unwrap().execute(sql, p).map(drop).map_err(|e| format!("Couldn't save the meeting: {e}"));
         set("UPDATE meeting SET state = 'transcribing', failure = NULL WHERE id = ?1", &[&id])?;
-        let done = self.write_up(id, stt, progress);
+        let done = self.write_up(id, stt, who, progress);
         if let Err(e) = &done {
             let _ = set("UPDATE meeting SET state = 'failed', failure = ?1 WHERE id = ?2", &[e, &id]);
         }
@@ -561,7 +591,21 @@ impl Meetings {
         Ok(rows.into_iter().map(|(at, s)| (at, match s.as_str() { "muted" => MuteState::Muted, "unmuted" => MuteState::Unmuted, _ => MuteState::Unknown })).collect())
     }
 
-    fn write_up(&self, id: i64, stt: &dyn Stt, progress: &mut dyn FnMut(f32)) -> Result<(), String> {
+    /// The meeting's captions: `(ms from its start, name)`, in time order.
+    fn captions(&self, id: i64) -> Result<Vec<(i64, String)>, String> {
+        let db = self.db.lock().unwrap();
+        let rows = db.prepare("SELECT at_ms, name FROM caption_event WHERE meeting = ?1 ORDER BY at_ms, id").and_then(|mut q| {
+            q.query_map([id], |r| Ok((r.get(0)?, r.get(1)?))).and_then(|r| r.collect())
+        });
+        rows.map_err(|e| format!("Couldn't read the captions: {e}"))
+    }
+
+    fn captions_said_unavailable(&self, id: i64) -> bool {
+        let c: Option<String> = self.db.lock().unwrap().query_row("SELECT captions FROM meeting WHERE id = ?1", [id], |r| r.get(0)).unwrap_or(None);
+        c.is_some()
+    }
+
+    fn write_up(&self, id: i64, stt: &dyn Stt, who: &dyn Voices, progress: &mut dyn FnMut(f32)) -> Result<(), String> {
         let folder = self.dir.join("meetings").join(id.to_string());
         let mic = wav_samples(&folder.join("mic.wav"))?;
         // The call's track may never have been made (the meeting ended as it started).
@@ -572,7 +616,7 @@ impl Meetings {
         // shortcut: both tracks sit in memory as 16-bit samples (115 MB an hour each); stream from disk past a few hours.
         let mut said: Vec<(f64, f64, &str, String)> = vec![];
         for (i, (who, audio, at)) in pieces.iter().enumerate() {
-            progress(i as f32 / pieces.len() as f32);
+            progress(i as f32 / (pieces.len() + 1) as f32);
             if audio.iter().all(|s| s.abs() < QUIET) {
                 continue;
             }
@@ -586,17 +630,38 @@ impl Meetings {
             }
         }
         said.sort_by(|a, b| a.0.total_cmp(&b.0)); // stable: Me before Them when they start together
+        let spans: Vec<(i64, i64)> = said.iter().map(|s| ((s.0 * 1000.0).round() as i64, (s.1 * 1000.0).round() as i64)).collect();
+        let them_lines: Vec<usize> = (0..said.len()).filter(|&i| said[i].2 == "Them").collect();
+        let (mut labels, mut note) = (vec![None; said.len()], None);
+        if !them_lines.is_empty() {
+            progress(pieces.len() as f32 / (pieces.len() + 1) as f32);
+            // shortcut: the whole track goes to the model in one call (Sortformer streams it, keeping its voices straight); a model that can't take a long track needs chunking here.
+            let audio: Vec<f32> = them.iter().map(|s| *s as f32 / 32768.0).collect();
+            match who.diarize(&audio) {
+                Ok(turns) => {
+                    let names = self.captions(id)?;
+                    let me: Vec<_> = (0..said.len()).filter(|&i| said[i].2 == "Me").map(|i| spans[i]).collect();
+                    let got = speakers::label(&them_lines.iter().map(|&i| spans[i]).collect::<Vec<_>>(), &me, &turns, &names);
+                    for (&i, l) in them_lines.iter().zip(got) {
+                        labels[i] = l;
+                    }
+                    if names.is_empty() && self.captions_said_unavailable(id) {
+                        note = Some("Teams captions weren't available, so voices are numbered.".to_string());
+                    }
+                }
+                Err(e) => note = Some(format!("Couldn't tell voices apart: {e}")),
+            }
+        }
         let mut db = self.db.lock().unwrap();
         let save = |db: &mut Connection| -> rusqlite::Result<()> {
             let tx = db.transaction()?;
             tx.execute("DELETE FROM segment WHERE meeting = ?1", [id])?; // a retry starts clean
-            for (start, end, who, text) in &said {
-                let (start, end) = ((start * 1000.0).round() as i64, (end * 1000.0).round() as i64);
-                let mute = if *who == "Me" { mute_of(&events, start, end).map(MuteState::as_str) } else { None };
-                tx.execute("INSERT INTO segment(meeting, start_ms, end_ms, speaker, text, mute) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", (id, start, end, who, text, mute))?;
+            for (((_, _, who, text), (start, end)), label) in said.iter().zip(&spans).zip(&labels) {
+                let mute = if *who == "Me" { mute_of(&events, *start, *end).map(MuteState::as_str) } else { None };
+                tx.execute("INSERT INTO segment(meeting, start_ms, end_ms, speaker, text, mute, label) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", (id, start, end, who, text, mute, label))?;
             }
             // A meeting cut off by a crash never got its length.
-            tx.execute("UPDATE meeting SET state = 'done', failure = NULL, duration_ms = COALESCE(duration_ms, ?2) WHERE id = ?1", (id, mic.len() as i64 * 1000 / RATE as i64))?;
+            tx.execute("UPDATE meeting SET state = 'done', failure = NULL, note = ?3, duration_ms = COALESCE(duration_ms, ?2) WHERE id = ?1", (id, mic.len() as i64 * 1000 / RATE as i64, &note))?;
             tx.commit()
         };
         save(&mut db).map_err(|e| format!("Couldn't save the notes: {e}"))
@@ -638,6 +703,8 @@ pub struct Row {
     /// "recorded", "transcribing", "done" or "failed".
     pub state: String,
     pub failure: Option<String>,
+    /// A one-line thing worth knowing about a finished meeting, like why voices weren't told apart.
+    pub note: Option<String>,
 }
 
 /// The state of the mute button over a stretch of speech, from the timeline: the state that covers more than half
@@ -666,6 +733,7 @@ fn mute_of(events: &[(i64, MuteState)], start: i64, end: i64) -> Option<MuteStat
 #[derive(serde::Serialize, Debug, PartialEq)]
 pub struct Line {
     pub id: i64,
+    /// "Me", or for the other side "Speaker 2", a name from the captions, or "Them" when voices weren't told apart.
     pub speaker: String,
     pub start_ms: i64,
     /// Empty when `hidden`: what's left out never leaves the backend.
@@ -687,9 +755,9 @@ pub struct Page {
 
 /// Every meeting, newest first. The one still recording isn't in it: the list shows it as its live card.
 pub fn list(db: &Connection) -> Result<Vec<Row>, String> {
-    let sql = "SELECT id, title, started, duration_ms, source_app, state, failure FROM meeting WHERE state <> 'recording' ORDER BY started DESC, id DESC";
+    let sql = "SELECT id, title, started, duration_ms, source_app, state, failure, note FROM meeting WHERE state <> 'recording' ORDER BY started DESC, id DESC";
     let rows = db.prepare(sql).and_then(|mut q| {
-        q.query_map([], |r| Ok(Row { id: r.get(0)?, title: r.get(1)?, started: r.get(2)?, duration_ms: r.get(3)?, source_app: r.get(4)?, state: r.get(5)?, failure: r.get(6)? })).and_then(|r| r.collect())
+        q.query_map([], |r| Ok(Row { id: r.get(0)?, title: r.get(1)?, started: r.get(2)?, duration_ms: r.get(3)?, source_app: r.get(4)?, state: r.get(5)?, failure: r.get(6)?, note: r.get(7)? })).and_then(|r| r.collect())
     });
     rows.map_err(|e| format!("Couldn't read your meetings: {e}"))
 }
@@ -701,7 +769,7 @@ pub fn page(db: &Connection, id: i64) -> Result<Page, String> {
 
 fn lines(db: &Connection, id: i64) -> Result<Vec<Line>, String> {
     let keep = get(db)?.keep_teams;
-    db.prepare("SELECT id, speaker, start_ms, text, mute, included FROM segment WHERE meeting = ?1 ORDER BY start_ms, id")
+    db.prepare("SELECT id, COALESCE(label, speaker), start_ms, text, mute, included FROM segment WHERE meeting = ?1 ORDER BY start_ms, id")
         .and_then(|mut q| {
             q.query_map([id], |r| {
                 let (mute, included): (Option<String>, bool) = (r.get(4)?, r.get(5)?);
@@ -1023,6 +1091,121 @@ mod tests {
         }
     }
 
+    /// Tells voices apart by script.
+    struct Voiced(Result<Vec<crate::runtime::Turn>, String>);
+    impl Voices for Voiced {
+        fn diarize(&self, _: &[f32]) -> Result<Vec<crate::runtime::Turn>, String> {
+            self.0.clone()
+        }
+    }
+
+    /// Hands out one script of segments per call: Me's chunk first, then Them's.
+    struct Script(Mutex<Vec<Vec<Segment>>>);
+    impl Stt for Script {
+        fn transcribe(&self, _: &[f32]) -> Result<Vec<Segment>, String> {
+            Ok(self.0.lock().unwrap().remove(0))
+        }
+    }
+
+    fn seg(start: f32, end: f32, text: &str) -> Segment {
+        Segment { start, end, text: text.into() }
+    }
+
+    fn turn(start: f32, end: f32, speaker: usize) -> crate::runtime::Turn {
+        crate::runtime::Turn { start, end, speaker }
+    }
+
+    fn lines_of(m: &Meetings, id: i64) -> Vec<String> {
+        m.db.lock().unwrap().prepare("SELECT COALESCE(label, speaker) FROM segment WHERE meeting = ?1 ORDER BY start_ms, id").unwrap().query_map([id], |r| r.get(0)).unwrap().map(Result::unwrap).collect()
+    }
+
+    fn note(m: &Meetings, id: i64) -> Option<String> {
+        m.db.lock().unwrap().query_row("SELECT note FROM meeting WHERE id = ?1", [id], |r| r.get(0)).unwrap()
+    }
+
+    /// Ten seconds of both tracks: Me says one thing, Them two; voice 2 talks 2.5 to 5.5 s and voice 9 after.
+    fn call(tmp: &std::path::Path) -> (Meetings, i64, Script, Voiced) {
+        let m = meetings(tmp, Fake(0));
+        let id = m.db.lock().unwrap().query_row("INSERT INTO meeting(started, state) VALUES (1, 'recorded') RETURNING id", [], |r| r.get(0)).unwrap();
+        write_track(tmp, id, "mic.wav", &[(true, 10.0)]);
+        write_track(tmp, id, "them.wav", &[(true, 10.0)]);
+        let said = Script(Mutex::new(vec![vec![seg(0.0, 2.0, "hi")], vec![seg(3.0, 5.0, "a"), seg(6.0, 8.0, "b")]]));
+        (m, id, said, Voiced(Ok(vec![turn(2.5, 5.5, 2), turn(5.5, 10.0, 9)])))
+    }
+
+    fn caption_at(m: &Meetings, id: i64, name: &str, at: &[i64]) {
+        for at in at {
+            m.db.lock().unwrap().execute("INSERT INTO caption_event(meeting, at_ms, name) VALUES (?1, ?2, ?3)", (id, at, name)).unwrap();
+        }
+    }
+
+    #[test]
+    fn them_is_split_into_voices_and_named_from_the_captions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (m, id, stt, who) = call(tmp.path());
+        caption_at(&m, id, "Ana", &[4000, 4300, 4600]);
+        caption_at(&m, id, "Bo", &[8000, 8300, 8600]);
+        m.transcribe(id, &stt, &who, &mut |_| {}).unwrap();
+        assert_eq!(lines_of(&m, id), ["Me", "Ana", "Bo"]);
+        assert_eq!(said(&m, id).iter().map(|s| s.1.as_str()).collect::<Vec<_>>(), ["Me", "Them", "Them"], "an older build still reads Me and Them");
+        assert_eq!(note(&m, id), None);
+    }
+
+    #[test]
+    fn without_captions_voices_are_numbered_and_unavailable_captions_say_so() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (m, id, stt, who) = call(tmp.path());
+        m.transcribe(id, &stt, &who, &mut |_| {}).unwrap();
+        assert_eq!((lines_of(&m, id), note(&m, id)), (["Me", "Speaker 2", "Speaker 3"].map(String::from).to_vec(), None));
+        let (m, id, stt, who) = call(tmp.path());
+        m.db.lock().unwrap().execute("UPDATE meeting SET captions = 'unavailable'", []).unwrap();
+        m.transcribe(id, &stt, &who, &mut |_| {}).unwrap();
+        assert_eq!(note(&m, id).unwrap(), "Teams captions weren't available, so voices are numbered.");
+    }
+
+    #[test]
+    fn a_diarizer_that_fails_keeps_the_me_them_transcript_and_says_why() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (m, id, stt, _) = call(tmp.path());
+        m.transcribe(id, &stt, &Voiced(Err("Download Sortformer in Settings › Speech models".into())), &mut |_| {}).unwrap();
+        assert_eq!(lines_of(&m, id), ["Me", "Them", "Them"]);
+        assert_eq!(state(&m, id), ("done".into(), None));
+        assert_eq!(note(&m, id).unwrap(), "Couldn't tell voices apart: Download Sortformer in Settings › Speech models");
+        let shown = page(&m.db.lock().unwrap(), id).unwrap().meeting.note;
+        assert_eq!(shown, note(&m, id));
+    }
+
+    #[test]
+    fn captions_are_kept_only_while_recording_trimmed_clamped_and_capped() {
+        let tmp = tempfile::tempdir().unwrap();
+        let m = meetings(tmp.path(), Fake(RATE as usize));
+        m.caption("Early", 1500, None, 2000);
+        let id = m.start(1000).unwrap();
+        m.caption("  Ana  ", 1500, Some("  hello  "), 2000);
+        m.caption("Bo", 9_000_000, Some("   "), 3000);
+        m.caption("   ", 1500, None, 2000);
+        m.caption(&"x".repeat(200), 1500, Some(&"y".repeat(500)), 2000);
+        let rows: Vec<(i64, String, Option<String>)> = m.db.lock().unwrap().prepare("SELECT at_ms, name, text FROM caption_event ORDER BY id").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(Result::unwrap).collect();
+        assert_eq!(rows.len(), 3, "not before the meeting, not blank");
+        assert_eq!(rows[0], (500, "Ana".into(), Some("hello".into())));
+        assert_eq!(rows[1], (2000, "Bo".into(), None), "a clock from the future is held to now");
+        assert_eq!((rows[2].1.len(), rows[2].2.as_ref().unwrap().len()), (80, 300));
+        m.db.lock().unwrap().execute(&format!("INSERT INTO caption_event(meeting, at_ms, name) WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < {}) SELECT {id}, 0, 'x' FROM n", MAX_CAPTIONS - 3), []).unwrap();
+        m.caption("Late", 1500, None, 2000);
+        let n: i64 = m.db.lock().unwrap().query_row("SELECT COUNT(*) FROM caption_event", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, MAX_CAPTIONS);
+    }
+
+    #[test]
+    fn a_labelled_line_shows_and_copies_by_its_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let m = meetings(tmp.path(), Fake(0));
+        let db = m.db.lock().unwrap();
+        db.execute("INSERT INTO meeting(started, state) VALUES (1, 'done')", []).unwrap();
+        db.execute("INSERT INTO segment(meeting, start_ms, end_ms, speaker, text, label) VALUES (1, 3000, 0, 'Them', 'right', 'Ana'), (1, 4000, 0, 'Them', 'old row', NULL)", []).unwrap();
+        assert_eq!(outgoing(&db, 1).unwrap(), "Ana 00:03\nright\n\nThem 00:04\nold row");
+    }
+
     fn said(m: &Meetings, id: i64) -> Vec<(i64, String, String)> {
         let db = m.db.lock().unwrap();
         let mut q = db.prepare("SELECT start_ms, speaker, text FROM segment WHERE meeting = ?1 ORDER BY id").unwrap();
@@ -1050,7 +1233,7 @@ mod tests {
         let (m, id) = two_tracks(tmp.path());
         let stt = Count::default();
         let mut seen = vec![];
-        m.transcribe(id, &stt, &mut |p| seen.push(p)).unwrap();
+        m.transcribe(id, &stt, &Voiced(Err("x".into())), &mut |p| seen.push(p)).unwrap();
         assert_eq!(stt.0.lock().unwrap().len(), 6, "four chunks of Me and two of Them; two silent ones never reached the model");
         let line = |ms: i64, who: &str, n: &str| (ms, who.to_string(), n.to_string());
         assert_eq!(said(&m, id), [line(100, "Me", "1"), line(1650, "Them", "5"), line(1950, "Me", "2"), line(3200, "Them", "6"), line(3500, "Me", "3"), line(5050, "Me", "4")]);
@@ -1069,12 +1252,12 @@ mod tests {
             let mut q = db.prepare("SELECT speaker, mute FROM segment WHERE meeting = ?1 ORDER BY start_ms").unwrap();
             q.query_map([id], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect()
         };
-        m.transcribe(id, &Count::default(), &mut |_| {}).unwrap();
+        m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), &mut |_| {}).unwrap();
         assert!(marks(&m).iter().all(|(_, s)| s.is_none()), "no add-on, no marks");
         for (at, s) in [(0, "unmuted"), (1900, "muted"), (3000, "unmuted"), (5000, "unknown")] {
             m.db.lock().unwrap().execute("INSERT INTO mute_event(meeting, at_ms, state, source) VALUES (?1, ?2, ?3, 'teams')", (id, at, s)).unwrap();
         }
-        m.transcribe(id, &Count::default(), &mut |_| {}).unwrap(); // Me lines at 100, 1950, 3500 and 5050 ms
+        m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), &mut |_| {}).unwrap(); // Me lines at 100, 1950, 3500 and 5050 ms
         let me: Vec<_> = marks(&m).into_iter().map(|(who, s)| (who, s.unwrap_or_default())).collect();
         let want = |who: &str, s: &str| (who.to_string(), s.to_string());
         assert_eq!(me, [want("Me", "unmuted"), want("Them", ""), want("Me", "muted"), want("Them", ""), want("Me", "unmuted"), want("Me", "unknown")]);
@@ -1140,14 +1323,14 @@ mod tests {
     fn a_failure_keeps_the_audio_and_the_reason_and_try_again_finishes() {
         let tmp = tempfile::tempdir().unwrap();
         let (m, id) = two_tracks(tmp.path());
-        assert_eq!(m.transcribe(id, &Count(Default::default(), Some(2)), &mut |_| {}), Err("The model fell over.".into()));
+        assert_eq!(m.transcribe(id, &Count(Default::default(), Some(2)), &Voiced(Err("x".into())), &mut |_| {}), Err("The model fell over.".into()));
         assert_eq!(state(&m, id), ("failed".into(), Some("The model fell over.".into())));
         assert!(said(&m, id).is_empty() && m.failed(id));
         assert!(tmp.path().join(format!("meetings/{id}/mic.wav")).exists() && tmp.path().join(format!("meetings/{id}/them.wav")).exists());
         assert!(m.unfinished().is_empty(), "a failed one waits for Try again, not for the next launch");
-        m.transcribe(id, &Count::default(), &mut |_| {}).unwrap();
+        m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), &mut |_| {}).unwrap();
         assert_eq!((state(&m, id), said(&m, id).len(), m.failed(id)), (("done".into(), None), 6, false));
-        m.transcribe(id, &Count::default(), &mut |_| {}).unwrap();
+        m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), &mut |_| {}).unwrap();
         assert_eq!(said(&m, id).len(), 6, "writing up again replaces the notes");
     }
 
@@ -1160,7 +1343,7 @@ mod tests {
         let next = meetings(tmp.path(), Fake(0));
         assert_eq!(next.unfinished(), [id]);
         let stt = Count::default();
-        next.transcribe(id, &stt, &mut |_| {}).unwrap();
+        next.transcribe(id, &stt, &Voiced(Err("x".into())), &mut |_| {}).unwrap();
         assert_eq!(*stt.0.lock().unwrap(), [RATE as usize * 3], "the flushed mic audio; the call was silent");
         assert_eq!((said(&next, id).len(), state(&next, id)), (1, ("done".into(), None)));
         assert!(next.unfinished().is_empty());

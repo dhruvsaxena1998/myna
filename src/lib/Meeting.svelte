@@ -36,6 +36,7 @@
   <article aria-labelledby="mt">
     <h1 id="mt">{page.title}</h1>
     <p class="meta">{date[1] ? `${date[1]} · ` : `${date[0]} · `}{meta(page)}</p>
+    {#if page.note}<p class="note">{page.note}</p>{/if}
     <p class="err" role="status">{error}</p>
     {#if page.segments.length}
       <div class="transcript">
@@ -72,6 +73,7 @@
   article { max-width: var(--w-doc, 720px); margin: 0 auto; user-select: text; }
   h1 { margin: 0; font-size: var(--fs-title1); line-height: 1.2; font-weight: var(--fw-bold, 700); letter-spacing: -.02em; }
   .meta { margin: var(--sp-1) 0 0; color: var(--text-3); font-variant-numeric: tabular-nums; }
+  .note { margin: var(--sp-1) 0 0; color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
   .err { margin: var(--sp-1) 0; min-height: var(--lh-footnote); color: var(--danger-text); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
   .transcript { margin-top: var(--sp-3); }
   .seg { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: var(--sp-4); padding: var(--sp-2) 0; }

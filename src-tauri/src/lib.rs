@@ -15,6 +15,7 @@ mod pill;
 mod rules;
 mod runtime;
 mod session;
+mod speakers;
 mod storage;
 mod trace;
 mod update;
@@ -536,6 +537,16 @@ fn mic_word(muted: Option<bool>) -> Option<&'static str> {
     muted.map(|m| if m { "muted" } else { "live" })
 }
 
+/// The add-on read a caption off Teams, or says it can't: kept on the meeting for naming its voices.
+fn on_caption(app: &AppHandle, m: addon::Msg) {
+    let meetings = app.state::<meeting::Meetings>();
+    match m {
+        addon::Msg::Caption { name, at, text } => meetings.caption(&name, at, text.as_deref(), now_ms()),
+        addon::Msg::Captions { .. } => meetings.captions_unavailable(),
+        _ => {}
+    }
+}
+
 /// The add-on saw the Teams mute button change (or dropped, which is `Unknown`): the timeline, then the pill, menu and live card.
 fn on_mute(app: &AppHandle, state: addon::MuteState, at: i64) {
     let m = app.state::<meeting::Meetings>();
@@ -892,7 +903,7 @@ fn write_up_meeting(app: &AppHandle, id: i64) {
         };
         say("transcribing", 0.0, None);
         let session = app.state::<Arc<Session>>();
-        let done = app.state::<meeting::Meetings>().transcribe(id, &**session, &mut |p| say("transcribing", p, None));
+        let done = app.state::<meeting::Meetings>().transcribe(id, &**session, &**session, &mut |p| say("transcribing", p, None));
         session.schedule_unload(); // the model idles out like after a dictation
         match done {
             Ok(()) => say("done", 1.0, None),
@@ -1024,12 +1035,13 @@ pub fn run() {
                     let on_drop = handle.clone();
                     let for_mute = handle.clone();
                     let for_tab = handle.clone();
+                    let for_caption = handle.clone();
                     app.manage(addon::Addon::new(db.clone(), addon::ORIGIN, &addon::PORTS, move |connected| {
                         let _ = handle.emit("addon-status", connected);
                         if !connected {
                             on_mute(&on_drop, addon::MuteState::Unknown, now_ms()); // Myna can't see the button anymore
                         }
-                    }, move |state, at| on_mute(&for_mute, state, at), move |t| on_tab(&for_tab, t)));
+                    }, move |state, at| on_mute(&for_mute, state, at), move |m| on_caption(&for_caption, m), move |t| on_tab(&for_tab, t)));
                     app.manage(Data {
                         db,
                         models_dir: models,
