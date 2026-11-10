@@ -6,6 +6,7 @@
 
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import BrowserAddon from "$lib/BrowserAddon.svelte";
   import Permissions, { type Perms } from "$lib/Permissions.svelte";
 
   let { notes = $bindable(), perms }: { notes: Notes; perms: Perms } = $props();
@@ -49,6 +50,7 @@
     </ul>
     <p class="err" role="status">{error}</p>
   </section>
+  <BrowserAddon />
   <Permissions initial={perms} kinds={["mic", "audio"]} />
 {/if}
 
