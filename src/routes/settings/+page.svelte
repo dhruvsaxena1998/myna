@@ -16,6 +16,7 @@
   import MeetingNotes from "$lib/MeetingNotes.svelte";
   import CleanupStyles, { type Cleanup } from "$lib/CleanupStyles.svelte";
   import Write from "$lib/Write.svelte";
+  import StagePath from "$lib/StagePath.svelte";
   import type { Ai } from "$lib/AiProviders.svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { onMount, tick } from "svelte";
@@ -87,6 +88,10 @@
     view.sub === "style" ? (cleanup?.styles.find((x) => x.id === view.arg)?.name ?? "") : view.sub ? (view.title ?? SUBS[view.sub]?.title ?? "") : PAGES.find((p) => p.id === view.page)!.title,
   );
   let scroller: HTMLElement;
+  // Listen, Understand and Write (not their drill-ins) are headed by the stage path instead of a title.
+  const stage = $derived(!view.sub && (view.page === "listen" || view.page === "understand" || view.page === "write") ? view.page : null);
+  const sttPick = $derived(stt?.models.find((m) => m.id === sttActive));
+  const fastRoute = $derived(ai?.fast && !ai.fast.gone ? ai.fast : null);
 
   async function show(v: View, push = true) {
     if (v.page === "experimental" && !look?.experimental) v = { page: "general", sub: null, arg: null };
@@ -164,14 +169,20 @@
   </nav>
 
   <main>
-    <header data-tauri-drag-region>
+    <header data-tauri-drag-region class:staged={stage && voice}>
       <span class="hnav">
         <button class="btn quiet icon" aria-label="Back" title="Back (⌘[)" disabled={hist.i === 0} onclick={() => step(-1)}><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6" /></svg></button>
         <button class="btn quiet icon" aria-label="Forward" title="Forward (⌘])" disabled={hist.i === hist.list.length - 1} onclick={() => step(1)}><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg></button>
       </span>
-      <h1>{title}</h1>
+      {#if stage && voice}
+        <h1 class="sr-only">{title}</h1>
+        <StagePath
+          page={stage} on={voice.on} mode={voice.mode} accel={voice.key || null} paste={voice.paste} {go}
+          model={sttPick?.name ?? null} installed={!!sttPick && installed(sttPick)} pct={sttPick ? dl.pct[sttPick.id] : undefined}
+          fast={fastRoute ? { model: fastRoute.model, off: !!ai?.providers.find((p) => p.id === fastRoute.provider)?.off_device } : null} />
+      {:else}<h1>{title}</h1>{/if}
     </header>
-    <div class="content" bind:this={scroller}>
+    <div class="content" class:staged={stage && voice} bind:this={scroller}>
       {#key hist.i + ":" + view.page + ":" + view.sub + ":" + view.arg}
         <div class="page prefs">
           <!-- Every setting lives in the database, so if it failed to open, every page shows why. -->
@@ -293,7 +304,10 @@
   /* A new view rises in. */
   .page { animation: enter var(--dur) var(--ease-out); }
   @keyframes enter { from { opacity: 0; transform: translateY(4px); } }
-  header { height: var(--h-toolbar); display: flex; align-items: center; gap: var(--sp-1); min-width: 0; padding: 0 var(--sp-5); }
+  header { position: relative; height: var(--h-toolbar); display: flex; align-items: center; gap: var(--sp-1); min-width: 0; padding: 0 var(--sp-5); }
+  /* With the stage path the head is about 44px, the same in every state; the page starts 12px under it. */
+  header.staged { box-sizing: border-box; height: auto; min-height: 44px; padding-block: var(--sp-1); }
+  .content.staged .page { padding-top: var(--sp-3); }
   .hnav { display: flex; gap: 2px; flex: none; margin: 0 var(--sp-2) 0 calc(-1 * var(--sp-2)); }
   .hnav .btn { width: 28px; height: 28px; color: var(--text); }
   .hnav .btn:disabled { color: var(--text-disabled); }

@@ -307,28 +307,28 @@ textarea.input { height: auto; padding: var(--sp-2) var(--sp-3); border-radius: 
 .prefs .end { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); }
 .prefs .count { color: var(--text-3); font-variant-numeric: tabular-nums; }
 .prefs .chev { display: inline-flex; color: var(--text-3); }
-:where(.prefs) .ic { width: var(--ic); height: var(--ic); flex: none; fill: none; stroke: currentColor; stroke-width: var(--ic-stroke); stroke-linecap: round; stroke-linejoin: round; }
+:where(.prefs, .stage-path) .ic { width: var(--ic); height: var(--ic); flex: none; fill: none; stroke: currentColor; stroke-width: var(--ic-stroke); stroke-linecap: round; stroke-linejoin: round; }
 .prefs .err { margin: var(--sp-1) 0 0; min-height: var(--lh-footnote); color: var(--danger-text); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
 .prefs section > .err:last-child { margin-bottom: calc(-1 * (var(--sp-1) + var(--lh-footnote))); }
 /* A page-wide error line after the last section: 4px under it, not a whole gap. */
 .prefs > .err { margin-top: calc(var(--sp-1) - var(--sp-5)); }
 .prefs .add { display: flex; gap: var(--sp-2); margin-top: var(--sp-3); }
 /* Pill (DESIGN.md › Pill): neutral by default, .status, .caution. */
-.prefs .pill { display: inline-flex; align-items: center; gap: var(--sp-1); height: 20px; padding: 0 var(--sp-2); border-radius: var(--r-full); font-size: var(--fs-caption); line-height: var(--lh-caption);
+:is(.prefs, .stage-path) .pill { display: inline-flex; align-items: center; gap: var(--sp-1); height: 20px; padding: 0 var(--sp-2); border-radius: var(--r-full); font-size: var(--fs-caption); line-height: var(--lh-caption);
   font-weight: var(--fw-semibold); white-space: nowrap; flex: none; background: var(--fill-hover); color: var(--text-2); }
-.prefs .pill.status { background: var(--accent-soft); color: var(--accent-text); }
-.prefs .pill.caution { background: var(--caution-soft); color: var(--caution-text); }
-.prefs .pill .ic { width: 12px; height: 12px; }
+:is(.prefs, .stage-path) .pill.status { background: var(--accent-soft); color: var(--accent-text); }
+:is(.prefs, .stage-path) .pill.caution { background: var(--caution-soft); color: var(--caution-text); }
+:is(.prefs, .stage-path) .pill .ic { width: 12px; height: 12px; }
 /* Allowed / installed: a check plus a word. */
-.prefs .ok { display: inline-flex; align-items: center; gap: var(--sp-1); color: var(--text-2); white-space: nowrap; }
-.prefs .ok .ic { width: var(--ic-sm); height: var(--ic-sm); color: var(--ok-text); stroke-width: 2; }
+:is(.prefs, .stage-path) .ok { display: inline-flex; align-items: center; gap: var(--sp-1); color: var(--text-2); white-space: nowrap; }
+:is(.prefs, .stage-path) .ok .ic { width: var(--ic-sm); height: var(--ic-sm); color: var(--ok-text); stroke-width: 2; }
 /* Something you'd copy: a path, an address, a code. */
 .prefs .mono { font: 12px/var(--lh-footnote) var(--font-mono); overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; cursor: text; }
 .prefs .desc .mono { display: inline; }
 /* Keycaps. */
-.prefs kbd { display: inline-grid; place-items: center; min-width: 20px; height: 20px; box-sizing: border-box; padding: 0 5px; border-radius: var(--r-xs); background: var(--fill-field);
+:is(.prefs, .stage-path) kbd { display: inline-grid; place-items: center; min-width: 20px; height: 20px; box-sizing: border-box; padding: 0 5px; border-radius: var(--r-xs); background: var(--fill-field);
   box-shadow: inset 0 0 0 .5px var(--line-strong); font: var(--fs-footnote)/1 var(--font); color: var(--text); }
-.prefs .keys { display: inline-flex; gap: 3px; }
+:is(.prefs, .stage-path) .keys { display: inline-flex; gap: 3px; }
 /* Word chips: tags in a list row, the input at the end (docs/settings.html .chips). */
 .prefs .chips { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); min-height: 60px; box-sizing: border-box; padding: var(--sp-3) var(--sp-4); cursor: text; }
 .prefs .chips:focus-within { box-shadow: inset 0 0 0 2px var(--focus-ring); }
