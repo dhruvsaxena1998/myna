@@ -281,12 +281,16 @@ textarea.input { height: auto; padding: var(--sp-2) var(--sp-3); border-radius: 
 .prefs .help { margin: 0; color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
 .prefs h2 + .help { margin-bottom: var(--sp-3); }
 .prefs .help.after { margin-top: var(--sp-2); }
+/* A drill-in has no heading: its help line tucks up into the page gap, 8px above its list. */
+.prefs section > .help:first-child { margin: calc(-1 * var(--sp-1)) 0 var(--sp-2); }
 /* In-list sub-label, e.g. a vendor heading between two lists. */
 .prefs h3 { margin: var(--sp-3) 0 var(--sp-1); padding: 0 var(--sp-4); font-size: var(--fs-footnote); line-height: var(--lh-footnote); font-weight: var(--fw-semibold); color: var(--text-2); }
 .prefs .list + h3 { margin-top: var(--sp-4); }
 .prefs .list { list-style: none; margin: 0; padding: 0; border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); }
 /* The separator is a background line inset 16px from the left, so it adds no height; hover fills set background-color and keep it. */
 .prefs .list > li + li { background-image: linear-gradient(var(--line), var(--line)); background-repeat: no-repeat; background-position: var(--sp-4) 0; background-size: calc(100% - var(--sp-4)) 1px; }
+/* A list whose rows lead with a radio (models): the line starts at the text, 48px in. */
+.prefs .list.radios > li + li { background-position: 48px 0; background-size: calc(100% - 48px) 1px; }
 .prefs .list > li:first-child { border-radius: var(--r-xl) var(--r-xl) 0 0; }
 .prefs .list > li:last-child { border-radius: 0 0 var(--r-xl) var(--r-xl); }
 .prefs .list > li:only-child { border-radius: var(--r-xl); }
@@ -325,13 +329,14 @@ textarea.input { height: auto; padding: var(--sp-2) var(--sp-3); border-radius: 
 .prefs kbd { display: inline-grid; place-items: center; min-width: 20px; height: 20px; box-sizing: border-box; padding: 0 5px; border-radius: var(--r-xs); background: var(--fill-field);
   box-shadow: inset 0 0 0 .5px var(--line-strong); font: var(--fs-footnote)/1 var(--font); color: var(--text); }
 .prefs .keys { display: inline-flex; gap: 3px; }
-/* Word chips: a field of tags with an input at the end. */
-.prefs .chipin { display: flex; flex-wrap: wrap; align-items: center; align-content: flex-start; gap: var(--sp-1); min-height: var(--h-ctl-lg); box-sizing: border-box; padding: var(--sp-1h) var(--sp-2);
-  border-radius: var(--r-lg); background: var(--fill-field); box-shadow: inset 0 0 0 .5px var(--line-strong); cursor: text; }
-.prefs .chipin:focus-within { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-.prefs .tag { display: inline-flex; align-items: center; gap: var(--sp-1); height: 22px; box-sizing: border-box; padding: 0 var(--sp-1) 0 var(--sp-2); border-radius: var(--r-full); background: var(--fill-control);
-  box-shadow: inset 0 0 0 .5px var(--line-strong); white-space: nowrap; cursor: default; }
-.prefs .tag button { display: inline-grid; place-items: center; width: 16px; height: 16px; padding: 0; border: 0; border-radius: var(--r-full); background: none; color: var(--text-3); }
+/* Word chips: tags in a list row, the input at the end (docs/settings.html .chips). */
+.prefs .chips { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); min-height: 60px; box-sizing: border-box; padding: var(--sp-3) var(--sp-4); cursor: text; }
+.prefs .chips:focus-within { box-shadow: inset 0 0 0 2px var(--focus-ring); }
+.prefs .chips input { flex: 1 1 140px; min-width: 120px; height: 24px; padding: 0 var(--sp-1); border: 0; background: none; outline: none; color: var(--text); font: inherit; caret-color: var(--accent); }
+.prefs .chips input::placeholder { color: var(--text-3); }
+.prefs .tag { display: inline-flex; align-items: center; gap: 2px; height: 24px; box-sizing: border-box; padding: 0 var(--sp-1) 0 10px; border-radius: var(--r-full); background: var(--fill-field);
+  box-shadow: inset 0 0 0 .5px var(--line); white-space: nowrap; cursor: default; }
+.prefs .tag button { display: inline-grid; place-items: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: var(--r-full); background: none; color: var(--text-3); }
 .prefs .tag button:hover { background: var(--fill-hover); color: var(--text); }
 .prefs .tag button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
 .prefs .tag .ic { width: 12px; height: 12px; }

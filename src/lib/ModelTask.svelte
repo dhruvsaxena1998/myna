@@ -3,11 +3,9 @@
   import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
   import { fmtSize, type Task } from "$lib/models";
-  import { dl, watchDownloads } from "$lib/downloads.svelte";
-  import { fuzzy } from "$lib/fuzzy";
+  import { cancelDownload, dl, startDownload, watchDownloads } from "$lib/downloads.svelte";
 
-  // `tools`: provider headings, Sort by and a search box, for a list long enough to need them.
-  let { task, title, help, tools = false }: { task: Task; title: string; help: string; tools?: boolean } = $props();
+  let { task, title, help }: { task: Task; title: string; help: string } = $props();
 
   let active = $derived(task.active); // assignable: a pick shows at once, a failed save reverts it
   let error = $state("");
@@ -17,20 +15,10 @@
 
   // The buttons update at once; the backend confirms (or the catch puts it back).
   async function start(id: string) {
-    error = "";
-    delete dl.errors[id];
-    dl.pct[id] = 0;
-    try {
-      await invoke("model_download", { id });
-    } catch (e) {
-      delete dl.pct[id];
-      error = String(e);
-    }
+    error = await startDownload(id);
   }
   async function cancel(id: string) {
-    delete dl.pct[id];
-    dl.retry[id] = true;
-    invoke("model_cancel", { id }).catch((e) => (error = String(e)));
+    error = (await cancelDownload(id)) || error;
   }
   async function remove(id: string) {
     error = "";
@@ -43,22 +31,6 @@
       error = String(e);
     }
   }
-
-  let q = $state("");
-  let sort = $state<"rec" | "acc" | "spd" | "size">("rec");
-  const SORTS = [["rec", "Recommended"], ["acc", "Accuracy"], ["spd", "Speed"], ["size", "Size"]] as const;
-  let hits = $derived(task.models.filter((m) => fuzzy(q, m.name)));
-  // The chosen model never searches out of sight. Best first for accuracy and speed, smallest first for size; ties keep the catalog's order.
-  let visible = $derived.by(() => {
-    const list = task.models.filter((m) => m.id === active || hits.includes(m));
-    if (sort === "size") return list.sort((a, b) => a.size - b.size);
-    return sort === "rec" ? list : list.sort((a, b) => (sort === "acc" ? b.acc - a.acc : b.spd - a.spd));
-  });
-  // Providers in catalog order, whatever the sort.
-  let groups = $derived(
-    tools ? [...new Set(task.models.map((m) => m.vendor))].map((v) => ({ v, models: visible.filter((m) => m.vendor === v) })).filter((g) => g.models.length)
-      : [{ v: "", models: task.models }],
-  );
 
   const ACC = ["", "Basic", "Fair", "Good", "Great", "Best"];
   const SPD = ["", "Slow", "Steady", "Quick", "Fast", "Fastest"];
@@ -87,29 +59,15 @@
 <section class="task" aria-labelledby="task-{task.id}">
   <h2 id="task-{task.id}">{title}</h2>
   <p class="help">{help}</p>
-  {#if tools}
-    <div class="tools">
-      <label class="search">
-        <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" /><path d="M16 16l4.5 4.5" /></svg>
-        <input bind:value={q} type="search" placeholder="Search models" aria-label="Search models" autocomplete="off" spellcheck="false"
-          onkeydown={(e) => { if (e.key === "Escape" && q) { e.preventDefault(); q = ""; } }} />
-      </label>
-      <label class="sort"><span>Sort by</span>
-        <select class="select" bind:value={sort}>{#each SORTS as [v, l] (v)}<option value={v}>{l}</option>{/each}</select>
-      </label>
-    </div>
-  {/if}
   <div role="radiogroup" aria-label="{title} model">
-    {#each groups as g, i (g.v)}
-      {#if g.v}<h3 id="mg-{task.id}-{i}">{g.v}</h3>{/if}
-      <ul class="list" aria-labelledby={g.v ? `mg-${task.id}-${i}` : undefined}>
-        {#each g.models as m (m.id)}
+      <ul class="list">
+        {#each task.models as m (m.id)}
           {@const blocked = !!m.needs}
           <li class="model-row" class:blocked>
             <input type="radio" name="model-{task.id}" id="m-{m.id}" value={m.id} checked={active === m.id}
               disabled={blocked} onchange={() => pick(m.id)} />
             <label for="m-{m.id}">
-              <span class="name">{m.name}{#if !tools}{" "}<span class="vendor">{m.vendor}</span>{/if}</span>
+              <span class="name">{m.name}{" "}<span class="vendor">{m.vendor}</span></span>
               <span class="desc">{m.desc}</span>
             </label>
             <span class="rates">{@render rating("Accuracy", m.acc, ACC)}{@render rating("Speed", m.spd, SPD)}</span>
@@ -140,20 +98,11 @@
           </li>
         {/each}
       </ul>
-    {/each}
   </div>
-  {#if tools}<p class="none" role="status">{q.trim() && !hits.length ? `No model matches “${q.trim()}”.` : ""}</p>{/if}
   <p class="err" role="status">{shown}</p>
 </section>
 
 <style>
-  .tools { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); margin-bottom: var(--sp-1); }
-  .sort { display: flex; align-items: center; gap: var(--sp-2); color: var(--text-3); font-size: var(--fs-footnote); }
-  .sort .select { width: auto; }
-  /* Reserved line, so a search with no match never shifts the page. */
-  /* It shares the error line's slot under the list (a no-match and a failed save don't happen together), so the section gap stays 24px. */
-  .none { margin: var(--sp-1) 0 calc(-1 * (var(--sp-1) + var(--lh-footnote))); min-height: var(--lh-footnote); color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
-  .search { flex: 0 1 220px; min-width: 120px; }
   .list { container-type: inline-size; list-style: none; margin: 0; padding: 0; border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); }
   .model-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: var(--sp-3); align-items: start; padding: var(--sp-3) var(--sp-4); }
   .model-row input { margin: 3px 0 0; accent-color: var(--accent); }

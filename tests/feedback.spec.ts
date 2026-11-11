@@ -40,7 +40,7 @@ test("👎 opens the box with the pasted text; Save sends what was meant and sho
   await expect(box).toHaveValue("Mina is here");
   await box.fill("Myna is here");
   await page.getByRole("button", { name: "Save" }).click();
-  await expect(page.getByText("Add “Mina → Myna” to Words to remember")).toBeVisible();
+  await expect(page.getByText("Add “Mina → Myna” to Custom vocabulary")).toBeVisible();
   await expect(page.getByText("Came up in 2 dictations")).toBeVisible();
   expect(await calls(page, "feedback_set")).toEqual([{ trace: 4, rating: "down", corrected: null }, { trace: 4, rating: "down", corrected: "Myna is here" }]);
   await page.getByRole("button", { name: "Add", exact: true }).click();
@@ -97,33 +97,36 @@ async function settings(page: Page, fixes: string, extra = "", at = "Understand"
 
 test("Suggested fixes is hidden with none", async ({ page }) => {
   await settings(page, "[]");
-  await expect(page.getByRole("heading", { name: "Words to remember" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Your words" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Suggested fixes" })).toHaveCount(0);
 });
 
-test("Not now drops a fix; Add of a keep fix shows the word in Never remove", async ({ page }) => {
+test("Not now drops a fix; Add of a keep fix shows the word in Filler exceptions", async ({ page }) => {
   const keep = `{ key: "k:oh", kind: "keep", from: null, to: "oh", count: 3 }`;
   const word = `{ key: "w:myna", kind: "word", from: null, to: "Myna", count: 2 }`;
   await settings(page, `[${FIX}, ${keep}, ${word}]`, `fix_dismiss: ({ key }) => [${keep}, ${word}], fix_add: ({ key }) => { window.__keep = true; return [${word}]; },
     rules_get: () => ({ settings: { language: "en", tidy: true, words: [], keep: window.__keep ? ["oh"] : [] }, languages: [["en", "English"]] }),`);
-  await expect(page.getByText("Add “Mina → Myna” to Words to remember")).toBeVisible();
-  await expect(page.getByText("Add “Myna” to Words to remember")).toBeVisible();
+  await expect(page.getByText("Add “Mina → Myna” to Custom vocabulary")).toBeVisible();
+  await expect(page.getByText("Add “Myna” to Custom vocabulary")).toBeVisible();
   await page.getByRole("button", { name: "Not now" }).first().click();
   await expect(page.getByText("Add “Mina → Myna”")).toHaveCount(0);
   await page.getByRole("button", { name: "Add", exact: true }).first().click();
-  await expect(page.getByText("Never remove “oh”")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Remove oh from Never remove" })).toBeVisible();
+  await expect(page.getByText("Add “oh” to Filler exceptions")).toHaveCount(0);
+  const keepRow = page.getByRole("listitem").filter({ hasText: "Filler exceptions" });
+  await expect(keepRow).toContainText("oh"); // the shell read the words again
+  await expect(keepRow.locator(".count")).toHaveText("1");
   expect(await calls(page, "fix_dismiss")).toEqual([{ key: "a:mina:myna" }]);
   expect(await calls(page, "fix_add")).toEqual([{ key: "k:oh" }]);
 });
 
-test("Never remove adds lowercase words without duplicates and removes them, saving keep", async ({ page }) => {
+test("Filler exceptions adds lowercase words without duplicates and removes them, saving keep", async ({ page }) => {
   await settings(page, "[]");
+  await page.getByRole("button", { name: "Filler exceptions" }).click();
   const field = page.getByLabel("Add words for Myna to never remove");
   await field.fill("Oh, the, OH");
   await field.press("Enter");
-  await expect(page.getByRole("button", { name: "Remove oh from Never remove" })).toBeVisible();
-  await page.getByRole("button", { name: "Remove oh from Never remove" }).click();
+  await expect(page.getByRole("button", { name: "Remove oh from Filler exceptions" })).toBeVisible();
+  await page.getByRole("button", { name: "Remove oh from Filler exceptions" }).click();
   const saved = await page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "rules_set").map((c: any) => c[1].rules.keep));
   expect(saved).toEqual([["oh", "the"], ["the"]]);
 });

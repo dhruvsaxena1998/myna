@@ -4,6 +4,7 @@
   import About from "$lib/About.svelte";
   import ErrorState from "$lib/ErrorState.svelte";
   import { glassOn, syncGlass } from "$lib/look";
+  import ModelList from "$lib/ModelList.svelte";
   import ModelTask from "$lib/ModelTask.svelte";
   import Permissions from "$lib/Permissions.svelte";
   import PasteMethod from "$lib/PasteMethod.svelte";
@@ -19,7 +20,9 @@
   import CleanupStyles from "$lib/CleanupStyles.svelte";
   import type { Ai } from "$lib/AiProviders.svelte";
   import { invoke } from "@tauri-apps/api/core";
-  import { tick } from "svelte";
+  import { onMount, tick } from "svelte";
+  import { dl, startDownload, watchDownloads } from "$lib/downloads.svelte";
+  import { fmtSize, type Model } from "$lib/models";
 
   // Sidebar, in the order your voice goes through Myna (docs/settings.html, PAGES). Experimental is listed only while its switch in General is on.
   const ICON = {
@@ -44,6 +47,8 @@
   // Drill-ins: a sub-page under its parent, with its own toolbar title. Pages open them with `open`.
   const SUBS: Record<string, { parent: PageId; title: string }> = {
     models: { parent: "understand", title: "Speech-to-text · Voice typing" },
+    remember: { parent: "understand", title: "Custom vocabulary" },
+    keep: { parent: "understand", title: "Filler exceptions" },
   };
 
   // Shared by the shortcut rows and the pill preview, which shows the same hint as the real pill.
@@ -52,6 +57,14 @@
   // Adding a fix changes it behind Words' back, so read it again.
   let rules = $derived(data.rules?.ok ? data.rules.rules : null);
   const reloadRules = async () => (rules = await invoke<Rules>("rules_get").catch(() => rules));
+  // Shared by Understand's model row and the model list's drill-in, so a pick shows on the way back.
+  const stt = $derived(data.models?.ok ? data.models.tasks[0] : null);
+  let sttActive = $derived(stt?.active ?? null); // assignable: the list changes it
+  onMount(watchDownloads);
+  const installed = (m: Model) => dl.installed[m.id] ?? m.installed;
+  const modelState = (m: Model) => `${m.name} · ${installed(m) ? (m.system ? "Built in" : `Installed · ${fmtSize(m.size)}`) : m.id in dl.pct ? `Downloading ${dl.pct[m.id]}%` : `Not downloaded${m.system ? "" : ` · ${fmtSize(m.size)}`}`}`;
+  let sttError = $state(""); // a download that couldn't start
+  let unloadError = $state("");
   // Shared by General (look, the experimental switch) and Experimental (Liquid Glass): one look, saved whole.
   let look = $derived(data.appearance.ok ? data.appearance.look : null);
   // AI providers changes it; read it again on the way out, so the pages after it (Listen's and Write's cleanup rows) never show the old one.
@@ -155,11 +168,10 @@
           {#if !data.storage.ok}
             <ErrorState title="Myna couldn't open its data folder" message={data.storage.error} />
           {:else if view.sub === "models"}
-            <!-- Interim: the old Speech models page, until 18.4 and 18.8 split it. -->
-            {#if data.models?.ok}
-              <ModelTask task={data.models.tasks[0]} title="Turning speech into text" help="Used for voice typing and meeting notes." tools />
-              <ModelTask task={data.models.tasks[1]} title="Telling voices apart" help="Works out who said what. Always runs on this Mac. Your own voice is always “Me”." />
-            {/if}
+            {#if stt}<ModelList task={stt} label="Speech-to-text model" help="Used for voice typing. Downloads are shared with meeting notes." bind:active={sttActive} />{/if}
+          {:else if view.sub === "remember" || view.sub === "keep"}
+            {#if rules}<Words bind:rules part={view.sub} />
+            {:else}<ErrorState title="Myna couldn't read your words" message={data.rules?.ok === false ? data.rules.error : ""} />{/if}
           {:else if view.page === "listen"}
             {#if !voice}
               <ErrorState title="Myna couldn't read voice typing's settings" message={data.voice?.ok === false ? data.voice.error : ""} />
@@ -171,27 +183,37 @@
               {/if}
             {/if}
           {:else if view.page === "understand"}
-            {#if !data.models?.ok}
-              <ErrorState title="Myna couldn't list its models" message={data.models?.error ?? ""} />
+            {#if !stt || !data.models?.ok}
+              <ErrorState title="Myna couldn't list its models" message={data.models?.ok === false ? data.models.error : ""} />
             {:else}
-              {@const stt = data.models.tasks[0]}
+              {@const pick = stt.models.find((m) => m.id === sttActive)}
+              {@const nDl = stt.models.filter((m) => m.id in dl.pct).length}
+              {@const nFail = stt.models.filter((m) => dl.errors[m.id]).length}
+              {@const other = [nDl && `${nDl} downloading`, nFail && `${nFail} failed`].filter(Boolean).join(", ")}
+              {@const state = pick ? modelState(pick) : "Not set"}
               <section aria-labelledby="stt-h">
                 <h2 id="stt-h">Speech-to-text</h2>
-                {#if !voice?.on}<p class="help">Voice typing is off. Turn it on in Listen.</p>{/if}
+                {#if !voice?.on}<p class="help">Voice typing is off. Turn it on in Listen. Meeting notes use their own model.</p>{/if}
                 <ul class="list">
                   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions (the button inside takes the keys) -->
                   <li class="row go" onclick={() => open("models")}>
-                    <span><span class="name">Speech-to-text model</span><span class="desc">{stt.models.find((m) => m.id === stt.active)?.name ?? "Not set"}</span></span>
-                    <span class="end"><button class="btn" onclick={(e) => { e.stopPropagation(); open("models"); }}>All models</button></span>
+                    <span><span class="name">Speech-to-text model</span><span class="desc" title={state}>{state}</span></span>
+                    <span class="end">
+                      {#if other}<span class="meta" class:bad={nFail}>{other}</span>{/if}
+                      {#if pick && !installed(pick) && !(pick.id in dl.pct) && !pick.needs && (pick.files.length || pick.system || pick.sdk)}
+                        <button class="btn" onclick={async (e) => { e.stopPropagation(); sttError = await startDownload(pick.id); }}>Download</button>
+                      {/if}
+                      <button class="btn" onclick={(e) => { e.stopPropagation(); open("models"); }}>All models</button>
+                    </span>
                   </li>
+                  <UnloadAfter initial={data.models.unload} bind:error={unloadError} />
                 </ul>
+                <p class="err" role="status">{unloadError || sttError}</p>
               </section>
-              <UnloadAfter initial={data.models.unload} />
-              <!-- Interim: Fixes and Words stay as they were until 18.4 rebuilds them. -->
               {#if voice?.on}
-                <Fixes initial={data.fixes} onadd={reloadRules} />
-                {#if rules}<Words initial={rules} />
+                {#if rules}<Words bind:rules part="rows" {open} />
                 {:else}<ErrorState title="Myna couldn't read your words" message={data.rules?.ok === false ? data.rules.error : ""} />{/if}
+                <Fixes initial={data.fixes} onadd={reloadRules} />
               {/if}
             {/if}
           {:else if view.page === "write"}
@@ -213,6 +235,8 @@
           {:else if view.page === "meetings"}
             {#if notes}<MeetingNotes bind:notes perms={data.perms} />
             {:else}<ErrorState title="Myna couldn't read meeting notes' settings" message={data.notes?.ok === false ? data.notes.error : ""} />{/if}
+            <!-- Interim: until 18.8 rebuilds it, voices stay reachable here, whether notes are on or off. -->
+            {#if data.models?.ok && data.models.tasks[1]}<ModelTask task={data.models.tasks[1]} title="Telling voices apart" help="Works out who said what. Always runs on this Mac. Your own voice is always “Me”." />{/if}
           {:else if view.page === "general"}
             {#if look}<Look bind:look />
             {:else}<ErrorState title="Myna couldn't read its look" message={data.appearance.ok ? "" : data.appearance.error} />{/if}
@@ -274,5 +298,7 @@
   .empty { display: grid; justify-items: start; gap: var(--sp-1); padding: var(--sp-4); }
   .empty b { font-weight: var(--fw-semibold); }
   .empty p { margin: 0 0 var(--sp-2); color: var(--text-2); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
+  .meta { font-size: var(--fs-footnote); color: var(--text-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .meta.bad { color: var(--danger-text); }
   @container settings (max-width: 480px) { .content { padding: 0 var(--sp-4) var(--sp-6); } }
 </style>

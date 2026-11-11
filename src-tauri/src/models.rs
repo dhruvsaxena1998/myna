@@ -255,6 +255,8 @@ mod tests {
             assert_eq!(models.iter().filter(|m| m.default).count(), 1, "{task}: one default");
             for m in &models {
                 assert!((1..=5).contains(&m.acc) && (1..=5).contains(&m.spd), "{}", m.id);
+                // One line in a model row; "Recommended" comes from `default`, not the text.
+                assert!(m.desc.chars().count() <= 90 && !m.desc.contains("Recommended"), "{}: desc", m.id);
                 assert!(m.system || m.revision.len() == 40, "{}: pinned commit", m.id);
                 if !m.files.is_empty() {
                     assert_eq!(m.files.iter().map(|f| f.size).sum::<u64>(), m.size, "{}: size", m.id);

@@ -379,8 +379,10 @@ test("Write's empty state while voice typing is off sends you to Listen; Underst
   await expect(page.getByText("Turn it on in Listen to choose how your words are added.")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Adding your words" })).toHaveCount(0);
   await page.getByRole("option", { name: "Understand" }).click();
-  await expect(page.getByText("Voice typing is off. Turn it on in Listen.")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Words to remember" })).toHaveCount(0);
+  await expect(page.getByText("Voice typing is off. Turn it on in Listen. Meeting notes use their own model.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Speech-to-text" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Your words" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Suggested fixes" })).toHaveCount(0);
   await page.getByRole("option", { name: "Write" }).click();
   await page.getByRole("button", { name: "Go to Listen" }).click();
   await expect(page.getByRole("heading", { name: "Listen", level: 1 })).toBeVisible();
@@ -389,7 +391,7 @@ test("Write's empty state while voice typing is off sends you to Listen; Underst
 
 test("Understand and Write show their rows while voice typing is on", async ({ page }) => {
   await open(page, "Alt+Space", false, { at: "Understand" });
-  await expect(page.getByRole("heading", { name: "Words to remember" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Your words" })).toBeVisible();
   await expect(page.getByText("Voice typing is off")).toHaveCount(0);
 });
 

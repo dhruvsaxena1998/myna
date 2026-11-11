@@ -1,4 +1,4 @@
-<!-- One suggested fix with its Add and Not now buttons. Shared by Settings › Voice typing and the 👎 panel. -->
+<!-- One suggested fix with its Add and Not now buttons. Used by the 👎 panel. -->
 <script lang="ts">
   import { fixText, type Fix } from "./feedback";
 
