@@ -8,7 +8,7 @@ async function open(page: import("@playwright/test").Page, setFails = false) {
     pill_look_set: () => { if (${setFails}) throw "Couldn't save the pill's look: disk full"; },
   }`);
   await page.goto("/settings");
-  await page.getByRole("option", { name: "Voice typing" }).click();
+  await page.getByRole("option", { name: "Listen" }).click();
 }
 
 test("shows the saved style and position, with a preview", async ({ page }) => {

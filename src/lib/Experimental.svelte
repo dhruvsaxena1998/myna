@@ -3,7 +3,8 @@
   import { invoke } from "@tauri-apps/api/core";
   import { applyLook, type Look } from "./look";
 
-  let { look = $bindable() }: { look: Look } = $props();
+  // `part`: the master switch lives in General; the features on the Experimental page, listed while it's on.
+  let { look = $bindable(), part }: { look: Look; part: "switch" | "features" } = $props();
   let error = $state("");
 
   async function save(change: Partial<Look>) {
@@ -21,6 +22,7 @@
   }
 </script>
 
+{#if part === "switch"}
 <section aria-label="Experimental features">
   <ul class="list">
     <li class="row">
@@ -29,6 +31,7 @@
     </li>
   </ul>
 </section>
+{:else}
 <!-- Liquid Glass needs macOS 26; below it the backend sends liquid: null and the group isn't there. -->
 {#if look.experimental && look.liquid !== null}
   <section aria-labelledby="exp-look-h">
@@ -62,5 +65,6 @@
       </li>
     </ul>
   </section>
+{/if}
 {/if}
 <p class="err" role="status">{error}</p>

@@ -13,7 +13,7 @@ async function open(page: Page, state: object, extra = "") {
       : [{ id: "qwen2.5:7b", input_per_m: null, output_per_m: null, context: null, images: null }, { id: "llama3.2:3b", input_per_m: null, output_per_m: null, context: null, images: null }],
     ai_set: () => null, ${extra} }`);
   await page.goto("/settings");
-  await page.getByRole("option", { name: "AI provider" }).click();
+  await page.getByRole("option", { name: "AI providers" }).click();
 }
 const calls = (page: Page, cmd: string) => page.evaluate((c) => (window as any).__calls.filter((x: any) => x[0] === c).map((x: any) => x[1]), cmd);
 
@@ -205,7 +205,7 @@ test("removing a provider confirms, then names the slots now Not set", async ({ 
 test("a failed load shows the error, not a blank page", async ({ page }) => {
   await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", models_list: () => [], ai_get: () => { throw "Couldn't read the AI providers: locked" } }`);
   await page.goto("/settings");
-  await page.getByRole("option", { name: "AI provider" }).click();
+  await page.getByRole("option", { name: "AI providers" }).click();
   await expect(page.getByText("Couldn't read the AI providers: locked")).toBeVisible();
 });
 

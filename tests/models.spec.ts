@@ -12,10 +12,16 @@ const tasks = JSON.stringify([
   { id: "diar", active: "sortformer", models: [model("who", { default: true, min_macos: 15, needs: "Needs macOS 15" }), model("sortformer")] },
 ]);
 
+// Understand › Speech-to-text model › All models: the model list's drill-in.
+async function toModels(page: import("@playwright/test").Page) {
+  await page.getByRole("option", { name: "Understand" }).click();
+  await page.getByRole("button", { name: "All models" }).click();
+}
+
 async function open(page: import("@playwright/test").Page, select = "() => null", extra = "") {
   await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", models_list: () => (${tasks}), model_select: ${select}, ${extra} }`);
   await page.goto("/settings");
-  await page.getByRole("option", { name: "Speech models" }).click();
+  await toModels(page);
 }
 
 test("lists the catalog per task with size and state", async ({ page }) => {
@@ -58,7 +64,7 @@ test("a failed save reverts the pick and says why, without moving the rows", asy
 test("a failed model list shows the error, not a blank page", async ({ page }) => {
   await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", models_list: () => { throw "Couldn't read the chosen models: locked" } }`);
   await page.goto("/settings");
-  await page.getByRole("option", { name: "Speech models" }).click();
+  await page.getByRole("option", { name: "Understand" }).click();
   await expect(page.getByRole("alert")).toContainText("Couldn't read the chosen models: locked");
 });
 
@@ -133,7 +139,7 @@ test("a model with no downloadable files says coming soon (Desert Ant, until tic
   const t = JSON.stringify([{ id: "stt", active: "voz", models: [model("voz", { min_macos: 15, files: [] })] }, { id: "diar", active: null, models: [] }]);
   await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", models_list: () => (${t}) }`);
   await page.goto("/settings");
-  await page.getByRole("option", { name: "Speech models" }).click();
+  await toModels(page);
   await expect(page.getByText("Coming later")).toBeVisible();
   await expect(page.getByRole("button", { name: /Download/ })).toHaveCount(0);
 });
@@ -142,13 +148,13 @@ test("download progress survives switching to another page and back", async ({ p
   await open(page, undefined, "model_download: () => null");
   await row(page).getByRole("button", { name: "Download parakeet" }).click();
   await emit(page, { id: "parakeet", state: "progress", pct: 30 });
-  await page.getByRole("option", { name: "About" }).click();
+  await page.getByRole("option", { name: "General" }).click();
   await emit(page, { id: "parakeet", state: "progress", pct: 55 }); // keeps arriving while away
-  await page.getByRole("option", { name: "Speech models" }).click();
+  await toModels(page);
   await expect(row(page).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "55");
-  await page.getByRole("option", { name: "About" }).click();
+  await page.getByRole("option", { name: "General" }).click();
   await emit(page, { id: "parakeet", state: "done" });
-  await page.getByRole("option", { name: "Speech models" }).click();
+  await toModels(page);
   await expect(row(page)).toContainText("Installed");
 });
 
@@ -164,6 +170,7 @@ test("Cancel and Try again respond at once, before the backend answers", async (
 
 test("unload time shows the saved choice, saves a new one, and reverts a failed save", async ({ page }) => {
   await open(page, "() => null", `stt_unload_get: () => 900, stt_unload_set: ({ secs }) => { if (secs === -1) throw "Couldn't save when to unload the model: locked" }`);
+  await page.getByRole("button", { name: "Back" }).click(); // the unload row is on Understand itself
   const unload = page.getByLabel("Free up memory when idle");
   await expect(unload).toHaveValue("900");
   await unload.selectOption({ label: "After 1 hour" });
@@ -179,7 +186,7 @@ async function openApple(page: import("@playwright/test").Page, a: object, extra
   const t = JSON.stringify([{ id: "stt", active: "apple", models: [apple(a), model("parakeet", { default: true })] }, { id: "diar", active: null, models: [] }]);
   await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", models_list: () => (${t}), ${extra} }`);
   await page.goto("/settings");
-  await page.getByRole("option", { name: "Speech models" }).click();
+  await toModels(page);
   return row(page);
 }
 
@@ -225,7 +232,7 @@ const many = JSON.stringify([
 async function openMany(page: import("@playwright/test").Page) {
   await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", models_list: () => (${many}), model_select: () => null }`);
   await page.goto("/settings");
-  await page.getByRole("option", { name: "Speech models" }).click();
+  await toModels(page);
 }
 const stt = (page: import("@playwright/test").Page) => page.getByRole("radiogroup", { name: "Turning speech into text model" });
 const names = (page: import("@playwright/test").Page) => stt(page).getByRole("radio").evaluateAll((rs) => rs.map((r) => (r as HTMLInputElement).value));

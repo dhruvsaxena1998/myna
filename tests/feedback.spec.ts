@@ -91,7 +91,7 @@ test("the opened trace in Stats for nerds has the same 👍/👎", async ({ page
 async function settings(page: Page, fixes: string, extra = "") {
   await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", models_list: () => [], fixes_get: () => ${fixes}, ${extra} }`);
   await page.goto("/settings");
-  await page.getByRole("option", { name: "Voice typing" }).click();
+  await page.getByRole("option", { name: "Listen" }).click();
 }
 
 test("Suggested fixes is hidden with none", async ({ page }) => {

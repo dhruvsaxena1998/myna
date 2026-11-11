@@ -25,7 +25,7 @@ async function open(page: Page, key = "Alt+Space", globe = false, extra: { clean
     voice_pause: () => {},
   }`);
   await page.goto("/settings");
-  await page.getByRole("option", { name: "Voice typing" }).click();
+  await page.getByRole("option", { name: "Listen" }).click();
 }
 const calls = (page: Page, cmd: string) => page.evaluate((c) => (window as any).__calls.filter((x: any) => x[0] === c).map((x: any) => x[1]), cmd);
 
@@ -160,7 +160,7 @@ test("cleanup without a Fast model: Needs an Endpoint, and Set up opens AI provi
   await expect(row).toContainText("Set a Fast model on AI provider first.");
   await expect(row.getByRole("button", { name: "Set shortcut", exact: true })).toHaveCount(0); // no recorder yet
   await row.getByRole("button", { name: "Set up" }).click();
-  await expect(page.getByRole("heading", { name: "AI provider", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "AI providers", exact: true, level: 1 })).toBeVisible();
 });
 
 test("a Fast model that's gone counts as none", async ({ page }) => {
@@ -242,9 +242,9 @@ test("a Fast model set on AI provider shows on Voice typing without reloading", 
     ai_get: () => (window.__ai ??= ${JSON.stringify({ providers: [OLLAMA], main: null, fast: null })}), globe_ok: () => true,
   }`);
   await page.goto("/settings");
-  await page.getByRole("option", { name: "AI provider" }).click();
+  await page.getByRole("option", { name: "AI providers" }).click();
   await page.evaluate(() => ((window as any).__ai.fast = { provider: 1, model: "qwen2.5:7b", gone: false })); // what picking it there saves
-  await page.getByRole("option", { name: "Voice typing" }).click();
+  await page.getByRole("option", { name: "Listen" }).click();
   await expect(cleanRow(page)).toContainText("Ollama on this Mac · qwen2.5:7b");
   await expect(cleanRow(page).getByRole("button", { name: "Set shortcut", exact: true })).toBeVisible();
 });

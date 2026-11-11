@@ -8,7 +8,7 @@ async function open(page: Page, words: { spelling: string; heard: string | null 
     rules_set: () => { if (${!!opts.fails}) throw "Couldn't save your words: disk full"; },
   }`);
   await page.goto("/settings");
-  await page.getByRole("option", { name: "Voice typing" }).click();
+  await page.getByRole("option", { name: "Listen" }).click();
 }
 
 const w = (spelling: string, heard: string | null = null) => ({ spelling, heard });

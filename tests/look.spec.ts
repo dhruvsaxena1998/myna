@@ -17,6 +17,7 @@ async function open(page: Page, setFails = false, liquid: boolean | null = null,
   });
   await page.goto("/settings");
   await expect(page.locator("main")).toBeVisible();
+  await page.getByRole("option", { name: "General" }).click();
   await expect.poll(() => page.evaluate(() => (window as any).__calls.some((c: any) => c[0] === "plugin:event|listen" && c[1].event === "look"))).toBe(true);
 }
 const sets = (page: Page) => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "look_set").map((c: any) => c[1].look));
@@ -81,6 +82,7 @@ test("a failed save puts the old choice back and says why", async ({ page }) => 
 test("if the look can't be read, the page says why and the default look applies", async ({ page }) => {
   await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", models_list: () => [], look_get: () => { throw "Couldn't read Myna's look: locked"; } }`);
   await page.goto("/settings");
+  await page.getByRole("option", { name: "General" }).click();
   await expect(page.getByText("Couldn't read Myna's look: locked")).toBeVisible();
   expect(await attrs(page)).toEqual({ theme: "auto", accent: "blue", glass: "clear" });
 });
@@ -92,14 +94,15 @@ test("Look & appearance has just its three rows; Liquid Glass lives in Experimen
 
 test("Liquid Glass isn't offered below macOS 26", async ({ page }) => {
   await open(page);
-  await page.getByRole("option", { name: "Experimental features" }).click();
   await expect(page.getByRole("switch", { name: "Use experimental features" })).toBeChecked();
+  await page.getByRole("option", { name: "Experimental" }).click();
+  await expect(page.getByRole("switch", { name: "Stats for nerds" })).toBeVisible();
   await expect(page.getByRole("switch", { name: "Liquid Glass" })).toHaveCount(0);
 });
 
 test("Liquid Glass: a switch in Experimental features, off by default, that saves and marks the page", async ({ page }) => {
   await open(page, false, false);
-  await page.getByRole("option", { name: "Experimental features" }).click();
+  await page.getByRole("option", { name: "Experimental" }).click();
   const sw = page.getByRole("switch", { name: "Liquid Glass" });
   await expect(page.getByRole("heading", { name: "Look", exact: true })).toBeVisible();
   await expect(sw).not.toBeChecked();
@@ -113,34 +116,34 @@ test("Liquid Glass: a switch in Experimental features, off by default, that save
 test("both pages share one look: Liquid Glass never saves a stale highlight colour", async ({ page }) => {
   await open(page, false, false);
   await page.getByRole("radio", { name: "Pink" }).check();
-  await page.getByRole("option", { name: "Experimental features" }).click();
+  await page.getByRole("option", { name: "Experimental" }).click();
   await page.getByRole("switch", { name: "Liquid Glass" }).check();
-  await page.getByRole("option", { name: "Look & appearance" }).click();
+  await page.getByRole("option", { name: "General" }).click();
   await expect(page.getByRole("radio", { name: "Pink" })).toBeChecked();
   expect((await sets(page)).at(-1)).toEqual({ theme: "dark", accent: "pink", glass: "tinted", liquid: true, experimental: true });
 });
 
 test("a failed Liquid Glass save turns the switch back and says why", async ({ page }) => {
   await open(page, true, false);
-  await page.getByRole("option", { name: "Experimental features" }).click();
+  await page.getByRole("option", { name: "Experimental" }).click();
   await page.getByRole("switch", { name: "Liquid Glass" }).click();
   await expect(page.getByText("Couldn't save Myna's look: disk full")).toBeVisible();
   await expect(page.getByRole("switch", { name: "Liquid Glass" })).not.toBeChecked();
 });
 
-test("experimental features are off by default; the master switch shows them and keeps their own switches", async ({ page }) => {
+test("experimental features are off by default; the switch in General lists the Experimental page and keeps their own switches", async ({ page }) => {
   await open(page, false, true, false);
-  await page.getByRole("option", { name: "Experimental features" }).click();
   const master = page.getByRole("switch", { name: "Use experimental features" });
   await expect(master).not.toBeChecked();
-  await expect(page.getByText("Turning this off turns them all off.")).toBeVisible();
-  await expect(page.getByRole("switch", { name: "Liquid Glass" })).toHaveCount(0);
+  await expect(page.getByRole("option", { name: "Experimental" })).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.hasAttribute("data-liquid"))).toBe(false); // saved on, but gated
   await master.press("Space");
-  await expect(page.getByRole("switch", { name: "Liquid Glass" })).toBeChecked();
   expect(await page.evaluate(() => document.documentElement.hasAttribute("data-liquid"))).toBe(true);
+  await page.getByRole("option", { name: "Experimental" }).click();
+  await expect(page.getByRole("switch", { name: "Liquid Glass" })).toBeChecked();
+  await page.getByRole("option", { name: "General" }).click();
   await master.press("Space");
-  await expect(page.getByRole("switch", { name: "Liquid Glass" })).toHaveCount(0);
+  await expect(page.getByRole("option", { name: "Experimental" })).toHaveCount(0);
   expect(await sets(page)).toEqual([
     { theme: "dark", accent: "green", glass: "tinted", liquid: true, experimental: true },
     { theme: "dark", accent: "green", glass: "tinted", liquid: true, experimental: false },
@@ -153,8 +156,8 @@ test("Liquid Glass on Settings: one sheet of glass for the whole window, frosted
   const vp = page.viewportSize()!;
   await expect.poll(last).toEqual([{ x: 0, y: 0, w: vp.width, h: vp.height, radius: 0, shown: true, grow: true }]);
   await expect(page.locator("main")).toHaveCSS("background-color", "rgba(20, 20, 22, 0.42)"); // the page thins so the glass shows
-  await expect(page.getByRole("option", { name: "Look & appearance" })).toHaveCSS("background-color", "rgb(30, 123, 52)"); // a solid highlight, not a wash lost in the glass
-  await page.getByRole("option", { name: "Experimental features" }).click();
+  await expect(page.getByRole("option", { name: "General" })).toHaveCSS("background-color", "rgb(30, 123, 52)"); // a solid highlight, not a wash lost in the glass
+  await page.getByRole("option", { name: "Experimental" }).click();
   await page.getByRole("switch", { name: "Liquid Glass" }).click();
   await expect.poll(last).toEqual([]);
   await expect(page.locator("main")).toHaveCSS("background-color", "rgb(29, 29, 31)"); // today's opaque page
@@ -162,7 +165,7 @@ test("Liquid Glass on Settings: one sheet of glass for the whole window, frosted
 
 test("Liquid Glass Opacity: a slider that previews live, saves the new frost, and is disabled while Liquid Glass is off", async ({ page }) => {
   await open(page, false, true);
-  await page.getByRole("option", { name: "Experimental features" }).click();
+  await page.getByRole("option", { name: "Experimental" }).click();
   const slider = page.getByRole("slider", { name: "Opacity" });
   await expect(slider).toBeEnabled();
   await slider.focus();
@@ -172,12 +175,4 @@ test("Liquid Glass Opacity: a slider that previews live, saves the new frost, an
   expect((await sets(page)).at(-1)).toMatchObject({ liquid: true, frost: 51 });
   await page.getByRole("switch", { name: "Liquid Glass" }).click();
   await expect(slider).toBeDisabled();
-});
-
-test("a page that isn't built yet says so, with what will live there", async ({ page }) => {
-  await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", models_list: () => [] }`);
-  await page.goto("/settings");
-  await page.getByRole("option", { name: "Decision provider" }).click();
-  await expect(page.getByRole("heading", { name: "Not in this version yet" })).toBeVisible();
-  await expect(page.getByText("Coming later")).toBeVisible();
 });

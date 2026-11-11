@@ -6,6 +6,7 @@ async function open(page: Page, width: number) {
   await page.setViewportSize({ width, height: 520 });
   await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", models_list: () => [] }`);
   await page.goto("/settings");
+  await page.getByRole("option", { name: "General" }).click();
 }
 const box = async (page: Page, name: string) => (await page.locator(".prefs .row", { hasText: name }).first().boundingBox())!;
 
@@ -24,7 +25,6 @@ test("below 480px of content, a segmented control drops under its text; a switch
   const seg = (await page.locator(".prefs .row", { hasText: "Theme" }).locator(".seg").boundingBox())!;
   expect(seg.x - row.x).toBe(16); // under the text, left-aligned
   expect(seg.width).toBe(wide!.width); // not stretched
-  await page.getByRole("option", { name: "Experimental features" }).click();
   const sw = (await page.locator(".prefs .row", { hasText: "Use experimental features" }).locator(".switch").boundingBox())!;
   const r = await box(page, "Use experimental features");
   expect(r.x + r.width - (sw.x + sw.width)).toBe(16);

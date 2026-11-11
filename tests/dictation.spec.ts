@@ -9,7 +9,7 @@ async function open(page: import("@playwright/test").Page) {
     permission_ask: ({ kind }) => { if (kind === "mic") window.__perms.mic = "allowed"; },
   }`);
   await page.goto("/settings");
-  await page.getByRole("option", { name: "Voice typing" }).click();
+  await page.getByRole("option", { name: "Listen" }).click();
 }
 
 

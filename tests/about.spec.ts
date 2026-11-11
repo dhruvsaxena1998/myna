@@ -11,7 +11,7 @@ async function open(page: Page, extra = "") {
     ${extra}
   }`);
   await page.goto("/settings");
-  await page.getByRole("option", { name: "About" }).click();
+  await page.getByRole("option", { name: "General" }).click();
   await expect.poll(() => page.evaluate(() => (window as any).__calls.some((c: any) => c[0] === "plugin:event|listen" && c[1].event === "update-state"))).toBe(true);
 }
 const emit = (page: Page, s: object) => page.evaluate((s) => (window as any).__emit("update-state", s), s);
@@ -71,7 +71,7 @@ test("Update mode and Channel show their hints and persist across a restart", as
   await page.getByRole("radio", { name: "Stable" }).check();
 
   await page.reload();
-  await page.getByRole("option", { name: "About" }).click();
+  await page.getByRole("option", { name: "General" }).click();
   await expect(page.getByRole("combobox", { name: "Update mode" })).toHaveValue("off");
   await expect(page.getByRole("radio", { name: "Stable" })).toBeChecked();
 });
@@ -87,7 +87,7 @@ test("How often to check persists, and is off while Update mode is Off", async (
   await expect(page.getByText("Update mode is Off.")).toBeVisible();
 
   await page.reload();
-  await page.getByRole("option", { name: "About" }).click();
+  await page.getByRole("option", { name: "General" }).click();
   await expect(page.getByRole("combobox", { name: "How often to check" })).toHaveValue("week");
 });
 
