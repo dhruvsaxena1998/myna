@@ -1062,9 +1062,17 @@ pub fn run() {
                                     }
                                     return;
                                 }
-                                let clean = voice::get(&app.state::<Data>().db.lock().unwrap())
-                                    .is_ok_and(|v| v.keys().iter().any(|(k, c)| *c && k.parse::<Shortcut>().ok().as_ref() == Some(shortcut)));
-                                app.state::<Arc<Session>>().key(e.state() == ShortcutState::Pressed, clean)
+                                let keys = voice::get(&app.state::<Data>().db.lock().unwrap()).map(|v| v.keys()).unwrap_or_default();
+                                let mine = keys.iter().find(|(k, _)| k.parse::<Shortcut>().ok().as_ref() == Some(shortcut));
+                                let session = app.state::<Arc<Session>>();
+                                // Esc is caught only while recording (Session::start), and never when it's a voice typing key.
+                                if mine.is_none() && shortcut.key == tauri_plugin_global_shortcut::Code::Escape {
+                                    if e.state() == ShortcutState::Pressed {
+                                        session.cancel();
+                                    }
+                                    return;
+                                }
+                                session.key(e.state() == ShortcutState::Pressed, mine.is_some_and(|(_, c)| *c))
                             })
                             .build(),
                     )?;

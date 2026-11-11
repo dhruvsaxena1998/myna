@@ -1008,7 +1008,7 @@ function STYLES_SAMPLE() { return [
   { id:'message', name:'Message', apps:['Slack','Messages','WhatsApp'], text:'Fix punctuation and capitals. Keep it casual and short. Never use emoji.', newer:true },
   { id:'email', name:'Email', apps:['Mail','Outlook'], text:null }
 ]; }
-S.set = { modules:S.modules, hotkey:'fn', mode:'hold', paste:'clipboard', pillStyle:'capsule', pillPlace:'bottom', dict:['Myna','Parakeet','Desert Ant','Drove → Dhruv'], keep:['oh'], fixes:[{ k:'a', kind:'alias', from:'Mina', to:'Myna', n:2 }, { k:'k', kind:'keep', to:'the', n:3 }], exported:false, lang:'en', rules:true, hotkeyClean:'', hotkey2:'', hotkeyClean2:'', askRate:false, styles:STYLES_SAMPLE(), styleOpen:null, cleanFail:false, hkErr:'',
+S.set = { modules:S.modules, hotkey:'fn', mode:'hold', sounds:true, paste:'clipboard', pillStyle:'capsule', pillPlace:'bottom', dict:['Myna','Parakeet','Desert Ant','Drove → Dhruv'], keep:['oh'], fixes:[{ k:'a', kind:'alias', from:'Mina', to:'Myna', n:2 }, { k:'k', kind:'keep', to:'the', n:3 }], exported:false, lang:'en', rules:true, hotkeyClean:'', hotkey2:'', hotkeyClean2:'', askRate:false, styles:STYLES_SAMPLE(), styleOpen:null, cleanFail:false, hkErr:'',
   capture:'shots', interval:'15', apps:{ meet:false, teams:false, zoom:false, slack:false }, ext:false, retention:'30', folder:true, dataPath:'~/Library/Application Support/Myna', dataMoved:false,
   meetKey:'ctrl-opt-m', appearance:'auto', accent:'blue', glass:'clear', liquid:false, liquidFrost:50, expOn:false, detect:true,
   diar:'who', updMode:'auto', updEvery:'launch', channel:'beta',
@@ -1989,7 +1989,8 @@ function settingsPage() {
       + sgroup('Shortcuts', [
         srow('Dictate', S.hkRec === 'hotkey' || S.hkRec === 'hotkey2' ? 'Press the key or keys you want to use. Esc cancels.' : 'Adds what you said. Works in any app.', hotkeyPair('hotkey')),
         srow('Dictate with cleanup', cleanRowHelp(), S.ai.fast ? hotkeyPair('hotkeyClean') : `<button class="btn" data-act="spage" data-p="ai">Set up</button>`),
-        srow('How it starts', (x.mode === 'hold' ? 'Hold the key while you talk. Let go to add your words.' : 'Press once to start and again to stop.') + ' Same for both shortcuts.', segc('mode', [['hold','Hold to talk'],['toggle','Tap to start and stop']], 'How it starts'))
+        srow('How it starts', (x.mode === 'hold' ? 'Hold the key while you talk. Let go to add your words.' : 'Press once to start and again to stop.') + ' Same for both shortcuts. Esc stops without adding your words.', segc('mode', [['hold','Hold to talk'],['toggle','Tap to start and stop']], 'How it starts')),
+        srow('Sounds', 'Plays a sound when Myna starts and stops listening.', sw('sounds', 'Sounds'))
       ], x.hkErr ? `<p class="err" role="status">${icon('alert','ic-s')}${esc(x.hkErr)}</p>` : '') + sgroup('Pill', [
         srow('Style', 'How the pill looks while you talk. Settings shows a preview of it.', sel('pillStyle', [['capsule','Capsule'],['orb','Orb'],['wave','Waveform'],['card','Card']], 'Pill style')),
         srow('Position', 'Where it shows, on the screen you’re typing on.', sel('pillPlace', [['bottom','Bottom centre'],['top','Top centre'],['bottom-right','Bottom right'],['top-right','Top right']], 'Pill position'))

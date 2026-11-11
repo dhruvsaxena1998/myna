@@ -355,3 +355,13 @@ test("a failed save says why and shows what was kept", async ({ page }) => {
   await expect(page.getByText("Couldn't save the cleanup styles: disk full")).toBeVisible();
   await expect(box).toHaveValue(SHIPPED.email);
 });
+
+test("Sounds is on unless switched off, and saves with the other voice settings", async ({ page }) => {
+  await open(page);
+  await expect(page.getByText("Esc stops without adding your words.")).toBeVisible();
+  const sounds = page.getByRole("switch", { name: "Sounds" });
+  await expect(sounds).toBeChecked();
+  await sounds.click();
+  await expect(sounds).not.toBeChecked();
+  expect((await calls(page, "voice_set")).at(-1)).toMatchObject({ voice: { key: "Alt+Space", sounds: false } });
+});

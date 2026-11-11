@@ -1,7 +1,7 @@
 <!-- Voice typing's switch, its two shortcut recorders (Dictate, Dictate with cleanup), and how they start (prototype: the dictation page, `hotkeyRec` and `cleanRowHelp`). -->
 <script lang="ts" module>
   /** `key2` and `clean2`: an optional second key for each action, e.g. one on another keyboard. */
-  export type Voice = { on: boolean; key: string; clean: string | null; key2?: string | null; clean2?: string | null; rate?: boolean; mode: "hold" | "tap"; paste: "clipboard" | "type" };
+  export type Voice = { on: boolean; key: string; clean: string | null; key2?: string | null; clean2?: string | null; rate?: boolean; sounds?: boolean; mode: "hold" | "tap"; paste: "clipboard" | "type" };
   /** Which shortcut the recorder is changing. */
   type Which = "key" | "key2" | "clean" | "clean2";
 </script>
@@ -121,12 +121,16 @@
         </li>
       {/if}
       <li class="row">
-        <span><span class="name" id="mode-l">How it starts</span><span class="desc">{voice.mode === "hold" ? "Hold the key while you talk. Let go to add your words." : "Press once to start and again to stop. Stops by itself after 5 minutes."} Same for both shortcuts.</span></span>
+        <span><span class="name" id="mode-l">How it starts</span><span class="desc">{voice.mode === "hold" ? "Hold the key while you talk. Let go to add your words." : "Press once to start and again to stop. Stops by itself after 5 minutes."} Same for both shortcuts. Esc stops without adding your words.</span></span>
         <fieldset class="seg" aria-labelledby="mode-l">
           {#each [["hold", "Hold to talk"], ["tap", "Tap to start and stop"]] as [v, label]}
             <label><input type="radio" name="mode" value={v} checked={voice.mode === v} onchange={() => save({ ...voice, mode: v as Voice["mode"] })} /><span>{label}</span></label>
           {/each}
         </fieldset>
+      </li>
+      <li class="row">
+        <span><label class="name" for="voice-sounds">Sounds</label><span class="desc">Plays a sound when Myna starts and stops listening.</span></span>
+        <input id="voice-sounds" type="checkbox" role="switch" class="switch" checked={voice.sounds ?? true} onchange={(e) => save({ ...voice, sounds: e.currentTarget.checked })} />
       </li>
     </ul>
     <p class="err" role="status">{error}</p>
