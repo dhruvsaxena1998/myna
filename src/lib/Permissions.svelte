@@ -36,7 +36,7 @@
   const items = $derived(
     [
       { kind: "mic" as const, title: "Microphone", desc: "So Myna can hear you.", ok: perms.mic === "allowed", popup: perms.mic === "ask" },
-      { kind: "ax" as const, title: "Accessibility", desc: "So Myna can put your words into the app you’re using.", ok: perms.ax, popup: false },
+      { kind: "ax" as const, title: "Accessibility", desc: perms.ax ? "So Myna can put your words into your app." : "Switch Myna on in System Settings, then come back.", ok: perms.ax, popup: false },
       { kind: "audio" as const, title: "Screen & System Audio Recording", desc: "So Myna can hear the other people on a call.", ok: perms.audio === "allowed", popup: perms.audio === "ask" },
     ].filter((r) => kinds.includes(r.kind)),
   );

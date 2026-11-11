@@ -157,9 +157,9 @@ test("Fix it on the pill opens history on that dictation's box, even from anothe
   await expect(page.getByRole("heading", { name: "Voice typing history" })).toBeVisible();
 });
 
-test("Ask how it went is off until switched on, and saves with the other voice settings", async ({ page }) => {
+test("Rating prompt is off until switched on, and saves with the other voice settings", async ({ page }) => {
   await settings(page, "[]", `voice_set: () => {},`, "Write");
-  const ask = page.getByRole("switch", { name: "Ask how it went" });
+  const ask = page.getByRole("switch", { name: "Rating prompt" });
   await expect(ask).not.toBeChecked();
   await ask.click();
   await expect(ask).toBeChecked();

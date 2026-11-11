@@ -6,18 +6,16 @@
   import { glassOn, syncGlass } from "$lib/look";
   import ModelList from "$lib/ModelList.svelte";
   import ModelTask from "$lib/ModelTask.svelte";
-  import Permissions from "$lib/Permissions.svelte";
-  import PasteMethod from "$lib/PasteMethod.svelte";
   import UnloadAfter from "$lib/UnloadAfter.svelte";
   import Experimental from "$lib/Experimental.svelte";
   import Look from "$lib/Look.svelte";
   import PillLook from "$lib/PillLook.svelte";
   import Words, { type Rules } from "$lib/Words.svelte";
   import Fixes from "$lib/Fixes.svelte";
-  import Feedback from "$lib/Feedback.svelte";
   import VoiceShortcut from "$lib/VoiceShortcut.svelte";
   import MeetingNotes from "$lib/MeetingNotes.svelte";
-  import CleanupStyles from "$lib/CleanupStyles.svelte";
+  import CleanupStyles, { type Cleanup } from "$lib/CleanupStyles.svelte";
+  import Write from "$lib/Write.svelte";
   import type { Ai } from "$lib/AiProviders.svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { onMount, tick } from "svelte";
@@ -49,6 +47,8 @@
     models: { parent: "understand", title: "Speech-to-text · Voice typing" },
     remember: { parent: "understand", title: "Custom vocabulary" },
     keep: { parent: "understand", title: "Filler exceptions" },
+    styles: { parent: "write", title: "Cleanup styles" },
+    style: { parent: "write", title: "" }, // the style's own name
   };
 
   // Shared by the shortcut rows and the pill preview, which shows the same hint as the real pill.
@@ -57,6 +57,14 @@
   // Adding a fix changes it behind Words' back, so read it again.
   let rules = $derived(data.rules?.ok ? data.rules.rules : null);
   const reloadRules = async () => (rules = await invoke<Rules>("rules_get").catch(() => rules));
+  // Shared by Write's rows, the styles list and the style editor, so they always agree.
+  let cleanup = $derived(data.cleanup?.ok ? data.cleanup.cleanup : null); // assignable: saves return the styles as kept
+  // What Myna adds about spelling, so it shows in the editor with no wait. Read again when the words change.
+  let spell = $derived(data.spell); // assignable
+  $effect(() => {
+    void rules;
+    invoke<string>("cleanup_spell").then((v) => (spell = v), () => {});
+  });
   // Shared by Understand's model row and the model list's drill-in, so a pick shows on the way back.
   const stt = $derived(data.models?.ok ? data.models.tasks[0] : null);
   let sttActive = $derived(stt?.active ?? null); // assignable: the list changes it
@@ -75,7 +83,9 @@
   type View = { page: PageId; sub: string | null; arg: string | null; title?: string };
   let hist = $state<{ list: View[]; i: number }>({ list: [{ page: "listen", sub: null, arg: null }], i: 0 });
   const view = $derived(hist.list[hist.i]);
-  const title = $derived(view.sub ? (view.title ?? SUBS[view.sub]?.title ?? "") : PAGES.find((p) => p.id === view.page)!.title);
+  const title = $derived(
+    view.sub === "style" ? (cleanup?.styles.find((x) => x.id === view.arg)?.name ?? "") : view.sub ? (view.title ?? SUBS[view.sub]?.title ?? "") : PAGES.find((p) => p.id === view.page)!.title,
+  );
   let scroller: HTMLElement;
 
   async function show(v: View, push = true) {
@@ -172,6 +182,9 @@
           {:else if view.sub === "remember" || view.sub === "keep"}
             {#if rules}<Words bind:rules part={view.sub} />
             {:else}<ErrorState title="Myna couldn't read your words" message={data.rules?.ok === false ? data.rules.error : ""} />{/if}
+          {:else if view.sub === "styles" || view.sub === "style"}
+            {#if cleanup}<CleanupStyles bind:cleanup part={view.sub === "styles" ? "list" : "editor"} id={view.arg} {spell} {open} {drop} />
+            {:else}<ErrorState title="Myna couldn't read the cleanup styles" message={data.cleanup?.ok === false ? data.cleanup.error : ""} />{/if}
           {:else if view.page === "listen"}
             {#if !voice}
               <ErrorState title="Myna couldn't read voice typing's settings" message={data.voice?.ok === false ? data.voice.error : ""} />
@@ -222,15 +235,7 @@
             {:else if !voice.on}
               <section><ul class="list"><li class="empty"><b>Voice typing is off</b><p>Turn it on in Listen to choose how your words are added.</p><button class="btn" onclick={() => go("listen")}>Go to Listen</button></li></ul></section>
             {:else}
-              <!-- Interim: these rows move as 18.5 rebuilds Write. -->
-              <PasteMethod bind:voice />
-              <Feedback bind:voice />
-              <!-- Styles only matter once there's a Fast model to run them. -->
-              {#if ai?.fast && !ai.fast.gone}
-                {#if data.cleanup?.ok}<CleanupStyles initial={data.cleanup.cleanup} />
-                {:else}<ErrorState title="Myna couldn't read the cleanup styles" message={data.cleanup?.error ?? ""} />{/if}
-              {/if}
-              <Permissions initial={data.perms} kinds={["ax"]} />
+              <Write bind:voice {ai} {cleanup} perms={data.perms} {go} {open} />
             {/if}
           {:else if view.page === "meetings"}
             {#if notes}<MeetingNotes bind:notes perms={data.perms} />

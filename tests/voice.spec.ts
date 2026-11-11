@@ -139,12 +139,12 @@ test("the 🌐 key row is only for fn", async ({ page }) => {
   await expect(page.getByText("Do Nothing")).toBeHidden();
 });
 
-test("How words are added: Paste by default, Type saves and changes the help", async ({ page }) => {
+test("Insert method: Paste by default, Type saves and changes the help", async ({ page }) => {
   await open(page, "Alt+Space", false, { at: "Write" });
   await expect(page.getByRole("radio", { name: "Paste" })).toBeChecked();
-  await expect(page.getByText("Fastest. Myna puts back whatever you had copied afterwards.")).toBeVisible();
+  await expect(page.getByText("Fastest. Myna puts back whatever you had copied.")).toBeVisible();
   await page.getByRole("radio", { name: "Type" }).check();
-  await expect(page.getByText("Types each letter. Slower, but works in apps that block pasting.")).toBeVisible();
+  await expect(page.getByText("Types each letter. Slower, but works where pasting is blocked.")).toBeVisible();
   expect(await calls(page, "voice_set")).toEqual([{ voice: { on: true, key: "Alt+Space", clean: null, mode: "hold", paste: "type" } }]);
 });
 
@@ -259,70 +259,144 @@ test("a Fast model set on AI provider shows on Listen without reloading", async 
 
 // Cleanup styles: only once there's a Fast model to run them. `window.__newer` marks which edited styles have a newer shipped text.
 const withFast = (page: Page) => open(page, "Alt+Space", false, { ai: fastOn(OLLAMA, "qwen2.5:7b"), at: "Write" });
-const styleRow = (page: Page, name: string) => page.getByRole("listitem").filter({ hasText: new RegExp(`^${name}`) }).filter({ has: page.getByRole("button", { name: /^(Edit|Done)$/ }) });
-const edit = (page: Page, name: string) => styleRow(page, name).getByRole("button", { name: "Edit" }).click();
+const stylesRow = (page: Page) => page.getByRole("listitem").filter({ hasText: "Cleanup styles" });
+const toStyles = async (page: Page) => { await stylesRow(page).click(); await expect(page.getByRole("heading", { name: "Cleanup styles", level: 1 })).toBeVisible(); };
+const styleRow = (page: Page, name: string) => page.getByRole("listitem").filter({ has: page.getByText(name, { exact: true }) }).filter({ has: page.getByRole("button", { name: /^Edit / }) });
+const edit = async (page: Page, name: string) => { await toStyles(page); await styleRow(page, name).click(); await expect(page.getByRole("heading", { name, level: 1 })).toBeVisible(); };
+const box = (page: Page) => page.getByRole("textbox", { name: "Instructions" });
 
-test("Cleanup styles show only with a Fast model", async ({ page }) => {
-  await open(page, "Alt+Space", false, { at: "Write" });
-  await expect(page.getByRole("heading", { name: "Adding your words" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Cleanup styles" })).toHaveCount(0);
+test("the Cleanup model row names the model and provider and offers Change; a gone model counts as none", async ({ page }) => {
+  await open(page, "Alt+Space", false, { ai: fastOn(OLLAMA, "qwen2.5:7b"), at: "Write" });
+  const row = page.getByRole("listitem").filter({ hasText: "Cleanup model (Fast)" });
+  await expect(row.locator(".mono")).toHaveText("qwen2.5:7b");
+  await expect(row).toContainText("qwen2.5:7b · Ollama on this Mac");
+  await row.getByRole("button", { name: "Change" }).click();
+  await expect(page.getByRole("heading", { name: "AI providers", exact: true, level: 1 })).toBeVisible();
 });
 
-test("Cleanup styles list the four shipped ones with their apps, and mark an edited one with a newer default", async ({ page }) => {
+test("a Fast model on an off-device provider shows the caution pill", async ({ page }) => {
+  await open(page, "Alt+Space", false, { ai: fastOn(OR as any, "vendor/model"), at: "Write" });
+  const row = page.getByRole("listitem").filter({ hasText: "Cleanup model (Fast)" });
+  await expect(row.locator(".pill.caution")).toHaveText("Sends text off this Mac");
+  await expect(row.locator(".pill:not(.caution)")).toHaveCount(0);
+});
+
+test("a Fast model on a local provider shows the neutral Stays on this Mac pill", async ({ page }) => {
   await withFast(page);
-  await expect(page.getByText("Dictate with cleanup picks a style by the app you’re in. Only Myna sees the app; its name is never sent.")).toBeVisible();
-  await expect(styleRow(page, "Default")).toContainText("Every other app");
-  await expect(styleRow(page, "Code")).toContainText("Xcode, Cursor");
-  await expect(styleRow(page, "Message")).toContainText("Slack · edited");
-  await expect(styleRow(page, "Message")).toContainText("Newer default");
-  await expect(styleRow(page, "Email")).not.toContainText("edited");
+  const row = page.getByRole("listitem").filter({ hasText: "Cleanup model (Fast)" });
+  await expect(row.locator(".pill")).toHaveText("Stays on this Mac");
+  await expect(row.locator(".pill.caution")).toHaveCount(0);
 });
 
-test("Default has no name or apps to edit, shows what Myna adds, and Reset waits for an edit", async ({ page }) => {
+test("a Fast model set on AI providers shows on Write without reloading", async ({ page }) => {
+  await fakeTauri(page, `{
+    storage_status: () => "/tmp/Myna", models_list: () => ${MODELS}, voice_get: () => ({ on: true, key: "Alt+Space", clean: null, mode: "hold", paste: "clipboard" }),
+    ai_get: () => (window.__ai ??= ${JSON.stringify({ providers: [OLLAMA], main: null, fast: null })}), globe_ok: () => true,
+  }`);
+  await page.goto("/settings");
+  await page.getByRole("option", { name: "Write" }).click();
+  const row = page.getByRole("listitem").filter({ hasText: "Cleanup model (Fast)" });
+  await expect(row).toContainText("Dictate with cleanup needs a Fast model on AI providers.");
+  await row.getByRole("button", { name: "Set up" }).click();
+  await expect(page.getByRole("heading", { name: "AI providers", exact: true, level: 1 })).toBeVisible();
+  await page.evaluate(() => ((window as any).__ai.fast = { provider: 1, model: "qwen2.5:7b", gone: false })); // what picking it there saves
+  await page.getByRole("option", { name: "Write" }).click();
+  await expect(row).toContainText("qwen2.5:7b · Ollama on this Mac");
+  await expect(row.getByRole("button", { name: "Change" })).toBeVisible();
+});
+
+test("a Fast model that's gone counts as none on Write too", async ({ page }) => {
+  await open(page, "Alt+Space", false, { at: "Write", ai: { providers: [OLLAMA], main: null, fast: { provider: 1, model: "qwen2.5:7b", gone: true } } });
+  await expect(page.getByText("Dictate with cleanup needs a Fast model on AI providers.")).toBeVisible();
+  await expect(stylesRow(page)).toContainText("Available once a Fast model is set.");
+});
+
+test("Cleanup styles wait for a Fast model: a dimmed chevron, and the row opens nothing", async ({ page }) => {
+  await open(page, "Alt+Space", false, { at: "Write" });
+  await expect(page.getByRole("heading", { name: "Text insertion" })).toBeVisible();
+  await expect(stylesRow(page)).toContainText("Available once a Fast model is set.");
+  await expect(stylesRow(page).getByRole("button")).toHaveCount(0);
+  await stylesRow(page).click();
+  await expect(page.getByRole("heading", { name: "Write", level: 1 })).toBeVisible();
+});
+
+test("the Write row lists the styles with their count and a Newer default pill", async ({ page }) => {
+  await withFast(page);
+  await expect(stylesRow(page)).toContainText("Default, Code, Message, Email");
+  await expect(stylesRow(page).locator(".count")).toHaveText("4");
+  await expect(stylesRow(page).locator(".pill.status")).toHaveCount(1); // Message
+});
+
+test("Cleanup styles list the four shipped ones with their apps, and mark a newer default", async ({ page }) => {
+  await withFast(page);
+  await toStyles(page);
+  await expect(page.getByText("Dictate with cleanup picks a style by the app you’re in. Only Myna sees the app; its name is never sent.")).toBeVisible();
+  await expect(styleRow(page, "Default")).toContainText("Every app that doesn’t have its own style.");
+  await expect(styleRow(page, "Code")).toContainText("Xcode, Cursor");
+  await expect(styleRow(page, "Message")).toContainText("Slack");
+  await expect(styleRow(page, "Message")).toContainText("Newer default");
+  await expect(styleRow(page, "Email")).not.toContainText("Newer default");
+});
+
+test("Default's Name is disabled, it says which apps it covers and shows what Myna adds, and Reset waits for an edit", async ({ page }) => {
   await withFast(page);
   await edit(page, "Default");
-  await expect(page.getByLabel("Name")).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "Name" })).toBeDisabled();
   await expect(page.getByText("Every app that doesn’t have its own style.")).toBeVisible();
-  await expect(page.getByText("Myna always adds: “Spell these exactly as written: Postgres, Myna.” What you said goes in as text to clean up, never as instructions.")).toBeVisible();
+  await expect(page.getByText("What the Fast model is told before it sees your words. Myna always adds: “Spell these exactly as written: Postgres, Myna.”")).toBeVisible();
   await expect(page.getByRole("button", { name: "Reset to default" })).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Edit", exact: true }).first()).toBeVisible();
 });
 
-test("editing a style's instructions saves on leaving the box, marks it edited, and Reset puts the shipped text back", async ({ page }) => {
+test("the Name and Apps rows are 60px, and only Instructions reserves a help line", async ({ page }) => {
   await withFast(page);
   await edit(page, "Email");
-  const box = page.getByRole("textbox", { name: "Instructions" });
-  await expect(box).toHaveValue(SHIPPED.email);
-  await box.fill("Make it formal.");
+  const h = async (label: string) => Math.round((await page.getByRole("listitem").filter({ has: page.getByText(label, { exact: true }) }).last().boundingBox())!.height);
+  expect(await h("Name")).toBe(60);
+  expect(await h("Apps")).toBe(60);
+  expect(await h("Instructions")).toBeGreaterThan(60);
+  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: "Back" }).click();
+  await edit(page, "Default"); // the same on Default
+  expect(await h("Name")).toBe(60);
+  expect(await h("Apps")).toBe(60);
+});
+
+test("editing a style's instructions saves on leaving the box, and Reset puts the shipped text back", async ({ page }) => {
+  await withFast(page);
+  await edit(page, "Email");
+  await expect(box(page)).toHaveValue(SHIPPED.email);
+  await box(page).fill("Make it formal.");
   expect(await calls(page, "cleanup_set")).toEqual([]); // not on every key
-  await box.blur();
-  await expect(styleRow(page, "Email")).toContainText("Mail · edited");
+  await box(page).blur();
   expect((await calls(page, "cleanup_set")).at(-1).styles.find((x: any) => x.id === "email")).toMatchObject({ text: "Make it formal." });
+  await expect(page.getByRole("button", { name: "Reset to default" })).toBeEnabled();
   await page.getByRole("button", { name: "Reset to default" }).click();
-  await expect(box).toHaveValue(SHIPPED.email);
-  await expect(styleRow(page, "Email")).not.toContainText("edited");
+  await expect(box(page)).toHaveValue(SHIPPED.email);
   await expect(page.getByRole("button", { name: "Reset to default" })).toBeDisabled();
 });
 
 test("an emptied box goes back to the shipped text", async ({ page }) => {
   await withFast(page);
   await edit(page, "Code");
-  const box = page.getByRole("textbox", { name: "Instructions" });
-  await box.fill("  ");
-  await box.blur();
-  await expect(box).toHaveValue(SHIPPED.code);
+  await box(page).fill("  ");
+  await box(page).blur();
+  await expect(box(page)).toHaveValue(SHIPPED.code);
 });
 
 test("a newer default keeps the edit until Use the new default", async ({ page }) => {
   await withFast(page);
   await page.evaluate(() => ((window as any).__newer = { message: true }));
   await edit(page, "Message");
-  await expect(page.getByRole("textbox", { name: "Instructions" })).toHaveValue("Keep it casual and short.");
-  await expect(page.getByRole("status").filter({ hasText: "A newer default is available. Your edit is kept until you choose." })).toBeVisible();
-  await page.getByRole("button", { name: "Use the new default" }).click();
-  await expect(page.getByRole("textbox", { name: "Instructions" })).toHaveValue(SHIPPED.message);
+  await expect(box(page)).toHaveValue("Keep it casual and short.");
+  const row = page.getByRole("listitem").filter({ hasText: "A newer default is available" });
+  await expect(row).toContainText("Your edit is kept until you choose.");
+  await row.getByRole("button", { name: "Use the new default" }).click();
+  await expect(box(page)).toHaveValue(SHIPPED.message);
   await expect(page.getByText("A newer default is available")).toHaveCount(0);
+  await page.getByRole("button", { name: "Back" }).click();
   await expect(styleRow(page, "Message")).not.toContainText("Newer default");
+  await page.getByRole("button", { name: "Back" }).click();
+  await expect(stylesRow(page).locator(".pill.status")).toHaveCount(0); // Write's row agrees
 });
 
 test("adding an app moves it from the style that had it; removing one leaves it for Default", async ({ page }) => {
@@ -331,37 +405,89 @@ test("adding an app moves it from the style that had it; removing one leaves it 
   const add = page.getByRole("combobox", { name: "Add an app to Code" });
   await expect(add.getByRole("option", { name: "Slack (now Message)" })).toHaveCount(1);
   await add.selectOption("Slack");
-  await expect(styleRow(page, "Code")).toContainText("Xcode, Cursor, Slack");
-  await expect(styleRow(page, "Message")).toContainText("No apps yet");
+  await expect(page.getByRole("button", { name: "Remove Slack from Code" })).toBeVisible();
   await page.getByRole("button", { name: "Remove Xcode from Code" }).click();
-  await expect(styleRow(page, "Code")).toContainText("Cursor, Slack");
+  await expect(page.getByRole("button", { name: "Remove Xcode from Code" })).toHaveCount(0);
   await expect(add).toBeFocused();
+  await page.getByRole("button", { name: "Back" }).click();
+  await expect(styleRow(page, "Code")).toContainText("Cursor, Slack");
+  await expect(styleRow(page, "Message")).toContainText("No apps yet"); // Slack moved out
 });
 
-test("Add style makes a named style with Default's text; Delete style removes it; shipped styles can't be deleted", async ({ page }) => {
+test("Add style opens its editor with Default's text; the title follows a rename; shipped styles can't be deleted", async ({ page }) => {
   await withFast(page);
+  await toStyles(page);
   await page.getByRole("button", { name: "Add style" }).click();
+  await expect(page.getByRole("heading", { name: "New style", level: 1 })).toBeVisible();
   const name = page.getByRole("textbox", { name: "Name" });
   await expect(name).toBeFocused();
+  await expect(box(page)).toHaveValue(BASE);
   await name.fill("Notes style");
   await name.blur();
-  await expect(styleRow(page, "Notes style")).toContainText("No apps yet");
-  await expect(page.getByRole("textbox", { name: "Instructions" })).toHaveValue(BASE);
-  await page.getByRole("button", { name: "Delete style" }).click();
-  await expect(page.getByText("Notes style")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Add style" })).toBeFocused();
-  await edit(page, "Code");
+  await expect(page.getByRole("heading", { name: "Notes style", level: 1 })).toBeVisible();
+  await page.getByRole("button", { name: "Back" }).click();
+  await expect(styleRow(page, "Notes style")).toBeVisible();
+  await styleRow(page, "Code").click();
   await expect(page.getByRole("button", { name: "Delete style" })).toHaveCount(0);
+});
+
+test("Delete style removes it, lands on the list, and drops its editor from the history", async ({ page }) => {
+  await withFast(page);
+  await toStyles(page);
+  await page.getByRole("button", { name: "Add style" }).click();
+  await expect(page.getByRole("heading", { name: "New style", level: 1 })).toBeVisible();
+  await page.getByRole("button", { name: "Delete style" }).click();
+  await expect(page.getByRole("heading", { name: "Cleanup styles", level: 1 })).toBeVisible();
+  await expect(page.getByText("New style", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Add style" })).toBeFocused();
+  await expect(page.getByRole("button", { name: "Forward" })).toBeDisabled(); // ‹ › never lands on the deleted editor
+  await page.getByRole("button", { name: "Back" }).click();
+  await expect(page.getByRole("heading", { name: "Write", level: 1 })).toBeVisible();
+  await page.getByRole("button", { name: "Forward" }).click();
+  await expect(page.getByRole("heading", { name: "Cleanup styles", level: 1 })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Forward" })).toBeDisabled();
+});
+
+test("a deleted style's editor leaves the history even with pages visited after it", async ({ page }) => {
+  await withFast(page);
+  await toStyles(page);
+  await page.getByRole("button", { name: "Add style" }).click();
+  await page.getByRole("option", { name: "Listen" }).click(); // history: Write, styles, editor, Listen
+  await page.getByRole("button", { name: "Back" }).click(); // the editor again
+  await page.getByRole("button", { name: "Delete style" }).click();
+  await expect(page.getByRole("heading", { name: "Cleanup styles", level: 1 })).toBeVisible();
+  await page.getByRole("button", { name: "Forward" }).click();
+  await expect(page.getByRole("heading", { name: "Listen", level: 1 })).toBeVisible(); // not the deleted editor
+  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: "Back" }).click();
+  await expect(page.getByRole("heading", { name: "Write", level: 1 })).toBeVisible();
+});
+
+test("Delete style keeps its red on hover", async ({ page }) => {
+  await withFast(page);
+  await toStyles(page);
+  await page.getByRole("button", { name: "Add style" }).click();
+  const del = page.getByRole("button", { name: "Delete style" });
+  const red = () => del.evaluate((e) => getComputedStyle(e).backgroundColor);
+  await page.mouse.move(700, 10); // Delete appears under the cursor Add style was clicked with
+  await page.waitForTimeout(250);
+  const rest = await red();
+  await del.hover();
+  await page.waitForTimeout(250); // the colour eases in
+  const hover = await red();
+  const [r, g, b] = hover.match(/[\d.]+/g)!.map(Number);
+  expect(r).toBeGreaterThan(g * 2); // still red, only a little lighter
+  expect(r).toBeGreaterThan(b * 2);
+  expect(hover).not.toBe(rest);
 });
 
 test("a failed save says why and shows what was kept", async ({ page }) => {
   await withFast(page);
   await edit(page, "Email");
-  const box = page.getByRole("textbox", { name: "Instructions" });
-  await box.fill("boom");
-  await box.blur();
+  await box(page).fill("boom");
+  await box(page).blur();
   await expect(page.getByText("Couldn't save the cleanup styles: disk full")).toBeVisible();
-  await expect(box).toHaveValue(SHIPPED.email);
+  await expect(box(page)).toHaveValue(SHIPPED.email);
 });
 
 test("Sounds is on unless switched off, and saves with the other voice settings", async ({ page }) => {
@@ -377,7 +503,7 @@ test("Write's empty state while voice typing is off sends you to Listen; Underst
   await open(page, "Alt+Space", false, { on: false, at: "Write" });
   await expect(page.getByText("Voice typing is off", { exact: true })).toBeVisible();
   await expect(page.getByText("Turn it on in Listen to choose how your words are added.")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Adding your words" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Text insertion" })).toHaveCount(0);
   await page.getByRole("option", { name: "Understand" }).click();
   await expect(page.getByText("Voice typing is off. Turn it on in Listen. Meeting notes use their own model.")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Speech-to-text" })).toBeVisible();

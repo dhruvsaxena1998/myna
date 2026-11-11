@@ -364,12 +364,23 @@ textarea.input { height: auto; padding: var(--sp-2) var(--sp-3); border-radius: 
 .prefs .slider input[type="range"]:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: 10px; }
 /* One disabled look for everything that isn't a button. */
 .prefs .switch:disabled, .prefs .seg:disabled, .prefs .slider:has(input:disabled) { opacity: .45; }
+/* Field row on a drill-in (docs/settings.html .field): label column, control column, the help under the control. `.one` is a 60px row with no help line. */
+.prefs .field { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: var(--sp-1) var(--sp-4); align-items: start; box-sizing: border-box; padding: var(--sp-3) var(--sp-4); }
+.prefs .field.one { min-height: 60px; align-items: center; align-content: center; }
+.prefs .field > label, .prefs .field > .name { font-weight: var(--fw-medium); line-height: var(--h-ctl); }
+.prefs .field .help { grid-column: 2; min-height: var(--lh-footnote); }
+.prefs .field .input, .prefs .field .select { min-width: 0; }
+.prefs .field .select { justify-self: start; max-width: 220px; }
+.prefs .actions { display: flex; gap: var(--sp-2); }
 /* Narrow page: a wide control (select, segmented, keycaps, slider, swatches) drops under its text; switches, checks, buttons and chevrons stay right. */
 @container (max-width: 480px) {
   .prefs .row:is(.wide, :has(> :is(.select, .seg, .slider, .swatches))) { grid-template-columns: minmax(0, 1fr); gap: var(--sp-2); }
   .prefs .row:is(.wide, :has(> :is(.select, .seg, .slider, .swatches))) > :last-child { justify-self: start; }
   .prefs .row.wide > .end { justify-content: flex-start; }
   .prefs .row .desc { white-space: normal; }
+  .prefs .field { grid-template-columns: minmax(0, 1fr); }
+  .prefs .field .help { grid-column: 1; }
+  .prefs .field > label, .prefs .field > .name { line-height: var(--lh-body); }
 }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   :root[data-theme] { --mat-window: var(--bg-inset); --mat-sidebar: var(--bg-sidebar); --mat-menu: var(--bg-raised); --hud-bg: var(--hud-bg-solid); }
