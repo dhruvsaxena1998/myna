@@ -32,6 +32,23 @@ pub enum Pill {
     Error { title: String, hint: String },
 }
 
+/// The sounds voice typing plays, when Sounds is on.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Sound {
+    Start,
+    Stop,
+}
+
+/// Esc, and Esc with each shortcut's modifiers so it works while a shortcut is held; never one of the shortcuts itself.
+fn esc_keys(v: &voice::Voice) -> Vec<String> {
+    let keys: Vec<String> = v.keys().into_iter().map(|(k, _)| k).collect();
+    let mods = keys.iter().filter_map(|k| k.rsplit_once('+').map(|(m, _)| format!("{m}+Escape")));
+    let mut esc: Vec<String> = mods.chain(["Escape".to_string()]).filter(|e| !keys.contains(e)).collect();
+    esc.sort();
+    esc.dedup();
+    esc
+}
+
 /// A mic recording in progress.
 pub trait Recording: Send {
     /// The mic's current loudness, 0 to 1.
@@ -56,6 +73,9 @@ pub trait World: Send + Sync + 'static {
     fn level(&self, level: f32);
     /// Moves the pill to "bottom", "top-right", ... on the screen the user is typing on.
     fn place(&self, place: String);
+    fn sound(&self, s: Sound);
+    /// Takes `keys` (Esc combinations) from every app while `on`, so Esc cancels the recording; gives them back when not.
+    fn catch_esc(&self, keys: &[String], on: bool);
     /// The app in front: its name and bundle id.
     fn front(&self) -> (Option<String>, Option<String>);
     fn transcriber(&self, id: &str, models_dir: &Path) -> Result<Box<dyn Transcriber>, String>;
@@ -72,6 +92,10 @@ struct Active {
     trace: Trace,
     /// Started by Dictate with cleanup.
     clean: bool,
+    /// Sounds was on when it started, so its stop sound matches its start sound.
+    sounds: bool,
+    /// The Esc shortcuts caught while it records.
+    esc: Vec<String>,
 }
 
 pub struct Session {
@@ -117,6 +141,21 @@ impl Session {
         } else {
             self.start(false, clean);
         }
+    }
+
+    /// Esc while recording: drops what was heard and pastes nothing.
+    pub fn cancel(self: &Arc<Self>) {
+        let Some(a) = self.recording.lock().unwrap().take() else { return };
+        self.world.catch_esc(&a.esc, false);
+        let s = self.clone();
+        std::thread::spawn(move || {
+            let _ = a.rec.finish();
+            if a.sounds {
+                s.world.sound(Sound::Stop);
+            }
+            s.world.show(Pill::Idle);
+            s.schedule_unload();
+        });
     }
 
     /// Recording, or still turning the last recording into text.
@@ -194,8 +233,13 @@ impl Session {
         let (app, bundle) = self.world.front();
         let started = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
         let trace = Trace { started, mode: if hold { "hold" } else { "tap" }, app, bundle, ..Default::default() };
-        *rec = Some(Active { rec: self.world.record(), token: token.clone(), trace, clean });
+        if v.sounds {
+            self.world.sound(Sound::Start); // before the mic opens, so the words don't start with it
+        }
+        let esc = esc_keys(&v);
+        *rec = Some(Active { rec: self.world.record(), token: token.clone(), trace, clean, sounds: v.sounds, esc: esc.clone() });
         drop(rec);
+        self.world.catch_esc(&esc, true);
         self.unload_gen.fetch_add(1, Ordering::SeqCst); // a pending unload must not fire mid-dictation
         self.world.show(Pill::Listening { hold, key: v.key, limit: self.tap_limit.as_secs() });
         let s = self.clone();
@@ -228,15 +272,20 @@ impl Session {
         if only.is_some_and(|t| slot.as_ref().is_none_or(|a| !Arc::ptr_eq(&a.token, t))) {
             return;
         }
-        let Some(Active { rec, trace: t, clean, .. }) = slot.take() else { return };
+        let Some(Active { rec, trace: t, clean, sounds, esc, .. }) = slot.take() else { return };
         drop(slot);
+        self.world.catch_esc(&esc, false);
         let released = Instant::now();
         let s = self.clone();
         std::thread::spawn(move || {
             // The trace, once the dictation reaches speech-to-text.
             let mut trace = None;
             let run = || -> Result<Pill, String> {
-                let audio = rec.finish()?;
+                let audio = rec.finish();
+                if sounds {
+                    s.world.sound(Sound::Stop); // after the mic closes, so the words don't end with it
+                }
+                let audio = audio?;
                 if audio.len() < runtime::RATE as usize / 4 {
                     return Ok(Pill::Idle); // a tap, not speech
                 }
@@ -404,6 +453,27 @@ impl World for Mac {
     fn place(&self, place: String) {
         pill::place(&self.0, place)
     }
+    fn sound(&self, s: Sound) {
+        let name = match s {
+            Sound::Start => "Tink",
+            Sound::Stop => "Pop",
+        };
+        // NSSound isn't Send, so it's made and played on the main thread.
+        let _ = self.0.run_on_main_thread(move || {
+            if let Some(sound) = objc2_app_kit::NSSound::soundNamed(&objc2_foundation::NSString::from_str(name)) {
+                sound.play();
+            }
+        });
+    }
+    fn catch_esc(&self, keys: &[String], on: bool) {
+        use tauri_plugin_global_shortcut::GlobalShortcutExt;
+        let gs = self.0.global_shortcut();
+        for k in keys {
+            if let Err(e) = if on { gs.register(k.as_str()) } else { gs.unregister(k.as_str()) } {
+                eprintln!("dictation: Esc {k}: {e}");
+            }
+        }
+    }
     fn front(&self) -> (Option<String>, Option<String>) {
         let Some(app) = objc2_app_kit::NSWorkspace::sharedWorkspace().frontmostApplication() else { return (None, None) };
         (app.localizedName().map(|n| n.to_string()), app.bundleIdentifier().map(|b| b.to_string()))
@@ -447,6 +517,9 @@ mod tests {
         shown: Vec<Pill>,
         pasted: Vec<String>,
         typed: Vec<bool>,
+        sounds: Vec<Sound>,
+        /// The Esc shortcuts caught right now.
+        esc: Vec<String>,
     }
 
     #[derive(Clone, Default)]
@@ -517,6 +590,13 @@ mod tests {
             self.0.lock().unwrap().levels += 1;
         }
         fn place(&self, _: String) {}
+        fn sound(&self, s: Sound) {
+            self.0.lock().unwrap().sounds.push(s);
+        }
+        fn catch_esc(&self, keys: &[String], on: bool) {
+            let esc = &mut self.0.lock().unwrap().esc;
+            if on { esc.extend_from_slice(keys) } else { esc.retain(|k| !keys.contains(k)) }
+        }
         fn front(&self) -> (Option<String>, Option<String>) {
             (Some("Notes".into()), Some("com.apple.Notes".into()))
         }
@@ -1005,5 +1085,85 @@ mod tests {
         assert_eq!(mac.0.lock().unwrap().pasted, ["Hello there."]);
         let (_, settings) = cleanup_step(&s).unwrap();
         assert_eq!((&settings["model"], settings["detail"].as_str()), (&serde_json::Value::Null, Some("Fast model: Not set")));
+    }
+
+    fn sounds(mac: &FakeMac) -> Vec<Sound> {
+        std::mem::take(&mut mac.0.lock().unwrap().sounds)
+    }
+
+    #[test]
+    fn a_sound_plays_at_start_and_stop_with_both_shortcuts_in_both_modes() {
+        for mode in ["hold", "tap"] {
+            let (s, mac, _tmp) = session(mode);
+            for clean in [false, true] {
+                press(&s, &mac, mode == "tap", clean);
+                assert_eq!(sounds(&mac), [Sound::Start, Sound::Stop], "{mode}, clean {clean}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_recording_too_short_to_keep_still_plays_the_stop_sound() {
+        let (s, mac, _tmp) = session("hold");
+        mac.0.lock().unwrap().audio = Some(vec![0.1; 10]);
+        assert_eq!(dictate(&s, &mac, false), [Pill::Idle]);
+        assert_eq!(sounds(&mac), [Sound::Start, Sound::Stop]);
+    }
+
+    #[test]
+    fn with_sounds_off_nothing_plays() {
+        let (s, mac, _tmp) = session("tap");
+        let db = s.db.lock().unwrap();
+        voice::set(&db, &voice::Voice { sounds: false, ..voice::get(&db).unwrap() }).unwrap();
+        drop(db);
+        dictate(&s, &mac, true);
+        assert!(sounds(&mac).is_empty());
+    }
+
+    #[test]
+    fn esc_while_recording_cancels_with_the_stop_sound_and_pastes_nothing() {
+        for mode in ["hold", "tap"] {
+            let (s, mac, _tmp) = session(mode);
+            s.key(mode == "hold", false);
+            assert_eq!(mac.0.lock().unwrap().esc, ["Alt+Escape", "Escape"], "caught only while recording");
+            s.cancel();
+            mac.wait(|l| l.shown.last() == Some(&Pill::Idle));
+            assert!(mac.0.lock().unwrap().esc.is_empty());
+            assert_eq!(sounds(&mac), [Sound::Start, Sound::Stop]);
+            s.key(false, false); // hold: letting go after Esc; tap: the next tap starts afresh
+            if mode == "tap" {
+                s.cancel();
+            }
+            std::thread::sleep(Duration::from_millis(50));
+            assert!(mac.0.lock().unwrap().pasted.is_empty(), "{mode}");
+            assert!(traces(&s).is_empty());
+        }
+    }
+
+    #[test]
+    fn a_finished_dictation_lets_go_of_esc() {
+        let (s, mac, _tmp) = session("hold");
+        dictate(&s, &mac, false);
+        assert!(mac.0.lock().unwrap().esc.is_empty());
+        s.cancel(); // nothing recording: nothing happens
+        assert_eq!(sounds(&mac), [Sound::Start, Sound::Stop]);
+    }
+
+    #[test]
+    fn esc_is_caught_bare_and_with_each_shortcuts_modifiers_but_never_as_a_shortcut() {
+        let v = |key: &str, clean: Option<&str>, key2: Option<&str>| voice::Voice {
+            on: true, key: key.into(), clean: clean.map(Into::into), key2: key2.map(Into::into), clean2: None,
+            mode: "hold".into(), paste: "clipboard".into(), rate: false, sounds: true,
+        };
+        assert_eq!(esc_keys(&v("Alt+Space", Some("Cmd+Shift+D"), None)), ["Alt+Escape", "Cmd+Shift+Escape", "Escape"]);
+        assert_eq!(esc_keys(&v(voice::FN, None, None)), ["Escape"]);
+        assert_eq!(esc_keys(&v("Alt+Space", None, Some("Alt+Escape"))), ["Escape"]);
+    }
+
+    #[test]
+    fn meeting_notes_play_no_sounds() {
+        let (s, mac, _tmp) = session("hold");
+        crate::meeting::Stt::transcribe(&*s, &[0.1; 16_000]).unwrap();
+        assert!(sounds(&mac).is_empty());
     }
 }
