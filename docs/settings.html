@@ -1,0 +1,754 @@
+<!doctype html>
+<html lang="en" data-theme="dark" data-accent="blue" data-glass="clear">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Myna Settings · prototype</title>
+<link rel="stylesheet" href="../design/tokens.css">
+<style>
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg-desk); }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  * { box-sizing: border-box; }
+  ::-webkit-scrollbar { width: 10px; } ::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 5px; border: 3px solid transparent; background-clip: padding-box; }
+  input, textarea { caret-color: var(--accent); }
+
+  /* Window: 880×520 by default, drag the corner down to 640×420. */
+  .window { width: 880px; height: 520px; min-width: 640px; min-height: 420px; max-width: 96vw; max-height: 92vh; resize: both; overflow: hidden;
+    display: grid; grid-template-columns: var(--w-settings-nav) minmax(0, 1fr); gap: var(--win-inset); padding: var(--win-inset);
+    border-radius: var(--r-2xl); background: var(--mat-window); box-shadow: var(--shadow-window); }
+
+  /* Sidebar */
+  .side { border-radius: var(--r-xl); background: var(--mat-sidebar); box-shadow: inset 0 0 0 .5px var(--edge); display: flex; flex-direction: column; min-height: 0; }
+  .lights { height: var(--h-titlebar); display: flex; gap: var(--sp-2); align-items: center; padding: 0 var(--sp-4); flex: none; }
+  .lights i { width: 12px; height: 12px; border-radius: 50%; background: var(--label-red); box-shadow: inset 0 0 0 .5px var(--line-strong); }
+  .lights i:nth-child(2) { background: var(--label-yellow); } .lights i:nth-child(3) { background: var(--label-green); }
+  .nav { list-style: none; margin: 0; padding: 0 var(--sp-2) var(--sp-2); outline: none; overflow: auto; }
+  .nav:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; border-radius: var(--r-md); }
+  .cap { margin: var(--sp-4) 0 var(--sp-1); padding: 0 10px; font-size: var(--fs-caption); line-height: var(--lh-caption); font-weight: var(--fw-semibold); color: var(--text-3); }
+  .cap:first-child { margin-top: 0; }
+  .gap { height: var(--sp-4); }
+  .nav li[role="option"] { height: var(--h-row); display: flex; align-items: center; gap: var(--sp-2); padding: 0 10px; border-radius: var(--r-md); cursor: default;
+    transition: background-color var(--dur-fast) var(--ease-in); }
+  .nav li[role="option"]:hover { background: var(--fill-hover); }
+  .nav li[aria-selected="true"] { background: var(--accent-soft-strong); font-weight: var(--fw-medium); }
+  .nav .ic { color: var(--text-2); }
+  .nav li[aria-selected="true"] .ic { color: var(--accent-text); }
+
+  .ic { width: var(--ic); height: var(--ic); flex: none; fill: none; stroke: currentColor; stroke-width: var(--ic-stroke); stroke-linecap: round; stroke-linejoin: round; }
+
+  /* Main panel */
+  main { container-type: inline-size; min-width: 0; min-height: 0; border-radius: var(--r-xl); background: var(--bg-content); display: flex; flex-direction: column; overflow: hidden; }
+  :root[data-liquid] main { box-shadow: inset 0 0 0 .5px var(--edge); }
+  .toolbar { height: var(--h-toolbar); flex: none; display: flex; align-items: center; gap: var(--sp-1); padding: 0 var(--sp-5); }
+  .toolbar h1 { margin: 0; font-size: var(--fs-title2); line-height: var(--lh-title2); font-weight: var(--fw-semibold); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* Signature: the page head on Listen, Understand and Write is the path your voice takes, each stage with what it does now. */
+  .head { height: auto; min-height: 44px; padding: var(--sp-1) var(--sp-5); }
+  .head + .scroll .page { padding-top: var(--sp-3); }
+  .strip { display: flex; align-items: flex-start; min-width: 0; overflow: hidden; }
+  .stage { display: flex; flex-direction: column; align-items: flex-start; flex: none; gap: 0; padding: 2px var(--sp-2); margin: 0 calc(-1 * var(--sp-2)); border: 0; border-radius: var(--r-sm); background: none; text-align: left;
+    transition: background-color var(--dur-fast) var(--ease-in); }
+  .stage:hover { background: var(--fill-hover); }
+  .stage .sn { font-size: var(--fs-body); line-height: var(--lh-body); font-weight: var(--fw-medium); color: var(--text-2); white-space: nowrap; }
+  .stage[aria-current="step"] .sn { color: var(--accent-text); }
+  .stage.off .sn { color: var(--text-3); }
+  .stage .sv { display: flex; align-items: center; gap: var(--sp-1); min-height: var(--lh-footnote); font-size: var(--fs-footnote); line-height: var(--lh-footnote); color: var(--text-3);
+    white-space: nowrap; overflow: hidden; font-variant-numeric: tabular-nums; }
+  .stage .sv kbd { height: 16px; min-width: 16px; padding: 0 4px; }
+  .stage .sv .ok { color: inherit; } .stage .sv .ok .ic { width: 12px; height: 12px; }
+  .stage .sv .pill { height: 16px; padding: 0 6px; }
+  .link { flex: none; width: 16px; height: .5px; margin: 11px var(--sp-2) 0; background: var(--line-strong); }
+  .link.off { background: none; border-top: .5px dashed var(--line-strong); }
+  .hnav { display: flex; gap: 2px; margin: 0 var(--sp-2) 0 -8px; flex: none; }
+  .hnav .btn { width: 28px; height: 28px; }
+  .hnav .btn { color: var(--text); }
+  .hnav .btn:disabled { color: var(--text-disabled); }
+  .stage:last-child { flex: 0 1 auto; min-width: 0; max-width: 100%; }
+  .stage:last-child .sv { max-width: 100%; }
+  .stage .clip { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .sv.fresh { animation: fresh 900ms var(--ease-out); }
+  @keyframes fresh { from { color: var(--accent-text); } }
+
+  /* Page */
+  .scroll { flex: 1; min-height: 0; overflow: auto; container-type: inline-size; }
+  .page { display: flex; flex-direction: column; gap: var(--sp-5); padding: 0 var(--sp-5) var(--sp-6); }
+  .page.enter { animation: enter var(--dur) var(--ease-out); }
+  @keyframes enter { from { opacity: 0; transform: translateY(4px); } }
+  section { position: relative; margin: 0; }
+  h2 { margin: 0 0 var(--sp-2); font-size: var(--fs-body); line-height: var(--lh-body); font-weight: var(--fw-semibold); color: var(--text-2); }
+  .help { margin: calc(-1 * var(--sp-1)) 0 var(--sp-2); font-size: var(--fs-footnote); line-height: var(--lh-footnote); color: var(--text-3); }
+  /* An error hangs in the 24px gap under its own list: 4px, a 16px line, 4px. It never pushes anything. */
+  .err { position: absolute; left: var(--sp-4); right: 0; top: calc(100% + var(--sp-1)); margin: 0; font-size: var(--fs-footnote); line-height: var(--lh-footnote); color: var(--danger-text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .err.okmsg { color: var(--text-2); }
+
+  .list { list-style: none; margin: 0; padding: 0; border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); }
+  .row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-3); align-items: center; min-height: 60px; padding: var(--sp-3) var(--sp-4); }
+  .row + .row::before, .row + .stage-row::before, .stage-row + .row::before { content: ""; position: absolute; top: 0; left: var(--sp-4); right: 0; height: 1px; background: var(--line); }
+  .row.go { cursor: default; } .row.go:hover { background: var(--fill-hover); }
+  .list > .row:first-child { border-radius: var(--r-xl) var(--r-xl) 0 0; } .list > .row:last-child { border-radius: 0 0 var(--r-xl) var(--r-xl); } .list > .row:only-child { border-radius: var(--r-xl); }
+  .txt { min-width: 0; }
+  .name { display: flex; align-items: center; gap: var(--sp-2); font-weight: var(--fw-medium); min-width: 0; }
+  .name > span:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .meta { font-weight: var(--fw-regular); font-size: var(--fs-footnote); color: var(--text-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .desc { display: block; margin-top: 2px; font-size: var(--fs-footnote); line-height: var(--lh-footnote); color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .desc.bad { color: var(--danger-text); }
+  .end { display: flex; align-items: center; gap: var(--sp-2); justify-content: flex-end; }
+  .chev { color: var(--text-3); }
+  .mono { font-family: var(--font-mono); font-size: var(--fs-footnote); user-select: text; -webkit-user-select: text; cursor: text; }
+  .count { color: var(--text-3); font-variant-numeric: tabular-nums; }
+
+  /* Controls */
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-1h); height: var(--h-ctl); padding: 0 14px; border: 0; border-radius: var(--r-full);
+    background: var(--fill-control); color: var(--text); box-shadow: inset 0 0 0 .5px var(--line-strong), var(--shadow-control); white-space: nowrap;
+    transition: background-color var(--dur-fast) var(--ease-in), transform var(--dur-fast) var(--ease-in); }
+  .btn:hover:not(:disabled) { background: color-mix(in srgb, var(--fill-control) 85%, var(--text)); }
+  .btn:active:not(:disabled) { transform: scale(.97); }
+  .btn:disabled { color: var(--text-disabled); }
+  .btn.primary { background: var(--accent); color: var(--on-accent); font-weight: var(--fw-medium); box-shadow: var(--shadow-control); }
+  .btn.primary:hover:not(:disabled) { background: var(--accent-hover); }
+  .btn.danger { background: var(--danger); color: var(--on-solid); font-weight: var(--fw-medium); box-shadow: var(--shadow-control); }
+  .btn.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--danger) 88%, var(--on-solid)); }
+  .btn.plain { background: none; box-shadow: none; padding: 0 10px; color: var(--text-2); }
+  .btn.plain:hover:not(:disabled) { background: var(--fill-hover); }
+  .btn.icon { width: var(--h-ctl); padding: 0; }
+  .btn.sm { height: var(--h-ctl-sm); padding: 0 10px; }
+  .btn.rec { box-shadow: inset 0 0 0 2px var(--focus-ring); color: var(--text-2); }
+
+  kbd { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 5px; border-radius: var(--r-xs); background: var(--fill-field);
+    box-shadow: inset 0 0 0 .5px var(--line-strong); font: var(--fs-footnote)/1 var(--font); color: var(--text); }
+  .keys { display: inline-flex; gap: 3px; }
+
+  .switch { appearance: none; width: 38px; height: 22px; margin: 0; border-radius: 11px; position: relative; flex: none; background: var(--fill-track);
+    transition: background-color var(--dur) var(--ease-out); }
+  .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: var(--fill-control-on);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, .3); transition: transform var(--dur) var(--ease-out); }
+  :root:not([data-theme="dark"]) .switch::after { background: #fff; }
+  .switch:checked { background: var(--accent); }
+  .switch:checked::after { transform: translateX(16px); background: #fff; }
+  .switch:disabled { opacity: .45; }
+
+  /* Segmented control: equal segments, the raised thumb is the only cue. */
+  .seg { display: inline-grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 2px; margin: 0; padding: 3px; border: 0; border-radius: var(--r-full); background: var(--fill-field); }
+  .seg label { position: relative; }
+  .seg input { position: absolute; inset: 0; margin: 0; opacity: 0; }
+  .seg span { display: grid; place-items: center; height: 24px; padding: 0 14px; border-radius: var(--r-full); color: var(--text-2); white-space: nowrap;
+    transition: background-color var(--dur-fast) var(--ease-in), color var(--dur-fast) var(--ease-in); }
+  .seg input:checked + span { background: var(--fill-control-on); color: var(--text); box-shadow: 0 0 0 .5px var(--line-strong), 0 1px 2px rgba(0, 0, 0, .1); }
+  .seg input:focus-visible + span { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+
+  .select:focus-visible, .input:focus-visible, .switch:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+  .input { height: var(--h-ctl); width: 100%; padding: 0 var(--sp-3); border: 0; border-radius: var(--r-md); background: var(--fill-field); box-shadow: inset 0 0 0 .5px var(--line-strong); }
+  .input::placeholder, textarea::placeholder { color: var(--text-3); }
+  .input[aria-invalid="true"] { box-shadow: inset 0 0 0 1.5px var(--danger); }
+  textarea.input { height: 96px; padding: var(--sp-2) var(--sp-3); border-radius: var(--r-lg); resize: none; line-height: var(--lh-body); }
+  .search { border-radius: var(--r-full); padding-left: 32px; background: var(--fill-field) no-repeat 12px center; }
+  .search-wrap { position: relative; } .search-wrap .ic { position: absolute; left: 11px; top: 7px; color: var(--text-3); }
+
+  .pill { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: var(--r-full); font-size: var(--fs-caption); line-height: var(--lh-caption);
+    font-weight: var(--fw-semibold); white-space: nowrap; background: var(--fill-hover); color: var(--text-2); }
+  .pill.status { background: var(--accent-soft); color: var(--accent-text); }
+  .pill.caution { background: var(--caution-soft); color: var(--caution-text); }
+
+  .ok { display: inline-flex; align-items: center; gap: var(--sp-1); color: var(--text-2); white-space: nowrap; }
+  .ok .ic { color: var(--ok); stroke-width: 2; width: var(--ic-sm); height: var(--ic-sm); }
+  .state { min-width: 164px; display: flex; justify-content: flex-end; }
+
+  /* Highlight colour */
+  .swatches { display: flex; gap: var(--sp-1); }
+  .sw { width: 24px; height: 24px; border: 0; padding: 0; border-radius: 50%; background: none; display: grid; place-items: center; }
+  .sw::before { content: ""; width: 16px; height: 16px; border-radius: 50%; background: var(--c); box-shadow: inset 0 0 0 .5px var(--line-strong); }
+  .sw[aria-checked="true"]::after { content: ""; position: absolute; width: 6px; height: 6px; border-radius: 50%; background: var(--on); }
+  .sw { position: relative; }
+
+  /* Slider */
+  .slider { display: flex; align-items: center; gap: var(--sp-2); color: var(--text-3); }
+  .range { appearance: none; width: 160px; height: 20px; margin: 0; background: none; --v: 50%; }
+  .range::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: linear-gradient(var(--accent), var(--accent)) 0 / var(--v) 100% no-repeat, var(--fill-track); }
+  .range::-webkit-slider-thumb { appearance: none; width: 20px; height: 20px; margin-top: -8px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 .5px var(--line-strong), 0 1px 4px rgba(0, 0, 0, .35); }
+  .slider:has(.range:disabled) { opacity: .45; }
+
+  /* Pill preview: a stand-in screen with the pill where it will show. Fixed height, so switching never moves the page. */
+  .stage-row { position: relative; height: 128px; margin: 0 var(--sp-3) var(--sp-3); border-radius: var(--r-md); background: var(--fill-field); box-shadow: inset 0 0 0 .5px var(--line); overflow: hidden; list-style: none; }
+  .hud { position: absolute; display: flex; align-items: center; gap: var(--sp-2); color: var(--hud-fg); background: var(--hud-bg); box-shadow: var(--shadow-hud), inset 0 0 0 .5px var(--hud-edge);
+    transition: top var(--dur) var(--ease-out), left var(--dur) var(--ease-out); font-size: var(--fs-footnote); white-space: nowrap; }
+  .hud.capsule { height: 32px; padding: 0 14px 0 10px; border-radius: 16px; }
+  .hud.orb { width: 28px; height: 28px; border-radius: 50%; justify-content: center; }
+  .hud.wave { height: 34px; padding: 0 12px; border-radius: 17px; }
+  .hud.card { height: 44px; padding: 0 14px; border-radius: 14px; }
+  .hud .bars { display: flex; gap: 2px; align-items: center; height: 14px; }
+  .hud .bars i { width: 2px; border-radius: 1px; background: currentColor; }
+  .hud .t2 { display: grid; line-height: 14px; } .hud .t2 small { opacity: .7; font-size: var(--fs-caption); }
+  .hud .tm { font-variant-numeric: tabular-nums; opacity: .8; }
+  .ring { width: 22px; height: 22px; border-radius: 50%; box-shadow: inset 0 0 0 2px currentColor; opacity: .9; }
+
+  /* Model rows on the drill-in: name, one line, then ratings and download state on one line. */
+  .mrow { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4); position: relative; min-height: 60px; }
+  .mstate { min-width: 136px; }
+  .mrow + .mrow::before { content: ""; position: absolute; top: 0; left: 48px; right: 0; height: 1px; background: var(--line); }
+  .mrow input[type="radio"] { margin: 0; accent-color: var(--accent); width: 16px; height: 16px; }
+  .bar { width: 96px; height: 4px; border-radius: 2px; background: var(--fill-track); overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--accent); transform-origin: left; }
+  .pct { font-size: var(--fs-footnote); color: var(--text-2); font-variant-numeric: tabular-nums; min-width: 32px; text-align: right; }
+  .none { margin: 0; min-height: var(--lh-footnote); font-size: var(--fs-footnote); color: var(--text-3); }
+
+  /* Word chips */
+  .chips { display: flex; flex-wrap: wrap; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4); align-items: center; min-height: 60px; }
+  .tag { display: inline-flex; align-items: center; gap: 2px; height: 24px; padding: 0 4px 0 10px; border-radius: var(--r-full); background: var(--fill-field); box-shadow: inset 0 0 0 .5px var(--line); }
+  .tag button { width: 18px; height: 18px; display: grid; place-items: center; border: 0; padding: 0; border-radius: 50%; background: none; color: var(--text-3); }
+  .tag button:hover { background: var(--fill-hover); color: var(--text); }
+  .tag .ic { width: 12px; height: 12px; }
+  .chips input { flex: 1 1 140px; min-width: 120px; height: 24px; border: 0; background: none; outline: none; padding: 0 var(--sp-1); }
+
+  /* Forms on drill-ins */
+  .field { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: var(--sp-1) var(--sp-4); align-items: start; padding: var(--sp-3) var(--sp-4); position: relative; }
+  .field + .field::before { content: ""; position: absolute; top: 0; left: var(--sp-4); right: 0; height: 1px; background: var(--line); }
+  .field.one { min-height: 60px; align-items: center; }
+  .field > label { font-weight: var(--fw-medium); line-height: var(--h-ctl); }
+  .field .fh { grid-column: 2; min-height: var(--lh-footnote); font-size: var(--fs-footnote); line-height: var(--lh-footnote); color: var(--text-3); }
+  .field .fh.bad { color: var(--danger-text); }
+  .actions { display: flex; justify-content: flex-end; gap: var(--sp-2); }
+  .steps { margin: 0; padding-left: 18px; font-size: var(--fs-footnote); line-height: var(--lh-footnote); color: var(--text-2); display: grid; gap: 2px; }
+
+  /* Empty states: a heading, one sentence, one action. */
+  .empty { display: grid; justify-items: start; gap: var(--sp-1); padding: var(--sp-4); }
+  .empty b { font-weight: var(--fw-semibold); }
+  .empty p { margin: 0 0 var(--sp-2); color: var(--text-2); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
+  .foot { margin: 0; font-size: var(--fs-footnote); line-height: var(--lh-footnote); color: var(--text-3); }
+  .foot a { color: var(--accent-text); text-decoration: none; } .foot a:hover { text-decoration: underline; text-underline-offset: 2px; }
+
+  /* Narrow window: the trailing control drops under its text. */
+  @container (width < 460px) { .link { width: 8px; margin-inline: var(--sp-1h); } }
+  @container (width < 480px) {
+    .row.wide { grid-template-columns: minmax(0, 1fr); gap: var(--sp-2); }
+    .row.wide .end { justify-content: flex-start; }
+    .row .state { min-width: 0; }
+    .desc { white-space: normal; }
+    .field { grid-template-columns: minmax(0, 1fr); } .field .fh { grid-column: 1; } .field > label { line-height: var(--lh-body); }
+    .page { padding: 0 var(--sp-4) var(--sp-6); }
+  }
+
+  /* Prototype controls: not part of the design. */
+  .proto { position: fixed; bottom: 12px; left: 12px; z-index: 9; display: grid; gap: 6px; padding: 10px 12px; width: 200px; border-radius: 10px; font: 12px/16px var(--font-mono);
+    background: var(--bg-raised); color: var(--text-2); box-shadow: inset 0 0 0 1px var(--line-strong); border: 1px dashed var(--line-strong); }
+  .proto label { display: grid; grid-template-columns: 64px 1fr; align-items: center; gap: 6px; }
+  .proto select { font: inherit; height: 22px; border-radius: 6px; border: 0; background: var(--fill-field); padding: 0 4px; }
+  .proto p { margin: 0; color: var(--text-3); }
+  :root[data-shot] .proto { display: none; }
+  .row .select { max-width: 240px; text-overflow: ellipsis; }
+  .field .select { justify-self: start; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+</style>
+</head>
+<body>
+<aside class="proto" aria-label="Prototype controls">
+  <b>Prototype</b>
+  <label>Theme <select id="p-theme"><option value="dark">Dark</option><option value="light">Light</option><option value="auto">Auto</option></select></label>
+  <label>Accent <select id="p-accent"></select></label>
+  <label>Scenario <select id="p-scn"><option value="typical">Typical</option><option value="fresh">Fresh install</option><option value="problems">Problems</option></select></label>
+  <p>Not part of the design. Every name, model and key is sample data.</p>
+</aside>
+<div class="window" id="win">
+  <nav class="side" aria-label="Settings"><div class="lights" aria-hidden="true"><i></i><i></i><i></i></div><ul class="nav" id="nav" role="listbox" tabindex="0" aria-label="Settings pages"></ul></nav>
+  <main id="main"></main>
+</div>
+<script>
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const ICON = {
+  mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
+  wave: '<path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2"/>',
+  write: '<path d="M4 20h4L19 9a2.1 2.1 0 0 0-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
+  people: '<circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="16.5" cy="9" r="2.5"/><path d="M16.5 14.5a4 4 0 0 1 4 4.5"/>',
+  server: '<rect x="4" y="4" width="16" height="7" rx="2"/><rect x="4" y="13" width="16" height="7" rx="2"/><path d="M8 7.5h.01M8 16.5h.01"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8"/>',
+  flask: '<path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.7 3h10.6a2 2 0 0 0 1.7-3l-5-9V3M7.5 15h9"/>',
+  chev: '<path d="M9 6l6 6-6 6"/>', back: '<path d="M15 6l-6 6 6 6"/>', check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>', x: '<path d="M7 7l10 10M17 7L7 17"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>', search: '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/>',
+  clear: '<rect x="3" y="3" width="11" height="11" rx="3"/><rect x="10" y="10" width="11" height="11" rx="3"/>',
+  tinted: '<rect x="3" y="3" width="11" height="11" rx="3" fill="currentColor"/><rect x="10" y="10" width="11" height="11" rx="3" fill="currentColor" opacity=".6"/>',
+};
+const ic = (n) => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${ICON[n]}</svg>`;
+
+const PAGES = [
+  { cap: "Voice typing" }, { id: "listen", title: "Listen", icon: "mic" }, { id: "understand", title: "Understand", icon: "wave" }, { id: "write", title: "Write", icon: "write" },
+  { gap: 1 }, { id: "meetings", title: "Meeting notes", icon: "people" },
+  { gap: 1 }, { id: "general", title: "General", icon: "gear" }, { id: "ai", title: "AI providers", icon: "server" }, { id: "experimental", title: "Experimental", icon: "flask", exp: 1 },
+];
+// The Experimental page exists only while the master switch in General is on.
+const nav = () => PAGES.filter((p) => p.id && (!p.exp || S.exp.on));
+const SUB = { models: ["understand", "Speech-to-text · Voice typing"], mmodels: ["meetings", "Speech-to-text · Meeting notes"], remember: ["understand", "Custom vocabulary"], keep: ["understand", "Filler exceptions"],
+  styles: ["write", "Cleanup styles"], style: ["styles", ""], diar: ["meetings", "Speaker diarization"], add: ["ai", "Add a provider"] };
+const ACCENTS = ["blue", "purple", "pink", "red", "orange", "yellow", "green", "graphite"];
+const STT = [
+  { id: "parakeet", name: "Parakeet TDT v3", vendor: "NVIDIA", desc: "Fast. English and 24 European languages.", acc: 5, spd: 5, mb: 670, def: true },
+  { id: "parakeet-en", name: "Parakeet Unified (English)", vendor: "NVIDIA", desc: "Most accurate. English only. A large download.", acc: 5, spd: 5, mb: 2518 },
+  { id: "apple", name: "Apple Speech", vendor: "Apple", desc: "Built into macOS. Nothing to download.", acc: 4, spd: 5, mb: 0 },
+  { id: "voz", name: "Desert Ant Voz", vendor: "Desert Ant Labs", desc: "Easy on the battery. Sends no audio or text.", acc: 5, spd: 5, mb: 337 },
+  { id: "w-small", name: "Whisper small", vendor: "OpenAI", desc: "Quick, for older Macs. Less accurate.", acc: 3, spd: 4, mb: 488 },
+  { id: "w-medium", name: "Whisper medium", vendor: "OpenAI", desc: "Many languages. Slower on long meetings.", acc: 4, spd: 3, mb: 539 },
+  { id: "w-turbo", name: "Whisper large-v3-turbo", vendor: "OpenAI", desc: "Many languages, accurate. Slow on long meetings.", acc: 4, spd: 3, mb: 1625 },
+  { id: "w-large", name: "Whisper large-v3", vendor: "OpenAI", desc: "Most accurate in many languages. Slowest.", acc: 4, spd: 2, mb: 1081 },
+];
+const DIAR = [
+  { id: "who", name: "Desert Ant Who", vendor: "Desert Ant Labs", desc: "Quick and small. New, so it may still mix voices up.", acc: 4, spd: 5, mb: 80, def: true },
+  { id: "sortformer", name: "Sortformer", vendor: "NVIDIA", desc: "Slower. A backup for when voices get mixed up.", acc: 4, spd: 3, mb: 402 },
+];
+const MODELS = { openai: ["qwen2.5:7b-instruct", "llama3.2:3b"], openrouter: ["anthropic/claude-sonnet-4.5", "openai/gpt-5-mini", "google/gemini-2.5-flash"] };
+const DECIDERS = ["openai/gpt-5-nano"];
+const LANGS = ["English", "German", "French", "Spanish", "Italian", "Portuguese", "Hindi", "Japanese"];
+const UNLOAD = [[0, "Right after each use"], [60, "After 1 minute"], [300, "After 5 minutes"], [900, "After 15 minutes"], [3600, "After 1 hour"], [-1, "Never"]];
+const STYLES = [["capsule", "Capsule"], ["orb", "Orb"], ["wave", "Waveform"], ["card", "Card"]];
+const PLACES = [["bottom", "Bottom centre"], ["top", "Top centre"], ["bottom-right", "Bottom right"], ["top-right", "Top right"]];
+const UPD = [["auto", "Check and download", "Downloads in the background, then asks you to restart."], ["check", "Check only", "Tells you when there’s an update. You choose when to download."], ["off", "Off", "Only checks when you click Check for updates."]];
+const FREQ = [["launch", "At launch and daily", "Checks each time Myna opens, and once a day while it’s open."], ["day", "Daily", "Checks once a day, even if you quit and reopen Myna."], ["week", "Weekly", "Checks once a week, even if you quit and reopen Myna."]];
+const OLLAMA = { id: 1, kind: "openai", name: "Ollama on this Mac", url: "http://localhost:11434/v1", key: false, off: false };
+const ROUTER = { id: 2, kind: "openrouter", name: "OpenRouter", url: "https://openrouter.ai/api/v1", key: true, off: true };
+const DEFAULT_STYLE = "Fix punctuation and grammar slips. Apply self-corrections. Keep the speaker’s words and tone.";
+
+function scenario(name) {
+  const fresh = name === "fresh", bad = name === "problems";
+  return {
+    voice: { on: !fresh, key: ["fn"], key2: null, clean: ["⌃", "fn"], clean2: null, mode: "hold", sounds: true, globe: !bad && !fresh, style: "capsule", place: "bottom", paste: "clipboard", rate: !fresh },
+    words: { lang: "English", tidy: true, remember: fresh ? [] : ["Kubernetes", "Desert Ant", "Myna", "Tauri", "SvelteKit", "Postgres", "Figma", "Acme", "Linear", "OpenRouter", "Ollama", "Grafana"], keep: fresh ? [] : ["like", "so", "right"] },
+    fixes: fresh ? [] : [{ text: "Drove → Dhruv", n: 4 }, { text: "cube control → kubectl", n: 3 }],
+    stt: "parakeet", sttMeet: name === "typical" ? "w-small" : "parakeet", installed: fresh ? ["apple"] : ["parakeet", "apple", "w-small"], dl: bad ? { "w-turbo": 42 } : {}, failed: bad ? { "w-medium": "Couldn’t download Whisper medium: the connection was lost" } : {},
+    diar: "who", diarInstalled: fresh ? [] : ["who"], unload: 300,
+    perms: { mic: fresh ? "ask" : "allowed", ax: !bad && !fresh, audio: fresh ? "ask" : "allowed" },
+    notes: { on: !fresh, key: ["⌃", "⌥", "M"], teams: !fresh && !bad }, addon: { on: !fresh && !bad, code: "K7Q-4M2-XD9", steps: false, copied: false },
+    providers: fresh || bad ? [] : [{ ...OLLAMA }, { ...ROUTER }], main: fresh || bad ? null : "2|anthropic/claude-sonnet-4.5", fast: fresh || bad ? null : "1|qwen2.5:7b-instruct", decide: "fast",
+    test: {}, confirm: null, removed: "", decideTest: "",
+    styles: [{ name: "Default", apps: [], text: DEFAULT_STYLE, newer: bad }, ...(fresh ? [] : [{ name: "Email", apps: ["Mail", "Outlook"], text: "Write full sentences with a greeting and sign-off. Keep it short." }, { name: "Chat", apps: ["Slack", "Messages"], text: "Casual. No sign-off. Lowercase is fine." }])],
+    look: { theme: document.documentElement.dataset.theme, accent: document.documentElement.dataset.accent, glass: "clear" },
+    exp: { on: false, liquid: false, frost: 50, stats: false },
+    upd: { mode: "auto", freq: "launch", channel: "beta", state: bad ? "available" : "idle" },
+    errs: bad ? { feedback: "Couldn’t save the setting: the disk is full" } : {},
+    rec: null, q: "", exported: false,
+  };
+}
+let S = scenario("typical");
+let page = "listen", sub = null, subArg = null, lastView = "", lastStrip = {};
+
+const prov = (id) => S.providers.find((p) => p.id === id);
+const route = (r) => { if (!r) return null; const [id, model] = r.split("|"); const p = prov(+id); return p ? { p, model } : null; };
+const caps = (k) => `<span class="keys">${k.map((c) => `<kbd>${esc(c)}</kbd>`).join("")}</span>`;
+const sw = (id, on, act, dis = false, label = "") => `<input type="checkbox" role="switch" class="switch" id="${id}" data-act="${act}" ${on ? "checked" : ""} ${dis ? "disabled" : ""} ${label ? `aria-label="${esc(label)}"` : ""}>`;
+const seg = (name, val, opts, act) => `<fieldset class="seg" aria-label="${esc(name)}">${opts.map(([v, l]) => `<label><input type="radio" name="${name}" value="${v}" data-act="${act}" ${val === v ? "checked" : ""}><span>${l}</span></label>`).join("")}</fieldset>`;
+const opt = ([v, l], val) => `<option value="${esc(v)}" ${String(val) === String(v) ? "selected" : ""}>${esc(l)}</option>`;
+const sel = (id, val, opts, act, dis = false) => `<select class="select" id="${id}" data-act="${act}" ${dis ? "disabled" : ""}>${opts.map((o) => o.group ? `<optgroup label="${esc(o.group)}">${o.opts.map((x) => opt(x, val)).join("")}</optgroup>` : opt(o, val)).join("")}</select>`;
+const row = (title, desc, end, { meta = "", bad = false, go = "", id = "" } = {}) =>
+  `<li class="row${go ? " go" : ""}${/class="(select|seg)"|id="rec-|class="swatches"|class="slider"/.test(end) ? " wide" : ""}" ${go ? `data-go="${go}"` : ""} ${id ? `id="${id}"` : ""}><span class="txt"><span class="name"><span>${title}</span>${meta}</span>${desc != null ? `<span class="desc${bad ? " bad" : ""}" title="${esc(String(desc).replace(/<[^>]+>/g, ""))}">${desc}</span>` : ""}</span><span class="end">${end}</span></li>`;
+const sec = (h, rows, { help = "", err = "", ok = "" } = {}) => `<section>${h ? `<h2>${h}</h2>` : ""}${help ? `<p class="help">${help}</p>` : ""}<ul class="list">${rows}</ul>${err ? `<p class="err" role="status">${esc(err)}</p>` : ok ? `<p class="err okmsg" role="status">${esc(ok)}</p>` : ""}</section>`;
+const okw = (w) => `<span class="ok">${ic("check")}${w}</span>`;
+const hostPill = (p) => p.off ? `<span class="pill caution">Sends text off this Mac</span>` : `<span class="pill">Stays on this Mac</span>`;
+const sttModel = () => STT.find((m) => m.id === S.stt);
+const modelState = (id) => { const m = STT.find((x) => x.id === id), pct = S.dl[id];
+  return `${esc(m.name)} · ${S.installed.includes(id) ? (m.mb ? `Installed · ${fmt(m.mb)}` : "Built in") : pct != null ? `Downloading ${pct}%` : `Not downloaded · ${fmt(m.mb)}`}`; };
+const fmt = (mb) => mb >= 1000 ? `${(mb / 1000).toFixed(1)} GB` : `${mb} MB`;
+
+/* ---------- Stage strip ---------- */
+function stripValues() {
+  const v = S.voice;
+  if (!v.on) return { listen: "Off", understand: "Waits for Listen", write: "Waits for Listen" };
+  const m = sttModel(), pct = S.dl[S.stt];
+  const fast = route(S.fast);
+  return {
+    listen: `${v.mode === "hold" ? "Hold" : "Tap"} ${v.key ? caps(v.key) : "no key set"}`,
+    understand: S.installed.includes(S.stt) ? okw(esc(m.name)) : pct != null ? `Downloading ${pct}%` : "Model not downloaded",
+    write: `${v.paste === "clipboard" ? "Paste" : "Type"}${fast ? ` · <span class="clip">${esc(fast.model)}</span>${fast.p.off ? ` <span class="pill caution">Sends text off this Mac</span>` : ""}` : ""}`,
+  };
+}
+function strip() {
+  const vals = stripValues(), off = !S.voice.on;
+  const out = ["listen", "understand", "write"].map((id, i) => {
+    const fresh = lastStrip[id] !== undefined && lastStrip[id] !== vals[id];
+    return `${i ? `<span class="link${off ? " off" : ""}" aria-hidden="true"></span>` : ""}<button class="stage${off && i ? " off" : ""}" data-nav="${id}" ${page === id ? 'aria-current="step"' : ""}><span class="sn">${PAGES.find((p) => p.id === id).title}</span><span class="sv${fresh ? " fresh" : ""}">${vals[id]}</span></button>`;
+  }).join("");
+  lastStrip = vals;
+  return `<header class="toolbar head">${hnav()}<h1 class="sr">${esc(title())}</h1><nav class="strip" aria-label="Where your voice goes">${out}</nav></header>`;
+}
+
+/* ---------- Pages ---------- */
+const KEYNAMES = { key: "Dictate", key2: "Dictate", clean: "Dictate with cleanup", clean2: "Dictate with cleanup", notes: "Recording" };
+const keyOf = (w) => (w === "notes" ? S.notes.key : S.voice[w]);
+function recorder(which) {
+  const k = keyOf(which), on = S.rec === which;
+  return `<button class="btn${on ? " rec" : ""}" id="rec-${which}" data-act="rec:${which}" aria-label="${KEYNAMES[which]} shortcut">${on ? "Press keys…" : k ? caps(k) : "Set key"}</button>`;
+}
+function shortcutEnd(a, b) {
+  const v = S.voice;
+  return `${recorder(a)}${v[b] ? `${recorder(b)}<button class="btn plain icon" data-act="unset:${b}" aria-label="Remove second key">${ic("x")}</button>`
+    : `<button class="btn plain icon" data-act="add2:${b}" aria-label="Add another key" title="Add another key">${ic("plus")}</button>`}`;
+}
+function perm(kind) {
+  const P = { mic: ["Microphone", "So Myna can hear you."], audio: ["Screen & System Audio Recording", "So Myna can hear the other people on a call."], ax: ["Accessibility", "So Myna can put your words into your app."] };
+  const st = S.perms[kind], ok = kind === "ax" ? st === true : st === "allowed";
+  const desc = !ok && kind === "ax" ? "Switch Myna on in System Settings, then come back." : P[kind][1];
+  const end = ok ? okw("Allowed") : st === "ask" ? `<button class="btn" data-act="allow:${kind}">Allow</button>` : `<button class="btn" data-act="allow:${kind}">Open System Settings</button>`;
+  return row(P[kind][0], desc, `<span class="state">${end}</span>`);
+}
+function hud() {
+  const v = S.voice, bars = (n) => `<span class="bars">${Array.from({ length: n }, (_, i) => `<i style="height:${[6, 10, 14, 9, 12, 5, 11, 8, 13, 7][i % 10]}px"></i>`).join("")}</span>`;
+  const pos = { bottom: "left:50%;transform:translateX(-50%);bottom:12px", top: "left:50%;transform:translateX(-50%);top:12px", "bottom-right": "right:12px;bottom:12px", "top-right": "right:12px;top:12px" }[v.place];
+  const hint = `${v.mode === "hold" ? "Let go" : "Press"} ${v.key ? v.key.join(" ") : ""} to add`;
+  const body = { capsule: `${bars(6)}Listening`, orb: bars(4), wave: `${bars(10)}<span class="tm">0:04</span>`, card: `<span class="ring"></span><span class="t2">Listening<small>${esc(hint)}</small></span>` }[v.style];
+  return `<li class="stage-row" role="img" aria-label="Preview: ${STYLES.find((s) => s[0] === v.style)[1]} pill, ${PLACES.find((p) => p[0] === v.place)[1]}"><span class="hud ${v.style}" style="${pos}">${body}</span></li>`;
+}
+
+const VIEWS = {
+  listen() {
+    const v = S.voice;
+    let h = sec("", row("Use voice typing", "Hold a key, talk, and let go. Your words appear wherever you’re typing.", sw("v-on", v.on, "voice.on")) + perm("mic"));
+    if (!v.on) return h;
+    const fast = route(S.fast);
+    const recDesc = (w) => S.rec && S.rec.startsWith(w) ? "Press the key or keys you want to use. Esc cancels." : null;
+    h += sec("Shortcuts",
+      row("Dictate", recDesc("key") ?? "Adds what you said. Works in any app.", shortcutEnd("key", "key2")) +
+      row("Dictate with cleanup", recDesc("clean") ?? (fast ? "Fixes punctuation, grammar slips and self-corrections." : "Fixes punctuation, grammar slips and self-corrections. Needs a Fast model."),
+        fast ? shortcutEnd("clean", "clean2") : `<button class="btn" data-nav="ai">Set up</button>`) +
+      (!v.globe && [v.key, v.key2, v.clean, v.clean2].some((k) => k && k.includes("fn")) ? row(`Set ${caps(["fn"])} to Do Nothing`, "In Keyboard settings, set Press 🌐 key to Do Nothing.", `<button class="btn" data-act="globe">Open Keyboard Settings</button>`) : "") +
+      row("Activation", v.mode === "hold" ? "Hold while you talk, let go to add. Esc cancels." : "Press to start, again to stop. Stops after 5 minutes. Esc cancels.", seg("mode", v.mode, [["hold", "Hold"], ["tap", "Tap"]], "voice.mode")) +
+      row("Start and stop sounds", "Plays a sound when Myna starts and stops listening.", sw("v-snd", v.sounds, "voice.sounds")),
+      { err: S.errs.keys });
+    h += sec("Pill",
+      row("Style", "Shows while you talk, then what happened.", sel("p-style", v.style, STYLES, "voice.style")) +
+      row("Position", "On the screen you’re typing on.", sel("p-place", v.place, PLACES, "voice.place")) + hud());
+    return h;
+  },
+  understand() {
+    const m = sttModel(), inst = S.installed.includes(S.stt), pct = S.dl[S.stt];
+    const nFail = Object.keys(S.failed).length, nDl = Object.keys(S.dl).length;
+    const other = [nDl && `${nDl} downloading`, nFail && `${nFail} failed`].filter(Boolean).join(", ");
+    const modelEnd = `${other ? `<span class="meta${nFail ? "" : ""}" style="${nFail ? "color:var(--danger-text)" : ""}">${other}</span>` : ""}${inst || pct != null ? "" : `<button class="btn" data-act="dl:${m.id}">Download</button>`}<button class="btn" data-go="models">All models</button>`;
+    let h = sec("Speech-to-text",
+      row("Speech-to-text model", modelState(S.stt), modelEnd) +
+      row("Unload model when idle", "Loading it again takes a few seconds.", sel("unload", S.unload, UNLOAD, "unload")),
+      { help: S.voice.on ? "" : "Voice typing is off. Turn it on in Listen." });
+    if (!S.voice.on) return h;
+    const w = S.words;
+    const list = (a, empty) => a.length ? `${a.slice(0, 3).join(", ")}${a.length > 3 ? ` and ${a.length - 3} more` : ""}` : empty;
+    h += sec("Your words",
+      row("Spoken language", "Myna tidies up English. Other languages stay as said.", sel("lang", w.lang, LANGS.map((l) => [l, l]), "words.lang")) +
+      row("Filler and repeat removal", w.tidy ? "Removes um, uh and repeats, and writes numbers as digits." : "Pastes exactly what the model heard.", sw("tidy", w.tidy, "words.tidy")) +
+      row("Custom vocabulary", esc(list(w.remember, "Names and words Myna should spell your way.")), `<span class="count">${w.remember.length || ""}</span><span class="chev">${ic("chev")}</span>`, { go: "remember" }) +
+      row("Filler exceptions", esc(list(w.keep, "Words Myna keeps even when they sound like filler.")), `<span class="count">${w.keep.length || ""}</span><span class="chev">${ic("chev")}</span>`, { go: "keep" }));
+    if (S.fixes.length) h += sec("Suggested fixes", S.fixes.map((f, i) => row(esc(f.text), `Came up in ${f.n} dictations`, `<button class="btn" data-act="fix:${i}">Add</button><button class="btn plain" data-act="skip:${i}">Not now</button>`)).join(""),
+      { help: "Mistakes Myna noticed in the dictations you rated." });
+    return h;
+  },
+  write() {
+    const v = S.voice;
+    if (!v.on) return `<section><ul class="list"><li class="empty"><b>Voice typing is off</b><p>Turn it on in Listen to choose how your words are added.</p><button class="btn" data-nav="listen">Go to Listen</button></li></ul></section>`;
+    const fast = route(S.fast);
+    let h = sec("Text insertion",
+      row("Insert method", v.paste === "clipboard" ? "Fastest. Myna puts back whatever you had copied." : "Types each letter. Slower, but works where pasting is blocked.", seg("paste", v.paste, [["clipboard", "Paste"], ["type", "Type"]], "voice.paste")) + perm("ax"));
+    h += sec("Cleanup",
+      row("Cleanup model (Fast)", fast ? `<span class="mono">${esc(fast.model)}</span> · ${esc(fast.p.name)}` : "Dictate with cleanup needs a Fast model on AI providers.", fast ? `${hostPill(fast.p)}<button class="btn" data-nav="ai">Change</button>` : `<button class="btn" data-nav="ai">Set up</button>`) +
+      (fast ? row("Cleanup styles", esc(S.styles.map((s) => s.name).join(", ")), `${S.styles.some((s) => s.newer) ? `<span class="pill status">Newer default</span>` : ""}<span class="count">${S.styles.length}</span><span class="chev">${ic("chev")}</span>`, { go: "styles" })
+        : row("Cleanup styles", "Available once a Fast model is set.", `<span class="chev" style="opacity:.45">${ic("chev")}</span>`)));
+    h += sec("Feedback",
+      row("Rating prompt", "The pill shows a thumbs up and down for a few seconds. Clicking keeps you in your app.", sw("rate", v.rate, "voice.rate")) +
+      row("Export ratings", "Ratings stay on this Mac. Export saves a file you can check and send us.", `<button class="btn" data-act="export">Export…</button>`),
+      { err: S.errs.feedback, ok: S.exported ? "Saved to Downloads" : "" });
+    return h;
+  },
+  meetings() {
+    const n = S.notes, a = S.addon;
+    let h = sec("", row("Use meeting notes", "Record your calls and get notes, a summary and answers to your questions.", sw("n-on", n.on, "notes.on")) +
+      (n.on ? row("Recording shortcut", S.rec === "notes" ? "Press the key or keys you want to use. Esc cancels." : "Works from any app, even when the window is closed.",
+        `${recorder("notes")}${n.key ? `<button class="btn plain icon" data-act="unset:notes" aria-label="Remove shortcut">${ic("x")}</button>` : ""}`) : ""), { err: S.errs.keys });
+    if (!n.on) return h;
+    h += sec("Keep my voice when muted",
+      row("Microsoft Teams on the web", a.on ? "Myna sees your mute button through the browser add-on." : "Needs the browser add-on. Connect it below.", sw("teams", n.teams && a.on, "notes.teams", !a.on)),
+      { help: "What you say while muted is left out of the notes, unless you turn on the app here." });
+    h += sec("Browser add-on",
+      row(a.on ? "Connected" : "Not connected", a.on ? "Sees when you’re muted in Teams, and who is talking." : "Add it to Chrome to keep your voice when muted in Teams.",
+        a.on ? `<button class="btn" data-act="addon">Disconnect</button>` : `<button class="btn" data-act="steps" aria-expanded="${a.steps}">${a.steps ? "Hide steps" : "Connect"}</button>`) +
+      (a.steps && !a.on ? `<li class="row"><ol class="steps"><li>Click Show folder.</li><li>In Chrome, open <span class="mono">chrome://extensions</span>, turn on Developer mode, then Load unpacked.</li><li>Pick that folder, click the Myna icon and paste the code below.</li></ol><span class="end"><button class="btn" data-act="folder">Show folder</button></span></li>` : "") +
+      row("Pairing code", "Paste this into the add-on.", `<span class="mono">${a.code}</span><button class="btn" data-act="copy" style="min-width:72px">${a.copied ? "Copied" : "Copy"}</button>`));
+    const d = DIAR.find((m) => m.id === S.diar);
+    h += sec("Models",
+      row("Speech-to-text model", modelState(S.sttMeet), `<button class="btn" data-go="mmodels">All models</button>`) +
+      row("Speaker diarization", S.diarInstalled.includes(d.id) ? "Works out who said what. Runs on this Mac." : `Not downloaded · ${fmt(d.mb)}`, `<button class="btn" data-go="diar">All models</button>`, { meta: `<span class="meta">${esc(d.name)}</span>` }));
+    h += sec("Permissions", perm("mic") + perm("audio"));
+    return h;
+  },
+  ai() {
+    const ps = S.providers;
+    let rows = ps.map((p) => {
+      if (S.confirm === p.id) {
+        const uses = [S.main, S.fast].map(route).some((r) => r && r.p.id === p.id);
+        return row(`Remove ${esc(p.name)} and its key?`, uses ? "Models that use it become Not set." : "Nothing uses it right now.", `<button class="btn" data-act="cancel">Cancel</button><button class="btn danger" data-act="remove:${p.id}">Remove</button>`);
+      }
+      const t = S.test[p.id];
+      const desc = t === "busy" ? "Testing…" : t === "ok" ? `Works · ${MODELS[p.kind].length} models · 0.4 s` : t === "fail" ? "Couldn’t connect: nothing answered at this address" : `<span class="mono">${esc(p.url)}</span>${p.key ? " · Key in Keychain" : ""}`;
+      return row(esc(p.name), desc, `<button class="btn" data-act="test:${p.id}" ${t === "busy" ? "disabled" : ""}>Test</button><button class="btn plain icon" data-act="confirm:${p.id}" aria-label="Remove ${esc(p.name)}">${ic("x")}</button>`, { meta: hostPill(p), bad: t === "fail" });
+    }).join("");
+    if (!ps.length) rows = `<li class="empty"><b>No AI providers yet</b><p>Add one to use summaries, chat and AI cleanup. Myna runs no AI itself.</p><button class="btn primary" data-go="add">Add a provider</button></li>`;
+    let h = sec("Providers", rows + (ps.length ? `<li class="row go" data-go="add"><span class="txt"><span class="name" style="color:var(--accent-text)"><span>Add a provider</span></span></span><span class="end"><span class="chev">${ic("chev")}</span></span></li>` : ""),
+      { help: "Servers on this Mac keep your words on it. Testing is free.", ok: S.removed });
+    const opts = [["", "Not set"], ...ps.map((p) => ({ group: p.name, opts: MODELS[p.kind].map((m) => [`${p.id}|${m}`, m]) }))];
+    const dis = !ps.length;
+    const dOpts = [["fast", "Use the Fast model"], ...ps.filter((p) => p.kind === "openrouter").map((p) => ({ group: p.name, opts: DECIDERS.map((m) => [`${p.id}|${m}`, m]) }))];
+    const decideOk = S.decide === "fast" ? !!route(S.fast) : !!route(S.decide);
+    h += sec("Models",
+      row("Main model", "Writes summaries and answers your questions.", sel("m-main", S.main ?? "", opts, "ai.main", dis)) +
+      row("Fast model", "Quick jobs like tidying up text and small decisions.", sel("m-fast", S.fast ?? "", opts, "ai.fast", dis)) +
+      row("Decision model", decideOk ? "Which folder a meeting goes in, which pictures matter. Reads text only." : "Pick a model here, or set a Fast model above.", sel("m-decide", S.decide, dOpts, "ai.decide", dis)) +
+      row("Test decision model", S.decideTest || "Which folder should “Acme pricing follow-up” go in?", `<button class="btn" data-act="dtest" ${decideOk ? "" : "disabled"}>Test</button>`),
+      { help: ps.length ? "Features without a model stay off." : "Add a provider first, then pick a model for each." });
+    return h;
+  },
+  general() {
+    const L = S.look, u = S.upd, e = S.exp;
+    let h = sec("Appearance",
+      row("Theme", "Auto follows your Mac.", seg("theme", L.theme, [["auto", "Auto"], ["light", "Light"], ["dark", "Dark"]], "look.theme")) +
+      row("Accent colour", "Buttons, switches and selection.", `<span class="swatches" role="radiogroup" aria-label="Accent colour">${ACCENTS.map((a) => `<button class="sw" role="radio" aria-checked="${L.accent === a}" aria-label="${a[0].toUpperCase() + a.slice(1)}" data-act="accent:${a}" style="--c:var(--sw-${a});--on:${a === "yellow" ? "var(--text)" : "#fff"}"></button>`).join("")}</span>`) +
+      row("Window tint", L.glass === "tinted" ? "The sidebar takes a hint of your highlight colour." : "The sidebar shows your desktop through it.", seg("glass", L.glass, [["clear", "Clear"], ["tinted", "Tinted"]], "look.glass")));
+    const ver = u.state === "available" ? `<button class="btn primary" data-act="update">Restart to update</button>` : `<button class="btn" data-act="check" ${u.state === "checking" ? "disabled" : ""} style="min-width:148px">${u.state === "checking" ? "Checking…" : "Check for updates"}</button>`;
+    h += sec("Updates",
+      row("Myna", u.state === "available" ? "Version 0.0.2-beta.10 · 0.0.2-beta.11 is ready" : u.state === "latest" ? "Version 0.0.2-beta.10 · Up to date" : "Version 0.0.2-beta.10", ver) +
+      row("Update mode", UPD.find((x) => x[0] === u.mode)[2], sel("u-mode", u.mode, UPD, "upd.mode")) +
+      (u.mode === "off" ? "" : row("Check frequency", FREQ.find((x) => x[0] === u.freq)[2], sel("u-freq", u.freq, FREQ, "upd.freq"))) +
+      row("Update channel", u.channel === "beta" ? "Gets pre-releases as well as stable releases." : "Stable releases only. A newer beta stays until stable passes it.", seg("chan", u.channel, [["stable", "Stable"], ["beta", "Beta"]], "upd.channel")));
+    h += sec("Your data",
+      row("Data folder", `<span class="mono">~/Library/Application Support/Myna</span>`, `<button class="btn" data-act="finder">Show in Finder</button>`),
+      { help: "Meetings, models and settings. Copy this folder to back them up." });
+    h += sec("Experimental", row("Use experimental features", e.on ? "Features that are still changing. They’re on the Experimental page." : "Features that are still changing. Off turns them all off.", sw("x-on", e.on, "exp.on")));
+    h += `<p class="foot">Free and open source, MIT license. Voz speech-to-text <a href="#" data-act="noop">powered by Desert Ant Labs</a>.</p>`;
+    return h;
+  },
+  experimental() {
+    const e = S.exp;
+    return sec("Appearance",
+      row("Liquid Glass", "Uses macOS’s own glass for the pill and the Settings window.", sw("x-liq", e.liquid, "exp.liquid")) +
+      row("Glass opacity", "Tinted is easier to read on a busy desktop.", `<span class="slider">${ic("clear")}<input type="range" class="range" id="frost" min="0" max="100" value="${e.frost}" style="--v:${e.frost}%" data-act="exp.frost" ${e.liquid ? "" : "disabled"} aria-label="Glass opacity">${ic("tinted")}</span>`)) +
+      sec("Voice typing", row("Stats for nerds", "Adds a page to the main window with the numbers behind each dictation.", sw("x-stats", e.stats, "exp.stats")));
+  },
+  /* Drill-ins */
+  models() { return modelList(STT, "stt", S.installed, "Used for voice typing. Downloads are shared with meeting notes."); },
+  mmodels() { return modelList(STT, "sttMeet", S.installed, "Used for meeting notes. Downloads are shared with voice typing."); },
+  diar() { return modelList(DIAR, "diar", S.diarInstalled, "Works out who said what. Runs on this Mac. Your own voice is always “Me”."); },
+  remember() { return chips("remember", "Names and words Myna should spell your way. For one it mishears, type Drove -> Dhruv.", "Add a word"); },
+  keep() { return chips("keep", "Words Myna keeps even when a filler rule would take them out, like “like”.", "Add a word"); },
+  styles() {
+    return sec("", S.styles.map((s, i) => row(esc(s.name), s.apps.length ? esc(s.apps.join(", ")) : "Every app that doesn’t have its own style.", `${s.newer ? `<span class="pill status">Newer default</span>` : ""}<span class="chev">${ic("chev")}</span>`, { go: `style:${i}` })).join(""),
+      { help: "Dictate with cleanup picks a style by the app you’re in. Only Myna sees the app; its name is never sent." }) +
+      `<div class="actions" style="justify-content:flex-start"><button class="btn" data-act="newstyle">Add style</button></div>`;
+  },
+  style() {
+    const s = S.styles[subArg];
+    const apps = s.name === "Default" ? `<span class="fh" style="grid-column:auto;line-height:var(--h-ctl)">Every app that doesn’t have its own style</span>`
+      : `<div class="chips" style="padding:0;min-height:var(--h-ctl)">${s.apps.map((a, j) => `<span class="tag">${esc(a)}<button data-act="unapp:${j}" aria-label="Remove ${esc(a)} from ${esc(s.name)}">${ic("x")}</button></span>`).join("")}<button class="btn sm" data-act="addapp">Add an app…</button></div>`;
+    return (s.newer ? sec("", row("A newer default is available", "Your edit is kept until you choose.", `<button class="btn" data-act="usenew">Use the new default</button>`)) : "") +
+      `<section><ul class="list"><li class="field one"><label for="st-name">Name</label><input class="input" id="st-name" data-act="style.name" value="${esc(s.name)}" maxlength="30" ${s.name === "Default" ? "disabled" : ""}></li>
+      <li class="field one"><label>Apps</label>${apps}</li>
+      <li class="field"><label for="st-text">Instructions</label><textarea class="input" id="st-text" data-act="style.text">${esc(s.text)}</textarea><span class="fh">What the Fast model is told before it sees your words.</span></li></ul></section>
+      <div class="actions">${s.name === "Default" ? `<button class="btn" data-act="resetstyle">Reset to default</button>` : `<button class="btn" data-act="delstyle">Delete style</button>`}</div>`;
+  },
+  add() {
+    const d = S.draft ?? (S.draft = { kind: "openai", name: "", url: "http://localhost:11434/v1", key: "", errs: {} });
+    const or = d.kind === "openrouter", e = d.errs;
+    const f = (id, label, input, help, err) => `<li class="field"><label for="${id}">${label}</label>${input}<span class="fh${err ? " bad" : ""}" id="${id}-h">${esc(err || help)}</span></li>`;
+    return `<section><ul class="list">
+      ${f("a-kind", "Kind", sel("a-kind", d.kind, [["openai", "OpenAI-compatible"], ["openrouter", "OpenRouter"]], "draft.kind"), or ? "One key for models from many companies." : "Any server that speaks the OpenAI API.")}
+      ${f("a-name", "Name", `<input class="input" id="a-name" data-act="draft.name" value="${esc(d.name)}" placeholder="${or ? "OpenRouter" : "Server on this Mac"}" maxlength="40" aria-invalid="${!!e.name}" aria-describedby="a-name-h">`, "Shown when you pick a model.", e.name)}
+      ${f("a-url", "Address", `<input class="input mono" id="a-url" data-act="draft.url" value="${esc(d.url)}" spellcheck="false" aria-invalid="${!!e.url}" aria-describedby="a-url-h">`, or ? "OpenRouter’s address. Leave it as it is." : "Where the server listens, ending in /v1.", e.url)}
+      ${f("a-key", or ? "Key" : "Key (optional)", `<input class="input mono" type="password" id="a-key" data-act="draft.key" value="${esc(d.key)}" placeholder="${or ? "sk-or-…" : ""}" aria-invalid="${!!e.key}" aria-describedby="a-key-h">`, `${or ? "Find it at openrouter.ai/keys." : "Only if your server asks for one."} Kept in your Mac’s Keychain.`, e.key)}
+    </ul></section><div class="actions"><button class="btn" data-act="back">Cancel</button><button class="btn primary" data-act="addprov">Add provider</button></div>`;
+  },
+};
+function modelList(list, kind, installed, help = "") {
+  const cur = S[kind], q = S.q.toLowerCase();
+  const shown = list.filter((m) => !q || `${m.name} ${m.vendor} ${m.desc}`.toLowerCase().includes(q));
+  const rows = shown.map((m) => {
+    const inst = installed.includes(m.id), pct = S.dl[m.id], fail = S.failed[m.id];
+    const state = inst ? okw(m.mb ? "Installed" : "Built in") : pct != null ? `<span class="bar"><i style="transform:scaleX(${pct / 100})"></i></span><span class="pct">${pct}%</span><button class="btn plain icon sm" data-act="canceldl:${m.id}" aria-label="Stop downloading ${esc(m.name)}">${ic("x")}</button>`
+      : fail ? `<button class="btn sm" data-act="dl:${m.id}">Retry</button>` : `<button class="btn sm" data-act="dl:${m.id}">Download</button>`;
+    return `<li class="mrow"><input type="radio" name="${kind}" value="${m.id}" data-act="pick:${kind}" aria-label="Use ${esc(m.name)}" ${cur === m.id ? "checked" : ""} ${inst ? "" : "disabled"}>
+      <span class="txt"><span class="name"><span>${esc(m.name)}</span><span class="meta">${esc(m.vendor)}${m.def ? " · Recommended" : ""}${m.mb ? ` · ${fmt(m.mb)}` : ""}</span></span>
+      <span class="desc${fail ? " bad" : ""}" title="${esc(fail || m.desc)}">${esc(fail || m.desc)}</span>
+</span><span class="end mstate">${state}</span></li>`;
+  }).join("");
+  return `${kind !== "diar" ? `<div class="search-wrap">${ic("search")}<input class="input search" id="q" data-act="q" value="${esc(S.q)}" placeholder="Search models" aria-label="Search models"></div>` : ""}
+    <section>${help ? `<p class="help">${help}</p>` : ""}<ul class="list">${rows}</ul><p class="none" style="margin-top:var(--sp-2)">${shown.length ? "" : "No models match."}</p></section>
+    <p class="foot">Sizes are download sizes. A model downloads only when you ask.</p>`;
+}
+function chips(key, help, ph) {
+  const a = S.words[key];
+  return `<section><p class="help" style="margin-top:0">${help}</p><ul class="list"><li class="chips">${a.map((w, i) => `<span class="tag">${esc(w)}<button data-act="unword:${key}:${i}" aria-label="Remove ${esc(w)}">${ic("x")}</button></span>`).join("")}<input id="w-in" data-act="word:${key}" placeholder="${ph}" aria-label="${ph}"></li></ul></section>
+    <p class="foot">Return or comma adds a word. Backspace in an empty field removes the last one.</p>`;
+}
+
+/* ---------- Render ---------- */
+function title() { return sub ? (sub === "style" ? S.styles[subArg]?.name || "Style" : SUB[sub][1]) : PAGES.find((p) => p.id === page).title; }
+function render() {
+  const focus = document.activeElement?.id, pos = document.activeElement?.selectionStart;
+  document.getElementById("nav").innerHTML = PAGES.filter((p) => !p.exp || S.exp.on).map((p) => p.cap ? `<li class="cap" role="presentation">${p.cap}</li>` : p.gap ? `<li class="gap" role="presentation"></li>`
+    : `<li role="option" id="nav-${p.id}" data-nav="${p.id}" aria-selected="${page === p.id}">${ic(p.icon)}${p.title}</li>`).join("");
+  const view = sub ? `${sub}:${subArg}` : page;
+  const scroller = document.querySelector(".scroll"), top = view === lastView && scroller ? scroller.scrollTop : 0;
+  const voicePage = !sub && ["listen", "understand", "write"].includes(page);
+  document.getElementById("main").innerHTML = `${voicePage ? strip() : `<header class="toolbar">${hnav()}<h1>${esc(title())}</h1></header>`}<div class="scroll"><div class="page${view !== lastView ? " enter" : ""}">${VIEWS[sub ?? page]()}</div></div>`;
+  document.querySelector(".scroll").scrollTop = top;
+  lastView = view;
+  const el = focus && document.getElementById(focus);
+  if (el) { el.focus(); if (pos != null && el.setSelectionRange) try { el.setSelectionRange(pos, pos); } catch {} }
+  const r = document.documentElement;
+  r.dataset.theme = S.look.theme; r.dataset.accent = S.look.accent; r.dataset.glass = S.look.glass;
+  if (S.exp.on && S.exp.liquid) { r.dataset.liquid = ""; r.style.setProperty("--frost", S.exp.frost / 100); } else { delete r.dataset.liquid; }
+  document.getElementById("p-theme").value = S.look.theme; document.getElementById("p-accent").value = S.look.accent;
+}
+// History across pages and drill-ins, like System Settings' ‹ ›.
+const H = { list: [], i: -1 };
+function show(v, push = true) {
+  if (v.page === "experimental" && !S.exp.on) v = { page: "general", sub: null, arg: null };
+  if (v.sub === "style" && !S.styles[v.arg]) v = { ...v, sub: "styles", arg: null };
+  if (push) { H.list = H.list.slice(0, H.i + 1); H.list.push(v); H.i = H.list.length - 1; }
+  page = v.page; sub = v.sub; subArg = v.arg; S.q = ""; S.rec = null; S.draft = null; render();
+}
+const go = (p) => show({ page: p, sub: null, arg: null });
+const open = (s) => { const [a, b] = s.split(":"); show({ page, sub: a, arg: b != null ? +b : null }); };
+function hist(d) { const j = H.i + d; if (j < 0 || j >= H.list.length) return; H.i = j; show(H.list[j], false); }
+const back = () => hist(-1);
+const hnav = () => `<span class="hnav"><button class="btn plain icon back" data-act="hback" aria-label="Back" title="Back (⌘[)" ${H.i > 0 ? "" : "disabled"}>${ic("back")}</button><button class="btn plain icon fwd" data-act="hfwd" aria-label="Forward" title="Forward (⌘])" ${H.i < H.list.length - 1 ? "" : "disabled"}>${ic("chev")}</button></span>`;
+const setPath = (path, val) => { const [o, k] = path.split("."); S[o][k] = val; };
+
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("[data-act],[data-nav],[data-go]");
+  if (!t || t.matches("input,select,textarea")) return;
+  if (t.dataset.nav) return go(t.dataset.nav);
+  if (t.dataset.go) return open(t.dataset.go);
+  const [a, b, c] = t.dataset.act.split(":");
+  e.preventDefault();
+  const act = {
+    back() { back(); return true; }, hback() { hist(-1); return true; }, hfwd() { hist(1); return true; }, noop() {},
+    rec() { S.rec = S.rec === b ? null : b; S.errs.keys = ""; },
+    add2() { S.rec = b; }, unset() { if (b === "notes") S.notes.key = null; else S.voice[b] = null; },
+    globe() { S.voice.globe = true; },
+    allow() { S.perms[b] = b === "ax" ? true : "allowed"; },
+    export() { S.exported = true; },
+    fix() { const f = S.fixes.splice(+b, 1)[0]; S.words.remember.push(f.text.split("→")[1].trim()); },
+    skip() { S.fixes.splice(+b, 1); },
+    dl() { delete S.failed[b]; S.dl[b] = 0; tick(b); },
+    canceldl() { delete S.dl[b]; },
+    addon() { S.addon.on = false; S.notes.teams = false; },
+    steps() { S.addon.steps = !S.addon.steps; },
+    folder() {}, finder() {},
+    copy() { S.addon.copied = true; navigator.clipboard?.writeText(S.addon.code).catch(() => {}); setTimeout(() => { S.addon.copied = false; render(); }, 1500); },
+    test() { S.test[b] = "busy"; setTimeout(() => { S.test[b] = prov(+b).kind === "openai" && !prov(+b).url.includes("localhost") ? "fail" : "ok"; render(); }, 700); },
+    confirm() { S.confirm = +b; S.removed = ""; }, cancel() { S.confirm = null; },
+    remove() {
+      const p = prov(+b), gone = [];
+      S.providers = S.providers.filter((x) => x.id !== +b);
+      for (const k of ["main", "fast"]) if (route(S[k]) === null && S[k]) { S[k] = null; gone.push(k === "main" ? "Main model" : "Fast model"); }
+      if (S.decide !== "fast" && !route(S.decide)) S.decide = "fast";
+      S.confirm = null; S.removed = `Removed ${p.name} and its key.${gone.length ? ` ${gone.join(" and ")} ${gone.length > 1 ? "are" : "is"} now Not set.` : ""}`;
+    },
+    dtest() { S.decideTest = "Testing…"; setTimeout(() => { S.decideTest = S.decide === "fast" ? "Picked Acme · 1.1 s · Free" : "Picked Acme · 98% sure · 0.6 s · $0.000018"; render(); }, 700); },
+    accent() { S.look.accent = b; },
+    check() { S.upd.state = "checking"; setTimeout(() => { S.upd.state = "latest"; render(); }, 900); },
+    update() { S.upd.state = "latest"; },
+    newstyle() { S.styles.push({ name: "New style", apps: [], text: "" }); open(`style:${S.styles.length - 1}`); return true; },
+    delstyle() { S.styles.splice(subArg, 1); hist(-1); H.list.length = H.i + 1; },
+    resetstyle() { S.styles[subArg].text = DEFAULT_STYLE; }, usenew() { S.styles[subArg].text = DEFAULT_STYLE; S.styles[subArg].newer = false; },
+    addapp() { const all = ["Notes", "Pages", "Safari", "Xcode", "Linear"], s = S.styles[subArg]; const n = all.find((x) => !S.styles.some((y) => y.apps.includes(x))); if (n) s.apps.push(n); },
+    unapp() { S.styles[subArg].apps.splice(+b, 1); },
+    unword() { S.words[b].splice(+c, 1); },
+    addprov() {
+      const d = S.draft, or = d.kind === "openrouter"; d.errs = {};
+      if (!d.name.trim()) d.errs.name = "Give it a name.";
+      if (!/^https?:\/\/\S+$/.test(d.url.trim())) d.errs.url = "Enter an address like http://localhost:11434/v1.";
+      if (or && !d.key.trim()) d.errs.key = "Paste your OpenRouter key.";
+      else if (or && !d.key.trim().startsWith("sk-or-")) d.errs.key = "OpenRouter keys start with “sk-or-”. Make sure you copied all of it.";
+      if (Object.keys(d.errs).length) return;
+      const off = !/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])[:/]/.test(d.url.trim());
+      S.providers.push({ id: Date.now(), kind: d.kind, name: d.name.trim(), url: d.url.trim(), key: !!d.key, off });
+      S.removed = ""; back(); return true;
+    },
+  }[a];
+  if (act && act() !== true) render();
+});
+function tick(id) {
+  const t = setInterval(() => {
+    if (S.dl[id] == null) return clearInterval(t);
+    S.dl[id] = Math.min(100, S.dl[id] + 7);
+    if (S.dl[id] >= 100) { delete S.dl[id]; (DIAR.some((m) => m.id === id) ? S.diarInstalled : S.installed).push(id); clearInterval(t); }
+    render();
+  }, 400);
+}
+document.addEventListener("change", (e) => {
+  const t = e.target, a = t.dataset.act;
+  if (!a) return;
+  const val = t.type === "checkbox" ? t.checked : t.value;
+  if (a.startsWith("pick:")) { S[a.slice(5)] = val; }
+  else if (a === "unload") S.unload = +val;
+  else if (a.startsWith("ai.")) S[a.slice(3)] = val || null, S.decideTest = "";
+  else if (a === "draft.kind") { S.draft.kind = val; S.draft.errs = {}; S.draft.url = val === "openrouter" ? "https://openrouter.ai/api/v1" : "http://localhost:11434/v1"; if (val === "openrouter" && !S.draft.name) S.draft.name = "OpenRouter"; }
+  else if (a.startsWith("draft.") || a.startsWith("style.") || a === "q" || a === "exp.frost") return;
+  else if (a === "voice.rate" && S.errs.feedback) { S.errs.feedback = "Couldn’t save the setting: the disk is full"; t.checked = !t.checked; return; }
+  else if (a === "exp.on" || a === "exp.liquid" || a === "exp.stats") S.exp[a.slice(4)] = val;
+  else setPath(a, val);
+  if (a === "voice.on") S.rec = null;
+  render();
+});
+document.addEventListener("input", (e) => {
+  const t = e.target, a = t.dataset.act;
+  if (!a) return;
+  if (a.startsWith("draft.")) S.draft[a.slice(6)] = t.value;
+  else if (a === "style.name") { S.styles[subArg].name = t.value; document.querySelector(".toolbar h1").textContent = t.value || "Style"; }
+  else if (a === "style.text") S.styles[subArg].text = t.value;
+  else if (a === "q") { S.q = t.value; render(); }
+  else if (a === "exp.frost") { S.exp.frost = +t.value; t.style.setProperty("--v", `${t.value}%`); document.documentElement.style.setProperty("--frost", t.value / 100); }
+  else if (a.startsWith("word:") && t.value.includes(",")) { addWords(a.slice(5), t.value); t.value = ""; }
+});
+function addWords(key, text) {
+  const list = S.words[key];
+  for (const part of text.split(",")) { const w = (key === "keep" ? part.trim().toLowerCase() : part.trim()).slice(0, 40); if (w && !list.some((x) => x.toLowerCase() === w.toLowerCase())) list.push(w); }
+  render();
+}
+document.addEventListener("keydown", (e) => {
+  const t = e.target;
+  if (S.rec) {
+    e.preventDefault();
+    if (e.key === "Escape") { S.rec = null; return render(); }
+    if (["Shift", "Control", "Alt", "Meta"].includes(e.key)) return;
+    const k = [e.ctrlKey && "⌃", e.altKey && "⌥", e.shiftKey && "⇧", e.metaKey && "⌘", e.code.startsWith("Key") ? e.code.slice(3) : e.code.startsWith("Digit") ? e.code.slice(5) : e.key.length === 1 ? e.key.toUpperCase() : e.key].filter(Boolean);
+    const which = S.rec;
+    const other = Object.keys(KEYNAMES).find((w) => w !== which && keyOf(w) && keyOf(w).join() === k.join());
+    S.rec = null;
+    if (other) S.errs.keys = `${k.join("")} is already the ${KEYNAMES[other]} shortcut. Pick another key.`;
+    else if (which === "notes") S.notes.key = k; else S.voice[which] = k;
+    return render();
+  }
+  if (t.dataset.act?.startsWith("word:")) {
+    const key = t.dataset.act.slice(5);
+    if (e.key === "Enter" && t.value.trim()) { e.preventDefault(); addWords(key, t.value); }
+    else if (e.key === "Backspace" && !t.value && S.words[key].length) { S.words[key].pop(); render(); }
+    return;
+  }
+  if (t.id === "nav" && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+    e.preventDefault();
+    const N = nav(), i = N.findIndex((p) => p.id === page);
+    go(N[Math.max(0, Math.min(N.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)))].id);
+    document.getElementById("nav").focus();
+  }
+  if (e.key === "Escape" && sub && !t.matches("input,textarea,select")) back();
+  if (e.metaKey && (e.key === "[" || e.key === "]")) { e.preventDefault(); hist(e.key === "[" ? -1 : 1); }
+});
+document.getElementById("p-accent").innerHTML = ACCENTS.map((a) => `<option value="${a}">${a}</option>`).join("");
+document.getElementById("p-theme").onchange = (e) => { S.look.theme = e.target.value; render(); };
+document.getElementById("p-accent").onchange = (e) => { S.look.accent = e.target.value; render(); };
+document.getElementById("p-scn").onchange = (e) => { const look = S.look; S = scenario(e.target.value); S.look = look; lastStrip = {}; H.list = []; H.i = -1; show({ page: nav().some((p) => p.id === page) ? page : "general", sub: null, arg: null }); };
+// Deep links for screenshots: #page=understand&sub=models&scn=problems&theme=light
+const qs = new URLSearchParams(location.hash.slice(1));
+if (qs.get("scn")) { S = scenario(qs.get("scn")); document.getElementById("p-scn").value = qs.get("scn"); }
+if (qs.get("shot")) document.documentElement.dataset.shot = "";
+if (qs.get("theme")) S.look.theme = qs.get("theme");
+if (qs.get("voice") === "off") S.voice.on = false;
+if (qs.get("exp") === "on") S.exp.on = true;
+if (qs.get("page")) page = qs.get("page");
+if (qs.get("sub")) { const [a, b] = qs.get("sub").split(":"); sub = a; subArg = b != null ? +b : null; }
+show({ page, sub, arg: subArg });
+</script>
+</body>
+</html>

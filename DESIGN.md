@@ -2,7 +2,7 @@
 
 Values live in `design/tokens.css`. This file holds the rules for using them. `design/specimen.html` shows every token and core component in light and dark. Run `node design/check-contrast.mjs` after changing any colour.
 
-Source: `docs/index.html` (prototype, latest round) and `docs/flow.html`. Where the prototype stacked four rounds of overrides, the last round wins and is now the token value.
+Source: `docs/index.html` (prototype, latest round), `docs/flow.html`, and `docs/settings.html` (Settings v2, which replaces the Settings pages in `docs/index.html`). Where the prototype stacked four rounds of overrides, the last round wins and is now the token value.
 
 ## Thesis
 
@@ -16,11 +16,13 @@ References: macOS 26 system apps (Notes, Settings, Control Center), Things, Craf
 - Sidebar: `--mat-sidebar`, radius `--r-xl`, width `--w-sidebar`.
 - Main: opaque `--bg-content`, radius `--r-xl`. A 56px toolbar with no bottom border, then content.
 
+**Settings** (`docs/settings.html`). Sidebar order: Voice typing (Listen, Understand, Write), Meeting notes, General, AI providers, and Experimental, which is listed only while "Use experimental features" is on in General. Row titles may be precise and technical where a plain word blurs the meaning ("Speech-to-text model", "Speaker diarization"); descriptions stay plain.
+
 **Surfaces, back to front.** desk → window material → sidebar material → content page → inset (grouped lists, inspector, live card) → menu material (menus, popovers, toasts, live-notes panel) → HUD. In dark mode each step up is lighter; shadows alone don't separate surfaces there.
 
 **Materials are real vibrancy in the app.** CSS `backdrop-filter` only blurs what is inside the WebView. In Tauri the window and sidebar glass come from native vibrancy (transparent window plus `NSVisualEffectView`); the `--mat-*` tokens are the tint laid over it. Menus and popovers inside the window can use CSS blur. Without blur support, the opaque `--bg-*` fallbacks apply automatically.
 
-**Liquid Glass (experimental, macOS 26+).** Settings › Experimental features can swap the vibrancy for macOS's own glass (`NSGlassEffectView`): one sheet of Regular glass behind the whole Settings window, and Clear glass behind the pill. While it's on, and only then, the page is not opaque: `--bg-content`, `--bg-inset` and `--mat-sidebar` thin into frosted fills (`html[data-liquid]` in `tokens.css`) so the glass shows through. Contrast then depends on the desktop, so it stays experimental.
+**Liquid Glass (experimental, macOS 26+).** Settings › Experimental can swap the vibrancy for macOS's own glass (`NSGlassEffectView`): one sheet of Regular glass behind the whole Settings window, and Clear glass behind the pill. While it's on, and only then, the page is not opaque: `--bg-content`, `--bg-inset` and `--mat-sidebar` thin into frosted fills (`html[data-liquid]` in `tokens.css`) so the glass shows through. Contrast then depends on the desktop, so it stays experimental.
 
 **Radii are concentric.** Inner radius = outer radius − padding between them. Window 26, panels 18 (26 − 8), popover 14 with menu items 8 at 5–6px padding. Interactive controls are capsules (`--r-full`); fields are `--r-md`; multi-line text areas `--r-lg`.
 
@@ -49,7 +51,7 @@ Rules:
 - **Status is never colour alone.** Mic state is a dot plus words ("Mic live · mirrored from Meet", "Mic off · manual"). The recording dot pulses; possibly-muted groups carry a text label; badges are text pills.
 - No pure white surfaces in light mode: the page is a soft off-white and grouped lists sit a shade darker, so a full window doesn't glare. White stays for small raised things (selected segment, switch knob, default button).
 - Text tiers: `--text` for content and labels, `--text-2` for secondary copy, `--text-3` for help, timestamps and section labels. All three clear 4.5:1 on every surface, checked by script.
-- Accent is user-selectable (Settings → Look: blue default, plus purple, pink, red, orange, yellow, green, graphite) with optional tinted glass. Every accent defines its own fill, on-fill text and light/dark text colour.
+- Accent is user-selectable (Settings → General: blue default, plus purple, pink, red, orange, yellow, green, graphite) with optional tinted glass. Every accent defines its own fill, on-fill text and light/dark text colour.
 - HUD pills (dictation, recording) are dark in both themes, like system HUDs.
 
 ## Type
@@ -90,7 +92,9 @@ One family: the system font (`--font`). WebKit picks SF Pro Text or Display by s
 - **Pill** (status badge). One size, 20px, caption text. Three kinds: neutral (`--fill-hover` / `--text-2`), status (`--accent-soft` / `--accent-text`), caution (`--caution-soft` / `--caution-text`). Off-device badges are always the caution pill with words.
 - **Tag.** Capsule, 22px, `--fill-field`, a 7px `--label-*` dot, removable with a 16px ×.
 - **Nav row.** 30px, radius `--r-md`, icon in `--text-2`. Selected: `--accent-soft-strong` fill, icon in `--accent-text`, weight 500. Counts trail in `--text-3`, tabular.
-- **Grouped list** (Settings grammar). `--bg-inset`, radius `--r-xl`, hairline ring, rows split by `--line`. Rows: title, one line of description, trailing control.
+- **Grouped list** (Settings grammar). `--bg-inset`, radius `--r-xl`, hairline ring, rows split by a `--line` hairline inset 16px from the left. Rows are 60px: title in body 500, one line of description in footnote `--text-2`, trailing control. Status trails as a check plus a word ("✓ Installed", "✓ Allowed"). A long list never sits inline: its row shows a count and a chevron and opens a drill-in page. Below 480px of content width, rows with a wide control (select, segmented, keycaps, slider) stack the control under the text; switches, checks and chevrons stay on the right.
+- **Toolbar history.** Every Settings page has ‹ › at the left of the toolbar, one history across pages and drill-ins, disabled when there's nowhere to go; ⌘[ and ⌘] do the same. Drill-ins have no separate back button.
+- **Stage path** (Settings › Voice typing only). Listen — Understand — Write replaces the page title next to ‹ ›: names in body 500, the current one in `--accent-text`, the others `--text-2`; under each, its live value in footnote `--text-3` (a keycap for the shortcut, ✓ plus the model name, the insert method and cleanup model, with the caution pill when cleanup sends text off this Mac). Clicking a stage goes there. About 44px tall; it reads as a quiet path, never a headline.
 - **Menu / popover.** `--mat-menu` with blur, `--edge` inner ring, `--shadow-menu`, radius `--r-lg`, 5px padding. Items 26px, radius `--r-sm`; hover/focus fills `--accent` with `--on-accent` text, like a native menu. Section labels in caption. Shortcuts trail in `--text-3`.
 - **HUD pill.** `--hud-bg` with blur, `--hud-fg` text. Recording: 40px capsule with the red dot, timer and mic state. Dictation: the user picks a style and a position on Voice typing (`src/lib/Pill.svelte`): **Capsule** (default) 40px, level bars and words; **Orb** 32px, bars only while things go well, words for errors; **Waveform** 44px, scrolling level and a timer; **Card** 56px, two lines, a mic ring that swells with the level. Positions: bottom centre (default), top centre, bottom right, top right, inside the visible frame (clear of the menubar and Dock). Errors always say what's wrong and what to do (title + hint). When Dictate with cleanup falls back, the pill says "Added without cleanup" with the reason; a cleanup that works looks like any other paste.
 - **Transcript row.** Speaker and time in a 112px left margin, right-aligned; prose in the reading style. In the narrow inspector, speaker and time sit inline above the text. Never chat bubbles.
