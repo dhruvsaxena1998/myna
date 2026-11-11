@@ -1,4 +1,4 @@
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use std::path::Path;
 
 /// One step per schema version; `open` runs every step above the file's `user_version`.
@@ -69,6 +69,37 @@ pub fn seed(from: &Path, to: &Path) -> Result<(), String> {
     std::fs::create_dir_all(to).map_err(|e| format!("Couldn't create {}: {e}", to.display()))?;
     let c = Connection::open_with_flags(&src, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|e| format!("Couldn't read {}: {e}", src.display()))?;
     c.execute("VACUUM INTO ?1", [dst.to_string_lossy()]).map(drop).map_err(|e| format!("Couldn't copy {}: {e}", src.display()))
+}
+
+// Settings: one row per key in `setting`. An older Myna reads what a newer one wrote, so:
+// - a key is never renamed or reused for something else;
+// - a reader never fails on a value it doesn't know: it falls back to its default;
+// - a stored value's text never changes form (a switch stays "1"/"0", Look's stay "on"/"off").
+// Each reader and writer returns the database error as is; callers add their own message.
+
+/// The saved value, or None if this key was never saved.
+pub fn read_text(conn: &Connection, key: &str) -> rusqlite::Result<Option<String>> {
+    conn.query_row("SELECT value FROM setting WHERE key = ?1", [key], |r| r.get(0)).optional()
+}
+
+/// Missing gives `default`; "1" is on; any other value is off.
+pub fn read_switch(conn: &Connection, key: &str, default: bool) -> rusqlite::Result<bool> {
+    Ok(read_text(conn, key)?.map_or(default, |v| v == "1"))
+}
+
+/// The saved value if it's one of `choices`, else `default`.
+pub fn read_choice(conn: &Connection, key: &str, choices: &[&str], default: &str) -> rusqlite::Result<String> {
+    Ok(read_text(conn, key)?.filter(|v| choices.contains(&v.as_str())).unwrap_or_else(|| default.into()))
+}
+
+/// Saves `value` under `key`, replacing what was there. Takes a transaction too.
+pub fn write_text(conn: &Connection, key: &str, value: &str) -> rusqlite::Result<()> {
+    conn.execute("INSERT INTO setting(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2", [key, value]).map(drop)
+}
+
+/// Saves a switch as "1" or "0".
+pub fn write_switch(conn: &Connection, key: &str, on: bool) -> rusqlite::Result<()> {
+    write_text(conn, key, if on { "1" } else { "0" })
 }
 
 #[cfg(test)]
@@ -165,5 +196,63 @@ mod tests {
         let kinds: String = c.query_row("SELECT group_concat(kind) FROM provider ORDER BY id", [], |r| r.get(0)).unwrap();
         assert_eq!(kinds, "openai,openai,openrouter");
         c.execute("INSERT INTO model_list VALUES (1, '[]', 0)", []).unwrap();
+    }
+
+    fn plant(c: &Connection, key: &str, value: &str) {
+        c.execute("INSERT INTO setting VALUES (?1, ?2)", [key, value]).unwrap();
+    }
+
+    #[test]
+    fn a_switch_is_its_default_when_missing_on_for_1_and_off_for_anything_else() {
+        let tmp = tempfile::tempdir().unwrap();
+        let c = open(tmp.path()).unwrap();
+        assert_eq!(read_switch(&c, "s", true), Ok(true));
+        assert_eq!(read_switch(&c, "s", false), Ok(false));
+        plant(&c, "on", "1");
+        plant(&c, "off", "0");
+        plant(&c, "odd", "yes");
+        for default in [true, false] {
+            assert_eq!(read_switch(&c, "on", default), Ok(true));
+            assert_eq!(read_switch(&c, "off", default), Ok(false));
+            assert_eq!(read_switch(&c, "odd", default), Ok(false), "a value this build doesn't know reads off");
+        }
+    }
+
+    #[test]
+    fn a_choice_is_the_saved_value_when_listed_else_the_default() {
+        let tmp = tempfile::tempdir().unwrap();
+        let c = open(tmp.path()).unwrap();
+        let list = ["a", "b", "c"];
+        assert_eq!(read_choice(&c, "k", &list, "a"), Ok("a".into()));
+        assert_eq!(read_choice(&c, "k", &list, "b"), Ok("b".into()), "the default needn't be the first choice");
+        plant(&c, "k", "c");
+        assert_eq!(read_choice(&c, "k", &list, "a"), Ok("c".into()));
+        plant(&c, "new", "z");
+        assert_eq!(read_choice(&c, "new", &list, "a"), Ok("a".into()));
+        assert_eq!(read_choice(&c, "new", &list, "b"), Ok("b".into()));
+    }
+
+    #[test]
+    fn text_is_none_when_missing_and_as_saved_otherwise() {
+        let tmp = tempfile::tempdir().unwrap();
+        let c = open(tmp.path()).unwrap();
+        assert_eq!(read_text(&c, "t"), Ok(None));
+        plant(&c, "t", " Any text, kept {as is} ");
+        assert_eq!(read_text(&c, "t"), Ok(Some(" Any text, kept {as is} ".into())));
+    }
+
+    #[test]
+    fn writers_store_1_or_0_and_replace_text() {
+        let tmp = tempfile::tempdir().unwrap();
+        let c = open(tmp.path()).unwrap();
+        write_switch(&c, "s", true).unwrap();
+        assert_eq!(read_text(&c, "s"), Ok(Some("1".into())));
+        write_switch(&c, "s", false).unwrap();
+        assert_eq!(read_text(&c, "s"), Ok(Some("0".into())));
+        write_text(&c, "t", "one").unwrap();
+        let tx = c.unchecked_transaction().unwrap();
+        write_text(&tx, "t", "two").unwrap(); // a transaction works too
+        tx.commit().unwrap();
+        assert_eq!(read_text(&c, "t"), Ok(Some("two".into())));
     }
 }

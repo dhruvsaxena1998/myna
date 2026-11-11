@@ -2,7 +2,8 @@
 //! It deletes listed filler words and repeats, writes spoken numbers as digits and respells the user's
 //! words to remember, then repairs the gap. It never adds, reorders or rephrases.
 
-use rusqlite::{Connection, OptionalExtension};
+use crate::storage;
+use rusqlite::Connection;
 
 /// A name or special word the user lists, with the wrong form the model tends to write (heard as), if any.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -347,12 +348,6 @@ fn mac_language() -> String {
     LANGUAGES.iter().find(|l| l.0 == code).map_or("en", |l| l.0).into()
 }
 
-fn read(conn: &Connection, key: &str) -> Result<Option<String>, String> {
-    conn.query_row("SELECT value FROM setting WHERE key = ?1", [key], |r| r.get(0))
-        .optional()
-        .map_err(|e| format!("Couldn't read your words: {e}"))
-}
-
 pub fn load(conn: &Connection) -> Result<Settings, String> {
     let err = |e: rusqlite::Error| format!("Couldn't read your words: {e}");
     let mut q = conn.prepare("SELECT spelling, heard FROM word ORDER BY id").map_err(err)?;
@@ -360,8 +355,8 @@ pub fn load(conn: &Connection) -> Result<Settings, String> {
     let mut q = conn.prepare("SELECT word FROM keep_word ORDER BY rowid").map_err(err)?;
     let keep = q.query_map([], |r| r.get(0)).map_err(err)?.collect::<Result<_, _>>().map_err(err)?;
     Ok(Settings {
-        language: read(conn, "dictation_language")?.unwrap_or_else(mac_language),
-        tidy: read(conn, "dictation_tidy")?.is_none_or(|v| v == "1"),
+        language: storage::read_text(conn, "dictation_language").map_err(err)?.unwrap_or_else(mac_language),
+        tidy: storage::read_switch(conn, "dictation_tidy", true).map_err(err)?,
         words,
         keep,
     })
@@ -371,9 +366,8 @@ pub fn load(conn: &Connection) -> Result<Settings, String> {
 pub fn save(conn: &Connection, s: &Settings) -> Result<(), String> {
     let err = |e: rusqlite::Error| format!("Couldn't save your words: {e}");
     let tx = conn.unchecked_transaction().map_err(err)?;
-    for (k, v) in [("dictation_language", s.language.as_str()), ("dictation_tidy", if s.tidy { "1" } else { "0" })] {
-        tx.execute("INSERT INTO setting(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2", [k, v]).map_err(err)?;
-    }
+    storage::write_text(&tx, "dictation_language", &s.language).map_err(err)?;
+    storage::write_switch(&tx, "dictation_tidy", s.tidy).map_err(err)?;
     tx.execute("DELETE FROM word", []).map_err(err)?;
     for w in &s.words {
         tx.execute("INSERT INTO word(spelling, heard) VALUES (?1, ?2)", (&w.spelling, &w.heard)).map_err(err)?;
@@ -595,5 +589,15 @@ mod tests {
                 assert_eq!(clean(&once, &s), once, "{name}: {raw}");
             }
         }
+    }
+
+    #[test]
+    fn tidy_is_on_when_missing_off_when_unknown_and_an_unlisted_language_is_kept() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = crate::storage::open(tmp.path()).unwrap();
+        assert!(load(&conn).unwrap().tidy);
+        conn.execute_batch("INSERT INTO setting VALUES ('dictation_tidy', 'yes'), ('dictation_language', 'ja')").unwrap();
+        let s = load(&conn).unwrap();
+        assert_eq!((s.tidy, s.language.as_str()), (false, "ja"));
     }
 }

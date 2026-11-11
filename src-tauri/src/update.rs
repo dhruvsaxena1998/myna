@@ -2,7 +2,8 @@
 //! The feed is picked here from the Channel (JS can't set updater endpoints). Download and install are
 //! separate: install waits for Restart now and never runs while dictating.
 
-use rusqlite::{Connection, OptionalExtension};
+use crate::storage;
+use rusqlite::Connection;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
@@ -52,22 +53,30 @@ pub struct Updates {
     cancel: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
+fn read_err(e: rusqlite::Error) -> String {
+    format!("Couldn't read the update settings: {e}")
+}
+
+fn write_err(e: rusqlite::Error) -> String {
+    format!("Couldn't save the update settings: {e}")
+}
+
 fn read(conn: &Connection, key: &str) -> Result<Option<String>, String> {
-    conn.query_row("SELECT value FROM setting WHERE key = ?1", [key], |r| r.get(0))
-        .optional()
-        .map_err(|e| format!("Couldn't read the update settings: {e}"))
+    storage::read_text(conn, key).map_err(read_err)
 }
 
 /// `prerelease`: the running build is a beta. Its Channel is saved on first launch, so a beta install
 /// that later updates to a stable release stays on beta.
 pub fn get(conn: &Connection, prerelease: bool) -> Result<Prefs, String> {
     let own = if prerelease { "beta" } else { "stable" };
-    conn.execute("INSERT INTO setting(key, value) VALUES ('update_channel', ?1) ON CONFLICT(key) DO NOTHING", [own])
-        .map_err(|e| format!("Couldn't save the update settings: {e}"))?;
+    if read(conn, "update_channel")?.is_none() {
+        storage::write_text(conn, "update_channel", own).map_err(write_err)?;
+    }
+    let choice = |key, choices: &[&str], default| storage::read_choice(conn, key, choices, default).map_err(read_err);
     Ok(Prefs {
-        mode: read(conn, "update_mode")?.filter(|m| MODES.contains(&m.as_str())).unwrap_or(MODES[0].into()),
-        channel: read(conn, "update_channel")?.filter(|c| CHANNELS.contains(&c.as_str())).unwrap_or(own.into()),
-        every: read(conn, "update_every")?.filter(|e| EVERY.contains(&e.as_str())).unwrap_or(EVERY[0].into()),
+        mode: choice("update_mode", &MODES, MODES[0])?,
+        channel: choice("update_channel", &CHANNELS, own)?,
+        every: choice("update_every", &EVERY, EVERY[0])?,
     })
 }
 
@@ -76,8 +85,7 @@ pub fn set(conn: &Connection, p: &Prefs) -> Result<(), String> {
         return Err(format!("{} {} {} isn't one of the choices.", p.mode, p.channel, p.every));
     }
     for (k, v) in [("update_mode", &p.mode), ("update_channel", &p.channel), ("update_every", &p.every)] {
-        conn.execute("INSERT INTO setting(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2", [k, v])
-            .map_err(|e| format!("Couldn't save the update settings: {e}"))?;
+        storage::write_text(conn, k, v).map_err(write_err)?;
     }
     Ok(())
 }
@@ -90,9 +98,7 @@ pub fn due(p: &Prefs, last: Option<SystemTime>, now: SystemTime) -> bool {
 }
 
 fn write(conn: &Connection, key: &str, value: &str) -> Result<(), String> {
-    conn.execute("INSERT INTO setting(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2", [key, value])
-        .map(drop)
-        .map_err(|e| format!("Couldn't save the update settings: {e}"))
+    storage::write_text(conn, key, value).map_err(write_err)
 }
 
 /// Saves when the last check ran and what it found, so a launch that skips the check still shows it.
@@ -146,8 +152,7 @@ pub fn tell(conn: &Connection, mode: &str, s: &State, manual: bool) -> Result<Op
     let seen = read(conn, "update_seen")?.unwrap_or_default();
     // A manual check always stops at Available, which Check only's notice matches.
     let Some((version, title, body)) = notice(if manual { "check" } else { mode }, s, &seen) else { return Ok(None) };
-    conn.execute("INSERT INTO setting(key, value) VALUES ('update_seen', ?1) ON CONFLICT(key) DO UPDATE SET value = ?1", [format!("{seen},{version}")])
-        .map_err(|e| format!("Couldn't save the update settings: {e}"))?;
+    write(conn, "update_seen", &format!("{seen},{version}"))?;
     Ok((!manual).then_some((title, body)))
 }
 
@@ -591,5 +596,27 @@ mod tests {
         assert_eq!(get(&conn, true), Ok(p("off", "stable")));
         set(&conn, &Prefs { every: "week".into(), ..p("off", "stable") }).unwrap();
         assert_eq!(get(&conn, true).unwrap().every, "week");
+    }
+
+    #[test]
+    fn unknown_saved_settings_fall_back_and_the_channel_to_the_builds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = crate::storage::open(tmp.path()).unwrap();
+        conn.execute_batch("INSERT INTO setting VALUES ('update_mode', 'sometimes'), ('update_channel', 'nightly'), ('update_every', 'hourly')").unwrap();
+        let p = |c: &str| Prefs { mode: "auto".into(), channel: c.into(), every: "launch".into() };
+        assert_eq!(get(&conn, true), Ok(p("beta")));
+        assert_eq!(get(&conn, false), Ok(p("stable")));
+        let saved: String = conn.query_row("SELECT value FROM setting WHERE key = 'update_channel'", [], |r| r.get(0)).unwrap();
+        assert_eq!(saved, "nightly", "the seed never overwrites");
+    }
+
+    #[test]
+    fn an_unreadable_last_check_or_found_update_is_ignored() {
+        let tmp = tempfile::tempdir().unwrap();
+        let c = crate::storage::open(tmp.path()).unwrap();
+        c.execute_batch("INSERT INTO setting VALUES ('update_last', 'yesterday'), ('update_found', '{not json')").unwrap();
+        let a = app("0.0.2-beta.1");
+        assert_eq!(restore(a.handle(), &c, &prefs("check", "day")), Ok(false));
+        assert_eq!(*a.state::<Updates>().last.lock().unwrap(), None);
     }
 }

@@ -3,8 +3,8 @@
 //! words, cleaned, falls back to the rules output. Never fails a dictation: the caller always has text to paste.
 
 use crate::ai::{Backend, Cost};
-use crate::rules;
-use rusqlite::{Connection, OptionalExtension};
+use crate::{rules, storage};
+use rusqlite::Connection;
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc;
 use std::time::Duration;
@@ -125,10 +125,7 @@ pub struct Edit {
 }
 
 fn stored(conn: &Connection) -> Result<Vec<Stored>, String> {
-    let json: Option<String> = conn
-        .query_row("SELECT value FROM setting WHERE key = 'cleanup_styles'", [], |r| r.get(0))
-        .optional()
-        .map_err(|e| format!("Couldn't read the cleanup styles: {e}"))?;
+    let json = storage::read_text(conn, "cleanup_styles").map_err(|e| format!("Couldn't read the cleanup styles: {e}"))?;
     match json {
         Some(j) => serde_json::from_str(&j).map_err(|e| format!("Couldn't read the cleanup styles: {e}")),
         None => Ok(SHIPPED.iter().map(|s| Stored { id: s.0.into(), name: s.1.into(), apps: s.3.iter().map(|a| a.to_string()).collect(), text: None, base: None }).collect()),
@@ -181,8 +178,7 @@ pub fn save(conn: &Connection, edits: Vec<Edit>) -> Result<Vec<Style>, String> {
         return Err(format!("{} can't be deleted.", s.1));
     }
     let json = serde_json::to_string(&out).map_err(|e| e.to_string())?;
-    conn.execute("INSERT INTO setting(key, value) VALUES ('cleanup_styles', ?1) ON CONFLICT(key) DO UPDATE SET value = ?1", [json])
-        .map_err(|e| format!("Couldn't save the cleanup styles: {e}"))?;
+    storage::write_text(conn, "cleanup_styles", &json).map_err(|e| format!("Couldn't save the cleanup styles: {e}"))?;
     styles(conn)
 }
 
@@ -441,5 +437,13 @@ mod tests {
         let o = run(b, "m", DEFAULT, TEXT, &settings(&[]), Duration::from_millis(50));
         assert!(start.elapsed() < Duration::from_secs(2));
         assert_eq!(o, Outcome { text: TEXT.into(), cost: None, fallback: Some(Fallback { reason: "AI took too long", detail: None }) });
+    }
+
+    #[test]
+    fn styles_that_dont_parse_are_an_error_not_the_shipped_ones() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = crate::storage::open(tmp.path()).unwrap();
+        conn.execute("INSERT INTO setting VALUES ('cleanup_styles', '{not json')", []).unwrap();
+        assert!(styles(&conn).unwrap_err().starts_with("Couldn't read the cleanup styles: "));
     }
 }
