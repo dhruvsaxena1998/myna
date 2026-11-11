@@ -131,7 +131,7 @@
         <div class="soon">
           <h2>Not in this version yet</h2>
           <p>{page.soon}</p>
-          <span class="tag">Coming later</span>
+          <span class="pill">Coming later</span>
         </div>
       {/if}
     </div>
@@ -155,7 +155,7 @@
   li.selected .ic { color: var(--accent-text); }
   :global(html[data-liquid]) li.selected .ic { color: var(--on-accent); }
   /* Stronger than --accent-soft-strong: the sidebar sits on see-through material, which thins a pale wash. */
-  li.selected { background: color-mix(in srgb, var(--accent) 28%, transparent); }
+  li.selected { font-weight: var(--fw-medium); background: color-mix(in srgb, var(--accent) 28%, transparent); }
   /* On Liquid Glass, tinted or not, a wash of the accent vanishes into the glass: a solid fill, like a focused Finder sidebar. */
   :global(html[data-liquid]) li.selected { background: var(--accent); color: var(--on-accent); }
   main { border-radius: var(--r-xl); background: var(--bg-content); box-shadow: var(--shadow-panel); overflow: hidden;
@@ -171,6 +171,4 @@
   .soon { margin: auto; max-width: 360px; padding-bottom: var(--h-toolbar); text-align: center; } /* centred in the panel, not the scroller */
   .soon h2 { margin-bottom: var(--sp-1); }
   .soon p { margin: 0 0 var(--sp-3); color: var(--text-2); }
-  .tag { display: inline-flex; align-items: center; height: 20px; padding: 0 var(--sp-2); border-radius: var(--r-full); background: var(--fill-hover); color: var(--text-2);
-    font-size: var(--fs-caption); font-weight: var(--fw-medium); }
 </style>

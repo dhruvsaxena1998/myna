@@ -101,11 +101,11 @@
   {/if}
   <div role="radiogroup" aria-label="{title} model">
     {#each groups as g, i (g.v)}
-      {#if g.v}<h3 class="group" id="mg-{task.id}-{i}">{g.v}</h3>{/if}
+      {#if g.v}<h3 id="mg-{task.id}-{i}">{g.v}</h3>{/if}
       <ul class="list" aria-labelledby={g.v ? `mg-${task.id}-${i}` : undefined}>
         {#each g.models as m (m.id)}
           {@const blocked = !!m.needs}
-          <li class="row" class:blocked>
+          <li class="model-row" class:blocked>
             <input type="radio" name="model-{task.id}" id="m-{m.id}" value={m.id} checked={active === m.id}
               disabled={blocked} onchange={() => pick(m.id)} />
             <label for="m-{m.id}">
@@ -129,7 +129,7 @@
                   <button class="btn quiet" aria-label="Remove {m.name}" onclick={() => remove(m.id)}>Remove</button>
                 {/if}
               {:else if m.files.length === 0 && !m.system && !m.sdk}
-                <span class="size">{fmtSize(m.size)}</span><span class="pill">Coming soon</span>
+                <span class="size">{fmtSize(m.size)}</span><span class="pill">Coming later</span>
               {:else}
                 {#if !m.system}<span class="size">{fmtSize(m.size)}</span>{/if}
                 <button class="btn" aria-label="Download {m.name}" onclick={() => start(m.id)}>
@@ -150,24 +150,15 @@
   .tools { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); margin-bottom: var(--sp-1); }
   .sort { display: flex; align-items: center; gap: var(--sp-2); color: var(--text-3); font-size: var(--fs-footnote); }
   .sort .select { width: auto; }
-  .group { margin: var(--sp-3) 0 var(--sp-1); padding: 0 var(--sp-4); font-size: var(--fs-footnote); font-weight: var(--fw-semibold); color: var(--text-3); }
-  .list + .group { margin-top: var(--sp-4); }
   /* Reserved line, so a search with no match never shifts the page. */
   /* It shares the error line's slot under the list (a no-match and a failed save don't happen together), so the section gap stays 24px. */
   .none { margin: var(--sp-1) 0 calc(-1 * (var(--sp-1) + var(--lh-footnote))); min-height: var(--lh-footnote); color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
-  /* Same search field as Voice typing history (History.svelte). */
-  .search { position: relative; display: flex; align-items: center; flex: 0 1 220px; min-width: 120px; }
-  .search > .ic { position: absolute; left: 10px; color: var(--text-3); pointer-events: none; }
-  .search input { width: 100%; box-sizing: border-box; height: var(--h-ctl); padding: 0 30px; border: 0; border-radius: var(--r-full); background: var(--fill-field);
-    box-shadow: inset 0 0 0 .5px var(--line-strong); color: var(--text); font: inherit; outline: none; -webkit-appearance: none; appearance: none; }
-  .search input::-webkit-search-cancel-button { display: none; }
-  .search input:focus-visible { box-shadow: inset 0 0 0 1.5px var(--accent); }
+  .search { flex: 0 1 220px; min-width: 120px; }
   .list { container-type: inline-size; list-style: none; margin: 0; padding: 0; border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); }
-  .row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: var(--sp-3); align-items: start; padding: var(--sp-3) var(--sp-4); }
-  .row input { margin: 3px 0 0; accent-color: var(--accent); }
-  .row.blocked label, .row.blocked .rates { opacity: .55; }
+  .model-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: var(--sp-3); align-items: start; padding: var(--sp-3) var(--sp-4); }
+  .model-row input { margin: 3px 0 0; accent-color: var(--accent); }
+  .model-row.blocked label, .model-row.blocked .rates { opacity: .55; }
   label { display: block; }
-  .name { font-weight: var(--fw-semibold); }
   .vendor { color: var(--text-3); font-weight: var(--fw-regular); }
   .rates { display: flex; flex-direction: column; gap: var(--sp-1); padding-top: 2px; }
   .rate { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-footnote); color: var(--text-2); white-space: nowrap; }
@@ -178,14 +169,11 @@
   .rate-w { min-width: 48px; font-weight: var(--fw-medium); }
   .dl { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); min-width: 240px; height: var(--h-ctl); }
   .size { color: var(--text-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .ok { display: inline-flex; align-items: center; gap: var(--sp-1); color: var(--ok-text); font-weight: var(--fw-medium); }
   .ic { width: 14px; height: 14px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-  .pill { display: inline-flex; align-items: center; height: 20px; padding: 0 var(--sp-2); border-radius: var(--r-full); font-size: var(--fs-caption); font-weight: var(--fw-medium); background: var(--fill-hover); color: var(--text-2); white-space: nowrap; }
-  .btn.quiet { background: none; box-shadow: none; color: var(--text-2); padding: 0 var(--sp-2); }
   .bar { width: 72px; height: 4px; border-radius: 2px; background: var(--line-strong); overflow: hidden; }
   .bar b { display: block; height: 100%; background: var(--accent); transform-origin: left; }
-  .btn:focus-visible, .row input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-    .row { grid-template-columns: auto minmax(0, 1fr); }
+  .model-row input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+    .model-row { grid-template-columns: auto minmax(0, 1fr); }
     .rates, .dl { grid-column: 2; justify-content: flex-start; }
     .rates { flex-direction: row; gap: var(--sp-3); }
 </style>

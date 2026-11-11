@@ -64,7 +64,5 @@
 </section>
 
 <style>
-  .state { display: flex; justify-content: flex-end; align-items: center; min-width: 190px; height: var(--h-ctl); }
-  .ok { display: inline-flex; align-items: center; gap: var(--sp-1); color: var(--ok-text); font-weight: var(--fw-medium); }
-  .ic { width: 14px; height: 14px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .state { display: flex; justify-content: flex-end; align-items: center; min-width: 164px; height: var(--h-ctl); }
 </style>

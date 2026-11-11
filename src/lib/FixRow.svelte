@@ -15,11 +15,7 @@
 
 <style>
   li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-3); align-items: center; padding: var(--sp-3) var(--sp-4); }
-  .name { display: block; font-weight: var(--fw-semibold); overflow-wrap: anywhere; }
-  .desc { display: block; margin-top: 2px; color: var(--text-2); }
+  .name { display: block; font-weight: var(--fw-medium); overflow-wrap: anywhere; }
+  .desc { display: block; margin-top: 2px; font-size: var(--fs-footnote); line-height: var(--lh-footnote); color: var(--text-2); }
   .btns { display: flex; gap: var(--sp-2); }
-  .btn { display: inline-flex; align-items: center; height: var(--h-ctl); padding: 0 14px; border: 0; border-radius: var(--r-full); background: var(--fill-control); color: var(--text); font: inherit;
-    box-shadow: inset 0 0 0 .5px var(--line-strong), var(--shadow-control); }
-  .btn:hover { background: color-mix(in srgb, var(--fill-control) 85%, var(--text)); }
-  .btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 </style>

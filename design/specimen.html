@@ -80,12 +80,12 @@ button, input, select { font: inherit; color: inherit; }
 .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); transition: transform var(--dur) var(--ease-out); }
 .switch:checked { background: var(--accent); }
 .switch:checked::after { transform: translateX(16px); }
-.seg { display: inline-flex; padding: 3px; gap: 2px; border-radius: var(--r-full); background: var(--fill-field); }
-.seg span { display: flex; align-items: center; gap: var(--sp-1h); height: 26px; padding: 0 14px; border-radius: var(--r-full); color: var(--text-2); }
-.seg .on { background: var(--fill-control-on); color: var(--text); font-weight: var(--fw-medium); box-shadow: 0 0 0 .5px var(--line-strong), 0 1px 2px rgba(0,0,0,.1); }
+.seg { display: inline-grid; grid-auto-flow: column; grid-auto-columns: 1fr; padding: 3px; gap: 2px; border-radius: var(--r-full); background: var(--fill-field); }
+.seg span { display: flex; align-items: center; gap: var(--sp-1h); height: 24px; padding: 0 14px; border-radius: var(--r-full); color: var(--text-2); justify-content: center; }
+.seg .on { background: var(--fill-control-on); color: var(--text); box-shadow: 0 0 0 .5px var(--line-strong), 0 1px 2px rgba(0,0,0,.1); }
 input[type=radio], input[type=checkbox]:not(.switch) { accent-color: var(--accent); margin: 0; }
 
-.pill { display: inline-flex; align-items: center; gap: var(--sp-1); height: 20px; padding: 0 var(--sp-2); border-radius: var(--r-full); font-size: var(--fs-caption); font-weight: var(--fw-medium); background: var(--fill-hover); color: var(--text-2); white-space: nowrap; }
+.pill { display: inline-flex; align-items: center; gap: var(--sp-1); height: 20px; padding: 0 var(--sp-2); border-radius: var(--r-full); font-size: var(--fs-caption); font-weight: var(--fw-semibold); background: var(--fill-hover); color: var(--text-2); white-space: nowrap; }
 .pill.status { background: var(--accent-soft); color: var(--accent-text); }
 .pill.caution { background: var(--caution-soft); color: var(--caution-text); }
 .tag { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 10px; border-radius: var(--r-full); background: var(--fill-field); font-size: var(--fs-footnote); color: var(--text-2); }

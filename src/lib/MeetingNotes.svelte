@@ -26,8 +26,8 @@
   }
 </script>
 
-<section class="group" aria-labelledby="meet-h">
-  <h2 id="meet-h" class="sr">Meeting notes</h2>
+<section aria-labelledby="meet-h">
+  <h2 id="meet-h" class="sr-only">Meeting notes</h2>
   <ul class="list">
     <li class="row">
       <span><label class="name" for="meet-on">Use meeting notes</label><span class="desc">Record your calls and get notes, a summary and answers to your questions.</span></span>
@@ -38,7 +38,7 @@
 </section>
 
 {#if notes.on}
-  <section class="group" aria-labelledby="meet-key-h">
+  <section aria-labelledby="meet-key-h">
     <h2 id="meet-key-h">Shortcut</h2>
     <ul class="list">
       <li class="row">
@@ -50,7 +50,7 @@
     </ul>
     <p class="err" role="status">{error}</p>
   </section>
-  <section class="group" aria-labelledby="keep-h">
+  <section aria-labelledby="keep-h">
     <h2 id="keep-h">Keep my voice when I’m muted</h2>
     <p class="help">Normally, anything you say while muted in a call is left out of the notes. Turn on an app below to keep it in.</p>
     <h3>Myna sees your mute button through the browser add-on</h3>
@@ -65,8 +65,3 @@
   <Permissions initial={perms} kinds={["mic", "audio"]} />
 {/if}
 
-<style>
-  .help { margin: 0 0 var(--sp-2); color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
-  h3 { margin: var(--sp-2) 0 var(--sp-1); font-size: var(--fs-footnote); font-weight: var(--fw-semibold); color: var(--text-2); }
-  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-</style>

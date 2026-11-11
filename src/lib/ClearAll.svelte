@@ -42,11 +42,6 @@
 
 <style>
   .wrap { position: relative; flex: none; }
-  .btn { display: inline-flex; align-items: center; height: var(--h-ctl); padding: 0 14px; border: 0; border-radius: var(--r-full); background: var(--fill-control); box-shadow: inset 0 0 0 .5px var(--line-strong); color: var(--text); font: inherit; white-space: nowrap; }
-  .btn:hover:not(:disabled) { background: color-mix(in srgb, var(--fill-control) 85%, var(--text)); }
-  .btn:disabled { opacity: .4; }
-  .btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-  .btn.danger { background: var(--danger); color: var(--on-solid); box-shadow: var(--shadow-solid); }
   .confirm { position: absolute; z-index: 90; top: calc(100% + 6px); right: 0; width: 280px; display: grid; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4); border-radius: var(--r-lg); background: var(--bg-raised); box-shadow: var(--shadow-menu); font-size: var(--fs-footnote); line-height: var(--lh-footnote); white-space: normal; }
   .acts { display: flex; justify-content: flex-end; gap: var(--sp-2); }
   .err { color: var(--danger-text); }

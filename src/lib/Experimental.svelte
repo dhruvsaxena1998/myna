@@ -21,7 +21,7 @@
   }
 </script>
 
-<section class="group" aria-label="Experimental features">
+<section aria-label="Experimental features">
   <ul class="list">
     <li class="row">
       <span><label class="name" for="exp-on">Use experimental features</label><span class="desc" id="exp-d">New things we’re still working on. They may change. Turning this off turns them all off.</span></span>
@@ -31,7 +31,7 @@
 </section>
 <!-- Liquid Glass needs macOS 26; below it the backend sends liquid: null and the group isn't there. -->
 {#if look.experimental && look.liquid !== null}
-  <section class="group" aria-labelledby="exp-look-h">
+  <section aria-labelledby="exp-look-h">
     <h2 id="exp-look-h">Look</h2>
     <ul class="list">
       <li class="row">
@@ -42,21 +42,18 @@
       <li class="row">
         <span><label class="name" for="frost">Opacity</label><span class="desc" id="frost-d">Clear to tinted. Tinted makes words easier to read on a busy desktop.</span></span>
         <div class="slider">
-          <svg class="end" viewBox="0 0 18 18" aria-hidden="true"><rect x="1" y="1" width="10" height="10" rx="3" fill="none" stroke="currentColor" stroke-width="1.5" /><rect x="7" y="7" width="10" height="10" rx="3" fill="none" stroke="currentColor" stroke-width="1.5" /></svg>
-          <span class="rail">
-            <input type="range" id="frost" min="0" max="100" step="1" disabled={look.liquid !== true} value={look.frost} style:--v="{look.frost}%" aria-describedby="frost-d"
+          <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="11" height="11" rx="3" /><rect x="10" y="10" width="11" height="11" rx="3" /></svg>
+          <input type="range" id="frost" min="0" max="100" step="1" disabled={look.liquid !== true} value={look.frost} style:--v="{look.frost}%" aria-describedby="frost-d"
               aria-valuetext={look.frost === 0 ? "Clear" : look.frost === 100 ? "Tinted" : `${look.frost}%`}
               oninput={(e) => { look = { ...look, frost: e.currentTarget.valueAsNumber }; applyLook(look); }} onchange={(e) => save({ frost: e.currentTarget.valueAsNumber })} />
-            <span class="ticks" aria-hidden="true"><i></i><i></i><i></i></span>
-          </span>
-          <svg class="end" viewBox="0 0 18 18" aria-hidden="true"><rect x="1" y="1" width="10" height="10" rx="3" fill="currentColor" /><rect x="7" y="7" width="10" height="10" rx="3" fill="currentColor" stroke="var(--bg-inset)" stroke-width="1" /></svg>
+          <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="11" height="11" rx="3" fill="currentColor" /><rect x="10" y="10" width="11" height="11" rx="3" fill="currentColor" opacity=".6" /></svg>
         </div>
       </li>
     </ul>
   </section>
 {/if}
 {#if look.experimental}
-  <section class="group" aria-labelledby="exp-dict-h">
+  <section aria-labelledby="exp-dict-h">
     <h2 id="exp-dict-h">Voice typing</h2>
     <ul class="list">
       <li class="row">
@@ -67,17 +64,3 @@
   </section>
 {/if}
 <p class="err" role="status">{error}</p>
-
-<style>
-  /* Opacity slider: 4px track, accent left of a 20px white knob; --v is the fill's width. */
-  .slider { display: flex; align-items: center; gap: var(--sp-2); width: 260px; color: var(--text-2); }
-  .slider:has(:disabled) { opacity: .45; }
-  .end { width: 18px; height: 18px; flex: none; }
-  .rail { flex: 1; min-width: 0; }
-  input[type="range"] { appearance: none; display: block; width: 100%; height: 20px; margin: 0; background: none; }
-  input[type="range"]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: linear-gradient(to right, var(--accent) var(--v), var(--fill-track) var(--v)); }
-  input[type="range"]::-webkit-slider-thumb { appearance: none; width: 20px; height: 20px; margin-top: -8px; border-radius: 50%; background: #fff; box-shadow: var(--shadow-control); }
-  input[type="range"]:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: 10px; }
-  .ticks { display: flex; justify-content: space-between; padding: 0 8px; margin-top: 2px; }
-  .ticks i { width: 3px; height: 3px; border-radius: 50%; background: var(--text-3); }
-</style>

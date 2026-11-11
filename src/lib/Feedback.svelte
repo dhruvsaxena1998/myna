@@ -32,7 +32,7 @@
   }
 </script>
 
-<section class="group" aria-labelledby="fb-h">
+<section aria-labelledby="fb-h">
   <h2 id="fb-h">Feedback</h2>
   <ul class="list">
     <li class="row">

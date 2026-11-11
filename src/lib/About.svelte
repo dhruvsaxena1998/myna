@@ -49,7 +49,7 @@
         {:else if upd.s.state === "available"}<button class="btn" onclick={open}>Update available · {upd.s.version}</button>
         {:else if upd.s.state === "downloading"}<span class="pill" role="status">Downloading {upd.s.pct}%</span>
         {:else if upd.s.state === "downloaded"}<button class="btn" onclick={open}>Restart to update</button>
-        {:else if upd.s.state === "error"}<span class="pill alert">Update failed</span><button class="btn" onclick={check}>Try again</button>
+        {:else if upd.s.state === "error"}<span class="pill">Update failed</span><button class="btn" onclick={check}>Try again</button>
         {:else}<button class="btn" onclick={check}>Check for updates</button>{/if}
       </div>
     </li>
@@ -69,7 +69,7 @@
       <span><span class="name" id="chan-l">Channel</span><span class="desc">Beta also gets newer stable releases. Switching to stable keeps your current version until stable passes it.</span></span>
       <fieldset class="seg" aria-labelledby="chan-l">
         {#each [["stable", "Stable"], ["beta", "Beta"]] as [v, label]}
-          <label><input type="radio" name="channel" value={v} checked={prefs.channel === v} onchange={() => save({ channel: v as Prefs["channel"] })} /><span data-l={label}>{label}</span></label>
+          <label><input type="radio" name="channel" value={v} checked={prefs.channel === v} onchange={() => save({ channel: v as Prefs["channel"] })} /><span>{label}</span></label>
         {/each}
       </fieldset>
     </li>
@@ -87,10 +87,5 @@
 <style>
   .attrib { color: var(--text-3); }
   .attrib a { color: inherit; }
-  .mono { font: 12px/var(--lh-body) var(--font-mono); overflow-wrap: anywhere; }
   .slot { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); width: 240px; height: var(--h-ctl); font-variant-numeric: tabular-nums; }
-  /* Status pill (DESIGN.md); the alert kind uses the danger colours. */
-  .pill { display: inline-flex; align-items: center; height: 20px; padding: 0 var(--sp-2); border-radius: var(--r-full); font-size: var(--fs-caption); font-weight: var(--fw-medium);
-    background: var(--accent-soft); color: var(--accent-text); white-space: nowrap; }
-  .pill.alert { background: var(--danger-soft); color: var(--danger-text); }
 </style>

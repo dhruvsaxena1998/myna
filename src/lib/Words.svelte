@@ -64,7 +64,7 @@
   }
 </script>
 
-<section class="group" aria-labelledby="your-h">
+<section aria-labelledby="your-h">
   <h2 id="your-h">Your words</h2>
   <ul class="list">
     <li class="row">
@@ -80,7 +80,7 @@
   </ul>
 </section>
 
-<section class="group" aria-labelledby="dict-h">
+<section aria-labelledby="dict-h">
   <h2 id="dict-h">Words to remember</h2>
   <p class="help">Names and special words Myna should spell your way.</p>
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (the input inside takes the keys) -->
@@ -99,7 +99,7 @@
   <p class="err" role="status">{error}</p>
 </section>
 
-<section class="group" aria-labelledby="keep-h">
+<section aria-labelledby="keep-h">
   <h2 id="keep-h">Never remove</h2>
   <p class="help">Words Myna keeps even when they sound like a filler or a repeat, like oh or the.</p>
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (the input inside takes the keys) -->
@@ -118,19 +118,6 @@
 </section>
 
 <style>
-  .row + .row { box-shadow: inset 0 .5px 0 var(--line); }
-  .help.after { margin: 6px 0 0; }
-  .chipin { display: flex; flex-wrap: wrap; align-items: center; align-content: flex-start; gap: 6px; min-height: var(--h-ctl-lg); box-sizing: border-box; padding: 6px 8px;
-    border-radius: var(--r-lg); background: var(--fill-field); box-shadow: inset 0 0 0 .5px var(--line-strong); cursor: text; }
-  .chipin:focus-within { box-shadow: inset 0 0 0 1.5px var(--accent); }
-  /* Tag: capsule, 22px (DESIGN.md), lifted off the field like a control. */
-  .tag { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 6px 0 10px; border-radius: var(--r-full); background: var(--fill-control);
-    box-shadow: inset 0 0 0 .5px var(--line-strong); white-space: nowrap; cursor: default; }
-  .tag button { display: inline-grid; place-items: center; width: 16px; height: 16px; padding: 0; border: 0; border-radius: var(--r-full); background: none; color: var(--text-3); }
-  .tag button:hover { background: var(--fill-hover); color: var(--text); }
-  .tag button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
-  .ic { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; }
   .chipin-f { flex: 1 0 160px; margin: 0; }
   input:not(.switch) { width: 100%; box-sizing: border-box; padding: 4px 2px; border: 0; background: none; outline: none; color: var(--text); font: inherit; }
-  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 </style>

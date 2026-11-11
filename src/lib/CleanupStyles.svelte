@@ -64,13 +64,13 @@
   const apps = $derived([...new Set([...initial.apps, ...styles.flatMap((s) => s.apps)])].sort((a, b) => a.localeCompare(b)));
 </script>
 
-<section class="group" aria-labelledby="sty-h">
+<section aria-labelledby="sty-h">
   <h2 id="sty-h">Cleanup styles</h2>
   <p class="help">Dictate with cleanup picks a style by the app you’re in. Only Myna sees the app; its name is never sent.</p>
   <ul class="list">
     {#each styles as s (s.id)}
-      <li class="srow">
-        <span class="od"><span class="name">{s.name}{#if s.newer} <span class="pill">Newer default</span>{/if}</span><span class="desc">{meta(s)}</span></span>
+      <li class="row">
+        <span class="od"><span class="name">{s.name}{#if s.newer} <span class="pill status">Newer default</span>{/if}</span><span class="desc">{meta(s)}</span></span>
         <button class="btn" id="se-{s.id}" aria-expanded={open === s.id} aria-controls="ed-{s.id}" onclick={() => toggle(s)}>{open === s.id ? "Done" : "Edit"}</button>
       </li>
       {#if open === s.id}
@@ -99,7 +99,7 @@
               {/if}
             </div>
             <div class="field"><label class="name" for="st-{s.id}">Instructions</label>
-              {#key rev}<textarea class="textarea" id="st-{s.id}" rows="5" spellcheck="true" onchange={(e) => patch(s, { text: e.currentTarget.value })}>{s.text}</textarea>{/key}
+              {#key rev}<textarea class="input" id="st-{s.id}" rows="5" spellcheck="true" onchange={(e) => patch(s, { text: e.currentTarget.value })}>{s.text}</textarea>{/key}
               <span class="help">{spell ? `Myna always adds: “Spell these exactly as written: ${spell}.” ` : ""}What you said goes in as text to clean up, never as instructions.</span></div>
             {#if s.newer}
               <p class="newer" role="status"><span>A newer default is available. Your edit is kept until you choose.</span><button class="btn" onclick={() => reset(s)}>Use the new default</button></p>
@@ -118,28 +118,15 @@
 </section>
 
 <style>
-  .help { margin: 0 0 var(--sp-3); color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
-  .field .help { margin: 0; }
-  .srow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-3); align-items: center; padding: var(--sp-3) var(--sp-4); }
-  li + li { box-shadow: inset 0 .5px 0 var(--line); }
-  .style-li { padding: 0 var(--sp-4) var(--sp-4); box-shadow: none; }
+  /* The editor belongs to the row above it: no separator between them. */
+  .list > li.style-li { padding: 0 var(--sp-4) var(--sp-4); background: none; }
   .od { min-width: 0; }
   .style-ed { display: grid; gap: var(--sp-3); }
   .field { display: grid; gap: var(--sp-1); align-content: start; }
   .apps { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
   .select { width: auto; max-width: 220px; }
-  .input, .textarea { display: block; width: 100%; box-sizing: border-box; border: 0; background: var(--fill-field); color: var(--text); font: inherit; box-shadow: inset 0 0 0 .5px var(--line-strong); }
-  .input { height: var(--h-ctl); padding: 0 var(--sp-3); border-radius: var(--r-md); }
-  .textarea { resize: vertical; padding: 8px 12px; border-radius: var(--r-lg); line-height: 1.5; }
-  .input:focus-visible, .textarea:focus-visible { outline: none; box-shadow: inset 0 0 0 1.5px var(--accent); }
-  /* Tag: capsule, 22px (DESIGN.md), lifted off the field like a control. */
-  .tag { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 6px 0 10px; border-radius: var(--r-full); background: var(--fill-control); box-shadow: inset 0 0 0 .5px var(--line-strong); white-space: nowrap; }
-  .tag button { display: inline-grid; place-items: center; width: 16px; height: 16px; padding: 0; border: 0; border-radius: var(--r-full); background: none; color: var(--text-3); }
-  .tag button:hover { background: var(--fill-hover); color: var(--text); }
-  .tag button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
-  .ic { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; }
-  .pill { display: inline-flex; align-items: center; height: 20px; padding: 0 var(--sp-2); border-radius: var(--r-full); background: var(--accent-soft); color: var(--accent-text); font-size: var(--fs-caption); font-weight: var(--fw-medium); }
+  .field .input { display: block; width: 100%; }
+  textarea { resize: vertical; }
   .newer { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); margin: 0; padding: 8px 12px; border-radius: 12px; background: var(--accent-soft); color: var(--accent-text); font-size: var(--fs-footnote); }
   .acts { display: flex; gap: var(--sp-2); }
-  .btn.danger { background: var(--danger); color: var(--on-solid); box-shadow: var(--shadow-solid); }
 </style>

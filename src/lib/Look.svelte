@@ -29,12 +29,12 @@
 {#snippet seg(key: "theme" | "glass", choices: string[][], labelledby: string)}
   <fieldset class="seg" aria-labelledby={labelledby}>
     {#each choices as [v, label]}
-      <label><input type="radio" name={key} value={v} checked={look[key] === v} onchange={() => save(key, v)} /><span data-l={label}>{label}</span></label>
+      <label><input type="radio" name={key} value={v} checked={look[key] === v} onchange={() => save(key, v)} /><span>{label}</span></label>
     {/each}
   </fieldset>
 {/snippet}
 
-<section class="group" aria-label="Look">
+<section aria-label="Look">
   <ul class="list">
     <li class="row">
       <span><span class="name" id="theme-l">Theme</span><span class="desc">Auto follows your Mac.</span></span>
@@ -44,7 +44,7 @@
       <span><span class="name" id="accent-l">Highlight colour</span><span class="desc">Used for buttons and selected items.</span></span>
       <fieldset class="swatches" aria-labelledby="accent-l">
         {#each ACCENTS as [v, label]}
-          <label class="sw" title={label}><input type="radio" name="accent" value={v} checked={look.accent === v} onchange={() => save("accent", v)} /><span aria-hidden="true" style="--c: var(--sw-{v})"></span><span class="sr">{label}</span></label>
+          <label class="sw" title={label}><input type="radio" name="accent" value={v} checked={look.accent === v} onchange={() => save("accent", v)} /><span aria-hidden="true" style="--c: var(--sw-{v})"></span><span class="sr-only">{label}</span></label>
         {/each}
       </fieldset>
     </li>
@@ -57,7 +57,6 @@
 </section>
 
 <style>
-  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   /* Swatches: 22px dots; the chosen one gets a ring in its own colour. */
   .swatches { display: flex; flex-wrap: wrap; gap: 10px; margin: 0; padding: 0; border: 0; }
   .sw { position: relative; display: block; }

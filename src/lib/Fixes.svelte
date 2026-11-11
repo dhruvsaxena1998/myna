@@ -20,7 +20,7 @@
 </script>
 
 {#if fixes.length}
-  <section class="group" aria-labelledby="fix-h">
+  <section aria-labelledby="fix-h">
     <h2 id="fix-h">Suggested fixes</h2>
     <p class="help">Mistakes Myna noticed in the dictations you rated.</p>
     <ul class="list">

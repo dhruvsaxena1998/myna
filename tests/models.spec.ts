@@ -134,7 +134,7 @@ test("a model with no downloadable files says coming soon (Desert Ant, until tic
   await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", models_list: () => (${t}) }`);
   await page.goto("/settings");
   await page.getByRole("option", { name: "Speech models" }).click();
-  await expect(page.getByText("Coming soon")).toBeVisible();
+  await expect(page.getByText("Coming later")).toBeVisible();
   await expect(page.getByRole("button", { name: /Download/ })).toHaveCount(0);
 });
 

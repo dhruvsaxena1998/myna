@@ -9,7 +9,7 @@
 </div>
 
 <style>
-  .error { margin: var(--sp-4) 0; padding: var(--sp-3) var(--sp-4); border-radius: var(--r-lg);
+  .error { margin: 0; padding: var(--sp-3) var(--sp-4); border-radius: var(--r-lg);
     background: var(--danger-soft); color: var(--text); }
   h2 { margin: 0 0 var(--sp-1); font-size: var(--fs-body); line-height: var(--lh-body); font-weight: var(--fw-semibold); color: var(--danger-text); }
   p { margin: 0; color: var(--text-2); font-size: var(--fs-footnote); line-height: var(--lh-footnote); user-select: text; overflow-wrap: anywhere; }

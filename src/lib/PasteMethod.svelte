@@ -19,7 +19,7 @@
   }
 </script>
 
-<section class="group" aria-labelledby="paste-h">
+<section aria-labelledby="paste-h">
   <h2 id="paste-h">Adding your words</h2>
   <ul class="list">
     <li class="row">

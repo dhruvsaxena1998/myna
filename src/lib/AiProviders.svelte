@@ -208,7 +208,7 @@
   </div>
 {/if}
 
-<section class="group" aria-labelledby="prov-h">
+<section aria-labelledby="prov-h">
   <h2 id="prov-h">Providers</h2>
   <p class="help">Servers on this Mac keep your words here. Anything else gets them, even another computer on your network. Test checks the address and key without spending anything.</p>
   {#if none && !adding}
@@ -275,12 +275,12 @@
   <p class="err" role="status">{error}</p>
 </section>
 
-<section class="group" aria-labelledby="models-h">
+<section aria-labelledby="models-h">
   <h2 id="models-h">Models</h2>
   <ul class="list">
     {#each SLOTS as [slot, title, help]}
       {@const r = routes[slot]}
-      <li class="srow">
+      <li class="row">
         <span><span class="name">{title}</span><span class="desc">{help}</span>
           {#if r && gone(r)}<span class="notset">No longer offered by {prov(r.provider)?.name}. What uses it stays off until you pick another.</span>
           {:else if r && prov(r.provider)}{@render pill(prov(r.provider)!.off_device)}
@@ -334,7 +334,7 @@
   .prov { padding: var(--sp-3) var(--sp-4); }
   .top { display: flex; align-items: center; gap: var(--sp-2); }
   .pname { display: grid; gap: 2px; flex: 1; min-width: 0; }
-  .name { display: block; font-weight: var(--fw-semibold); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .url { font: 12px/16px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .confirm { display: flex; align-items: center; gap: var(--sp-2); min-height: 52px; }
   .confirm span { flex: 1; }
@@ -349,35 +349,25 @@
   .notice span { flex: 1; }
   .caution-i { color: var(--caution-text); }
   .notset { display: block; margin-top: var(--sp-1); color: var(--caution-text); }
-  .srow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-3); align-items: center; padding: var(--sp-3) var(--sp-4); }
-  .srow :global(.pill) { margin-top: var(--sp-1); }
+  .row :global(.pill) { margin-top: var(--sp-1); }
   .form { margin-top: var(--sp-3); padding: var(--sp-3) var(--sp-4); display: grid; gap: var(--sp-2); }
   .two { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
   .field { display: grid; gap: var(--sp-1); align-content: start; }
   .field label { font-weight: var(--fw-semibold); }
   .field .help { margin: 0; min-height: var(--lh-footnote); }
   .field .kind-h { min-height: calc(var(--lh-footnote) * 2); } /* both kinds' help fit, so switching never moves the form */
-  .input { height: var(--h-ctl); box-sizing: border-box; width: 100%; padding: 0 var(--sp-3); border: 0; border-radius: var(--r-md); background: var(--fill-field); color: var(--text); font: inherit;
-    box-shadow: inset 0 0 0 .5px var(--line-strong); }
-  .input:focus-visible { outline: none; box-shadow: inset 0 0 0 1.5px var(--accent); }
-  .input[aria-invalid="true"] { box-shadow: inset 0 0 0 1.5px var(--danger); }
+  .input { width: 100%; }
   .mono { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
   /* Reserved line so an error never shifts the form. */
   .err { margin: 0; min-height: var(--lh-footnote); color: var(--danger-text); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
   .actions { display: flex; justify-content: flex-end; gap: var(--sp-2); }
   .ic { width: 14px; height: 14px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-  .btn:focus-visible, .pk:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-  .btn.primary { background: var(--accent); color: var(--on-accent); box-shadow: var(--shadow-solid); }
-  .btn.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 88%, black); }
-  .btn.danger { background: var(--danger); color: var(--on-solid); box-shadow: var(--shadow-solid); }
-  .btn.quiet { background: none; box-shadow: none; color: var(--text-2); }
-  .btn.icon { width: var(--h-ctl-sm); height: var(--h-ctl-sm); padding: 0; justify-content: center; }
-  .btn.sm { height: var(--h-ctl-sm); padding: 0 10px; }
+  .pk:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   .pop-wrap { position: relative; }
   .pk-btn { max-width: 360px; }
   .pop { position: absolute; z-index: 10; right: 0; top: calc(100% + var(--sp-1)); width: min(420px, calc(100vw - 96px)); box-sizing: border-box; padding: 5px;
     border-radius: var(--r-lg); background: var(--bg-raised); box-shadow: var(--shadow-menu); }
-  .search { margin-bottom: 5px; }
+  .pop .input { margin-bottom: var(--sp-1); }
   /* Fixed, not max: the list must not resize when models arrive, or the page under it jumps. */
   .pk-list { height: 300px; overflow-y: auto; scrollbar-width: thin; }
   .pk-h { padding: 6px 10px 2px; font-size: var(--fs-caption); font-weight: var(--fw-semibold); color: var(--text-3); }

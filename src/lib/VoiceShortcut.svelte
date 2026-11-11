@@ -85,8 +85,8 @@
 <!-- Leaving the window ends recording, so the shortcut never stays switched off. -->
 <svelte:window {onkeydown} onblur={() => record(null)} />
 
-<section class="group" aria-labelledby="voice-h">
-  <h2 id="voice-h" class="sr">Voice typing</h2>
+<section aria-labelledby="voice-h">
+  <h2 id="voice-h" class="sr-only">Voice typing</h2>
   <ul class="list">
     <li class="row">
       <span><label class="name" for="voice-on">Use voice typing</label><span class="desc">Hold a key, talk, and let go. Your words appear wherever you’re typing.</span></span>
@@ -97,7 +97,7 @@
 </section>
 
 {#if voice.on}
-  <section class="group" aria-labelledby="hk-h">
+  <section aria-labelledby="hk-h">
     <h2 id="hk-h">Shortcuts</h2>
     <ul class="list">
       <li class="row">
@@ -108,7 +108,7 @@
         <span><span class="name">Dictate with cleanup</span>
           <span class="desc">
             {#if recording === "clean" || recording === "clean2"}Press the key or keys you want to use. Esc cancels.
-            {:else if !fast}Fixes punctuation, grammar slips and self-corrections with AI before adding your words.<br /><span class="need">Needs an Endpoint</span> Set a Fast model on AI provider first.
+            {:else if !fast}Fixes punctuation, grammar slips and self-corrections with AI before adding your words.<br /><span class="pill need">Needs an Endpoint</span> Set a Fast model on AI provider first.
             {:else}Fixes punctuation, grammar slips and self-corrections before adding your words. If that takes over 3 s, they go in as they are.
               <span class="fast"><span class="model">{fast.provider?.name ?? "Unknown provider"} · <code>{fast.route.model}</code></span><HostPill off={fast.provider?.off_device ?? true} /></span>{/if}
           </span></span>
@@ -147,7 +147,7 @@
       {#if key}<span class="keys" aria-label="Current shortcut: {spoken(key)}">{#each keycaps(key) as k}<kbd>{k}</kbd>{/each}</span>
       {:else}<span class="keys" aria-label="No shortcut"><kbd class="empty">—</kbd></span>{/if}
       <button class="btn" bind:this={btns[which]} onclick={() => record(which)}>{key ? "Change" : "Set shortcut"}</button>
-      {#if key && which !== "key"}<button class="btn plain icon" title="Remove" onclick={() => remove(which)} aria-label="Remove the {which.endsWith('2') ? 'second ' : ''}{LABEL[which]} shortcut"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" /></svg></button>{/if}
+      {#if key && which !== "key"}<button class="btn quiet icon" title="Remove" onclick={() => remove(which)} aria-label="Remove the {which.endsWith('2') ? 'second ' : ''}{LABEL[which]} shortcut"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" /></svg></button>{/if}
     {/if}
   </span>
 {/snippet}
@@ -155,12 +155,11 @@
 <!-- The optional second key: "Add another key" until one is set. -->
 {#snippet second(which: "key2" | "clean2")}
   {#if voice[which] || recording === which}{@render recorder(which)}
-  {:else}<span class="hk"><button class="btn plain" bind:this={btns[which]} onclick={() => record(which)}>Add another key</button></span>{/if}
+  {:else}<span class="hk"><button class="btn quiet" bind:this={btns[which]} onclick={() => record(which)}>Add another key</button></span>{/if}
 {/snippet}
 
 <style>
   .two { display: flex; flex-direction: column; align-items: flex-end; gap: var(--sp-2); }
-  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   .hk { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); min-width: 180px; }
   .keys { display: inline-flex; gap: var(--sp-1); }
   kbd.empty { color: var(--text-3); }
@@ -169,12 +168,10 @@
   .model { font-size: var(--fs-footnote); line-height: var(--lh-footnote); color: var(--text-3); }
   .model code { font: 12px var(--font-mono); }
   .fast :global(.pill) { margin: 0; }
-  .need { display: inline-flex; align-items: center; height: 20px; margin-top: var(--sp-1); padding: 0 var(--sp-2); border-radius: var(--r-full); background: var(--fill-hover); color: var(--text-2); font-size: var(--fs-caption); font-weight: var(--fw-medium); }
+  .need { margin-top: var(--sp-1); }
   .desc :global(.pill) { margin-top: var(--sp-1); }
   kbd { min-width: 26px; height: 26px; padding: 0 var(--sp-2); box-sizing: border-box; display: inline-grid; place-items: center;
     border-radius: var(--r-md); background: var(--fill-field); box-shadow: inset 0 0 0 .5px var(--line-strong); font: inherit; }
-  .btn.icon { width: var(--h-ctl); padding: 0; }
   .ic { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; }
-  .btn.plain { background: none; box-shadow: none; color: var(--text-2); }
   .btn.live { min-width: 150px; color: var(--accent-text); box-shadow: inset 0 0 0 2px var(--accent); }
 </style>

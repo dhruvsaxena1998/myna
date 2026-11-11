@@ -22,7 +22,7 @@
   }
 </script>
 
-<section class="group" aria-labelledby="pill-h">
+<section aria-labelledby="pill-h">
   <h2 id="pill-h">Pill</h2>
   <p class="help">Shows while you talk, then what happened. It never takes the cursor from the app you're typing in.</p>
   <ul class="list">
@@ -40,7 +40,7 @@
     </li>
     <!-- A small screen with the pill where it will show; fixed height so switching styles never moves the page. -->
     <li class="stage {look.place}" aria-label="Preview: {STYLES.find(([v]) => v === look.style)?.[1]} pill, {PLACES.find(([v]) => v === look.place)?.[1]}" role="img">
-      <span class="pill" aria-hidden="true"><Pill style={look.style} pill={listening} {wave} secs={4} /></span>
+      <span class="at" aria-hidden="true"><Pill style={look.style} pill={listening} {wave} secs={4} /></span>
     </li>
   </ul>
   <p class="err" role="status">{error}</p>
@@ -50,9 +50,9 @@
   .list { overflow: hidden; } /* the preview stage keeps the list's corners */
   /* The preview screen: a desktop-ish wash so the dark pill reads in both themes. */
   .stage { position: relative; height: 150px; display: flex; background: var(--stage-desk); }
-  .pill { position: absolute; }
-  .bottom .pill { bottom: var(--sp-4); left: 50%; translate: -50% 0; }
-  .top .pill { top: var(--sp-3); left: 50%; translate: -50% 0; }
-  .bottom-right .pill { bottom: var(--sp-4); right: var(--sp-4); }
-  .top-right .pill { top: var(--sp-3); right: var(--sp-4); }
+  .at { position: absolute; }
+  .bottom .at { bottom: var(--sp-4); left: 50%; translate: -50% 0; }
+  .top .at { top: var(--sp-3); left: 50%; translate: -50% 0; }
+  .bottom-right .at { bottom: var(--sp-4); right: var(--sp-4); }
+  .top-right .at { top: var(--sp-3); right: var(--sp-4); }
 </style>

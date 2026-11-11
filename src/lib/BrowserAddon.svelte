@@ -45,7 +45,7 @@
     });
 </script>
 
-<section class="group" aria-labelledby="addon-h">
+<section aria-labelledby="addon-h">
   <h2 id="addon-h">Browser add-on</h2>
   <ul class="list">
     <li class="row">
@@ -76,6 +76,5 @@
 
 <style>
   .steps { margin: 0; padding-left: 1.2em; font: var(--text-sm, 13px/1.4 inherit); }
-  .mono { font: 12px/var(--lh-body) var(--font-mono); overflow-wrap: anywhere; }
   .code { display: flex; align-items: center; gap: 10px; }
 </style>
