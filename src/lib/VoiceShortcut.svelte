@@ -8,83 +8,52 @@
 
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import { listen } from "@tauri-apps/api/event";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { onMount, tick } from "svelte";
+  import { onMount } from "svelte";
   import Permissions, { type Perms } from "./Permissions.svelte";
   import type { Ai } from "./AiProviders.svelte";
-  import { fromKey, keycaps, spoken } from "./shortcut";
+  import { clash } from "./shortcut";
+  import { PRESS, Recorder } from "./recorder.svelte";
+  import ShortcutButton from "./ShortcutButton.svelte";
 
   // `globe`: the 🌐 key is set to Do Nothing, so fn only starts voice typing.
   // `ai`: the Fast model, which Dictate with cleanup needs; `setup` opens the AI providers page.
-  let { voice = $bindable(), globe: initial, ai, perms, setup }: { voice: Voice; globe: boolean; ai: Ai | null; perms: Perms; setup: () => void } = $props();
+  // `meetKey`: Meeting notes' shortcut, which no voice typing key can match.
+  let { voice = $bindable(), globe: initial, ai, perms, setup, meetKey }: { voice: Voice; globe: boolean; ai: Ai | null; perms: Perms; setup: () => void; meetKey: string } = $props();
   const fast = $derived(!!ai?.fast && !ai.fast.gone);
   const LABEL: Record<Which, string> = { key: "Dictate", key2: "Dictate", clean: "Dictate with cleanup", clean2: "Dictate with cleanup" };
   const WHICH: Which[] = ["key", "key2", "clean", "clean2"];
   let globe = $derived(initial); // assignable: refreshed on focus
   onMount(() => {
-    // The browser never sees fn; the backend tells us when it’s let go while recording.
-    const offFn = listen("voice-fn", () => recording && pick("Fn"));
     // Changed in System Settings, then back to Myna.
     const offFocus = getCurrentWindow().onFocusChanged(async ({ payload }) => payload && (globe = await invoke<boolean>("globe_ok")));
-    return () => [offFn, offFocus].forEach((off) => void off.then((f) => f()));
+    return () => void offFocus.then((f) => f());
   });
-  let recording = $state<Which | null>(null);
-  let error = $state("");
-  const btns = $state<Partial<Record<Which, HTMLButtonElement>>>({});
-  const PRESS = "Press the key or keys you want to use. Esc cancels.";
+  const rec = new Recorder<Which>({
+    fn: true,
+    save: (which, key) => save({ ...voice, [which]: key }),
+    check: (which, key) => clash(key, [...WHICH.filter((w) => w !== which).map((w): [string, string | null | undefined] => [LABEL[w], voice[w]]), ["Recording", meetKey]]),
+  });
+  const recording = $derived(rec.recording);
 
   async function save(next: Voice) {
     const was = voice;
     voice = next;
-    error = "";
+    rec.error = "";
     try {
       await invoke("voice_set", { voice: next });
     } catch (err) {
       voice = was;
-      error = String(err);
+      rec.error = String(err);
     }
   }
 
   // Removing the first cleanup key moves the second one up, so the first is always the one set.
   const remove = (which: Which) => save(which === "clean" ? { ...voice, clean: voice.clean2 ?? null, clean2: null } : { ...voice, [which]: null });
-
-  async function record(which: Which | null) {
-    if (recording === which) return;
-    const was = recording;
-    recording = which;
-    error = "";
-    await tick();
-    btns[which ?? was!]?.focus();
-    // While recording, the old shortcuts must reach this page instead of starting voice typing.
-    if ((was === null) !== (which === null)) await invoke("voice_pause", { paused: which !== null }).catch((err) => (error = String(err)));
-  }
-
-  function onkeydown(e: KeyboardEvent) {
-    if (!recording) return;
-    e.preventDefault();
-    if (e.key === "Escape") return void record(null);
-    const key = fromKey(e);
-    if (key === null) return;
-    if (typeof key === "object") return void (error = key.error);
-    pick(key);
-  }
-
-  function pick(key: string) {
-    const which = recording!;
-    recording = null;
-    const other = WHICH.find((w) => w !== which && voice[w] === key);
-    if (other) {
-      error = `${spoken(key)} is already the ${LABEL[other]} shortcut. Pick another key.`;
-      invoke("voice_pause", { paused: false }).catch(() => {});
-      return void tick().then(() => btns[which]?.focus());
-    }
-    save({ ...voice, [which]: key }).then(() => btns[which]?.focus());
-  }
 </script>
 
 <!-- Leaving the window ends recording, so the shortcut never stays switched off. -->
-<svelte:window {onkeydown} onblur={() => record(null)} />
+<svelte:window onkeydown={rec.onkeydown} onblur={() => rec.record(null)} />
 
 <section aria-labelledby="voice-h">
   <h2 id="voice-h" class="sr-only">Voice typing</h2>
@@ -95,7 +64,7 @@
     </li>
     {#if voice.on}<Permissions initial={perms} kinds={["mic"]} rows />{/if}
   </ul>
-  {#if !voice.on}<p class="err" role="status">{error}</p>{/if}
+  {#if !voice.on}<p class="err" role="status">{rec.error}</p>{/if}
 </section>
 
 {#if voice.on}
@@ -135,7 +104,7 @@
         <input id="voice-sounds" type="checkbox" role="switch" class="switch" checked={voice.sounds ?? true} onchange={(e) => save({ ...voice, sounds: e.currentTarget.checked })} />
       </li>
     </ul>
-    <p class="err" role="status">{error}</p>
+    <p class="err" role="status">{rec.error}</p>
   </section>
 {/if}
 
@@ -144,30 +113,17 @@
 
 <!-- The keycaps sit inside the button, so one control shows the key and changes it. -->
 {#snippet recorder(which: Which)}
-  {@const key = voice[which]}
-  {@const nth = which.endsWith("2") ? "second " : ""}
-  <button class="btn" class:rec={recording === which} bind:this={btns[which]} aria-live={recording === which ? "polite" : undefined}
-    aria-label={recording === which ? undefined : key ? `${nth}${LABEL[which]} shortcut: ${spoken(key)}` : `Set the ${nth}${LABEL[which]} shortcut`}
-    onclick={() => record(recording === which ? null : which)}>
-    {#if recording === which}Press keys…
-    {:else if key}<span class="keys">{#each keycaps(key) as k}<kbd>{k}</kbd>{/each}</span>
-    {:else}Set key{/if}
-  </button>
+  <ShortcutButton id="rec-{which}" name="{which.endsWith("2") ? "second " : ""}{LABEL[which]} shortcut" key={voice[which]} recording={recording === which} onclick={() => rec.record(recording === which ? null : which)} />
 {/snippet}
 
 <!-- The optional second key: a quiet + until one is set, then its own recorder and a quiet ×. The slot at the right never changes size. -->
 {#snippet second(which: "key2" | "clean2")}
   {#if voice[which] || recording === which}
     {@render recorder(which)}
-    <button class="btn quiet icon" title="Remove" aria-label={voice[which] ? `Remove the second ${LABEL[which]} shortcut` : "Cancel"} onclick={() => (voice[which] ? remove(which) : record(null))}>{@render x()}</button>
+    <button class="btn quiet icon" title="Remove" aria-label={voice[which] ? `Remove the second ${LABEL[which]} shortcut` : "Cancel"} onclick={() => (voice[which] ? remove(which) : rec.record(null))}>{@render x()}</button>
   {:else}
-    <button class="btn quiet icon" title="Add another key" aria-label="Add another key" disabled={which === "clean2" && !voice.clean} onclick={() => record(which)}>
+    <button class="btn quiet icon" title="Add another key" aria-label="Add another key" disabled={which === "clean2" && !voice.clean} onclick={() => rec.record(which)}>
       <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
     </button>
   {/if}
 {/snippet}
-
-<style>
-  /* Recording: the focus ring sits inside the button, so it never changes its size. */
-  .btn.rec { box-shadow: inset 0 0 0 2px var(--focus-ring); color: var(--text-2); }
-</style>

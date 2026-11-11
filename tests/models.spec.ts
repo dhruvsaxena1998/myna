@@ -12,7 +12,7 @@ const tasks = JSON.stringify([
   { id: "diar", active: "sortformer", models: [model("who", { default: true, min_macos: 15, needs: "Needs macOS 15" }), model("sortformer")] },
 ]);
 
-// Understand › All models: the speech-to-text list's drill-in. Voices (diarization) stay on Meeting notes until 18.8.
+// Understand › All models: the speech-to-text list's drill-in. Speaker diarization has its own drill-in on Meeting notes (toVoices).
 async function toModels(page: import("@playwright/test").Page) {
   await page.getByRole("option", { name: "Understand" }).click();
   await page.getByRole("button", { name: "All models" }).click();
@@ -20,10 +20,11 @@ async function toModels(page: import("@playwright/test").Page) {
 
 async function toVoices(page: import("@playwright/test").Page) {
   await page.getByRole("option", { name: "Meeting notes" }).click();
+  await page.getByRole("listitem").filter({ hasText: "Speaker diarization" }).getByRole("button", { name: "All models" }).click();
 }
 
 async function open(page: import("@playwright/test").Page, select = "() => null", extra = "") {
-  await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", models_list: () => (${tasks}), model_select: ${select}, ${extra} }`);
+  await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", models_list: () => (${tasks}), model_select: ${select}, meeting_get: () => ({ on: true, key: "Ctrl+Alt+KeyM", keep_teams: false }), ${extra} }`);
   await page.goto("/settings");
   await toModels(page);
 }
@@ -61,7 +62,7 @@ test("models that need macOS 15 can't be picked", async ({ page }) => {
   await expect(page.getByText("Needs macOS 15")).toHaveCount(1);
   await toVoices(page);
   await expect(page.getByRole("radio", { name: /who/ })).toBeDisabled();
-  await expect(page.getByRole("radiogroup", { name: "Telling voices apart model" }).getByRole("radio", { name: /sortformer/ })).toBeChecked();
+  await expect(page.getByRole("radiogroup", { name: "Speaker diarization model" }).getByRole("radio", { name: /sortformer/ })).toBeChecked();
   await expect(page.getByText("Needs macOS 15")).toHaveCount(1);
 });
 
@@ -298,10 +299,19 @@ test("the no-match line is reserved: it takes its height before any search", asy
   expect(await none.boundingBox()).toEqual({ ...before, y: before.y - 4 * 60 }); // only the four hidden rows moved it
 });
 
+test("the speaker diarization list is short, so it has no search, and says what it does", async ({ page }) => {
+  await open(page);
+  await toVoices(page);
+  await expect(page.getByRole("heading", { name: "Speaker diarization", level: 1 })).toBeVisible();
+  await expect(page.getByRole("searchbox")).toHaveCount(0);
+  await expect(page.getByText("Works out who said what. Runs on this Mac. Your own voice is always “Me”.")).toBeVisible();
+  await expect(page.getByRole("radio")).toHaveCount(2);
+});
+
 test("a task on Meeting notes shows the vendor after the name, with a space", async ({ page }) => {
   await open(page);
   await toVoices(page);
-  await expect(page.getByRole("radiogroup", { name: "Telling voices apart model" }).getByText("who Vendor")).toBeVisible();
+  await expect(page.getByRole("radiogroup", { name: "Speaker diarization model" }).getByText("who Vendor")).toBeVisible();
 });
 
 test("Understand says which model is picked, with its state, and opens the list from anywhere on the row", async ({ page }) => {

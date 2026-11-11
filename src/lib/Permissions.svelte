@@ -37,7 +37,7 @@
     [
       { kind: "mic" as const, title: "Microphone", desc: "So Myna can hear you.", ok: perms.mic === "allowed", popup: perms.mic === "ask" },
       { kind: "ax" as const, title: "Accessibility", desc: perms.ax ? "So Myna can put your words into your app." : "Switch Myna on in System Settings, then come back.", ok: perms.ax, popup: false },
-      { kind: "audio" as const, title: "Screen & System Audio Recording", desc: "So Myna can hear the other people on a call.", ok: perms.audio === "allowed", popup: perms.audio === "ask" },
+      { kind: "audio" as const, title: "Screen & System Audio Recording", desc: perms.audio === "unknown" ? "Myna can’t check this one. Your Mac asks the first time you record a meeting." : "So Myna can hear the other people on a call.", ok: perms.audio === "allowed", popup: perms.audio === "ask" },
     ].filter((r) => kinds.includes(r.kind)),
   );
 </script>
@@ -45,7 +45,7 @@
 {#snippet list()}
   {#each items as r (r.kind)}
     <li class="row">
-      <span><span class="name">{r.title}</span><span class="desc" title={r.desc}>{r.desc}</span>{#if r.kind === "ax" && back && !r.ok}<span class="desc">Still asking? Remove Myna from the list with −, then open System Settings again.</span>{/if}{#if r.kind === "audio" && perms.audio === "unknown"}<span class="desc">Myna can’t check this one. Your Mac asks the first time you record a meeting.</span>{/if}</span>
+      <span><span class="name">{r.title}</span><span class="desc" title={r.desc}>{r.desc}</span>{#if r.kind === "ax" && back && !r.ok}<span class="desc">Still asking? Remove Myna from the list with −, then open System Settings again.</span>{/if}</span>
       <!-- Fixed width so Allowed and the buttons swap without moving the text. -->
       <span class="state">
         {#if r.ok}

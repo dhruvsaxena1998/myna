@@ -1,4 +1,4 @@
-// Download state lives here, not in ModelTask, so it survives switching Settings pages (the component unmounts).
+// Download state lives here, not in a component, so it survives switching Settings pages (the component unmounts).
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 

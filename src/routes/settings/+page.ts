@@ -46,6 +46,13 @@ export async function load() {
         (err) => ({ ok: false as const, error: String(err) }),
       )
     : null;
+  // The browser add-on's state, so Meeting notes' Status and code are right on the first frame.
+  const addon = storage.ok
+    ? await invoke<{ connected: boolean; code: string }>("addon_get").then(
+        (addon) => ({ ok: true as const, addon }),
+        (err) => ({ ok: false as const, error: String(err) }),
+      )
+    : null;
   const rules = storage.ok
     ? await invoke<Rules>("rules_get").then(
         (rules) => ({ ok: true as const, rules }),
@@ -73,5 +80,5 @@ export async function load() {
         (err) => ({ ok: false as const, error: String(err) }),
       )
     : null;
-  return { storage, version, models, perms, globe, look, voice, notes, rules, fixes, ai, cleanup, spell, updates };
+  return { storage, version, models, perms, globe, look, voice, notes, addon, rules, fixes, ai, cleanup, spell, updates };
 }

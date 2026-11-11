@@ -442,16 +442,19 @@ fn voice_set(app: AppHandle, d: tauri::State<Data>, voice: voice::Voice) -> Resu
     if let Err(e) = sync_shortcut(&app) {
         voice::set(&d.db.lock().unwrap(), &was)?;
         let _ = sync_shortcut(&app);
+        let _ = sync_meeting(&app);
         return Err(e);
     }
+    let _ = sync_meeting(&app); // unpaused: meeting notes take their shortcut back; its own page reports a failure
     Ok(())
 }
 
-/// Lets go of the shortcut while Settings records a new one, and takes it back after.
+/// Lets go of every shortcut (voice typing's and meeting notes') while Settings records a new one, and takes them back after.
 #[tauri::command]
 fn voice_pause(app: AppHandle, d: tauri::State<Data>, paused: bool) -> Result<(), String> {
     d.paused.store(paused, Ordering::SeqCst);
-    sync_shortcut(&app)
+    let voice = sync_shortcut(&app);
+    sync_meeting(&app).and(voice)
 }
 
 #[tauri::command]
@@ -465,11 +468,14 @@ fn meeting_get(d: tauri::State<Data>) -> Result<meeting::Notes, String> {
 async fn meeting_set(app: AppHandle, d: tauri::State<'_, Data>, notes: meeting::Notes) -> Result<(), String> {
     let was = meeting::get(&d.db.lock().unwrap())?;
     meeting::set(&d.db.lock().unwrap(), &notes)?;
+    d.paused.store(false, Ordering::SeqCst); // a recorder saving its pick is done recording
     if let Err(e) = sync_meeting(&app) {
         meeting::set(&d.db.lock().unwrap(), &was)?;
         let _ = sync_meeting(&app);
+        let _ = sync_shortcut(&app);
         return Err(e);
     }
+    let _ = sync_shortcut(&app); // unpaused: voice typing takes its shortcuts back; Listen reports a failure
     if !notes.on {
         stop_meeting(&app);
     }
@@ -745,11 +751,16 @@ fn sync_shortcut(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// The shortcut to register: none while off, empty, or paused for a recorder in Settings.
+fn meeting_want(n: &meeting::Notes, paused: bool) -> Option<String> {
+    (n.on && !n.key.is_empty() && !paused).then(|| n.key.clone())
+}
+
 /// Registers the meeting notes shortcut while they're on, and sets the menu item and its note to match.
 fn sync_meeting(app: &AppHandle) -> Result<(), String> {
     let d = app.state::<Data>();
     let n = meeting::get(&d.db.lock().unwrap())?;
-    let want = (n.on && !n.key.is_empty()).then(|| n.key.clone());
+    let want = meeting_want(&n, d.paused.load(Ordering::SeqCst));
     let mut have = d.meeting_shortcut.lock().unwrap();
     if *have != want {
         let gs = app.global_shortcut();
@@ -1194,4 +1205,17 @@ pub fn run() {
                 open_main(app);
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_meeting_shortcut_is_let_go_while_a_recorder_listens() {
+        let n = |on, key: &str| meeting::Notes { on, key: key.into(), keep_teams: false };
+        assert_eq!(meeting_want(&n(true, "Alt+Space"), false), Some("Alt+Space".into()));
+        assert_eq!(meeting_want(&n(true, "Alt+Space"), true), None);
+        assert_eq!((meeting_want(&n(false, "Alt+Space"), false), meeting_want(&n(true, ""), false)), (None, None));
+    }
 }

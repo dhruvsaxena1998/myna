@@ -5,7 +5,6 @@
   import ErrorState from "$lib/ErrorState.svelte";
   import { glassOn, syncGlass } from "$lib/look";
   import ModelList from "$lib/ModelList.svelte";
-  import ModelTask from "$lib/ModelTask.svelte";
   import UnloadAfter from "$lib/UnloadAfter.svelte";
   import Experimental from "$lib/Experimental.svelte";
   import Look from "$lib/Look.svelte";
@@ -19,6 +18,7 @@
   import StagePath from "$lib/StagePath.svelte";
   import type { Ai } from "$lib/AiProviders.svelte";
   import { invoke } from "@tauri-apps/api/core";
+  import { listen } from "@tauri-apps/api/event";
   import { onMount, tick } from "svelte";
   import { dl, startDownload, watchDownloads } from "$lib/downloads.svelte";
   import { fmtSize, type Model, type Task } from "$lib/models";
@@ -47,6 +47,7 @@
   const SUBS: Record<string, { parent: PageId; title: string }> = {
     models: { parent: "understand", title: "Speech-to-text · Voice typing" },
     mmodels: { parent: "meetings", title: "Speech-to-text · Meeting notes" },
+    diar: { parent: "meetings", title: "Speaker diarization" },
     remember: { parent: "understand", title: "Custom vocabulary" },
     keep: { parent: "understand", title: "Filler exceptions" },
     styles: { parent: "write", title: "Cleanup styles" },
@@ -79,6 +80,16 @@
       const other = t.find((x) => x.id === (from === "stt" ? "meeting_stt" : "stt"));
       if (other) from === "stt" ? (meetActive = other.active) : (sttActive = other.active);
     }, () => {});
+  // The speaker diarization models, picked in their own drill-in.
+  const diar = $derived(data.models?.ok ? data.models.tasks.find((t) => t.id === "diar") : null);
+  let diarActive = $derived(diar?.active ?? null); // assignable
+  // The browser add-on, kept here so it is current when Meeting notes is opened again; it can connect while another page shows.
+  let addonOn = $derived(data.addon?.ok ? data.addon.addon.connected : false); // assignable
+  let addonCode = $derived(data.addon?.ok ? data.addon.addon.code : ""); // assignable
+  onMount(() => {
+    const off = listen<boolean>("addon-status", (e) => (addonOn = e.payload));
+    return () => void off.then((f) => f());
+  });
   onMount(watchDownloads);
   const installed = (m: Model) => dl.installed[m.id] ?? m.installed;
   const modelState = (m: Model) => `${m.name} · ${installed(m) ? (m.system ? "Built in" : `Installed · ${fmtSize(m.size)}`) : m.id in dl.pct ? `Downloading ${dl.pct[m.id]}%` : `Not downloaded${m.system ? "" : ` · ${fmtSize(m.size)}`}`}`;
@@ -202,6 +213,8 @@
             {#if stt}<ModelList task={stt} label="Speech-to-text model" help="Used for voice typing. Downloads are shared with meeting notes." bind:active={sttActive} onchange={() => reloadPicks("stt")} />{/if}
           {:else if view.sub === "mmodels"}
             {#if meet}<ModelList task={meet} label="Meeting notes speech-to-text model" help="Used for meeting notes. Downloads are shared with voice typing." bind:active={meetActive} onchange={() => reloadPicks("meeting_stt")} />{/if}
+          {:else if view.sub === "diar"}
+            {#if diar}<ModelList task={diar} label="Speaker diarization model" help="Works out who said what. Runs on this Mac. Your own voice is always “Me”." search={false} bind:active={diarActive} />{/if}
           {:else if view.sub === "remember" || view.sub === "keep"}
             {#if rules}<Words bind:rules part={view.sub} />
             {:else}<ErrorState title="Myna couldn't read your words" message={data.rules?.ok === false ? data.rules.error : ""} />{/if}
@@ -212,7 +225,7 @@
             {#if !voice}
               <ErrorState title="Myna couldn't read voice typing's settings" message={data.voice?.ok === false ? data.voice.error : ""} />
             {:else}
-              <VoiceShortcut bind:voice globe={data.globe} {ai} perms={data.perms} setup={() => go("ai")} />
+              <VoiceShortcut bind:voice globe={data.globe} {ai} perms={data.perms} setup={() => go("ai")} meetKey={notes?.key ?? ""} />
               {#if voice.on}
                 {#if data.look?.ok}<PillLook initial={data.look.look} listening={{ state: "listening", hold: voice.mode === "hold", key: voice.key }} />
                 {:else}<ErrorState title="Myna couldn't read the pill's look" message={data.look?.error ?? ""} />{/if}
@@ -261,24 +274,36 @@
               <Write bind:voice {ai} {cleanup} perms={data.perms} {go} {open} />
             {/if}
           {:else if view.page === "meetings"}
-            {#if notes}<MeetingNotes bind:notes perms={data.perms} />
+            {#if notes}<MeetingNotes bind:notes {voice} perms={data.perms} bind:connected={addonOn} bind:code={addonCode} loadError={data.addon?.ok === false ? data.addon.error : ""}>
+              {#snippet models()}
+                {#if meet || diar}
+                  {@const pick = meet?.models.find((m) => m.id === meetActive)}
+                  {@const state = pick ? modelState(pick) : "Not set"}
+                  {@const dpick = diar?.models.find((m) => m.id === diarActive)}
+                  {@const ddesc = dpick && !installed(dpick) ? (dpick.id in dl.pct ? `Downloading ${dl.pct[dpick.id]}%` : `Not downloaded · ${fmtSize(dpick.size)}`) : "Works out who said what. Runs on this Mac."}
+                  <section aria-labelledby="mstt-h">
+                    <h2 id="mstt-h">Models</h2>
+                    <ul class="list">
+                      {#if meet}
+                        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions (the button inside takes the keys) -->
+                        <li class="row go" onclick={() => open("mmodels")}>
+                          <span><span class="name">Speech-to-text model</span><span class="desc" title={state}>{state}</span></span>
+                          <span class="end"><button class="btn" onclick={(e) => { e.stopPropagation(); open("mmodels"); }}>All models</button></span>
+                        </li>
+                      {/if}
+                      {#if diar}
+                        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions (the button inside takes the keys) -->
+                        <li class="row go" onclick={() => open("diar")}>
+                          <span><span class="name withmeta"><span>Speaker diarization</span>{#if dpick}<span class="meta">{dpick.name}</span>{/if}</span><span class="desc" title={ddesc}>{ddesc}</span></span>
+                          <span class="end"><button class="btn" onclick={(e) => { e.stopPropagation(); open("diar"); }}>All models</button></span>
+                        </li>
+                      {/if}
+                    </ul>
+                  </section>
+                {/if}
+              {/snippet}
+            </MeetingNotes>
             {:else}<ErrorState title="Myna couldn't read meeting notes' settings" message={data.notes?.ok === false ? data.notes.error : ""} />{/if}
-            <!-- Interim: until 18.8 rebuilds the page, its models sit here, whether notes are on or off. -->
-            {#if meet}
-              {@const pick = meet.models.find((m) => m.id === meetActive)}
-              {@const state = pick ? modelState(pick) : "Not set"}
-              <section aria-labelledby="mstt-h">
-                <h2 id="mstt-h">Models</h2>
-                <ul class="list">
-                  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions (the button inside takes the keys) -->
-                  <li class="row go" onclick={() => open("mmodels")}>
-                    <span><span class="name">Speech-to-text model</span><span class="desc" title={state}>{state}</span></span>
-                    <span class="end"><button class="btn" onclick={(e) => { e.stopPropagation(); open("mmodels"); }}>All models</button></span>
-                  </li>
-                </ul>
-              </section>
-            {/if}
-            {#if data.models?.ok && data.models.tasks[1]}<ModelTask task={data.models.tasks[1]} title="Telling voices apart" help="Works out who said what. Always runs on this Mac. Your own voice is always “Me”." />{/if}
           {:else if view.page === "general"}
             {#if look}<Look bind:look />
             {:else}<ErrorState title="Myna couldn't read its look" message={data.appearance.ok ? "" : data.appearance.error} />{/if}
@@ -344,6 +369,7 @@
   .empty b { font-weight: var(--fw-semibold); }
   .empty p { margin: 0 0 var(--sp-2); color: var(--text-2); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
   .meta { font-size: var(--fs-footnote); color: var(--text-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .withmeta { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; }
   .meta.bad { color: var(--danger-text); }
   @container settings (max-width: 480px) { .content { padding: 0 var(--sp-4) var(--sp-6); } }
 </style>

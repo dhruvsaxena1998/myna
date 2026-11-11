@@ -7,8 +7,8 @@
   import { cancelDownload, dl, startDownload, watchDownloads } from "$lib/downloads.svelte";
   import { fuzzy } from "$lib/fuzzy";
 
-  // `onchange`: after a pick or a removal, which can change the other speech-to-text task's pick too.
-  let { task, label, help, active = $bindable(), onchange }: { task: Task; label: string; help: string; active: string | null; onchange?: () => void } = $props();
+  // `search`: false for a short list, like the diarization models. `onchange`: after a pick or a removal, which can change the other speech-to-text task's pick too.
+  let { task, label, help, active = $bindable(), onchange, search = true }: { task: Task; label: string; help: string; active: string | null; onchange?: () => void; search?: boolean } = $props();
 
   let error = $state("");
   let q = $state("");
@@ -51,11 +51,11 @@
   }
 </script>
 
-<label class="search">
+{#if search}<label class="search">
   <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" /><path d="M16 16l4.5 4.5" /></svg>
   <input bind:value={q} type="search" placeholder="Search models" aria-label="Search models" autocomplete="off" spellcheck="false"
     onkeydown={(e) => { if (e.key === "Escape" && q) { e.preventDefault(); q = ""; } }} />
-</label>
+</label>{/if}
 <section>
   <p class="help">{help}</p>
   <div role="radiogroup" aria-label={label}>
@@ -67,7 +67,7 @@
           <input type="radio" name="model-{task.id}" id="m-{task.id}-{m.id}" value={m.id} aria-label="Use {m.name}" checked={active === m.id}
             disabled={blocked || !installed(m)} onchange={() => pick(m.id)} />
           <span>
-            <span class="name"><span class="title">{m.name}</span><span class="meta">{m.vendor}{m.default ? " · Recommended" : ""}{m.size ? ` · ${fmtSize(m.size)}` : ""}</span></span>
+            <span class="name"><span class="title">{m.name}</span>{" "}<span class="meta">{m.vendor}{m.default ? " · Recommended" : ""}{m.size ? ` · ${fmtSize(m.size)}` : ""}</span></span>
             <span class="desc" class:bad={failed} title={failed || m.desc}>{failed || m.desc}</span>
           </span>
           <!-- Fixed width, so a state change (Download, progress, Installed) never moves the row. Apple's download can't stop, and SDK models can't cancel either. -->
@@ -108,8 +108,6 @@
   /* In a narrow window the vendor line gives way first, so a name is never lost. */
   .title { flex: 0 1 auto; min-width: 6ch; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .meta { flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-footnote); font-weight: var(--fw-regular); color: var(--text-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
-  /* One line at every width: the failed message too (its full text is the title). */
-  .mrow .desc { white-space: nowrap; }
   .mrow .desc.bad { color: var(--danger-text); }
   .mstate { width: 152px; }
   .bar { width: 72px; height: 4px; border-radius: 2px; background: var(--fill-track); overflow: hidden; }

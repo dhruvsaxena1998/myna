@@ -229,6 +229,15 @@ test("Add another key gives each shortcut a second key; one key can't serve twic
   await expect(add).toHaveCount(2);
 });
 
+test("a key Meeting notes already uses is refused, naming it", async ({ page }) => {
+  await open(page); // the fake's Recording shortcut is Ctrl+Alt+KeyM
+  await dictateKey(page).click();
+  await page.keyboard.press("Control+Alt+KeyM");
+  await expect(page.getByText("Control Option M is already the Recording shortcut. Pick another key.")).toBeVisible();
+  expect(await calls(page, "voice_set")).toEqual([]);
+  expect((await calls(page, "voice_pause")).at(-1)).toEqual({ paused: false });
+});
+
 test("a key already used by the other shortcut is refused with the reason", async ({ page }) => {
   await open(page, "Alt+Space", false, { ai: fastOn(OLLAMA, "qwen2.5:7b") });
   await cleanRow(page).getByRole("button", { name: "Set the Dictate with cleanup shortcut" }).click();
