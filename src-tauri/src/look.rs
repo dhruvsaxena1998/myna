@@ -8,7 +8,8 @@ use objc2_app_kit::{
     NSWindowOrderingMode,
 };
 use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize};
-use rusqlite::{Connection, OptionalExtension};
+use crate::storage;
+use rusqlite::Connection;
 use tauri::{AppHandle, Manager};
 
 pub const THEMES: [&str; 3] = ["auto", "light", "dark"];
@@ -58,31 +59,18 @@ pub fn liquid_ok(macos: u32) -> bool {
     macos >= 26
 }
 
-fn read(conn: &Connection, key: &str, choices: &[&str]) -> Result<String, String> {
-    let saved: Option<String> = conn
-        .query_row("SELECT value FROM setting WHERE key = ?1", [key], |r| r.get(0))
-        .optional()
-        .map_err(|e| format!("Couldn't read Myna's look: {e}"))?;
-    Ok(saved.filter(|v| choices.contains(&v.as_str())).unwrap_or(choices[0].into()))
-}
-
-fn saved_frost(conn: &Connection) -> Result<u8, String> {
-    let saved: Option<String> = conn
-        .query_row("SELECT value FROM setting WHERE key = 'look_frost'", [], |r| r.get(0))
-        .optional()
-        .map_err(|e| format!("Couldn't read Myna's look: {e}"))?;
-    Ok(saved.and_then(|v| v.parse().ok()).filter(|v| *v <= 100).unwrap_or_else(default_frost))
-}
-
 pub fn get(conn: &Connection, macos: u32) -> Result<Look, String> {
+    let err = |e| format!("Couldn't read Myna's look: {e}");
+    let read = |key, choices: &[&str]| storage::read_choice(conn, key, choices, choices[0]).map_err(err);
+    let frost = storage::read_text(conn, "look_frost").map_err(err)?.and_then(|v| v.parse().ok()).filter(|v| *v <= 100);
     Ok(Look {
-        theme: read(conn, "look_theme", &THEMES)?,
-        accent: read(conn, "look_accent", &ACCENTS)?,
-        glass: read(conn, "look_glass", &GLASSES)?,
-        liquid: liquid_ok(macos).then(|| read(conn, "look_liquid", &["off", "on"])).transpose()?.map(|v| v == "on"),
-        experimental: read(conn, "experimental", &["off", "on"])? == "on",
-        nerds: read(conn, "exp_nerds", &["off", "on"])? == "on",
-        frost: saved_frost(conn)?,
+        theme: read("look_theme", &THEMES)?,
+        accent: read("look_accent", &ACCENTS)?,
+        glass: read("look_glass", &GLASSES)?,
+        liquid: liquid_ok(macos).then(|| read("look_liquid", &["off", "on"])).transpose()?.map(|v| v == "on"),
+        experimental: read("experimental", &["off", "on"])? == "on",
+        nerds: read("exp_nerds", &["off", "on"])? == "on",
+        frost: frost.unwrap_or_else(default_frost),
     })
 }
 
@@ -100,8 +88,7 @@ pub fn set(conn: &Connection, l: &Look, macos: u32) -> Result<(), String> {
     let (liquid, exp, nerds, frost) = (l.liquid.map(onoff), onoff(l.experimental), onoff(l.nerds), l.frost.to_string());
     let saved = [("look_theme", &l.theme), ("look_accent", &l.accent), ("look_glass", &l.glass), ("experimental", &exp), ("exp_nerds", &nerds), ("look_frost", &frost)];
     for (k, v) in saved.into_iter().chain(liquid.as_ref().map(|v| ("look_liquid", v))) {
-        conn.execute("INSERT INTO setting(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2", [k, v])
-            .map_err(|e| format!("Couldn't save Myna's look: {e}"))?;
+        storage::write_text(conn, k, v).map_err(|e| format!("Couldn't save Myna's look: {e}"))?;
     }
     Ok(())
 }
@@ -276,5 +263,17 @@ mod tests {
         assert!(!get(&conn, 15).unwrap().nerds);
         set(&conn, &Look { nerds: true, ..is("auto", "blue", "clear") }, 15).unwrap();
         assert!(get(&conn, 15).unwrap().nerds);
+    }
+
+    #[test]
+    fn unknown_saved_switches_read_off() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = crate::storage::open(tmp.path()).unwrap();
+        conn.execute_batch("INSERT INTO setting VALUES ('look_liquid', '1'), ('experimental', 'yes'), ('exp_nerds', 'ON')").unwrap();
+        let l = get(&conn, 26).unwrap();
+        assert_eq!((l.liquid, l.experimental, l.nerds), (Some(false), false, false));
+        conn.execute("UPDATE setting SET value = 'lots' WHERE key = 'look_liquid'", []).unwrap();
+        conn.execute("INSERT INTO setting VALUES ('look_frost', 'lots')", []).unwrap();
+        assert_eq!(get(&conn, 26).unwrap().frost, 50);
     }
 }

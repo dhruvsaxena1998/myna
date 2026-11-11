@@ -1,5 +1,6 @@
 //! The bundled catalog of on-device models (models/local.json), what's installed, and the active model per task.
 
+use crate::storage;
 use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -198,10 +199,7 @@ pub const UNLOAD_CHOICES: [i64; 6] = [0, 60, 300, 900, 3600, -1];
 const UNLOAD_DEFAULT: i64 = 300;
 
 pub fn unload_after(conn: &Connection) -> Result<i64, String> {
-    let saved: Option<String> = conn
-        .query_row("SELECT value FROM setting WHERE key = 'stt_unload_secs'", [], |r| r.get(0))
-        .optional()
-        .map_err(|e| format!("Couldn't read when to unload the model: {e}"))?;
+    let saved = storage::read_text(conn, "stt_unload_secs").map_err(|e| format!("Couldn't read when to unload the model: {e}"))?;
     Ok(saved.and_then(|v| v.parse().ok()).filter(|v| UNLOAD_CHOICES.contains(v)).unwrap_or(UNLOAD_DEFAULT))
 }
 
@@ -209,12 +207,7 @@ pub fn set_unload_after(conn: &Connection, secs: i64) -> Result<(), String> {
     if !UNLOAD_CHOICES.contains(&secs) {
         return Err(format!("{secs} s isn't one of the choices."));
     }
-    conn.execute(
-        "INSERT INTO setting(key, value) VALUES ('stt_unload_secs', ?1) ON CONFLICT(key) DO UPDATE SET value = ?1",
-        [secs.to_string()],
-    )
-    .map_err(|e| format!("Couldn't save when to unload the model: {e}"))?;
-    Ok(())
+    storage::write_text(conn, "stt_unload_secs", &secs.to_string()).map_err(|e| format!("Couldn't save when to unload the model: {e}"))
 }
 
 /// Major macOS version, e.g. 15. 0 if unknown, which hides the macOS 15+ models rather than letting them fail later.
@@ -366,5 +359,14 @@ mod tests {
         assert!(!installed(&conn), "partial file");
         f.set_len(1624555275).unwrap(); // sparse, no real disk use
         assert!(installed(&conn));
+    }
+
+    #[test]
+    fn an_unknown_or_non_numeric_unload_time_reads_5_minutes() {
+        let (_tmp, conn) = db();
+        conn.execute("INSERT INTO setting VALUES ('stt_unload_secs', '7')", []).unwrap();
+        assert_eq!(unload_after(&conn), Ok(300));
+        conn.execute("UPDATE setting SET value = 'never' WHERE key = 'stt_unload_secs'", []).unwrap();
+        assert_eq!(unload_after(&conn), Ok(300));
     }
 }

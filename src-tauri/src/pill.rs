@@ -8,7 +8,8 @@ use objc2::ClassType;
 use objc2_app_kit::{NSEvent, NSPanel, NSScreen, NSStatusWindowLevel, NSWindow, NSWindowCollectionBehavior as B, NSWindowStyleMask};
 use std::sync::Mutex;
 use objc2_foundation::{MainThreadMarker, NSPoint};
-use rusqlite::{Connection, OptionalExtension};
+use crate::storage;
+use rusqlite::Connection;
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
 pub const STYLES: [&str; 4] = ["capsule", "orb", "wave", "card"];
@@ -22,16 +23,9 @@ pub struct Look {
     pub place: String,
 }
 
-fn read(conn: &Connection, key: &str, choices: &[&str]) -> Result<String, String> {
-    let saved: Option<String> = conn
-        .query_row("SELECT value FROM setting WHERE key = ?1", [key], |r| r.get(0))
-        .optional()
-        .map_err(|e| format!("Couldn't read the pill's look: {e}"))?;
-    Ok(saved.filter(|v| choices.contains(&v.as_str())).unwrap_or(choices[0].into()))
-}
-
 pub fn look(conn: &Connection) -> Result<Look, String> {
-    Ok(Look { style: read(conn, "pill_style", &STYLES)?, place: read(conn, "pill_place", &PLACES)? })
+    let read = |key, choices: &[&str]| storage::read_choice(conn, key, choices, choices[0]).map_err(|e| format!("Couldn't read the pill's look: {e}"));
+    Ok(Look { style: read("pill_style", &STYLES)?, place: read("pill_place", &PLACES)? })
 }
 
 pub fn set_look(conn: &Connection, style: &str, place: &str) -> Result<(), String> {
@@ -39,8 +33,7 @@ pub fn set_look(conn: &Connection, style: &str, place: &str) -> Result<(), Strin
         return Err(format!("{style} at {place} isn't one of the choices."));
     }
     for (k, v) in [("pill_style", style), ("pill_place", place)] {
-        conn.execute("INSERT INTO setting(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2", [k, v])
-            .map_err(|e| format!("Couldn't save the pill's look: {e}"))?;
+        storage::write_text(conn, k, v).map_err(|e| format!("Couldn't save the pill's look: {e}"))?;
     }
     Ok(())
 }
@@ -192,5 +185,13 @@ mod tests {
         assert!(set_look(&conn, "huge", "top").is_err());
         assert!(set_look(&conn, "orb", "middle").is_err());
         assert_eq!(look(&conn), Ok(is("card", "top-right")));
+    }
+
+    #[test]
+    fn an_unknown_saved_look_falls_back_to_capsule_at_the_bottom() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = crate::storage::open(tmp.path()).unwrap();
+        conn.execute_batch("INSERT INTO setting VALUES ('pill_style', 'blob'), ('pill_place', 'middle')").unwrap();
+        assert_eq!(look(&conn), Ok(Look { style: "capsule".into(), place: "bottom".into() }));
     }
 }
