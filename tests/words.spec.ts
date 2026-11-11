@@ -1,14 +1,14 @@
 import { expect, test, type Page } from "@playwright/test";
-import { fakeTauri } from "./tauri";
+import { fakeTauri, MODELS } from "./tauri";
 
 async function open(page: Page, words: { spelling: string; heard: string | null }[], opts: { tidy?: boolean; fails?: boolean } = {}) {
   await fakeTauri(page, `{
-    storage_status: () => "/tmp/Myna", models_list: () => [],
+    storage_status: () => "/tmp/Myna", models_list: () => ${MODELS},
     rules_get: () => ({ settings: { language: "de", tidy: ${opts.tidy ?? true}, words: ${JSON.stringify(words)}, keep: [] }, languages: [["en", "English"], ["de", "German"]] }),
     rules_set: () => { if (${!!opts.fails}) throw "Couldn't save your words: disk full"; },
   }`);
   await page.goto("/settings");
-  await page.getByRole("option", { name: "Listen" }).click();
+  await page.getByRole("option", { name: "Understand" }).click();
 }
 
 const w = (spelling: string, heard: string | null = null) => ({ spelling, heard });

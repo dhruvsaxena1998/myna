@@ -275,7 +275,8 @@ textarea.input { height: auto; padding: var(--sp-2) var(--sp-3); border-radius: 
    Sections sit 24px apart; a section's reserved error line hangs inside that gap, so every gap is the same. */
 .prefs { display: flex; flex-direction: column; gap: var(--sp-5); container-type: inline-size; }
 .prefs section { margin: 0; }
-.prefs h2 { margin: 0 0 var(--sp-2); font-size: var(--fs-title3); line-height: var(--lh-title3); font-weight: var(--fw-semibold); }
+/* Section heading: a quiet label over its list (docs/settings.html), not a headline. */
+.prefs h2 { margin: 0 0 var(--sp-2); font-size: var(--fs-body); line-height: var(--lh-body); font-weight: var(--fw-semibold); color: var(--text-2); }
 .prefs h2:has(+ .help) { margin-bottom: var(--sp-1); }
 .prefs .help { margin: 0; color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
 .prefs h2 + .help { margin-bottom: var(--sp-3); }
@@ -290,7 +291,7 @@ textarea.input { height: auto; padding: var(--sp-2) var(--sp-3); border-radius: 
 .prefs .list > li:last-child { border-radius: 0 0 var(--r-xl) var(--r-xl); }
 .prefs .list > li:only-child { border-radius: var(--r-xl); }
 /* Row: 60px for one line of description (12 + 18 + 2 + 16 + 12): title, description, trailing control. */
-.prefs .row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-3); align-items: center; min-height: 60px; box-sizing: border-box; padding: var(--sp-3) var(--sp-4); }
+.prefs .row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-3); align-items: center; align-content: center; min-height: 60px; box-sizing: border-box; padding: var(--sp-3) var(--sp-4); }
 .prefs .row > :first-child { min-width: 0; }
 .prefs .name { display: block; font-weight: var(--fw-medium); }
 .prefs .desc { display: block; margin-top: 2px; font-size: var(--fs-footnote); line-height: var(--lh-footnote); color: var(--text-2); }

@@ -10,7 +10,8 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { onMount } from "svelte";
 
-  let { initial, kinds = ["mic", "ax"] }: { initial: Perms; kinds?: Kind[] } = $props();
+  // `rows`: just the `<li>` rows, for a list that already exists (Listen's, under Use voice typing).
+  let { initial, kinds = ["mic", "ax"], rows: bare = false }: { initial: Perms; kinds?: Kind[]; rows?: boolean } = $props();
 
   let perms = $derived(initial); // assignable: refreshed on focus and after asking
   const refresh = async () => (perms = await invoke<Perms>("permissions_state"));
@@ -32,7 +33,7 @@
     await refresh();
   }
 
-  const rows = $derived(
+  const items = $derived(
     [
       { kind: "mic" as const, title: "Microphone", desc: "So Myna can hear you.", ok: perms.mic === "allowed", popup: perms.mic === "ask" },
       { kind: "ax" as const, title: "Accessibility", desc: "So Myna can put your words into the app you’re using.", ok: perms.ax, popup: false },
@@ -41,27 +42,33 @@
   );
 </script>
 
-<section aria-labelledby="perm-h">
-  <h2 id="perm-h">Permissions</h2>
-  <p class="help">Your Mac asks once for each.{#if kinds.includes("ax")} For Accessibility, switch Myna on in System Settings, then come back.{/if}</p>
-  <ul class="list">
-    {#each rows as r (r.kind)}
-      <li class="row">
-        <span><span class="name">{r.title}</span><span class="desc">{r.desc}</span>{#if r.kind === "ax" && back && !r.ok}<span class="desc">Still asking? Remove Myna from the list with −, then open System Settings again.</span>{/if}{#if r.kind === "audio" && perms.audio === "unknown"}<span class="desc">Myna can’t check this one. Your Mac asks the first time you record a meeting.</span>{/if}</span>
-        <!-- Fixed width so Allowed and the buttons swap without moving the text. -->
-        <span class="state">
-          {#if r.ok}
-            <span class="ok"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>Allowed</span>
-          {:else if r.popup}
-            <button class="btn" aria-label="Allow {r.title}" onclick={() => ask(r.kind)}>Allow</button>
-          {:else}
-            <button class="btn" aria-label="Open System Settings for {r.title}" onclick={() => ask(r.kind)}>Open System Settings</button>
-          {/if}
-        </span>
-      </li>
-    {/each}
-  </ul>
-</section>
+{#snippet list()}
+  {#each items as r (r.kind)}
+    <li class="row">
+      <span><span class="name">{r.title}</span><span class="desc" title={r.desc}>{r.desc}</span>{#if r.kind === "ax" && back && !r.ok}<span class="desc">Still asking? Remove Myna from the list with −, then open System Settings again.</span>{/if}{#if r.kind === "audio" && perms.audio === "unknown"}<span class="desc">Myna can’t check this one. Your Mac asks the first time you record a meeting.</span>{/if}</span>
+      <!-- Fixed width so Allowed and the buttons swap without moving the text. -->
+      <span class="state">
+        {#if r.ok}
+          <span class="ok"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>Allowed</span>
+        {:else if r.popup}
+          <button class="btn" aria-label="Allow {r.title}" onclick={() => ask(r.kind)}>Allow</button>
+        {:else}
+          <button class="btn" aria-label="Open System Settings for {r.title}" onclick={() => ask(r.kind)}>Open System Settings</button>
+        {/if}
+      </span>
+    </li>
+  {/each}
+{/snippet}
+
+{#if bare}
+  {@render list()}
+{:else}
+  <section aria-labelledby="perm-h">
+    <h2 id="perm-h">Permissions</h2>
+    <p class="help">Your Mac asks once for each.{#if kinds.includes("ax")} For Accessibility, switch Myna on in System Settings, then come back.{/if}</p>
+    <ul class="list">{@render list()}</ul>
+  </section>
+{/if}
 
 <style>
   .state { display: flex; justify-content: flex-end; align-items: center; min-width: 164px; height: var(--h-ctl); }

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { fakeTauri } from "./tauri";
+import { fakeTauri, MODELS } from "./tauri";
 
 const BASE = "Fix punctuation, capitals and grammar slips.";
 const SHIPPED: Record<string, string> = { default: BASE, code: BASE + " Keep code names.", message: BASE + " Keep it casual.", email: BASE + " Use full sentences." };
@@ -8,11 +8,11 @@ const STYLES = [style("default", "Default", []), style("code", "Code", ["Xcode",
 
 // `voice_set` fails for any shortcut using Ctrl+Alt, like a shortcut another app holds.
 // `__globe` stands for the 🌐 key's setting being Do Nothing.
-async function open(page: Page, key = "Alt+Space", globe = false, extra: { clean?: string | null; ai?: object } = {}) {
+async function open(page: Page, key = "Alt+Space", globe = false, extra: { clean?: string | null; ai?: object; at?: string; on?: boolean } = {}) {
   await page.addInitScript((g) => ((window as any).__globe = g), globe);
   await fakeTauri(page, `{
-    storage_status: () => "/tmp/Myna", models_list: () => [],
-    voice_get: () => ({ on: true, key: "${key}", clean: ${JSON.stringify(extra.clean ?? null)}, mode: "hold", paste: "clipboard" }),
+    storage_status: () => "/tmp/Myna", models_list: () => ${MODELS},
+    voice_get: () => ({ on: ${extra.on ?? true}, key: "${key}", clean: ${JSON.stringify(extra.clean ?? null)}, mode: "hold", paste: "clipboard" }),
     cleanup_get: () => ({ styles: window.__styles ??= ${JSON.stringify(STYLES)}, apps: ["Cursor", "Mail", "Notes", "Slack", "Xcode"] }),
     cleanup_spell: () => "Postgres, Myna",
     cleanup_set: ({ styles }) => {
@@ -25,93 +25,108 @@ async function open(page: Page, key = "Alt+Space", globe = false, extra: { clean
     voice_pause: () => {},
   }`);
   await page.goto("/settings");
-  await page.getByRole("option", { name: "Listen" }).click();
+  await page.getByRole("option", { name: extra.at ?? "Listen" }).click();
 }
+const dictateKey = (page: Page) => page.getByRole("button", { name: /^Dictate shortcut: / });
 const calls = (page: Page, cmd: string) => page.evaluate((c) => (window as any).__calls.filter((x: any) => x[0] === c).map((x: any) => x[1]), cmd);
 
 test("shows the shortcut", async ({ page }) => {
   await open(page);
-  await expect(page.getByLabel("Current shortcut: Option Space")).toHaveText("⌥Space");
+  await expect(page.getByRole("button", { name: "Dictate shortcut: Option Space" })).toHaveText("⌥Space");
 });
 
-test("Change records a new shortcut and saves it; the old one is paused meanwhile", async ({ page }) => {
+test("the recorder shows the keycaps; clicking it records a new shortcut and saves it; the old one is paused meanwhile", async ({ page }) => {
   await open(page);
-  await page.getByRole("button", { name: "Change" }).click();
-  await expect(page.getByRole("button", { name: "Press a key…" })).toBeFocused();
+  await dictateKey(page).click();
+  await expect(dictateKey(page)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Press keys…" })).toBeFocused();
   await expect(page.getByText("Press the key or keys you want to use. Esc cancels.")).toBeVisible();
   await page.keyboard.down("Control");
   await page.keyboard.down("Shift");
   await page.keyboard.press("KeyD");
   await page.keyboard.up("Shift");
   await page.keyboard.up("Control");
-  await expect(page.getByLabel("Current shortcut: Control Shift D")).toHaveText("⌃⇧D");
+  await expect(page.getByRole("button", { name: "Dictate shortcut: Control Shift D" })).toHaveText("⌃⇧D");
   expect(await calls(page, "voice_pause")).toEqual([{ paused: true }]);
   expect(await calls(page, "voice_set")).toEqual([{ voice: { on: true, key: "Ctrl+Shift+KeyD", clean: null, mode: "hold", paste: "clipboard" } }]);
 });
-
 test("Esc cancels and gives the old shortcut back", async ({ page }) => {
   await open(page);
-  await page.getByRole("button", { name: "Change" }).click();
+  await dictateKey(page).click();
   await page.keyboard.press("Escape");
-  await expect(page.getByLabel("Current shortcut: Option Space")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Change" })).toBeFocused();
+  await expect(page.getByRole("button", { name: "Dictate shortcut: Option Space" })).toBeVisible();
+  await expect(dictateKey(page)).toBeFocused();
   expect(await calls(page, "voice_pause")).toEqual([{ paused: true }, { paused: false }]);
   expect(await calls(page, "voice_set")).toEqual([]);
 });
 
 test("a key that types on its own is refused, and recording goes on", async ({ page }) => {
   await open(page);
-  await page.getByRole("button", { name: "Change" }).click();
+  await dictateKey(page).click();
   await page.keyboard.press("KeyD");
   await expect(page.getByText("Add ⌘, ⌥ or ⌃, so the key still types normally.")).toBeVisible();
   await page.keyboard.press("F5");
-  await expect(page.getByLabel("Current shortcut: F5")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Dictate shortcut: F5" })).toBeVisible();
   await expect(page.getByText("Add ⌘")).toBeHidden();
 });
 
 test("a shortcut another app holds says so and keeps the old one", async ({ page }) => {
   await open(page);
-  await page.getByRole("button", { name: "Change" }).click();
+  await dictateKey(page).click();
   await page.keyboard.press("Control+Alt+KeyK");
   await expect(page.getByText("Another app is using that shortcut. Pick a different one.")).toBeVisible();
-  await expect(page.getByLabel("Current shortcut: Option Space")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Dictate shortcut: Option Space" })).toBeVisible();
 });
 
-test("Tap to start and stop saves, says how it stops, and the preview follows", async ({ page }) => {
+test("Tap saves, says how it stops, and the preview follows", async ({ page }) => {
   await open(page);
   await expect(page.getByRole("img", { name: /Preview/ })).toContainText("Release ⌥Space to paste");
-  await page.getByText("Tap to start and stop").click();
-  await expect(page.getByText("Press once to start and again to stop. Stops by itself after 5 minutes.")).toBeVisible();
+  await page.getByRole("radio", { name: "Tap" }).check();
+  await expect(page.getByText("Press to start, again to stop. Stops after 5 minutes. Esc cancels.")).toBeVisible();
   await expect(page.getByRole("img", { name: /Preview/ })).toContainText("Press ⌥Space again to paste");
   expect(await calls(page, "voice_set")).toEqual([{ voice: { on: true, key: "Alt+Space", clean: null, mode: "tap", paste: "clipboard" } }]);
 });
 
-test("turning voice typing off hides its settings; on brings them back", async ({ page }) => {
+test("turning voice typing off leaves only the Use voice typing row; on brings the rest back", async ({ page }) => {
   await open(page);
   const sw = page.getByRole("switch", { name: "Use voice typing" });
+  await expect(page.getByRole("listitem").filter({ hasText: "Microphone" })).toContainText("Allowed");
   await sw.click();
   await expect(sw).not.toBeChecked();
-  for (const h of ["Shortcut", "Pill", "Permissions"]) await expect(page.getByRole("heading", { name: h })).toBeHidden();
+  for (const h of ["Shortcuts", "Pill"]) await expect(page.getByRole("heading", { name: h })).toBeHidden();
+  await expect(page.getByText("Microphone", { exact: true })).toBeHidden();
+  await expect(page.locator(".page .row")).toHaveCount(1);
   await sw.click();
-  await expect(page.getByRole("heading", { name: "Shortcut" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Shortcuts" })).toBeVisible();
+  await expect(page.getByText("Microphone", { exact: true })).toBeVisible();
   expect((await calls(page, "voice_set")).map((c: any) => c.voice.on)).toEqual([false, true]);
+});
+
+test("a failed switch-on keeps the error line under the one row", async ({ page }) => {
+  await open(page, "Ctrl+Alt+KeyK", false, { on: false }); // voice_set refuses this key
+  const sw = page.getByRole("switch", { name: "Use voice typing" });
+  await sw.click();
+  await expect(page.getByText("Another app is using that shortcut. Pick a different one.")).toBeVisible();
+  await expect(sw).not.toBeChecked();
+  await expect(page.locator(".page .row")).toHaveCount(1);
 });
 
 test("fn can be picked while recording; the browser never sees it, so the backend says so", async ({ page }) => {
   await open(page);
   await page.evaluate(() => (window as any).__emit("voice-fn", null)); // not recording: ignored
-  await expect(page.getByLabel("Current shortcut: Option Space")).toBeVisible();
-  await page.getByRole("button", { name: "Change" }).click();
+  await expect(page.getByRole("button", { name: "Dictate shortcut: Option Space" })).toBeVisible();
+  await dictateKey(page).click();
   await page.evaluate(() => (window as any).__emit("voice-fn", null));
-  await expect(page.getByLabel("Current shortcut: fn")).toHaveText("fn");
-  await expect(page.getByRole("button", { name: "Change" })).toBeFocused();
+  await expect(page.getByRole("button", { name: "Dictate shortcut: fn" })).toHaveText("fn");
+  await expect(dictateKey(page)).toBeFocused();
   expect(await calls(page, "voice_set")).toEqual([{ voice: { on: true, key: "Fn", clean: null, mode: "hold", paste: "clipboard" } }]);
 });
 
 test("with fn, the 🌐 key row shows the steps until the key is set to Do Nothing", async ({ page }) => {
   await open(page, "Fn");
-  const row = page.getByRole("listitem").filter({ hasText: "Set the 🌐 key to Do Nothing" });
-  await expect(row).toContainText("“Press 🌐 key to”");
+  const row = page.getByRole("listitem").filter({ hasText: "Set fn to Do Nothing" });
+  await expect(row).toContainText("In Keyboard settings, set Press 🌐 key to Do Nothing.");
+  await expect(row.locator("kbd")).toHaveText("fn");
   await row.getByRole("button", { name: "Open Keyboard Settings" }).click();
   expect(await calls(page, "globe_open")).toHaveLength(1);
   // Changed in System Settings, then back to Myna.
@@ -121,11 +136,11 @@ test("with fn, the 🌐 key row shows the steps until the key is set to Do Nothi
 
 test("the 🌐 key row is only for fn", async ({ page }) => {
   await open(page);
-  await expect(page.getByText("Set the 🌐 key to Do Nothing")).toBeHidden();
+  await expect(page.getByText("Do Nothing")).toBeHidden();
 });
 
 test("How words are added: Paste by default, Type saves and changes the help", async ({ page }) => {
-  await open(page);
+  await open(page, "Alt+Space", false, { at: "Write" });
   await expect(page.getByRole("radio", { name: "Paste" })).toBeChecked();
   await expect(page.getByText("Fastest. Myna puts back whatever you had copied afterwards.")).toBeVisible();
   await page.getByRole("radio", { name: "Type" }).check();
@@ -136,7 +151,7 @@ test("How words are added: Paste by default, Type saves and changes the help", a
 test("only the page scrolls, never the whole window", async ({ page }) => {
   await page.setViewportSize({ width: 880, height: 420 });
   await open(page);
-  await expect(page.getByRole("heading", { name: "Permissions" })).toBeAttached();
+  await expect(page.getByRole("heading", { name: "Pill" })).toBeAttached();
   const doc = await page.evaluate(() => [document.documentElement.scrollHeight, innerHeight]);
   expect(doc[0]).toBeLessThanOrEqual(doc[1]);
 });
@@ -146,55 +161,48 @@ const OR = { id: 2, kind: "openrouter", name: "OpenRouter", url: "https://openro
 const fastOn = (p: typeof OLLAMA, model: string) => ({ providers: [p], main: null, fast: { provider: p.id, model, gone: false } });
 const cleanRow = (page: Page) => page.getByRole("listitem").filter({ hasText: "Dictate with cleanup" });
 
-test("Shortcuts: Dictate and Dictate with cleanup, and one How it starts for both", async ({ page }) => {
+test("Shortcuts: Dictate, Dictate with cleanup and Activation", async ({ page }) => {
   await open(page);
   await expect(page.getByRole("heading", { name: "Shortcuts" })).toBeVisible();
   await expect(page.getByText("Adds what you said. Works in any app.")).toBeVisible();
-  await expect(page.getByText("Hold the key while you talk. Let go to add your words. Same for both shortcuts.")).toBeVisible();
+  await expect(page.getByText("Hold while you talk, let go to add. Esc cancels.")).toBeVisible();
+  await expect(page.getByRole("radio", { name: "Hold" })).toBeChecked();
 });
 
-test("cleanup without a Fast model: Needs an Endpoint, and Set up opens AI provider", async ({ page }) => {
+test("cleanup without a Fast model: needs a Fast model, and Set up opens AI providers", async ({ page }) => {
   await open(page);
   const row = cleanRow(page);
-  await expect(row).toContainText("Needs an Endpoint");
-  await expect(row).toContainText("Set a Fast model on AI provider first.");
-  await expect(row.getByRole("button", { name: "Set shortcut", exact: true })).toHaveCount(0); // no recorder yet
+  await expect(row).toContainText("Needs a Fast model.");
+  await expect(row.getByRole("button", { name: /^Set the / })).toHaveCount(0); // no recorder yet
   await row.getByRole("button", { name: "Set up" }).click();
   await expect(page.getByRole("heading", { name: "AI providers", exact: true, level: 1 })).toBeVisible();
 });
 
 test("a Fast model that's gone counts as none", async ({ page }) => {
   await open(page, "Alt+Space", false, { ai: { providers: [OLLAMA], main: null, fast: { provider: 1, model: "qwen2.5:7b", gone: true } } });
-  await expect(cleanRow(page)).toContainText("Needs an Endpoint");
+  await expect(cleanRow(page)).toContainText("Needs a Fast model.");
 });
 
-test("cleanup with a Fast model on this Mac: names it, says it stays here, and starts unassigned", async ({ page }) => {
+test("cleanup with a Fast model: a one-line description, and it starts unassigned", async ({ page }) => {
   await open(page, "Alt+Space", false, { ai: fastOn(OLLAMA, "qwen2.5:7b") });
   const row = cleanRow(page);
-  await expect(row).toContainText("before adding your words. If that takes over 3 s, they go in as they are.");
-  await expect(row).toContainText("Ollama on this Mac · qwen2.5:7b");
-  await expect(row).toContainText("Stays on this Mac");
-  await expect(row.getByLabel("No shortcut")).toBeVisible();
-  await expect(row).not.toContainText("Needs an Endpoint");
+  await expect(row).toContainText("Fixes punctuation, grammar slips and self-corrections.");
+  await expect(row).not.toContainText("Needs a Fast model");
+  await expect(row.getByRole("button", { name: "Set the Dictate with cleanup shortcut" })).toHaveText("Set key");
   await expect(row.getByRole("button", { name: "Remove" })).toHaveCount(0);
 });
 
-test("cleanup with an online Fast model says it sends text off this Mac", async ({ page }) => {
-  await open(page, "Alt+Space", false, { ai: fastOn(OR as typeof OLLAMA, "openai/gpt-5-mini") });
-  await expect(cleanRow(page)).toContainText("Sends text off this Mac");
-});
-
-test("Set records the cleanup shortcut and saves it beside Dictate's; Change and Remove follow", async ({ page }) => {
+test("Set records the cleanup shortcut and saves it beside Dictate's; the recorder and Remove follow", async ({ page }) => {
   await open(page, "Alt+Space", false, { ai: fastOn(OLLAMA, "qwen2.5:7b") });
   const row = cleanRow(page);
-  await row.getByRole("button", { name: "Set shortcut", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Press a key…" })).toBeFocused();
+  await row.getByRole("button", { name: "Set the Dictate with cleanup shortcut" }).click();
+  await expect(page.getByRole("button", { name: "Press keys…" })).toBeFocused();
   await page.keyboard.press("Control+Shift+KeyC");
-  await expect(page.getByLabel("Current shortcut: Control Shift C")).toHaveText("⌃⇧C");
+  await expect(page.getByRole("button", { name: "Dictate with cleanup shortcut: Control Shift C" })).toHaveText("⌃⇧C");
   expect(await calls(page, "voice_set")).toEqual([{ voice: { on: true, key: "Alt+Space", clean: "Ctrl+Shift+KeyC", mode: "hold", paste: "clipboard" } }]);
-  await expect(row.getByRole("button", { name: "Change" })).toBeVisible();
+  await expect(row.getByRole("button", { name: "Dictate with cleanup shortcut: Control Shift C" })).toBeVisible();
   await row.getByRole("button", { name: "Remove the Dictate with cleanup shortcut" }).click();
-  await expect(row.getByLabel("No shortcut")).toBeVisible();
+  await expect(row.getByRole("button", { name: "Set the Dictate with cleanup shortcut" })).toHaveText("Set key");
   expect((await calls(page, "voice_set")).at(-1)).toEqual({ voice: { on: true, key: "Alt+Space", clean: null, clean2: null, mode: "hold", paste: "clipboard" } });
 });
 
@@ -203,9 +211,9 @@ test("Add another key gives each shortcut a second key; one key can't serve twic
   const add = page.getByRole("button", { name: "Add another key" });
   await expect(add).toHaveCount(2); // one per shortcut
   await add.first().click();
-  await expect(page.getByRole("button", { name: "Press a key…" })).toBeFocused();
+  await expect(page.getByRole("button", { name: "Press keys…" })).toBeFocused();
   await page.keyboard.press("PageDown");
-  await expect(page.getByLabel("Current shortcut: Page Down")).toBeVisible();
+  await expect(page.getByRole("button", { name: "second Dictate shortcut: Page Down" })).toBeVisible();
   expect((await calls(page, "voice_set")).at(-1)).toEqual({ voice: { on: true, key: "Alt+Space", clean: "Ctrl+Shift+KeyC", key2: "PageDown", mode: "hold", paste: "clipboard" } });
   // Dictate's second key can't also be cleanup's.
   await page.getByRole("button", { name: "Add another key" }).click();
@@ -223,40 +231,40 @@ test("Add another key gives each shortcut a second key; one key can't serve twic
 
 test("a key already used by the other shortcut is refused with the reason", async ({ page }) => {
   await open(page, "Alt+Space", false, { ai: fastOn(OLLAMA, "qwen2.5:7b") });
-  await cleanRow(page).getByRole("button", { name: "Set shortcut", exact: true }).click();
+  await cleanRow(page).getByRole("button", { name: "Set the Dictate with cleanup shortcut" }).click();
   await page.keyboard.press("Alt+Space");
   await expect(page.getByText("Option Space is already the Dictate shortcut. Pick another key.")).toBeVisible();
   expect(await calls(page, "voice_set")).toEqual([]);
   expect((await calls(page, "voice_pause")).at(-1)).toEqual({ paused: false });
   // And the other way round.
-  await page.getByRole("button", { name: "Change" }).click();
+  await dictateKey(page).click();
   await page.keyboard.press("Control+Shift+KeyC");
-  await cleanRow(page).getByRole("button", { name: "Set shortcut", exact: true }).click();
+  await cleanRow(page).getByRole("button", { name: "Set the Dictate with cleanup shortcut" }).click();
   await page.keyboard.press("Control+Shift+KeyC");
   await expect(page.getByText("Control Shift C is already the Dictate shortcut. Pick another key.")).toBeVisible();
 });
 
-test("a Fast model set on AI provider shows on Voice typing without reloading", async ({ page }) => {
+test("a Fast model set on AI provider shows on Listen without reloading", async ({ page }) => {
   await fakeTauri(page, `{
-    storage_status: () => "/tmp/Myna", models_list: () => [], voice_get: () => ({ on: true, key: "Alt+Space", clean: null, mode: "hold", paste: "clipboard" }),
+    storage_status: () => "/tmp/Myna", models_list: () => ${MODELS}, voice_get: () => ({ on: true, key: "Alt+Space", clean: null, mode: "hold", paste: "clipboard" }),
     ai_get: () => (window.__ai ??= ${JSON.stringify({ providers: [OLLAMA], main: null, fast: null })}), globe_ok: () => true,
   }`);
   await page.goto("/settings");
   await page.getByRole("option", { name: "AI providers" }).click();
   await page.evaluate(() => ((window as any).__ai.fast = { provider: 1, model: "qwen2.5:7b", gone: false })); // what picking it there saves
   await page.getByRole("option", { name: "Listen" }).click();
-  await expect(cleanRow(page)).toContainText("Ollama on this Mac · qwen2.5:7b");
-  await expect(cleanRow(page).getByRole("button", { name: "Set shortcut", exact: true })).toBeVisible();
+  await expect(cleanRow(page)).not.toContainText("Needs a Fast model");
+  await expect(cleanRow(page).getByRole("button", { name: "Set the Dictate with cleanup shortcut" })).toBeVisible();
 });
 
 // Cleanup styles: only once there's a Fast model to run them. `window.__newer` marks which edited styles have a newer shipped text.
-const withFast = (page: Page) => open(page, "Alt+Space", false, { ai: fastOn(OLLAMA, "qwen2.5:7b") });
+const withFast = (page: Page) => open(page, "Alt+Space", false, { ai: fastOn(OLLAMA, "qwen2.5:7b"), at: "Write" });
 const styleRow = (page: Page, name: string) => page.getByRole("listitem").filter({ hasText: new RegExp(`^${name}`) }).filter({ has: page.getByRole("button", { name: /^(Edit|Done)$/ }) });
 const edit = (page: Page, name: string) => styleRow(page, name).getByRole("button", { name: "Edit" }).click();
 
 test("Cleanup styles show only with a Fast model", async ({ page }) => {
-  await open(page);
-  await expect(page.getByRole("heading", { name: "Words to remember" })).toBeVisible();
+  await open(page, "Alt+Space", false, { at: "Write" });
+  await expect(page.getByRole("heading", { name: "Adding your words" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Cleanup styles" })).toHaveCount(0);
 });
 
@@ -358,10 +366,53 @@ test("a failed save says why and shows what was kept", async ({ page }) => {
 
 test("Sounds is on unless switched off, and saves with the other voice settings", async ({ page }) => {
   await open(page);
-  await expect(page.getByText("Esc stops without adding your words.")).toBeVisible();
-  const sounds = page.getByRole("switch", { name: "Sounds" });
+  const sounds = page.getByRole("switch", { name: "Start and stop sounds" });
   await expect(sounds).toBeChecked();
   await sounds.click();
   await expect(sounds).not.toBeChecked();
   expect((await calls(page, "voice_set")).at(-1)).toMatchObject({ voice: { key: "Alt+Space", sounds: false } });
+});
+
+test("Write's empty state while voice typing is off sends you to Listen; Understand says why", async ({ page }) => {
+  await open(page, "Alt+Space", false, { on: false, at: "Write" });
+  await expect(page.getByText("Voice typing is off", { exact: true })).toBeVisible();
+  await expect(page.getByText("Turn it on in Listen to choose how your words are added.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Adding your words" })).toHaveCount(0);
+  await page.getByRole("option", { name: "Understand" }).click();
+  await expect(page.getByText("Voice typing is off. Turn it on in Listen.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Words to remember" })).toHaveCount(0);
+  await page.getByRole("option", { name: "Write" }).click();
+  await page.getByRole("button", { name: "Go to Listen" }).click();
+  await expect(page.getByRole("heading", { name: "Listen", level: 1 })).toBeVisible();
+  await expect(page.getByRole("switch", { name: "Use voice typing" })).not.toBeChecked();
+});
+
+test("Understand and Write show their rows while voice typing is on", async ({ page }) => {
+  await open(page, "Alt+Space", false, { at: "Understand" });
+  await expect(page.getByRole("heading", { name: "Words to remember" })).toBeVisible();
+  await expect(page.getByText("Voice typing is off")).toHaveCount(0);
+});
+
+test("the recorders' right edges line up across Dictate and Dictate with cleanup", async ({ page }) => {
+  await open(page, "Alt+Space", false, { ai: fastOn(OLLAMA, "qwen2.5:7b") });
+  const right = async (loc: import("@playwright/test").Locator) => { const b = (await loc.boundingBox())!; return Math.round(b.x + b.width); };
+  const rows = [page.getByRole("listitem").filter({ hasText: "Adds what you said" }), cleanRow(page)];
+  const plus = rows.map((r) => r.getByRole("button", { name: "Add another key" }));
+  const keys = rows.map((r) => r.getByRole("button", { name: /^(Dictate|Set the)/ }));
+  expect(await right(plus[0])).toBe(await right(plus[1]));
+  expect(await right(keys[0])).toBe(await right(keys[1]));
+  // Recording doesn't move the edge.
+  const edge = await right(keys[0]);
+  await keys[0].click();
+  expect(await right(page.getByRole("button", { name: "Press keys…" }))).toBe(edge);
+  await page.keyboard.press("Escape");
+  expect(await right(keys[0])).toBe(edge);
+});
+
+test("Set up and the other end buttons share the shortcut buttons' right edge", async ({ page }) => {
+  await open(page, "Fn");
+  const right = async (loc: import("@playwright/test").Locator) => { const b = (await loc.boundingBox())!; return Math.round(b.x + b.width); };
+  const edge = await right(page.getByRole("button", { name: "Add another key" }));
+  expect(await right(page.getByRole("button", { name: "Set up" }))).toBe(edge);
+  expect(await right(page.getByRole("button", { name: "Open Keyboard Settings" }))).toBe(edge);
 });

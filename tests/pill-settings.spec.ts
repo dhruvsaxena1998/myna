@@ -18,16 +18,24 @@ test("shows the saved style and position, with a preview", async ({ page }) => {
   await expect(page.getByRole("img", { name: "Preview: Orb pill, Top centre" })).toBeVisible();
 });
 
-test("saves a new choice and the preview follows, without moving the rows below", async ({ page }) => {
+test("saves a new choice and the preview follows, without moving the page", async ({ page }) => {
   await open(page);
-  const below = page.getByRole("heading", { name: "Permissions" });
-  const before = await below.boundingBox();
+  const desk = page.getByRole("img", { name: /^Preview/ });
+  const before = [await desk.boundingBox(), await page.getByLabel("Position").boundingBox()];
+  expect(before[0]!.height).toBe(128); // a fixed height, whatever the style
   await page.getByLabel("Style").selectOption("card");
   await page.getByLabel("Position").selectOption("bottom-right");
   await expect(page.getByRole("img", { name: "Preview: Card pill, Bottom right" })).toBeVisible();
   const sets = await page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "pill_look_set").map((c: any) => c[1]));
   expect(sets).toEqual([{ style: "card", place: "top" }, { style: "card", place: "bottom-right" }]);
-  expect(await below.boundingBox()).toEqual(before);
+  expect([await desk.boundingBox(), await page.getByLabel("Position").boundingBox()]).toEqual(before);
+});
+
+test("the pill's rows each take one line", async ({ page }) => {
+  await open(page);
+  for (const label of ["Style", "Position"]) await expect(page.getByRole("listitem").filter({ has: page.getByLabel(label) })).toHaveCSS("height", "60px");
+  await expect(page.getByText("Shows while you talk, then what happened.")).toBeVisible();
+  await expect(page.getByText("On the screen you’re typing on.")).toBeVisible();
 });
 
 test("a failed save puts the old choice back and says why", async ({ page }) => {

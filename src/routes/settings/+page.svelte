@@ -164,22 +164,10 @@
             {#if !voice}
               <ErrorState title="Myna couldn't read voice typing's settings" message={data.voice?.ok === false ? data.voice.error : ""} />
             {:else}
-              <VoiceShortcut bind:voice globe={data.globe} {ai} setup={() => go("ai")} />
-              <!-- Interim: the rest of the old Voice typing page, until Understand (18.4) and Write (18.5) take their rows. -->
+              <VoiceShortcut bind:voice globe={data.globe} {ai} perms={data.perms} setup={() => go("ai")} />
               {#if voice.on}
                 {#if data.look?.ok}<PillLook initial={data.look.look} listening={{ state: "listening", hold: voice.mode === "hold", key: voice.key }} />
                 {:else}<ErrorState title="Myna couldn't read the pill's look" message={data.look?.error ?? ""} />{/if}
-                <PasteMethod bind:voice />
-                <Fixes initial={data.fixes} onadd={reloadRules} />
-                {#if rules}<Words initial={rules} />
-                {:else}<ErrorState title="Myna couldn't read your words" message={data.rules?.ok === false ? data.rules.error : ""} />{/if}
-                <Feedback bind:voice />
-                <!-- Styles only matter once there's a Fast model to run them. -->
-                {#if ai?.fast && !ai.fast.gone}
-                  {#if data.cleanup?.ok}<CleanupStyles initial={data.cleanup.cleanup} />
-                  {:else}<ErrorState title="Myna couldn't read the cleanup styles" message={data.cleanup?.error ?? ""} />{/if}
-                {/if}
-                <Permissions initial={data.perms} />
               {/if}
             {/if}
           {:else if view.page === "understand"}
@@ -189,6 +177,7 @@
               {@const stt = data.models.tasks[0]}
               <section aria-labelledby="stt-h">
                 <h2 id="stt-h">Speech-to-text</h2>
+                {#if !voice?.on}<p class="help">Voice typing is off. Turn it on in Listen.</p>{/if}
                 <ul class="list">
                   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions (the button inside takes the keys) -->
                   <li class="row go" onclick={() => open("models")}>
@@ -198,11 +187,29 @@
                 </ul>
               </section>
               <UnloadAfter initial={data.models.unload} />
+              <!-- Interim: Fixes and Words stay as they were until 18.4 rebuilds them. -->
+              {#if voice?.on}
+                <Fixes initial={data.fixes} onadd={reloadRules} />
+                {#if rules}<Words initial={rules} />
+                {:else}<ErrorState title="Myna couldn't read your words" message={data.rules?.ok === false ? data.rules.error : ""} />{/if}
+              {/if}
             {/if}
           {:else if view.page === "write"}
-            <!-- Interim until 18.5: Write's rows still sit on Listen. -->
-            <section><ul class="list"><li class="row"><span><span class="name">On Listen for now</span><span class="desc">Insert method, cleanup and feedback move here in a later build.</span></span>
-              <span class="end"><button class="btn" onclick={() => go("listen")}>Go to Listen</button></span></li></ul></section>
+            {#if !voice}
+              <ErrorState title="Myna couldn't read voice typing's settings" message={data.voice?.ok === false ? data.voice.error : ""} />
+            {:else if !voice.on}
+              <section><ul class="list"><li class="empty"><b>Voice typing is off</b><p>Turn it on in Listen to choose how your words are added.</p><button class="btn" onclick={() => go("listen")}>Go to Listen</button></li></ul></section>
+            {:else}
+              <!-- Interim: these rows move as 18.5 rebuilds Write. -->
+              <PasteMethod bind:voice />
+              <Feedback bind:voice />
+              <!-- Styles only matter once there's a Fast model to run them. -->
+              {#if ai?.fast && !ai.fast.gone}
+                {#if data.cleanup?.ok}<CleanupStyles initial={data.cleanup.cleanup} />
+                {:else}<ErrorState title="Myna couldn't read the cleanup styles" message={data.cleanup?.error ?? ""} />{/if}
+              {/if}
+              <Permissions initial={data.perms} kinds={["ax"]} />
+            {/if}
           {:else if view.page === "meetings"}
             {#if notes}<MeetingNotes bind:notes perms={data.perms} />
             {:else}<ErrorState title="Myna couldn't read meeting notes' settings" message={data.notes?.ok === false ? data.notes.error : ""} />{/if}
@@ -263,5 +270,9 @@
   .hnav .btn:disabled { color: var(--text-disabled); }
   /* Let drags on the title fall through to the header's drag region. */
   h1 { pointer-events: none; margin: 0; min-width: 0; font-size: var(--fs-title2); line-height: var(--lh-title2); font-weight: var(--fw-semibold); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* Empty state: a heading, one sentence, one action. */
+  .empty { display: grid; justify-items: start; gap: var(--sp-1); padding: var(--sp-4); }
+  .empty b { font-weight: var(--fw-semibold); }
+  .empty p { margin: 0 0 var(--sp-2); color: var(--text-2); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
   @container settings (max-width: 480px) { .content { padding: 0 var(--sp-4) var(--sp-6); } }
 </style>
