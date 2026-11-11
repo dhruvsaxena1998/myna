@@ -15,5 +15,7 @@
 
 <style>
   /* Recording: the focus ring sits inside the button, so it never changes its size. */
-  .btn.rec { box-shadow: inset 0 0 0 2px var(--focus-ring); color: var(--text-2); }
+  /* Wide enough for "Press keys…", so starting to record never changes the button's width. */
+  .btn { min-width: 88px; }
+  .btn.rec { box-shadow: inset 0 0 0 2px var(--focus-ring); color: var(--text-2); font-size: var(--fs-footnote); padding: 0 var(--sp-2); }
 </style>

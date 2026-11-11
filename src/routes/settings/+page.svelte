@@ -190,7 +190,7 @@
   </nav>
 
   <main>
-    <header data-tauri-drag-region class:staged={stage && voice}>
+    <header data-tauri-drag-region>
       <span class="hnav">
         <button class="btn quiet icon" aria-label="Back" title="Back (⌘[)" disabled={hist.i === 0} onclick={() => step(-1)}><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6" /></svg></button>
         <button class="btn quiet icon" aria-label="Forward" title="Forward (⌘])" disabled={hist.i === hist.list.length - 1} onclick={() => step(1)}><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg></button>
@@ -203,7 +203,7 @@
           fast={fastRoute ? { model: fastRoute.model, off: !!ai?.providers.find((p) => p.id === fastRoute.provider)?.off_device } : null} />
       {:else}<h1>{title}</h1>{/if}
     </header>
-    <div class="content" class:staged={stage && voice} bind:this={scroller}>
+    <div class="content" bind:this={scroller}>
       {#key hist.i + ":" + view.page + ":" + view.sub + ":" + view.arg}
         <div class="page prefs">
           <!-- Every setting lives in the database, so if it failed to open, every page shows why. -->
@@ -352,13 +352,11 @@
   .content { position: relative; padding: 0 var(--sp-5) var(--sp-6); overflow: auto; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
   .content::-webkit-scrollbar { width: 8px; }
   .content::-webkit-scrollbar-thumb { border-radius: 4px; background: var(--line-strong); border: 2px solid transparent; background-clip: content-box; }
-  /* A new view rises in. */
-  .page { animation: enter var(--dur) var(--ease-out); }
-  @keyframes enter { from { opacity: 0; transform: translateY(4px); } }
+  /* A new view fades in, in place: switching pages never moves the content. */
+  .page { animation: enter var(--dur-fast) var(--ease-out); }
+  @keyframes enter { from { opacity: 0; } }
   header { position: relative; height: var(--h-toolbar); display: flex; align-items: center; gap: var(--sp-1); min-width: 0; padding: 0 var(--sp-5); }
-  /* With the stage path the head is about 44px, the same in every state; the page starts 12px under it. */
-  header.staged { box-sizing: border-box; height: auto; min-height: 44px; padding-block: var(--sp-1); }
-  .content.staged .page { padding-top: var(--sp-3); }
+  /* The stage path (about 44px) sits in the same 56px toolbar as every other page's title, so ‹ › and the content never move between pages. */
   .hnav { display: flex; gap: 2px; flex: none; margin: 0 var(--sp-2) 0 calc(-1 * var(--sp-2)); }
   .hnav .btn { width: 28px; height: 28px; color: var(--text); }
   .hnav .btn:disabled { color: var(--text-disabled); }

@@ -136,7 +136,7 @@ test("drill-ins and the other pages keep the plain title", async ({ page }) => {
 test("the header is the same height in every state, and long IDs end in an ellipsis", async ({ page, context }) => {
   await open(page);
   const h = await header(page);
-  expect(h).toBe(46) // the design's head: 2 + 18 + 16 + 2 for a stage, 4 above and below;
+  expect(h).toBe(56); // the same toolbar as every other page, so ‹ › and the content never move between pages
   await stage(page, /^Understand/).click();
   await emit(page, { id: "p", state: "progress", pct: 5 });
   expect(await header(page)).toBe(h);

@@ -72,4 +72,6 @@
 
 <style>
   .state { display: flex; justify-content: flex-end; align-items: center; min-width: 164px; height: var(--h-ctl); }
+  /* Narrow: the description gets the room (docs/settings.html). */
+  @container (max-width: 480px) { .state { min-width: 0; } }
 </style>

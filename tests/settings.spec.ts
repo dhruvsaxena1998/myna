@@ -68,3 +68,14 @@ test("Experimental is listed only while its switch in General is on, and leaves 
   await expect(fwd(page)).toBeDisabled(); // nowhere to go: Experimental left the stack
   await expect(title(page)).toHaveText("General");
 });
+
+test("switching pages never moves the toolbar or where the content starts", async ({ page }) => {
+  await open(page, true);
+  const at = async () => [(await page.locator("main header").boundingBox())!.height, (await page.locator(".page > *").first().boundingBox())!.y];
+  await page.getByRole("option", { name: "Listen" }).click();
+  const first = await at();
+  for (const p of ["Understand", "Write", "Meeting notes", "General", "AI providers", "Experimental"]) {
+    await page.getByRole("option", { name: p, exact: true }).click();
+    expect(await at(), p).toEqual(first);
+  }
+});

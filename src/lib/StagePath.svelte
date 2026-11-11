@@ -69,9 +69,18 @@
   .link.off { background: none; border-top: .5px dashed var(--line-strong); }
   /* The last stage gives way, so a long model ID ends in an ellipsis. */
   .stage:last-child { flex: 0 1 auto; min-width: 0; max-width: 100%; }
+  /* Room for the usual values (Hold or Tap with a key; a model name or a download), so a changed value doesn't push the stages after it. */
+  .stage:first-of-type { min-width: 112px; }
+  .stage:nth-of-type(2) { min-width: 168px; max-width: 220px; }
+  .stage:nth-of-type(2) .sv { max-width: 100%; }
   .stage:last-child .sv { max-width: 100%; }
   .clip { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .sv.fresh { animation: fresh var(--dur) var(--ease-out); }
   @keyframes fresh { from { color: var(--accent-text); } }
-  @container settings (width < 460px) { .link { width: 8px; margin-inline: var(--sp-1h); } }
+  /* Narrow: three equal shares, so every name shows and a changed value still moves nothing; values end in an ellipsis. */
+  @container settings (width < 460px) {
+    .link { width: 8px; margin-inline: var(--sp-1h); }
+    .stage, .stage:first-of-type, .stage:nth-of-type(2), .stage:last-child { flex: 1 1 0; min-width: 0; max-width: none; }
+    .sv { max-width: 100%; }
+  }
 </style>
