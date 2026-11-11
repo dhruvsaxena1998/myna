@@ -21,7 +21,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { onMount, tick } from "svelte";
   import { dl, startDownload, watchDownloads } from "$lib/downloads.svelte";
-  import { fmtSize, type Model } from "$lib/models";
+  import { fmtSize, type Model, type Task } from "$lib/models";
 
   // Sidebar, in the order your voice goes through Myna (docs/settings.html, PAGES). Experimental is listed only while its switch in General is on.
   const ICON = {
@@ -46,6 +46,7 @@
   // Drill-ins: a sub-page under its parent, with its own toolbar title. Pages open them with `open`.
   const SUBS: Record<string, { parent: PageId; title: string }> = {
     models: { parent: "understand", title: "Speech-to-text · Voice typing" },
+    mmodels: { parent: "meetings", title: "Speech-to-text · Meeting notes" },
     remember: { parent: "understand", title: "Custom vocabulary" },
     keep: { parent: "understand", title: "Filler exceptions" },
     styles: { parent: "write", title: "Cleanup styles" },
@@ -69,6 +70,15 @@
   // Shared by Understand's model row and the model list's drill-in, so a pick shows on the way back.
   const stt = $derived(data.models?.ok ? data.models.tasks[0] : null);
   let sttActive = $derived(stt?.active ?? null); // assignable: the list changes it
+  // Meeting notes' own pick, from the same catalog; voice typing's until one is saved, so a voice typing pick can move it.
+  const meet = $derived(data.models?.ok ? data.models.tasks.find((t) => t.id === "meeting_stt") : null);
+  let meetActive = $derived(meet?.active ?? null); // assignable
+  // A pick or removal in one list can move the other's (a deleted model is forgotten by both); each list keeps its own.
+  const reloadPicks = (from: "stt" | "meeting_stt") =>
+    invoke<Task[]>("models_list").then((t) => {
+      const other = t.find((x) => x.id === (from === "stt" ? "meeting_stt" : "stt"));
+      if (other) from === "stt" ? (meetActive = other.active) : (sttActive = other.active);
+    }, () => {});
   onMount(watchDownloads);
   const installed = (m: Model) => dl.installed[m.id] ?? m.installed;
   const modelState = (m: Model) => `${m.name} · ${installed(m) ? (m.system ? "Built in" : `Installed · ${fmtSize(m.size)}`) : m.id in dl.pct ? `Downloading ${dl.pct[m.id]}%` : `Not downloaded${m.system ? "" : ` · ${fmtSize(m.size)}`}`}`;
@@ -189,7 +199,9 @@
           {#if !data.storage.ok}
             <ErrorState title="Myna couldn't open its data folder" message={data.storage.error} />
           {:else if view.sub === "models"}
-            {#if stt}<ModelList task={stt} label="Speech-to-text model" help="Used for voice typing. Downloads are shared with meeting notes." bind:active={sttActive} />{/if}
+            {#if stt}<ModelList task={stt} label="Speech-to-text model" help="Used for voice typing. Downloads are shared with meeting notes." bind:active={sttActive} onchange={() => reloadPicks("stt")} />{/if}
+          {:else if view.sub === "mmodels"}
+            {#if meet}<ModelList task={meet} label="Meeting notes speech-to-text model" help="Used for meeting notes. Downloads are shared with voice typing." bind:active={meetActive} onchange={() => reloadPicks("meeting_stt")} />{/if}
           {:else if view.sub === "remember" || view.sub === "keep"}
             {#if rules}<Words bind:rules part={view.sub} />
             {:else}<ErrorState title="Myna couldn't read your words" message={data.rules?.ok === false ? data.rules.error : ""} />{/if}
@@ -251,7 +263,21 @@
           {:else if view.page === "meetings"}
             {#if notes}<MeetingNotes bind:notes perms={data.perms} />
             {:else}<ErrorState title="Myna couldn't read meeting notes' settings" message={data.notes?.ok === false ? data.notes.error : ""} />{/if}
-            <!-- Interim: until 18.8 rebuilds it, voices stay reachable here, whether notes are on or off. -->
+            <!-- Interim: until 18.8 rebuilds the page, its models sit here, whether notes are on or off. -->
+            {#if meet}
+              {@const pick = meet.models.find((m) => m.id === meetActive)}
+              {@const state = pick ? modelState(pick) : "Not set"}
+              <section aria-labelledby="mstt-h">
+                <h2 id="mstt-h">Models</h2>
+                <ul class="list">
+                  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions (the button inside takes the keys) -->
+                  <li class="row go" onclick={() => open("mmodels")}>
+                    <span><span class="name">Speech-to-text model</span><span class="desc" title={state}>{state}</span></span>
+                    <span class="end"><button class="btn" onclick={(e) => { e.stopPropagation(); open("mmodels"); }}>All models</button></span>
+                  </li>
+                </ul>
+              </section>
+            {/if}
             {#if data.models?.ok && data.models.tasks[1]}<ModelTask task={data.models.tasks[1]} title="Telling voices apart" help="Works out who said what. Always runs on this Mac. Your own voice is always “Me”." />{/if}
           {:else if view.page === "general"}
             {#if look}<Look bind:look />

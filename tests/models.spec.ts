@@ -146,7 +146,7 @@ test("Remove uninstalls a model", async ({ page }) => {
   await open(page, undefined, "model_delete: () => null");
   const whisper = stt(page).getByRole("listitem").nth(2);
   await whisper.getByRole("button", { name: "Remove whisper" }).click();
-  expect(await calls(page, "model_delete")).toEqual([["model_delete", { id: "whisper" }]]);
+  expect(await calls(page, "model_delete")).toEqual([["model_delete", { id: "whisper", task: "stt" }]]);
   await expect(whisper.getByRole("button", { name: "Download whisper" })).toBeVisible();
 });
 

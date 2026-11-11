@@ -162,9 +162,10 @@ fn model_cancel(app: AppHandle, d: tauri::State<Data>, id: String) {
     }
 }
 
-/// Returns the task's active model afterwards: deleting the chosen one falls back to the default.
+/// Returns `task`'s active model afterwards (the first task with the model when there's none): deleting the chosen one
+/// falls back to the default, and for meeting notes to voice typing's pick.
 #[tauri::command]
-async fn model_delete(d: tauri::State<'_, Data>, id: String) -> Result<Option<String>, String> {
+async fn model_delete(d: tauri::State<'_, Data>, id: String, task: Option<String>) -> Result<Option<String>, String> {
     let m = models::find(&id).ok_or_else(|| format!("Unknown model {id}"))?;
     if d.downloads.lock().unwrap().contains_key(&id) {
         return Err(format!("{} is downloading. Cancel it first.", m.name));
@@ -174,7 +175,8 @@ async fn model_delete(d: tauri::State<'_, Data>, id: String) -> Result<Option<St
     let db = d.db.lock().unwrap();
     models::forget(&db, &id)?;
     let tasks = models::list(&db, &d.models_dir, d.macos, &apple::status())?;
-    Ok(tasks.into_iter().find(|t| t.models.iter().any(|x| x.id == id)).and_then(|t| t.active))
+    let mine = |t: &models::Task| task.as_deref().map_or_else(|| t.models.iter().any(|x| x.id == id), |task| t.id == task);
+    Ok(tasks.into_iter().find(mine).and_then(|t| t.active))
 }
 
 /// `MYNA_DEBUG=1` turns on debug aids in the UI (for now: the window size while resizing).

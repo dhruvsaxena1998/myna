@@ -7,7 +7,8 @@
   import { cancelDownload, dl, startDownload, watchDownloads } from "$lib/downloads.svelte";
   import { fuzzy } from "$lib/fuzzy";
 
-  let { task, label, help, active = $bindable() }: { task: Task; label: string; help: string; active: string | null } = $props();
+  // `onchange`: after a pick or a removal, which can change the other speech-to-text task's pick too.
+  let { task, label, help, active = $bindable(), onchange }: { task: Task; label: string; help: string; active: string | null; onchange?: () => void } = $props();
 
   let error = $state("");
   let q = $state("");
@@ -27,7 +28,8 @@
   async function remove(id: string) {
     error = "";
     try {
-      active = await invoke<string | null>("model_delete", { id }); // the default takes over from a deleted pick
+      active = await invoke<string | null>("model_delete", { id, task: task.id }); // the default takes over from a deleted pick
+      onchange?.();
       dl.installed[id] = false;
       delete dl.errors[id];
       delete dl.retry[id]; // a load failure set it; a removed model offers Download, not Retry
@@ -41,6 +43,7 @@
     error = "";
     try {
       await invoke("model_select", { task: task.id, id });
+      onchange?.();
     } catch (e) {
       active = was;
       error = String(e);
