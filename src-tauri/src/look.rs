@@ -88,7 +88,7 @@ pub fn set(conn: &Connection, l: &Look, macos: u32) -> Result<(), String> {
     let (liquid, exp, nerds, frost) = (l.liquid.map(onoff), onoff(l.experimental), onoff(l.nerds), l.frost.to_string());
     let saved = [("look_theme", &l.theme), ("look_accent", &l.accent), ("look_glass", &l.glass), ("experimental", &exp), ("exp_nerds", &nerds), ("look_frost", &frost)];
     for (k, v) in saved.into_iter().chain(liquid.as_ref().map(|v| ("look_liquid", v))) {
-        storage::write_text(conn, k, v).map_err(|e| format!("Couldn't save Myna's look: {e}"))?;
+        storage::write_text(conn, k, v).map_err(|e| e.to_string())?;
     }
     Ok(())
 }

@@ -12,7 +12,7 @@ const box = async (page: Page, name: string) => (await page.locator(".prefs .row
 
 test("one-line rows are 60px, separators add no height", async ({ page }) => {
   await open(page, 880);
-  const theme = await box(page, "Theme"), accent = await box(page, "Highlight colour");
+  const theme = await box(page, "Theme"), accent = await box(page, "Accent colour");
   expect(theme.height).toBe(60);
   expect(accent.y - theme.y).toBe(60);
 });

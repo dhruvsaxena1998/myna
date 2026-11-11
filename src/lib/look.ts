@@ -23,3 +23,16 @@ export function applyLook(l: Look) {
 export function syncGlass(l: Look | null) {
   invoke("glass_set", { glass: l && glassOn(l) ? [{ x: 0, y: 0, w: innerWidth, h: innerHeight, radius: 0, shown: true, grow: true }] : [] });
 }
+
+/** Applies `next` at once and saves it whole (the backend's "look" event tells the other windows).
+ *  Returns what to show if that failed, naming `what` the user changed; then `was` is applied again. */
+export async function saveLook(was: Look, next: Look, what: string): Promise<string> {
+  applyLook(next);
+  try {
+    await invoke("look_set", { look: next });
+    return "";
+  } catch (err) {
+    applyLook(was);
+    return `Couldn't save ${what}: ${err}`;
+  }
+}

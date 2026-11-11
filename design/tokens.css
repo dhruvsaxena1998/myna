@@ -355,6 +355,19 @@ textarea.input { height: auto; padding: var(--sp-2) var(--sp-3); border-radius: 
   transition: background-color var(--dur-fast) var(--ease-in), color var(--dur-fast) var(--ease-in); }
 .prefs .seg input:checked + span { background: var(--fill-control-on); color: var(--text); box-shadow: 0 0 0 .5px var(--line-strong), 0 1px 2px rgba(0, 0, 0, .1); }
 .prefs .seg input:focus-visible + span { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+/* Accent swatches: a 24px hit area, a 16px dot in its own colour; the chosen one shows a pip in --on (dark on yellow), so it reads on every colour. */
+.prefs .swatches { display: flex; gap: var(--sp-1); margin: 0; padding: 0; border: 0; min-width: 0; }
+.prefs .sw { --on: #fff; position: relative; display: grid; place-items: center; width: 24px; height: 24px; }
+.prefs .sw:has(input[value="yellow"]) { --on: #1D1D1F; }
+.prefs .sw input { position: absolute; inset: 0; margin: 0; opacity: 0; }
+.prefs .sw .dot { display: grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: var(--c); box-shadow: inset 0 0 0 .5px var(--line-strong); }
+.prefs .sw .pip { width: 6px; height: 6px; border-radius: 50%; background: var(--on); visibility: hidden; }
+.prefs .sw input:checked + .dot .pip { visibility: visible; }
+.prefs .sw input:focus-visible + .dot { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+/* The page's last line (docs/settings.html .foot). */
+.prefs .foot { margin: 0; color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
+.prefs .foot a { color: var(--accent-text); text-decoration: none; }
+.prefs .foot a:hover { text-decoration: underline; text-underline-offset: 2px; }
 /* Slider: 4px track, accent left of a 20px white knob; --v is the fill's width. A glyph sits at each end. */
 .prefs .slider { display: flex; align-items: center; gap: var(--sp-2); width: 100%; max-width: 260px; color: var(--text-3); }
 .prefs .slider input[type="range"] { appearance: none; display: block; flex: 1; min-width: 0; height: 20px; margin: 0; background: none; }

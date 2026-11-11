@@ -1,13 +1,12 @@
 <script lang="ts">
   let { data } = $props();
   import AiProviders from "$lib/AiProviders.svelte";
-  import About from "$lib/About.svelte";
+  import General from "$lib/General.svelte";
   import ErrorState from "$lib/ErrorState.svelte";
   import { glassOn, syncGlass } from "$lib/look";
   import ModelList from "$lib/ModelList.svelte";
   import UnloadAfter from "$lib/UnloadAfter.svelte";
   import Experimental from "$lib/Experimental.svelte";
-  import Look from "$lib/Look.svelte";
   import PillLook from "$lib/PillLook.svelte";
   import Words, { type Rules } from "$lib/Words.svelte";
   import Fixes from "$lib/Fixes.svelte";
@@ -305,13 +304,10 @@
             </MeetingNotes>
             {:else}<ErrorState title="Myna couldn't read meeting notes' settings" message={data.notes?.ok === false ? data.notes.error : ""} />{/if}
           {:else if view.page === "general"}
-            {#if look}<Look bind:look />
-            {:else}<ErrorState title="Myna couldn't read its look" message={data.appearance.ok ? "" : data.appearance.error} />{/if}
-            {#if data.updates?.ok}<About version={data.version} path={data.storage.path} prefs={data.updates.prefs} status={data.updates.status} />
-            {:else}<ErrorState title="Myna couldn't read the update settings" message={data.updates?.ok === false ? data.updates.error : ""} />{/if}
-            {#if look}<Experimental bind:look part="switch" />{/if}
+            {#if look && data.updates?.ok}<General bind:look version={data.version} path={data.storage.path} prefs={data.updates.prefs} status={data.updates.status} />
+            {:else}<ErrorState title="Myna couldn't read its settings" message={!data.appearance.ok ? data.appearance.error : data.updates?.ok === false ? data.updates.error : ""} />{/if}
           {:else if view.page === "experimental"}
-            {#if look}<Experimental bind:look part="features" />{/if}
+            {#if look}<Experimental bind:look />{/if}
           {:else if view.page === "ai"}
             {#if ai}<AiProviders initial={ai} />
             {:else}<ErrorState title="Myna couldn't read its AI providers" message={data.ai?.ok === false ? data.ai.error : ""} />{/if}
