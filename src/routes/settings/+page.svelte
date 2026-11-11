@@ -51,6 +51,7 @@
     keep: { parent: "understand", title: "Filler exceptions" },
     styles: { parent: "write", title: "Cleanup styles" },
     style: { parent: "write", title: "" }, // the style's own name
+    add: { parent: "ai", title: "Add a provider" },
   };
 
   // Shared by the shortcut rows and the pill preview, which shows the same hint as the real pill.
@@ -220,6 +221,9 @@
           {:else if view.sub === "styles" || view.sub === "style"}
             {#if cleanup}<CleanupStyles bind:cleanup part={view.sub === "styles" ? "list" : "editor"} id={view.arg} {spell} {open} {drop} />
             {:else}<ErrorState title="Myna couldn't read the cleanup styles" message={data.cleanup?.ok === false ? data.cleanup.error : ""} />{/if}
+          {:else if view.sub === "add"}
+            {#if ai}<AiProviders bind:ai part="add" {back} />
+            {:else}<ErrorState title="Myna couldn't read its AI providers" message={data.ai?.ok === false ? data.ai.error : ""} />{/if}
           {:else if view.page === "listen"}
             {#if !voice}
               <ErrorState title="Myna couldn't read voice typing's settings" message={data.voice?.ok === false ? data.voice.error : ""} />
@@ -309,7 +313,7 @@
           {:else if view.page === "experimental"}
             {#if look}<Experimental bind:look />{/if}
           {:else if view.page === "ai"}
-            {#if ai}<AiProviders initial={ai} />
+            {#if ai}<AiProviders bind:ai part="page" {open} />
             {:else}<ErrorState title="Myna couldn't read its AI providers" message={data.ai?.ok === false ? data.ai.error : ""} />{/if}
           {/if}
         </div>
