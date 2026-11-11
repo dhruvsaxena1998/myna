@@ -455,8 +455,8 @@ impl World for Mac {
     }
     fn sound(&self, s: Sound) {
         let name = match s {
-            Sound::Start => "Tink",
-            Sound::Stop => "Pop",
+            Sound::Start => "Pop",
+            Sound::Stop => "Purr",
         };
         // NSSound isn't Send, so it's made and played on the main thread.
         let _ = self.0.run_on_main_thread(move || {
