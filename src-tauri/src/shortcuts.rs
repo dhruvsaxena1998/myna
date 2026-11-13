@@ -1,7 +1,8 @@
 //! Shortcuts: the global keys and what each one does. It registers keys through a `Registrar`, keeps the
 //! key-to-action map in memory, and answers "what does this key do" without the database or parsing.
-//! Voice typing's keys live here; meeting notes' key joins them later.
+//! Voice typing's keys and meeting notes' key live here.
 
+use crate::meeting::Notes;
 use crate::voice::{self, Voice};
 use std::sync::Mutex;
 use tauri_plugin_global_shortcut::Shortcut;
@@ -13,7 +14,11 @@ pub enum Do {
     Dictate { pressed: bool, clean: bool },
     /// fn let go while Settings records a key: tell the Settings page.
     TellSettings,
+    /// The meeting key was pressed: start meeting notes, or stop if recording.
+    ToggleMeeting,
 }
+
+const BUSY: &str = "Another app is using that shortcut. Pick a different one.";
 
 /// What the module needs from the Mac.
 pub trait Registrar: Send + Sync + 'static {
@@ -24,12 +29,18 @@ pub trait Registrar: Send + Sync + 'static {
     fn watch_fn(&self);
 }
 
+/// One feature's keys: what's registered now, with whether each runs Dictate with cleanup (always false for meeting notes).
 #[derive(Default)]
-struct State {
-    /// Every voice typing key now, fn included, with whether it runs Dictate with cleanup.
+struct Group {
     keys: Vec<(String, bool)>,
     /// `keys` parsed once, without fn.
     parsed: Vec<(Shortcut, bool)>,
+}
+
+#[derive(Default)]
+struct State {
+    voice: Group,
+    meeting: Group,
     paused: bool,
 }
 
@@ -43,35 +54,32 @@ impl Shortcuts {
         Self { reg, state: Default::default() }
     }
 
-    pub fn paused(&self) -> bool {
-        self.state.lock().unwrap().paused
-    }
-
-    /// Ends or starts a pause without syncing; the caller syncs.
-    pub fn set_paused(&self, paused: bool) {
-        self.state.lock().unwrap().paused = paused;
-    }
-
-    /// Registers voice typing's keys while it's on and not paused, and drops them otherwise.
-    /// The new keys are taken before the old ones go, so a refusal leaves the old ones working.
-    pub fn sync(&self, v: &Voice) -> Result<(), String> {
-        let mut s = self.state.lock().unwrap();
-        let want = if v.on && !s.paused { v.keys() } else { vec![] };
-        let have = |k: &str| s.keys.iter().any(|(h, _)| h == k);
+    /// Makes `g` hold exactly `want`. The new keys are taken before the old ones go, so a refusal leaves the old ones working.
+    /// `who` prefixes the log line.
+    fn swap(&self, g: &mut Group, want: Vec<(String, bool)>, who: &str) -> Result<(), String> {
+        let have = |k: &str| g.keys.iter().any(|(h, _)| h == k);
         let mut taken: Vec<&str> = vec![];
         for (k, _) in want.iter().filter(|(k, _)| k != voice::FN && !have(k)) {
             if let Err(e) = self.reg.register(k) {
-                eprintln!("dictation: couldn't use {k}: {e}");
+                eprintln!("{who}: couldn't use {k}: {e}");
                 taken.iter().for_each(|k| self.reg.unregister(k));
-                return Err("Another app is using that shortcut. Pick a different one.".into());
+                return Err(BUSY.into());
             }
             taken.push(k);
         }
-        for (k, _) in s.keys.iter().filter(|(k, _)| k != voice::FN && !want.iter().any(|(w, _)| w == k)) {
+        for (k, _) in g.keys.iter().filter(|(k, _)| k != voice::FN && !want.iter().any(|(w, _)| w == k)) {
             self.reg.unregister(k);
         }
-        s.parsed = want.iter().filter_map(|(k, c)| Some((k.parse().ok()?, *c))).collect();
-        s.keys = want;
+        g.parsed = want.iter().filter_map(|(k, c)| Some((k.parse().ok()?, *c))).collect();
+        g.keys = want;
+        Ok(())
+    }
+
+    /// Registers voice typing's keys while it's on and not paused, and drops them otherwise.
+    pub fn sync_voice(&self, v: &Voice) -> Result<(), String> {
+        let mut s = self.state.lock().unwrap();
+        let want = if v.on && !s.paused { v.keys() } else { vec![] };
+        self.swap(&mut s.voice, want, "dictation")?;
         // The recorder hears fn from the tap too, so it watches while paused.
         if v.on && (v.keys().iter().any(|(k, _)| k == voice::FN) || s.paused) {
             self.reg.watch_fn();
@@ -79,16 +87,28 @@ impl Shortcuts {
         Ok(())
     }
 
-    /// Lets go of every voice typing key while Settings records a new one, and takes them back after.
-    pub fn pause(&self, paused: bool, v: &Voice) -> Result<(), String> {
-        self.set_paused(paused);
-        self.sync(v)
+    /// Registers meeting notes' key while they're on, the key isn't "" and not paused, and drops it otherwise.
+    /// A refusal here leaves voice typing's keys alone, and the other way round.
+    pub fn sync_meeting(&self, n: &Notes) -> Result<(), String> {
+        let mut s = self.state.lock().unwrap();
+        let want = if n.on && !n.key.is_empty() && !s.paused { vec![(n.key.clone(), false)] } else { vec![] };
+        self.swap(&mut s.meeting, want, "meeting notes")
     }
 
-    /// A key from the plugin: what it does, or nothing if it isn't one of ours.
+    /// Lets go of every key while Settings records a new one, and takes them back after. Each group syncs on its
+    /// own: voice typing's result, then meeting notes'.
+    pub fn pause(&self, paused: bool, v: &Voice, n: &Notes) -> (Result<(), String>, Result<(), String>) {
+        self.state.lock().unwrap().paused = paused;
+        (self.sync_voice(v), self.sync_meeting(n))
+    }
+
+/// A key from the plugin: what it does, or nothing if it isn't one of ours.
     pub fn dispatch(&self, key: &Shortcut, pressed: bool) -> Option<Do> {
         let s = self.state.lock().unwrap();
-        let (_, clean) = s.parsed.iter().find(|(k, _)| k == key)?;
+        if s.meeting.parsed.iter().any(|(k, _)| k == key) {
+            return pressed.then_some(Do::ToggleMeeting);
+        }
+        let (_, clean) = s.voice.parsed.iter().find(|(k, _)| k == key)?;
         Some(Do::Dictate { pressed, clean: *clean })
     }
 
@@ -99,7 +119,7 @@ impl Shortcuts {
             // On release, so the release of this press doesn't reach the new shortcut.
             return (!down).then_some(Do::TellSettings);
         }
-        let (_, clean) = s.keys.iter().find(|(k, _)| k == voice::FN)?;
+        let (_, clean) = s.voice.keys.iter().find(|(k, _)| k == voice::FN)?;
         Some(Do::Dictate { pressed: down, clean: *clean })
     }
 }
@@ -178,6 +198,10 @@ mod tests {
         Voice { on, key: key.into(), clean: o(clean), key2: o(key2), clean2: o(clean2), mode: "hold".into(), paste: "clipboard".into(), rate: false, sounds: true }
     }
 
+    fn notes(on: bool, key: &str) -> Notes {
+        Notes { on, key: key.into(), keep_teams: false }
+    }
+
     fn all() -> Voice {
         voice(true, "Alt+Space", Some("Alt+D"), Some("Alt+C"), Some("Alt+E"))
     }
@@ -186,26 +210,24 @@ mod tests {
         k.parse().unwrap()
     }
 
-    const BUSY: &str = "Another app is using that shortcut. Pick a different one.";
-
     #[test]
     fn voice_typing_on_registers_every_key_and_never_fn() {
         let (s, f) = setup();
-        s.sync(&voice(true, "Fn", Some("Alt+D"), Some("Alt+C"), Some("Alt+E"))).unwrap();
+        s.sync_voice(&voice(true, "Fn", Some("Alt+D"), Some("Alt+C"), Some("Alt+E"))).unwrap();
         assert_eq!(f.calls(), ["+Alt+D", "+Alt+C", "+Alt+E"]);
         let (s, f) = setup();
-        s.sync(&all()).unwrap();
+        s.sync_voice(&all()).unwrap();
         assert_eq!(f.calls(), ["+Alt+Space", "+Alt+D", "+Alt+C", "+Alt+E"]);
     }
 
     #[test]
     fn voice_typing_off_registers_nothing_and_drops_what_was_held() {
         let (s, f) = setup();
-        s.sync(&voice(false, "Alt+Space", None, None, None)).unwrap();
+        s.sync_voice(&voice(false, "Alt+Space", None, None, None)).unwrap();
         assert!(f.calls().is_empty());
-        s.sync(&all()).unwrap();
+        s.sync_voice(&all()).unwrap();
         f.calls();
-        s.sync(&voice(false, "Alt+Space", None, None, None)).unwrap();
+        s.sync_voice(&voice(false, "Alt+Space", None, None, None)).unwrap();
         assert_eq!(f.calls(), ["-Alt+Space", "-Alt+D", "-Alt+C", "-Alt+E"]);
         assert_eq!(s.dispatch(&key("Alt+Space"), true), None);
     }
@@ -213,10 +235,10 @@ mod tests {
     #[test]
     fn a_refused_key_says_so_gives_back_what_it_took_and_keeps_the_old_keys() {
         let (s, f) = setup();
-        s.sync(&voice(true, "Alt+Space", None, None, None)).unwrap();
+        s.sync_voice(&voice(true, "Alt+Space", None, None, None)).unwrap();
         f.calls();
         f.refuse("Alt+C");
-        let err = s.sync(&voice(true, "Alt+F", Some("Alt+D"), Some("Alt+C"), None)).unwrap_err();
+        let err = s.sync_voice(&voice(true, "Alt+F", Some("Alt+D"), Some("Alt+C"), None)).unwrap_err();
         assert_eq!(err, BUSY);
         assert_eq!(f.calls(), ["+Alt+F", "+Alt+D", "-Alt+F", "-Alt+D"]);
         assert_eq!(s.dispatch(&key("Alt+Space"), true), Some(Do::Dictate { pressed: true, clean: false }));
@@ -226,9 +248,9 @@ mod tests {
     #[test]
     fn changing_only_the_action_of_a_held_key_leaves_it_registered() {
         let (s, f) = setup();
-        s.sync(&voice(true, "Alt+Space", None, None, None)).unwrap();
+        s.sync_voice(&voice(true, "Alt+Space", None, None, None)).unwrap();
         f.calls();
-        s.sync(&voice(true, "Alt+D", None, Some("Alt+Space"), None)).unwrap();
+        s.sync_voice(&voice(true, "Alt+D", None, Some("Alt+Space"), None)).unwrap();
         assert_eq!(f.calls(), ["+Alt+D"]);
         assert_eq!(s.dispatch(&key("Alt+Space"), true), Some(Do::Dictate { pressed: true, clean: true }));
     }
@@ -236,18 +258,84 @@ mod tests {
     #[test]
     fn pausing_drops_every_key_and_resuming_takes_them_back() {
         let (s, f) = setup();
-        s.sync(&all()).unwrap();
+        s.sync_voice(&all()).unwrap();
+        s.sync_meeting(&notes(true, "Alt+M")).unwrap();
         f.calls();
-        s.pause(true, &all()).unwrap();
-        assert_eq!(f.calls(), ["-Alt+Space", "-Alt+D", "-Alt+C", "-Alt+E"]);
-        s.pause(false, &all()).unwrap();
-        assert_eq!(f.calls(), ["+Alt+Space", "+Alt+D", "+Alt+C", "+Alt+E"]);
+        let (v, m) = s.pause(true, &all(), &notes(true, "Alt+M"));
+        assert!(v.is_ok() && m.is_ok());
+        assert_eq!(f.calls(), ["-Alt+Space", "-Alt+D", "-Alt+C", "-Alt+E", "-Alt+M"]);
+        assert_eq!(s.dispatch(&key("Alt+M"), true), None, "nothing while paused");
+        s.pause(false, &all(), &notes(true, "Alt+M")).0.unwrap();
+        assert_eq!(f.calls(), ["+Alt+Space", "+Alt+D", "+Alt+C", "+Alt+E", "+Alt+M"]);
+        assert_eq!(s.dispatch(&key("Alt+M"), true), Some(Do::ToggleMeeting));
+    }
+
+    #[test]
+    fn meeting_notes_on_registers_the_key_off_or_no_key_registers_nothing_and_drops_a_held_one() {
+        let (s, f) = setup();
+        s.sync_meeting(&notes(false, "Alt+M")).unwrap();
+        s.sync_meeting(&notes(true, "")).unwrap();
+        assert!(f.calls().is_empty());
+        s.sync_meeting(&notes(true, "Alt+M")).unwrap();
+        assert_eq!(f.calls(), ["+Alt+M"]);
+        s.sync_meeting(&notes(false, "Alt+M")).unwrap();
+        assert_eq!(f.calls(), ["-Alt+M"]);
+        s.sync_meeting(&notes(true, "Alt+M")).unwrap();
+        s.sync_meeting(&notes(true, "")).unwrap();
+        assert_eq!(f.calls(), ["+Alt+M", "-Alt+M"]);
+        assert_eq!(s.dispatch(&key("Alt+M"), true), None);
+    }
+
+    #[test]
+    fn changing_the_meeting_key_takes_the_new_one_before_dropping_the_old() {
+        let (s, f) = setup();
+        s.sync_meeting(&notes(true, "Alt+M")).unwrap();
+        f.calls();
+        s.sync_meeting(&notes(true, "Alt+N")).unwrap();
+        assert_eq!(f.calls(), ["+Alt+N", "-Alt+M"]);
+        assert_eq!(s.dispatch(&key("Alt+M"), true), None);
+        assert_eq!(s.dispatch(&key("Alt+N"), true), Some(Do::ToggleMeeting));
+    }
+
+    #[test]
+    fn a_refused_meeting_key_says_so_and_keeps_the_old_one() {
+        let (s, f) = setup();
+        s.sync_meeting(&notes(true, "Alt+M")).unwrap();
+        f.calls();
+        f.refuse("Alt+N");
+        assert_eq!(s.sync_meeting(&notes(true, "Alt+N")).unwrap_err(), BUSY);
+        assert!(f.calls().is_empty());
+        assert_eq!(s.dispatch(&key("Alt+M"), true), Some(Do::ToggleMeeting));
+        assert_eq!(s.dispatch(&key("Alt+N"), true), None);
+    }
+
+    #[test]
+    fn a_refusal_in_one_group_leaves_the_other_alone() {
+        let (s, f) = setup();
+        s.sync_meeting(&notes(true, "Alt+M")).unwrap();
+        s.sync_voice(&voice(true, "Alt+Space", None, None, None)).unwrap();
+        f.calls();
+        f.refuse("Alt+D");
+        f.refuse("Alt+N");
+        assert!(s.sync_voice(&voice(true, "Alt+D", None, None, None)).is_err());
+        assert_eq!(s.dispatch(&key("Alt+M"), true), Some(Do::ToggleMeeting));
+        assert!(s.sync_meeting(&notes(true, "Alt+N")).is_err());
+        assert_eq!(s.dispatch(&key("Alt+Space"), true), Some(Do::Dictate { pressed: true, clean: false }));
+        assert!(f.calls().is_empty());
+    }
+
+    #[test]
+    fn the_meeting_key_toggles_on_press_and_does_nothing_on_release() {
+        let (s, _) = setup();
+        s.sync_meeting(&notes(true, "Alt+M")).unwrap();
+        assert_eq!(s.dispatch(&key("Alt+M"), true), Some(Do::ToggleMeeting));
+        assert_eq!(s.dispatch(&key("Alt+M"), false), None);
     }
 
     #[test]
     fn a_key_press_and_release_run_dictate_or_cleanup() {
         let (s, _) = setup();
-        s.sync(&all()).unwrap();
+        s.sync_voice(&all()).unwrap();
         for k in ["Alt+Space", "Alt+D"] {
             assert_eq!(s.dispatch(&key(k), true), Some(Do::Dictate { pressed: true, clean: false }));
             assert_eq!(s.dispatch(&key(k), false), Some(Do::Dictate { pressed: false, clean: false }));
@@ -262,10 +350,10 @@ mod tests {
     #[test]
     fn fn_as_a_dictate_key_or_a_cleanup_key() {
         let (s, _) = setup();
-        s.sync(&voice(true, "Fn", None, None, None)).unwrap();
+        s.sync_voice(&voice(true, "Fn", None, None, None)).unwrap();
         assert_eq!(s.dispatch_fn(true), Some(Do::Dictate { pressed: true, clean: false }));
         assert_eq!(s.dispatch_fn(false), Some(Do::Dictate { pressed: false, clean: false }));
-        s.sync(&voice(true, "Alt+Space", None, Some("Fn"), None)).unwrap();
+        s.sync_voice(&voice(true, "Alt+Space", None, Some("Fn"), None)).unwrap();
         assert_eq!(s.dispatch_fn(true), Some(Do::Dictate { pressed: true, clean: true }));
         assert_eq!(s.dispatch_fn(false), Some(Do::Dictate { pressed: false, clean: true }));
     }
@@ -273,7 +361,7 @@ mod tests {
     #[test]
     fn fn_while_paused_tells_settings_on_release_only() {
         let (s, _) = setup();
-        s.pause(true, &voice(true, "Fn", None, None, None)).unwrap();
+        s.pause(true, &voice(true, "Fn", None, None, None), &notes(false, "")).0.unwrap();
         assert_eq!(s.dispatch_fn(true), None);
         assert_eq!(s.dispatch_fn(false), Some(Do::TellSettings));
     }
@@ -281,24 +369,24 @@ mod tests {
     #[test]
     fn fn_that_is_not_a_key_does_nothing() {
         let (s, _) = setup();
-        s.sync(&all()).unwrap();
+        s.sync_voice(&all()).unwrap();
         assert_eq!((s.dispatch_fn(true), s.dispatch_fn(false)), (None, None));
     }
 
     #[test]
     fn the_fn_tap_starts_for_fn_keys_and_while_paused_but_not_when_off() {
         let (s, f) = setup();
-        s.sync(&all()).unwrap();
+        s.sync_voice(&all()).unwrap();
         assert_eq!(f.watches(), 0);
-        s.sync(&voice(false, "Fn", None, None, None)).unwrap();
+        s.sync_voice(&voice(false, "Fn", None, None, None)).unwrap();
         assert_eq!(f.watches(), 0);
-        s.sync(&voice(true, "Fn", None, None, None)).unwrap();
+        s.sync_voice(&voice(true, "Fn", None, None, None)).unwrap();
         assert_eq!(f.watches(), 1);
         let (s, f) = setup();
-        s.pause(true, &all()).unwrap();
+        s.pause(true, &all(), &notes(true, "Alt+M")).0.unwrap();
         assert_eq!(f.watches(), 1);
         let (s, f) = setup();
-        s.pause(true, &voice(false, "Fn", None, None, None)).unwrap();
+        s.pause(true, &voice(false, "Fn", None, None, None), &notes(false, "")).0.unwrap();
         assert_eq!(f.watches(), 0);
     }
 }

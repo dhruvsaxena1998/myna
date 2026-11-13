@@ -38,7 +38,7 @@ use tauri::{ActivationPolicy, AppHandle, Emitter, Listener, Manager, WindowEvent
 use meeting_session::MeetingSession;
 use session::Session;
 use shortcuts::{Do, Shortcuts};
-use tauri_plugin_global_shortcut::{Shortcut, ShortcutState};
+use tauri_plugin_global_shortcut::ShortcutState;
 
 /// Result of creating the data folder and database: the folder path, or the error to show.
 struct Storage(Result<String, String>);
@@ -50,8 +50,6 @@ struct Data {
     macos: u32,
     /// Model id -> cancel flag, for each download in progress.
     downloads: Mutex<HashMap<String, Arc<AtomicBool>>>,
-    /// The meeting notes shortcut registered with macOS right now.
-    meeting_shortcut: Mutex<Option<String>>,
     /// API keys for AI providers: the Keychain.
     keys: Arc<dyn ai::Keys>,
 }
@@ -446,14 +444,16 @@ fn voice_get(d: tauri::State<Data>) -> Result<voice::Voice, String> {
 fn voice_set(app: AppHandle, d: tauri::State<Data>, voice: voice::Voice) -> Result<(), String> {
     let was = voice::get(&d.db.lock().unwrap())?;
     voice::set(&d.db.lock().unwrap(), &voice)?;
-    app.state::<Shortcuts>().set_paused(false);
-    if let Err(e) = sync_shortcut(&app) {
+    // A recorder saving its pick is done recording: unpaused, both groups take their keys.
+    let notes = meeting::get(&d.db.lock().unwrap())?;
+    let (voice_keys, _) = app.state::<Shortcuts>().pause(false, &voice, &notes); // meeting notes' own page reports its failure
+    if let Err(e) = voice_keys {
         voice::set(&d.db.lock().unwrap(), &was)?;
-        let _ = sync_shortcut(&app);
-        let _ = sync_meeting(&app);
+        let _ = app.state::<Shortcuts>().pause(false, &was, &notes);
+        voice_menu(&app, &was);
         return Err(e);
     }
-    let _ = sync_meeting(&app); // unpaused: meeting notes take their shortcut back; its own page reports a failure
+    voice_menu(&app, &voice);
     Ok(())
 }
 
@@ -461,8 +461,10 @@ fn voice_set(app: AppHandle, d: tauri::State<Data>, voice: voice::Voice) -> Resu
 #[tauri::command]
 fn voice_pause(app: AppHandle, d: tauri::State<Data>, paused: bool) -> Result<(), String> {
     let v = voice::get(&d.db.lock().unwrap())?;
-    let voice = app.state::<Shortcuts>().pause(paused, &v).map(|()| voice_menu(&app, &v));
-    sync_meeting(&app).and(voice)
+    let n = meeting::get(&d.db.lock().unwrap())?;
+    let (voice_keys, meeting_key) = app.state::<Shortcuts>().pause(paused, &v, &n);
+    voice_menu(&app, &v);
+    meeting_key.and(voice_keys)
 }
 
 #[tauri::command]
@@ -476,14 +478,20 @@ fn meeting_get(d: tauri::State<Data>) -> Result<meeting::Notes, String> {
 async fn meeting_set(app: AppHandle, d: tauri::State<'_, Data>, notes: meeting::Notes) -> Result<(), String> {
     let was = meeting::get(&d.db.lock().unwrap())?;
     meeting::set(&d.db.lock().unwrap(), &notes)?;
-    app.state::<Shortcuts>().set_paused(false); // a recorder saving its pick is done recording
-    if let Err(e) = sync_meeting(&app) {
+    // A recorder saving its pick is done recording: unpaused, both groups take their keys.
+    let v = voice::get(&d.db.lock().unwrap())?;
+    let (voice_keys, meeting_key) = app.state::<Shortcuts>().pause(false, &v, &notes);
+    if voice_keys.is_err() {
+        eprintln!("dictation: couldn't take the keys back"); // Listen reports a failure
+    }
+    voice_menu(&app, &v);
+    if let Err(e) = meeting_key {
         meeting::set(&d.db.lock().unwrap(), &was)?;
+        let _ = app.state::<Shortcuts>().pause(false, &v, &was);
         let _ = sync_meeting(&app);
-        let _ = sync_shortcut(&app);
         return Err(e);
     }
-    let _ = sync_shortcut(&app); // unpaused: voice typing takes its shortcuts back; Listen reports a failure
+    let _ = sync_meeting(&app);
     if !notes.on {
         app.state::<Arc<MeetingSession>>().stop();
     }
@@ -693,7 +701,7 @@ fn tell_update(app: &AppHandle, mode: &str, manual: bool) {
 /// Registers the saved voice typing keys through the Shortcuts module, then sets the menu items to match.
 fn sync_shortcut(app: &AppHandle) -> Result<(), String> {
     let v = voice::get(&app.state::<Data>().db.lock().unwrap())?;
-    app.state::<Shortcuts>().sync(&v)?;
+    app.state::<Shortcuts>().sync_voice(&v)?;
     voice_menu(app, &v);
     Ok(())
 }
@@ -707,32 +715,11 @@ fn voice_menu(app: &AppHandle, v: &voice::Voice) {
     sync_clean_item(app);
 }
 
-/// The shortcut to register: none while off, empty, or paused for a recorder in Settings.
-fn meeting_want(n: &meeting::Notes, paused: bool) -> Option<String> {
-    (n.on && !n.key.is_empty() && !paused).then(|| n.key.clone())
-}
-
-/// Registers the meeting notes shortcut while they're on, and sets the menu item and its note to match.
+/// Registers the meeting notes shortcut while they're on, and sets the add-on, the menu item and its note to match.
 fn sync_meeting(app: &AppHandle) -> Result<(), String> {
     let d = app.state::<Data>();
     let n = meeting::get(&d.db.lock().unwrap())?;
-    let want = meeting_want(&n, app.state::<Shortcuts>().paused());
-    let mut have = d.meeting_shortcut.lock().unwrap();
-    if *have != want {
-        use tauri_plugin_global_shortcut::GlobalShortcutExt;
-        let gs = app.global_shortcut();
-        if let Some(k) = &want {
-            gs.register(k.as_str()).map_err(|e| {
-                eprintln!("meeting notes: couldn't use {k}: {e}");
-                "Another app is using that shortcut. Pick a different one.".to_string()
-            })?;
-        }
-        if let Some(k) = have.as_ref() {
-            let _ = gs.unregister(k.as_str());
-        }
-        *have = want;
-    }
-    drop(have);
+    app.state::<Shortcuts>().sync_meeting(&n)?;
     // The add-on's socket is open only while notes are on.
     if let Some(a) = app.try_state::<addon::Addon>() {
         if n.on {
@@ -835,6 +822,7 @@ fn on_fn(app: &AppHandle, down: bool) {
 fn act(app: &AppHandle, todo: Option<Do>) {
     match todo {
         Some(Do::Dictate { pressed, clean }) => app.state::<Arc<Session>>().key(pressed, clean),
+        Some(Do::ToggleMeeting) => toggle_meeting(app),
         Some(Do::TellSettings) => {
             let _ = app.emit_to("settings", "voice-fn", ());
         }
@@ -898,20 +886,12 @@ pub fn run() {
                         models_dir: models,
                         macos: models::macos_major(),
                         downloads: Default::default(),
-                        meeting_shortcut: Default::default(),
                         keys,
                     });
                     app.manage(Shortcuts::new(Box::new(shortcuts::Mac(app.handle().clone()))));
                     app.handle().plugin(
                         tauri_plugin_global_shortcut::Builder::new()
                             .with_handler(|app, shortcut, e| {
-                                let meeting = app.state::<Data>().meeting_shortcut.lock().unwrap().clone();
-                                if meeting.is_some_and(|k| k.parse::<Shortcut>().ok().as_ref() == Some(shortcut)) {
-                                    if e.state() == ShortcutState::Pressed {
-                                        toggle_meeting(app);
-                                    }
-                                    return;
-                                }
                                 let todo = app.state::<Shortcuts>().dispatch(shortcut, e.state() == ShortcutState::Pressed);
                                 // Esc is caught only while recording (Session::start), and never when it's a voice typing key.
                                 if todo.is_none() && shortcut.key == tauri_plugin_global_shortcut::Code::Escape {
@@ -1038,17 +1018,4 @@ pub fn run() {
                 open_main(app);
             }
         });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_meeting_shortcut_is_let_go_while_a_recorder_listens() {
-        let n = |on, key: &str| meeting::Notes { on, key: key.into(), keep_teams: false };
-        assert_eq!(meeting_want(&n(true, "Alt+Space"), false), Some("Alt+Space".into()));
-        assert_eq!(meeting_want(&n(true, "Alt+Space"), true), None);
-        assert_eq!((meeting_want(&n(false, "Alt+Space"), false), meeting_want(&n(true, ""), false)), (None, None));
-    }
 }
