@@ -127,7 +127,8 @@ test("a failed Liquid Glass save turns the switch back and says why", async ({ p
   await open(page, true, false);
   await page.getByRole("option", { name: "Experimental" }).click();
   await page.getByRole("switch", { name: "Liquid Glass" }).click();
-  await expect(page.getByText("Couldn't save Liquid Glass: disk full")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Appearance" }).getByText("Couldn't save Liquid Glass: disk full")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Voice typing" }).locator(".err")).toBeEmpty();
   await expect(page.getByRole("switch", { name: "Liquid Glass" })).not.toBeChecked();
 });
 

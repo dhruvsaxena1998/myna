@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { fakeTauri } from "./tauri";
 
-// `meeting_set` fails for Ctrl+Alt+N, like a shortcut another app holds. Asking for System Audio allows it.
+// `meeting_set` fails for Ctrl+Alt+N, like a shortcut another app holds, and for a key a voice typing shortcut has (the backend's message). Asking for System Audio allows it.
 // `extra` adds or replaces handlers; `addon_get` can answer late, to show the page waits for it.
 async function open(page: Page, notes: { on: boolean; key: string; keep_teams?: boolean } = { on: false, key: "Ctrl+Alt+KeyM" }, audio = "allowed", addon = { connected: false, code: "MYNA-4F7Q-K2" }, extra = "", late = 0) {
   await fakeTauri(page, `{
@@ -9,7 +9,11 @@ async function open(page: Page, notes: { on: boolean; key: string; keep_teams?: 
     meeting_get: () => (${JSON.stringify(notes)}),
     addon_get: () => new Promise((ok) => setTimeout(() => ok(${JSON.stringify(addon)}), ${late})),
     addon_disconnect: () => "MYNA-NEW1-23", addon_folder: () => {}, text_copy: () => {}, voice_pause: () => {},
-    meeting_set: ({ notes }) => { if (notes.key === "Ctrl+Alt+KeyN") throw "Another app is using that shortcut. Pick a different one."; },
+    meeting_set: ({ notes }) => {
+      if (notes.key === "Ctrl+Alt+KeyN") throw "Another app is using that shortcut. Pick a different one.";
+      if (notes.key === "Alt+Space") throw "Option Space is already the Dictate shortcut. Pick another key.";
+      if (notes.key === "Ctrl+Shift+KeyC") throw "Control Shift C is already the Dictate with cleanup shortcut. Pick another key.";
+    },
     permissions_state: () => ({ ...(window.__perms ??= { mic: "allowed", ax: true, audio: ${JSON.stringify(audio)} }) }),
     permission_ask: ({ kind }) => { if (kind === "audio" && window.__perms.audio === "ask") window.__perms.audio = "allowed"; },
     ${extra}
@@ -94,17 +98,17 @@ test("a shortcut another app holds is refused and the old one stays", async ({ p
   await expect(shortcut(page)).toHaveText("⌃⌥M");
 });
 
-test("a key a voice typing shortcut uses is refused, naming it, and nothing is saved", async ({ page }) => {
-  const voice = `voice_get: () => ({ on: true, key: "Alt+Space", clean: "Ctrl+Shift+KeyC", key2: "End", mode: "hold", paste: "clipboard" })`;
-  await open(page, { on: true, key: "Ctrl+Alt+KeyM" }, "allowed", { connected: false, code: "C" }, voice);
+test("a key a voice typing shortcut uses is refused with the backend’s message, and the old key stays", async ({ page }) => {
+  await open(page, { on: true, key: "Ctrl+Alt+KeyM" });
   await shortcut(page).click();
   await page.keyboard.press("Alt+Space");
   await expect(page.getByText("Option Space is already the Dictate shortcut. Pick another key.")).toBeVisible();
+  await expect(shortcut(page)).toHaveText("⌃⌥M");
+  await expect(shortcut(page)).toBeFocused();
   await shortcut(page).click();
   await page.keyboard.press("Control+Shift+KeyC");
   await expect(page.getByText("Control Shift C is already the Dictate with cleanup shortcut. Pick another key.")).toBeVisible();
-  expect(await calls(page, "meeting_set")).toEqual([]);
-  expect((await calls(page, "voice_pause")).at(-1)).toEqual({ paused: false });
+  await expect(shortcut(page)).toHaveText("⌃⌥M");
 });
 
 test("fn alone is refused with a clear message", async ({ page }) => {
@@ -160,11 +164,11 @@ test("the recording pill says Muted or Mic live, mirrored from Teams, only while
   await page.goto("/pill");
   await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(9);
   const pill = page.getByRole("status");
-  await emit(page, "meeting", { started: Date.now(), mic: "live" });
+  await emit(page, "meeting", { started: Date.now(), mic: "live", words: "Mic live · mirrored from Teams" });
   await expect(pill).toContainText("Mic live · mirrored from Teams");
-  await emit(page, "meeting", { started: Date.now(), mic: "muted" });
+  await emit(page, "meeting", { started: Date.now(), mic: "muted", words: "Muted · mirrored from Teams" });
   await expect(pill).toContainText("Muted · mirrored from Teams");
-  await emit(page, "meeting", { started: Date.now(), mic: null });
+  await emit(page, "meeting", { started: Date.now(), mic: null, words: "Mic live" });
   await expect(pill).toHaveText(/Recording\d+:\d+Mic live$/);
 });
 
@@ -175,7 +179,7 @@ test("the recording pill shows Recording, the timer and Mic live, and goes when 
   await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(9);
   const pill = page.getByRole("status");
   await expect(pill).toBeHidden();
-  await emit(page, "meeting", { started: 100_000 - 65_000 });
+  await emit(page, "meeting", { started: 100_000 - 65_000, mic: null, words: "Mic live" });
   await expect(pill).toHaveText("Recording1:05Mic live");
   await page.clock.runFor(1000);
   await expect(pill).toHaveText("Recording1:06Mic live");
@@ -250,6 +254,8 @@ test("Browser add-on: not connected shows the steps, connected flips live, Disco
   await expect(group).toContainText("MYNA-4F7Q-K2");
   const connect = group.getByRole("button", { name: "Connect" });
   await expect(connect).toHaveAttribute("aria-expanded", "false");
+  const before = await status.boundingBox();
+  const connectWidth = (await connect.boundingBox())!.width;
   await connect.click();
   await expect(connect).toHaveAttribute("aria-expanded", "true");
   await expect(group).toContainText("Load unpacked");
@@ -261,6 +267,9 @@ test("Browser add-on: not connected shows the steps, connected flips live, Disco
   await expect(status).not.toContainText("Not connected");
   await expect(status).toContainText("Sees when you’re muted in Teams, and who is talking.");
   await expect(group).not.toContainText("Load unpacked");
+  // Connect and Disconnect swap words, not the row's height or the button's width.
+  expect((await status.boundingBox())!.height).toBe(before!.height);
+  expect((await group.getByRole("button", { name: "Disconnect" }).boundingBox())!.width).toBe(connectWidth);
   await group.getByRole("button", { name: "Disconnect" }).click();
   await expect(status).toContainText("Not connected");
   await expect(group).toContainText("MYNA-NEW1-23");

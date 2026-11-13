@@ -1,6 +1,6 @@
 // The keycap recorder's behaviour, shared by Listen and Meeting notes: one recorder at a time, the old shortcuts
-// paused while it listens (so they reach the page), Esc cancels, leaving the window ends it, and a pick is checked
-// before it's saved. The button itself is ShortcutButton.svelte.
+// paused while it listens (so they reach the page), Esc cancels, and leaving the window ends it. A pick is saved
+// and the backend says if the key is taken; the old key stays until the save works. The button itself is ShortcutButton.svelte.
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { onMount, tick } from "svelte";
@@ -11,8 +11,6 @@ export const PRESS = "Press the key or keys you want to use. Esc cancels.";
 type Options<W extends string> = {
   /** Saves the pick; resolves when it's done (or has said why not). */
   save: (which: W, key: string) => Promise<unknown>;
-  /** The error for a key that can't be used, or null. */
-  check: (which: W, key: string) => string | null;
   /** fn alone is a voice typing key, but can't be a global shortcut. */
   fn: boolean;
 };
@@ -58,9 +56,8 @@ export class Recorder<W extends string> {
   #pick(key: string) {
     const which = this.recording!;
     this.recording = null;
-    const err = key === "Fn" && !this.#o.fn ? "fn alone can’t start meeting notes. Add another key with it." : this.#o.check(which, key);
-    if (err) {
-      this.error = err;
+    if (key === "Fn" && !this.#o.fn) {
+      this.error = "fn alone can’t start meeting notes. Add another key with it.";
       invoke("voice_pause", { paused: false }).catch(() => {});
       return this.#focus(which);
     }

@@ -11,30 +11,27 @@
   import Permissions, { type Perms } from "$lib/Permissions.svelte";
   import ShortcutButton from "$lib/ShortcutButton.svelte";
   import { PRESS, Recorder } from "$lib/recorder.svelte";
-  import { clash } from "$lib/shortcut";
-  import type { Voice } from "$lib/VoiceShortcut.svelte";
 
-  // `voice`: its keys can't be this one. `connected` and `code` are the add-on's, kept by the page so they stay current while away.
+  // `connected` and `code` are the add-on's, kept by the page so they stay current while away.
   // `models`: the Models group, which needs the page's model state.
-  let { notes = $bindable(), voice, perms, connected = $bindable(), code = $bindable(), loadError, models }:
-    { notes: Notes; voice: Voice | null; perms: Perms; connected: boolean; code: string; loadError: string; models: Snippet } = $props();
+  let { notes = $bindable(), perms, connected = $bindable(), code = $bindable(), loadError, models }:
+    { notes: Notes; perms: Perms; connected: boolean; code: string; loadError: string; models: Snippet } = $props();
   let keepError = $state("");
 
   const rec = new Recorder<"notes">({
     fn: false,
-    save: (_, key) => save({ ...notes, key }),
-    check: (_, key) =>
-      clash(key, voice ? [["Dictate", voice.key], ["Dictate", voice.key2], ["Dictate with cleanup", voice.clean], ["Dictate with cleanup", voice.clean2]] : []),
+    save: (_, key) => save({ ...notes, key }, false, true),
   });
 
-  /** `keep`: the muted-voice switch, whose error shows under its own group. */
-  async function save(next: Notes, keep = false) {
+  /** `keep`: the muted-voice switch, whose error shows under its own group. `wait`: a recorder's pick, shown once the save works. */
+  async function save(next: Notes, keep = false, wait = false) {
     const was = notes;
-    notes = next;
+    if (!wait) notes = next;
     if (keep) keepError = "";
     else rec.error = "";
     try {
       await invoke("meeting_set", { notes: next });
+      notes = next;
     } catch (err) {
       notes = was;
       if (keep) keepError = String(err);

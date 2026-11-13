@@ -22,14 +22,14 @@
   // A meeting recording: its start time, or null. Its pill shares the dictation pill's spot, so it steps aside while dictation shows.
   let meetStarted = $state<number | null>(null);
   let meetSecs = $state(0);
-  let meetMic = $state<"live" | "muted" | null>(null); // the mute button, while the add-on mirrors it
+  let meetWords = $state(""); // how the mic is, in words, while a meeting records
   // A finished meeting's notes: being written up, saved, or failed. Shown in the same spot once the recording is over.
   let notes = $state<{ id: number; state: "transcribing" | "done" | "failed"; progress: number; error: string | null } | null>(null);
   let notesEl = $state<HTMLElement>();
   let notesHide: ReturnType<typeof setTimeout> | undefined;
   const meeting = $derived((meetStarted !== null || notes !== null) && !on);
   const shown = $derived<Shown | null>(
-    meetStarted !== null ? { state: "recording", mic: meetMic }
+    meetStarted !== null ? { state: "recording", words: meetWords }
     : !notes ? null
     : notes.state === "transcribing" ? { state: "notes", progress: notes.progress }
     : notes.state === "done" ? { state: "notes-saved" }
@@ -90,7 +90,7 @@
         if (payload.state === "fallback") hide = setTimeout(() => (on = false), 2600);
         if (payload.state === "error") hide = setTimeout(() => (on = false), 4000);
       }),
-      listen<{ started: number | null; mic: "live" | "muted" | null }>("meeting", ({ payload }) => ((meetStarted = payload.started), (meetMic = payload.mic), (meetSecs = payload.started === null ? 0 : Math.max(0, Math.floor((Date.now() - payload.started) / 1000))))),
+      listen<{ started: number | null; words: string | null }>("meeting", ({ payload }) => ((meetStarted = payload.started), (meetWords = payload.words ?? ""), (meetSecs = payload.started === null ? 0 : Math.max(0, Math.floor((Date.now() - payload.started) / 1000))))),
       listen<NonNullable<typeof notes>>("meeting-notes", ({ payload }) => {
         clearTimeout(notesHide);
         notes = payload;

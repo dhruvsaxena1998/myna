@@ -1,10 +1,11 @@
 //! The channel to Myna's browser add-on (07.1): a WebSocket on 127.0.0.1 while Meeting notes is on.
 //! Only the add-on's own origin gets in, and its first message must carry the connection code.
-//! The messages are in `Msg` (`stop-tab` is the one hyphenated name); `extension/messages.js` is the other copy. The Teams tab's sound (07.3) comes as
+//! The messages are in `Msg` (`stop-tab` is the one hyphenated name); `tests/extension/protocol.json` pins them for both sides. The Teams tab's sound (07.3) comes as
 //! binary frames: 4 bytes sequence (u32), 8 bytes capture time (i64, unix ms), then 16 kHz mono Int16 samples, all
-//! little-endian; `extension/audio.js` is the other copy.
+//! little-endian; the same fixture pins that layout.
 
-use rusqlite::{Connection, OptionalExtension};
+use crate::storage::{read_text, write_text};
+use rusqlite::Connection;
 use std::io::ErrorKind;
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
@@ -32,6 +33,9 @@ const STAY: u8 = 0;
 const STOPPED: u8 = 1;
 const WRONG_CODE: u8 = 2;
 const REPLACED: u8 = 3;
+/// The close codes the add-on hears for a wrong code and for a newer connection.
+const CLOSE_WRONG_CODE: u16 = 4001;
+const CLOSE_REPLACED: u16 = 4002;
 const ALPHABET: &[u8; 32] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no I, O, 0, 1
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq)]
@@ -55,7 +59,7 @@ impl MuteState {
 /// A message on the wire is `{"v":1,"type":...}` plus these fields. A type not listed fails to parse and is ignored.
 #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
-pub enum Msg {
+enum Msg {
     Hello { code: String },
     Welcome,
     Ping,
@@ -63,7 +67,7 @@ pub enum Msg {
     Selectors { version: String },
     Mute { state: MuteState, at: i64 },
     /// Teams' live captions showed `name` speaking at `at` (unix ms, the add-on's clock); `text` is optional.
-    Caption { name: String, at: i64, #[serde(default)] text: Option<String> },
+    Caption { name: String, at: i64, #[serde(default, skip_serializing_if = "Option::is_none")] text: Option<String> },
     /// The add-on expects captions but can't find them on the page.
     Captions { state: CaptionsState },
     /// The Teams tab's sound starts or stops coming as binary frames. `title` is the tab's, for the add-on's own use.
@@ -75,24 +79,33 @@ pub enum Msg {
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq)]
 #[serde(rename_all = "lowercase")]
-pub enum CaptionsState {
+enum CaptionsState {
     Unavailable,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq)]
 #[serde(rename_all = "lowercase")]
-pub enum TabState {
+enum TabState {
     Start,
     Stop,
 }
 
-/// What the tab stream does, as the meeting hears it.
+/// Everything the add-on module reports to the app: the one closure `Addon::new` takes. Only an authenticated connection produces the events after `Connected`.
 #[derive(Debug, PartialEq)]
-pub enum Tab {
-    Start,
-    Stop,
+pub enum AddonEvent {
+    /// A connection's `hello` carried the right code.
+    Connected,
+    /// The connected add-on reported its selector version; Settings asks again for what it shows.
+    SelectorsChanged,
+    /// The current connection ended. A connection a newer one replaced doesn't send it.
+    Disconnected,
+    Mute { state: MuteState, at: i64 },
+    Caption { name: String, at: i64, text: Option<String> },
+    CaptionsUnavailable,
+    TabStart,
     /// A frame: when it arrived, when it was captured (unix ms, the add-on's clock), and its samples.
-    Audio { at: Instant, ts: i64, samples: Vec<f32> },
+    TabAudio { at: Instant, ts: i64, samples: Vec<f32> },
+    TabStop,
 }
 
 /// A frame's sequence number, capture time and samples; None if it isn't one.
@@ -139,11 +152,11 @@ struct Wire<M> {
 
 pub const VERSION: u32 = 1;
 
-pub fn encode(msg: &Msg) -> String {
+fn encode(msg: &Msg) -> String {
     serde_json::to_string(&Wire { v: VERSION, msg }).expect("a message always serializes")
 }
 
-pub fn decode(text: &str) -> Option<Msg> {
+fn decode(text: &str) -> Option<Msg> {
     serde_json::from_str::<Wire<Msg>>(text).ok().filter(|w| w.v == VERSION).map(|w| w.msg)
 }
 
@@ -162,13 +175,7 @@ struct State {
 struct Shared {
     db: Arc<Mutex<Connection>>,
     origin: &'static str,
-    notify: Box<dyn Fn(bool) + Send + Sync>,
-    /// The mute button's state and when the add-on saw it (unix ms), from the authenticated connection only.
-    on_mute: Box<dyn Fn(MuteState, i64) + Send + Sync>,
-    /// `Caption` and `Captions` messages, from the authenticated connection only.
-    on_caption: Box<dyn Fn(Msg) + Send + Sync>,
-    /// The tab stream, from the authenticated connection only.
-    on_tab: Box<dyn Fn(Tab) + Send + Sync>,
+    emit: Box<dyn Fn(AddonEvent) + Send + Sync>,
     /// Set to tell the connection to send `stop-tab`.
     stop_tab: AtomicBool,
     st: Mutex<State>,
@@ -199,11 +206,11 @@ impl Shared {
     fn code(&self) -> Result<String, String> {
         let db = self.db.lock().unwrap();
         let err = |e: rusqlite::Error| format!("Couldn't read the add-on's connection code: {e}");
-        if let Some(c) = db.query_row("SELECT value FROM setting WHERE key = 'addon_code'", [], |r| r.get(0)).optional().map_err(err)? {
+        if let Some(c) = read_text(&db, "addon_code").map_err(err)? {
             return Ok(c);
         }
         let c = fresh_code();
-        db.execute("INSERT INTO setting(key, value) VALUES ('addon_code', ?1)", [&c]).map_err(err)?;
+        write_text(&db, "addon_code", &c).map_err(err)?;
         Ok(c)
     }
 
@@ -236,7 +243,7 @@ impl Shared {
             _ => return,
         };
         if !right {
-            return close(&mut ws, 4001);
+            return close(&mut ws, CLOSE_WRONG_CODE);
         }
 
         let kill: Kill = Arc::new(AtomicU8::new(STAY));
@@ -250,15 +257,15 @@ impl Shared {
             c.max_frame_size = Some(AUDIO_MAX);
         });
         let _ = ws.send(Message::text(encode(&Msg::Welcome)));
-        (self.notify)(true);
+        (self.emit)(AddonEvent::Connected);
         let mut stream: Option<Stream> = None;
 
         loop {
             match kill.load(Ordering::SeqCst) {
                 STAY => {}
                 STOPPED => break close(&mut ws, 1001),
-                WRONG_CODE => break close(&mut ws, 4001),
-                _ => break close(&mut ws, 4002),
+                WRONG_CODE => break close(&mut ws, CLOSE_WRONG_CODE),
+                _ => break close(&mut ws, CLOSE_REPLACED),
             }
             if self.stop_tab.swap(false, Ordering::SeqCst) {
                 let _ = ws.send(Message::text(encode(&Msg::StopTab)));
@@ -267,24 +274,25 @@ impl Shared {
                 Ok(Message::Text(t)) if t.len() > MAX => break close(&mut ws, 1009),
                 // `ping` and unknown types need nothing.
                 Ok(Message::Text(t)) => match decode(&t) {
-                    Some(Msg::Mute { state, at }) => (self.on_mute)(state, at),
+                    Some(Msg::Mute { state, at }) => (self.emit)(AddonEvent::Mute { state, at }),
                     Some(Msg::Selectors { version }) => {
                         let v: String = version.chars().filter(|c| !c.is_control()).take(32).collect();
                         self.st.lock().unwrap().selectors = (!v.is_empty()).then_some(v);
-                        (self.notify)(true); // Settings asks again for what it shows
+                        (self.emit)(AddonEvent::SelectorsChanged);
                     }
-                    Some(m @ (Msg::Caption { .. } | Msg::Captions { .. })) => (self.on_caption)(m),
+                    Some(Msg::Caption { name, at, text }) => (self.emit)(AddonEvent::Caption { name, at, text }),
+                    Some(Msg::Captions { state: CaptionsState::Unavailable }) => (self.emit)(AddonEvent::CaptionsUnavailable),
                     Some(Msg::Tab { state: TabState::Start, .. }) => {
                         stream = Some(Stream { started: Instant::now(), last: None, samples: 0 });
-                        (self.on_tab)(Tab::Start);
+                        (self.emit)(AddonEvent::TabStart);
                     }
-                    Some(Msg::Tab { state: TabState::Stop, .. }) if stream.take().is_some() => (self.on_tab)(Tab::Stop),
+                    Some(Msg::Tab { state: TabState::Stop, .. }) if stream.take().is_some() => (self.emit)(AddonEvent::TabStop),
                     _ => {}
                 },
                 Ok(Message::Binary(b)) => {
                     let Some(s) = stream.as_mut() else { break close(&mut ws, 1003) }; // no `tab start`: not audio we asked for
                     match s.take(&b) {
-                        Ok(Some((ts, samples))) => (self.on_tab)(Tab::Audio { at: Instant::now(), ts, samples }),
+                        Ok(Some((ts, samples))) => (self.emit)(AddonEvent::TabAudio { at: Instant::now(), ts, samples }),
                         Ok(None) => {}
                         Err(code) => break close(&mut ws, code),
                     }
@@ -296,21 +304,21 @@ impl Shared {
             }
         }
         if stream.is_some() {
-            (self.on_tab)(Tab::Stop); // the process tap takes over again
+            (self.emit)(AddonEvent::TabStop); // the process tap takes over again
         }
         let mut st = self.st.lock().unwrap();
         if st.conn.as_ref().is_some_and(|k| Arc::ptr_eq(k, &kill)) {
             st.conn = None;
             st.selectors = None;
             drop(st);
-            (self.notify)(false);
+            (self.emit)(AddonEvent::Disconnected);
         }
     }
 }
 
 impl Addon {
-    pub fn new(db: Arc<Mutex<Connection>>, origin: &'static str, ports: &[u16], notify: impl Fn(bool) + Send + Sync + 'static, on_mute: impl Fn(MuteState, i64) + Send + Sync + 'static, on_caption: impl Fn(Msg) + Send + Sync + 'static, on_tab: impl Fn(Tab) + Send + Sync + 'static) -> Self {
-        Addon { ports: ports.to_vec(), me: Arc::new(Shared { db, origin, notify: Box::new(notify), on_mute: Box::new(on_mute), on_caption: Box::new(on_caption), on_tab: Box::new(on_tab), stop_tab: AtomicBool::new(false), st: Default::default() }) }
+    pub fn new(db: Arc<Mutex<Connection>>, origin: &'static str, ports: &[u16], emit: impl Fn(AddonEvent) + Send + Sync + 'static) -> Self {
+        Addon { ports: ports.to_vec(), me: Arc::new(Shared { db, origin, emit: Box::new(emit), stop_tab: AtomicBool::new(false), st: Default::default() }) }
     }
 
     /// Tells the add-on the meeting is over, so it stops capturing the tab.
@@ -337,8 +345,7 @@ impl Addon {
     /// Cuts the add-on off: a new code, so the old one is useless, and the connection closed. Returns the new code.
     pub fn disconnect(&self) -> Result<String, String> {
         let c = fresh_code();
-        self.me.db.lock().unwrap()
-            .execute("INSERT INTO setting(key, value) VALUES ('addon_code', ?1) ON CONFLICT(key) DO UPDATE SET value = ?1", [&c])
+        write_text(&self.me.db.lock().unwrap(), "addon_code", &c)
             .map_err(|e| format!("Couldn't make a new connection code: {e}"))?;
         if let Some(k) = &self.me.st.lock().unwrap().conn {
             k.store(WRONG_CODE, Ordering::SeqCst);
@@ -395,9 +402,40 @@ mod tests {
     fn addon() -> (Addon, SocketAddr, tempfile::TempDir) {
         let tmp = tempfile::tempdir().unwrap();
         let db = Arc::new(Mutex::new(crate::storage::open(tmp.path()).unwrap()));
-        let a = Addon::new(db, ORIGIN, &[0], |_| {}, |_, _| {}, |_| {}, |_| {});
+        let a = Addon::new(db, ORIGIN, &[0], |_| {});
         let addr = a.start().unwrap();
         (a, addr, tmp)
+    }
+
+    type Events = Arc<Mutex<Vec<AddonEvent>>>;
+
+    /// An add-on and every event it reports, in order. Frames' arrival time is set to `epoch()`, so lists compare.
+    fn watched() -> (Addon, SocketAddr, Events, tempfile::TempDir) {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Mutex::new(crate::storage::open(tmp.path()).unwrap()));
+        let got: Events = Default::default();
+        let g = got.clone();
+        let a = Addon::new(db, ORIGIN, &[0], move |e| {
+            g.lock().unwrap().push(match e {
+                AddonEvent::TabAudio { ts, samples, .. } => AddonEvent::TabAudio { at: epoch(), ts, samples },
+                e => e,
+            })
+        });
+        let addr = a.start().unwrap();
+        (a, addr, got, tmp)
+    }
+
+    fn epoch() -> Instant {
+        static T: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+        *T.get_or_init(Instant::now)
+    }
+
+    fn audio(ts: i64, n: usize) -> AddonEvent {
+        AddonEvent::TabAudio { at: epoch(), ts, samples: vec![0.5; n] }
+    }
+
+    fn heard(got: &Events, n: usize) {
+        wait("the events", || got.lock().unwrap().len() >= n);
     }
 
     fn dial(addr: SocketAddr, origin: Option<&str>) -> Result<Client, tungstenite::Error> {
@@ -470,6 +508,28 @@ mod tests {
     }
 
     #[test]
+    fn the_wire_matches_the_shared_fixture() {
+        let fx: serde_json::Value = serde_json::from_str(include_str!("../../tests/extension/protocol.json")).unwrap();
+        assert_eq!(fx["version"], VERSION);
+        assert_eq!(fx["ports"], serde_json::json!(PORTS));
+        assert_eq!(fx["close"], serde_json::json!({ "wrongCode": CLOSE_WRONG_CODE, "replaced": CLOSE_REPLACED }));
+        for m in fx["messages"].as_array().unwrap() {
+            let wire = &m["wire"];
+            let msg = decode(&wire.to_string()).unwrap_or_else(|| panic!("does not decode: {wire}"));
+            let back: serde_json::Value = serde_json::from_str(&encode(&msg)).unwrap();
+            assert_eq!(&back, wire, "encodes differently");
+        }
+        for raw in fx["ignored"].as_array().unwrap() {
+            assert_eq!(decode(raw.as_str().unwrap()), None, "not ignored: {raw}");
+        }
+        for f in fx["frames"].as_array().unwrap() {
+            let bytes: Vec<u8> = f["bytes"].as_array().unwrap().iter().map(|b| b.as_u64().unwrap() as u8).collect();
+            let want: Vec<f32> = f["pcm"].as_array().unwrap().iter().map(|p| p.as_i64().unwrap() as f32 / 32768.0).collect();
+            assert_eq!(decode_frame(&bytes), Some((f["seq"].as_u64().unwrap() as u32, f["ts"].as_i64().unwrap(), want)), "frame {}", f["seq"]);
+        }
+    }
+
+    #[test]
     fn the_selector_version_is_kept_while_connected() {
         let (a, addr, _tmp) = addon();
         assert_eq!(a.selectors(), None);
@@ -481,38 +541,64 @@ mod tests {
     }
 
     #[test]
-    fn mute_messages_reach_myna_only_from_a_connection_that_said_hello() {
-        let tmp = tempfile::tempdir().unwrap();
-        let db = Arc::new(Mutex::new(crate::storage::open(tmp.path()).unwrap()));
-        let got = Arc::new(Mutex::new(vec![]));
-        let g = got.clone();
-        let a = Addon::new(db, ORIGIN, &[0], |_| {}, move |s, at| g.lock().unwrap().push((s, at)), |_| {}, |_| {});
-        let addr = a.start().unwrap();
-        let mut stranger = dial(addr, Some(ORIGIN)).unwrap();
-        stranger.send(Message::text(encode(&Msg::Mute { state: MuteState::Muted, at: 1 }))).unwrap();
-        assert!(closed(&mut stranger).is_some());
+    fn mute_and_caption_messages_reach_myna_as_events() {
+        let (a, addr, got, _t) = watched();
         let mut ws = connect(&a, addr);
         ws.send(Message::text(encode(&Msg::Mute { state: MuteState::Muted, at: 7 }))).unwrap();
-        wait("heard", || !got.lock().unwrap().is_empty());
-        assert_eq!(*got.lock().unwrap(), [(MuteState::Muted, 7)]);
+        ws.send(Message::text(r#"{"v":1,"type":"caption","name":"Ana","at":7,"text":"hi"}"#)).unwrap();
+        ws.send(Message::text(r#"{"v":1,"type":"caption","name":"Bo","at":8}"#)).unwrap();
+        ws.send(Message::text(r#"{"v":1,"type":"captions","state":"unavailable"}"#)).unwrap();
+        ws.send(Message::text(encode(&Msg::Selectors { version: "2026-11-10".into() }))).unwrap();
+        heard(&got, 6);
+        assert_eq!(*got.lock().unwrap(), [
+            AddonEvent::Connected,
+            AddonEvent::Mute { state: MuteState::Muted, at: 7 },
+            AddonEvent::Caption { name: "Ana".into(), at: 7, text: Some("hi".into()) },
+            AddonEvent::Caption { name: "Bo".into(), at: 8, text: None },
+            AddonEvent::CaptionsUnavailable,
+            AddonEvent::SelectorsChanged,
+        ]);
     }
 
     #[test]
-    fn caption_messages_reach_myna_only_from_a_connection_that_said_hello() {
-        let tmp = tempfile::tempdir().unwrap();
-        let db = Arc::new(Mutex::new(crate::storage::open(tmp.path()).unwrap()));
-        let got = Arc::new(Mutex::new(vec![]));
-        let g = got.clone();
-        let a = Addon::new(db, ORIGIN, &[0], |_| {}, |_, _| {}, move |m| g.lock().unwrap().push(m), |_| {});
-        let addr = a.start().unwrap();
-        let mut stranger = dial(addr, Some(ORIGIN)).unwrap();
-        stranger.send(Message::text(r#"{"v":1,"type":"caption","name":"Eve","at":1}"#)).unwrap();
-        assert!(closed(&mut stranger).is_some());
-        let mut ws = connect(&a, addr);
-        ws.send(Message::text(r#"{"v":1,"type":"caption","name":"Ana","at":7,"text":"hi"}"#)).unwrap();
-        ws.send(Message::text(r#"{"v":1,"type":"captions","state":"unavailable"}"#)).unwrap();
-        wait("heard", || got.lock().unwrap().len() == 2);
-        assert_eq!(*got.lock().unwrap(), [Msg::Caption { name: "Ana".into(), at: 7, text: Some("hi".into()) }, Msg::Captions { state: CaptionsState::Unavailable }]);
+    fn a_stranger_gets_no_events() {
+        let (_a, addr, got, _t) = watched();
+        for m in [
+            encode(&Msg::Mute { state: MuteState::Muted, at: 1 }),
+            r#"{"v":1,"type":"caption","name":"Eve","at":1}"#.into(),
+            encode(&Msg::Tab { state: TabState::Start, title: String::new() }),
+        ] {
+            let mut stranger = dial(addr, Some(ORIGIN)).unwrap();
+            stranger.send(Message::text(m)).unwrap();
+            assert!(closed(&mut stranger).is_some());
+        }
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(got.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn connecting_then_dropping_gives_connected_then_one_disconnected() {
+        let (a, addr, got, _t) = watched();
+        let ws = connect(&a, addr);
+        drop(ws);
+        wait("dropped", || !a.connected());
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(*got.lock().unwrap(), [AddonEvent::Connected, AddonEvent::Disconnected]);
+    }
+
+    #[test]
+    fn a_replaced_connection_sends_no_disconnected() {
+        let (a, addr, got, _t) = watched();
+        let mut first = connect(&a, addr);
+        let second = connect(&a, addr);
+        assert_eq!(closed(&mut first), Some(4002));
+        drop(first);
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(*got.lock().unwrap(), [AddonEvent::Connected, AddonEvent::Connected]);
+        drop(second);
+        heard(&got, 3);
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(*got.lock().unwrap(), [AddonEvent::Connected, AddonEvent::Connected, AddonEvent::Disconnected]);
     }
 
     #[test]
@@ -583,22 +669,9 @@ mod tests {
         Message::text(encode(&Msg::Tab { state, title: "Standup".into() }))
     }
 
-    type Heard = Arc<Mutex<Vec<(&'static str, i64, usize)>>>;
-
-    /// An add-on with a connection, and the tab events Myna heard from it as (kind, ts, samples).
-    fn tabbed() -> (Addon, Client, Heard, tempfile::TempDir) {
-        let tmp = tempfile::tempdir().unwrap();
-        let db = Arc::new(Mutex::new(crate::storage::open(tmp.path()).unwrap()));
-        let got = Arc::new(Mutex::new(vec![]));
-        let g = got.clone();
-        let a = Addon::new(db, ORIGIN, &[0], |_| {}, |_, _| {}, |_| {}, move |t| {
-            g.lock().unwrap().push(match t {
-                Tab::Start => ("start", 0, 0),
-                Tab::Stop => ("stop", 0, 0),
-                Tab::Audio { ts, samples, .. } => ("audio", ts, samples.len()),
-            })
-        });
-        let addr = a.start().unwrap();
+    /// An add-on with a connection, and the events Myna heard from it (the first is `Connected`).
+    fn tabbed() -> (Addon, Client, Events, tempfile::TempDir) {
+        let (a, addr, got, tmp) = watched();
         let ws = connect(&a, addr);
         (a, ws, got, tmp)
     }
@@ -611,8 +684,8 @@ mod tests {
             ws.send(frame(seq, ts, 1600)).unwrap(); // seq 2 was lost: the capture time shows the gap
         }
         ws.send(tab(TabState::Stop)).unwrap();
-        wait("heard", || got.lock().unwrap().len() == 5);
-        assert_eq!(*got.lock().unwrap(), [("start", 0, 0), ("audio", 1000, 1600), ("audio", 1100, 1600), ("audio", 1300, 1600), ("stop", 0, 0)]);
+        heard(&got, 6);
+        assert_eq!(*got.lock().unwrap(), [AddonEvent::Connected, AddonEvent::TabStart, audio(1000, 1600), audio(1100, 1600), audio(1300, 1600), AddonEvent::TabStop]);
         assert!(a.connected());
     }
 
@@ -621,7 +694,8 @@ mod tests {
         let (_a, mut ws, got, _t) = tabbed();
         ws.send(frame(0, 1, 160)).unwrap();
         assert_eq!(closed(&mut ws), Some(1003));
-        assert!(got.lock().unwrap().is_empty());
+        heard(&got, 2);
+        assert_eq!(*got.lock().unwrap(), [AddonEvent::Connected, AddonEvent::Disconnected]);
         let (_a, mut ws, _got, _t) = tabbed();
         ws.send(tab(TabState::Start)).unwrap();
         ws.send(tab(TabState::Stop)).unwrap();
@@ -644,7 +718,7 @@ mod tests {
         ws.send(tab(TabState::Start)).unwrap();
         ws.send(Message::binary(vec![0u8; AUDIO_MAX + 1])).unwrap();
         assert!(closed(&mut ws).is_some());
-        wait("stop", || got.lock().unwrap().last().is_some_and(|e| e.0 == "stop"));
+        wait("stop", || got.lock().unwrap().last() == Some(&AddonEvent::Disconnected));
         let (_a, mut ws, _got, _t) = tabbed();
         ws.send(tab(TabState::Start)).unwrap();
         ws.send(Message::binary(vec![0u8; HEADER + 3])).unwrap();
@@ -656,7 +730,7 @@ mod tests {
             let _ = ws.send(frame(seq, seq as i64, (AUDIO_MAX - HEADER) / 2)); // the socket may already be shut
         }
         assert_eq!(closed(&mut ws), Some(1008));
-        assert!(got.lock().unwrap().iter().filter(|e| e.0 == "audio").count() < 5);
+        assert!(got.lock().unwrap().iter().filter(|e| matches!(e, AddonEvent::TabAudio { .. })).count() < 5);
     }
 
     #[test]
@@ -667,7 +741,8 @@ mod tests {
         let told = (0..3).any(|_| matches!(ws.read(), Ok(Message::Text(t)) if t.as_str() == r#"{"v":1,"type":"stop-tab"}"#));
         assert!(told);
         drop(ws);
-        wait("stop", || got.lock().unwrap().last().is_some_and(|e| e.0 == "stop"));
+        wait("stop", || got.lock().unwrap().last() == Some(&AddonEvent::Disconnected));
+        assert_eq!(*got.lock().unwrap(), [AddonEvent::Connected, AddonEvent::TabStart, AddonEvent::TabStop, AddonEvent::Disconnected]);
     }
 
     #[test]

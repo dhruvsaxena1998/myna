@@ -17,7 +17,7 @@ pub struct Segment {
     pub text: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
 pub struct Turn {
     pub start: f32,
     pub end: f32,
@@ -71,16 +71,17 @@ pub fn diarizer(id: &str, models_dir: &Path) -> Result<Box<dyn Diarizer>, String
             let model = Sortformer::with_config(first_file(&m, &models_dir.join(id)), Some(cfg), DiarizationConfig::default());
             Ok(Box::new(Sort(model.map_err(|e| err(e.to_string()))?)))
         }
+        "who" => Ok(Box::new(crate::who::Who::load(&models_dir.join(id)).map_err(|e| format!("Couldn't load {}: {e}", m.name))?)),
         _ => Err(format!("{} can't run in Myna yet", m.name)),
     }
 }
 
 type Loaded = Result<Box<dyn Diarizer>, String>;
 
-/// The diarizer for a meeting: the active model if it's downloaded and loads, else Sortformer (Who isn't runnable yet).
+/// The diarizer for a meeting: the active model if it's downloaded and loads, else Sortformer.
 /// Err says to download one when none is, or why the last one tried didn't load.
 pub fn pick_diarizer(active: &str, installed: &dyn Fn(&str) -> bool, load: &dyn Fn(&str) -> Loaded) -> Loaded {
-    let mut err = "Download a voice model in Settings › Speech models".to_string();
+    let mut err = "Download a voice model in Settings › Meeting notes".to_string();
     for id in [active, "sortformer"] {
         if installed(id) {
             match load(id) {
@@ -229,14 +230,14 @@ mod tests {
     fn the_diarizer_falls_back_to_sortformer_and_says_when_there_is_none() {
         let turn = Turn { start: 0.0, end: 1.0, speaker: 0 };
         let load = |id: &str| -> Loaded {
-            if id == "who" { Err("Who can't run yet".into()) } else { Ok(Box::new(Fake(vec![Turn { speaker: 7, ..turn.clone() }]))) }
+            if id == "who" { Err("Couldn't load Desert Ant Who".into()) } else { Ok(Box::new(Fake(vec![Turn { speaker: 7, ..turn.clone() }]))) }
         };
         let pick = |active: &str, there: &'static [&'static str]| pick_diarizer(active, &|id| there.contains(&id), &load).map(|mut d| d.diarize(&[]).unwrap()[0].speaker);
         assert_eq!(pick("who", &["who", "sortformer"]), Ok(7), "the active one won't load");
         assert_eq!(pick("who", &["sortformer"]), Ok(7), "the active one isn't downloaded");
         assert_eq!(pick("sortformer", &["sortformer"]), Ok(7));
-        assert_eq!(pick("who", &["who"]).err().unwrap(), "Who can't run yet");
-        assert_eq!(pick("who", &[]).err().unwrap(), "Download a voice model in Settings › Speech models");
+        assert_eq!(pick("who", &["who"]).err().unwrap(), "Couldn't load Desert Ant Who");
+        assert_eq!(pick("who", &[]).err().unwrap(), "Download a voice model in Settings › Meeting notes");
     }
 
     #[test]
@@ -334,7 +335,18 @@ mod tests {
     #[test]
     #[ignore = "slow: needs the downloaded Sortformer model"]
     fn sortformer_tells_the_two_voices_apart() {
-        let turns = diarizer("sortformer", &models_dir()).unwrap().diarize(&fixture()).unwrap();
+        tells_the_two_voices_apart("sortformer");
+    }
+
+    #[test]
+    #[ignore = "slow: downloads Who through its SDK (macOS 15+)"]
+    fn who_tells_the_two_voices_apart() {
+        crate::who::download(&models_dir().join("who"), |_| {}).unwrap();
+        tells_the_two_voices_apart("who");
+    }
+
+    fn tells_the_two_voices_apart(id: &str) {
+        let turns = diarizer(id, &models_dir()).unwrap().diarize(&fixture()).unwrap();
         let at = |t: f32| turns.iter().find(|s| s.start <= t && t <= s.end).map(|s| s.speaker);
         let (first, second) = (at(2.0), at(7.0));
         assert!(first.is_some() && second.is_some() && first != second, "{turns:?}");

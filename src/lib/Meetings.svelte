@@ -1,7 +1,7 @@
 <!-- Meetings (docs/index.html `meetingsList()`): recorded meetings by day, with the live card while one records or is written up. -->
 <script lang="ts">
   import ErrorState from "./ErrorState.svelte";
-  import { clock, dayHead, meta, mic, writing, type Meeting, type Progress, type Running } from "./meetings";
+  import { clock, dayHead, meta, writing, type Meeting, type Progress, type Running } from "./meetings";
 
   let { meetings, running, progress, on, error, onstart, onstop, onenable, onopen, onretry }: {
     meetings: Meeting[]; running: Running; progress: Record<number, Progress>; on: boolean; error: string;
@@ -56,7 +56,7 @@
       <section class="card rec" aria-label="Meeting recording in progress">
         <div class="main"><span class="label"><span class="dot" aria-hidden="true"></span>Recording{running.source ? ` · ${running.source}` : ""}</span><span class="time">{clock(now - running.started)}</span></div>
         <span class="lvl" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
-        <span class="mic">{@render icon('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/>')}{mic(running.mic)}</span>
+        <span class="mic">{@render icon('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/>')}{running.words}</span>
         <span class="grow"></span>
         <button class="btn danger" onclick={onstop}>{@render icon('<rect x="7" y="7" width="10" height="10" rx="2"/>')}Stop</button>
       </section>

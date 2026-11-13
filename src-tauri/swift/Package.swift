@@ -7,6 +7,6 @@ let package = Package(
     platforms: [.macOS("14.2")],
     products: [.library(name: "MynaSwift", type: .static, targets: ["MynaSwift"])],
     dependencies: [.package(url: "https://github.com/Desert-Ant-Labs/desert-ant-core.git", exact: "4.3.0")],
-    targets: [.target(name: "MynaSwift", dependencies: [.product(name: "Voz", package: "desert-ant-core")])],
+    targets: [.target(name: "MynaSwift", dependencies: [.product(name: "Voz", package: "desert-ant-core"), .product(name: "Who", package: "desert-ant-core")])],
     swiftLanguageModes: [.v5]
 )

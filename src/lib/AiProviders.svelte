@@ -369,14 +369,20 @@
   .terr { color: var(--danger-text); }
   .pk:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   .pop { position: absolute; z-index: 10; right: 0; top: calc(100% + var(--sp-1)); width: min(420px, calc(100vw - 96px)); box-sizing: border-box; padding: 5px;
-    border-radius: var(--r-lg); background: var(--bg-raised); box-shadow: var(--shadow-menu); }
+    border-radius: var(--r-lg); background: var(--mat-menu); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
+    box-shadow: inset 0 0 0 .5px var(--edge), var(--shadow-menu); animation: rise var(--dur) var(--ease-out); }
+  /* DESIGN.md › Motion: popovers enter with an 8px rise and a fade. */
+  @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+  @media (prefers-reduced-motion: reduce) { .pop { animation: none; } }
   .pop .input { margin-bottom: var(--sp-1); }
   /* Fixed, not max: the list must not resize when models arrive, or the page under it jumps. */
   .pk-list { height: 300px; overflow-y: auto; scrollbar-width: thin; }
-  .pk-h { padding: 6px 10px 2px; font-size: var(--fs-caption); font-weight: var(--fw-semibold); color: var(--text-3); }
+  .pk-h { padding: 6px 10px 2px; font-size: var(--fs-caption); line-height: var(--lh-caption); font-weight: var(--fw-semibold); color: var(--text-3); }
   .pk-note { margin: 0; padding: 4px 10px; font-size: var(--fs-footnote); color: var(--text-3); }
   .pk { display: flex; flex-direction: column; align-items: stretch; width: 100%; min-height: 42px; box-sizing: border-box; padding: 4px 10px; border: 0; border-radius: var(--r-sm); background: none; color: var(--text); font: inherit; text-align: left; }
-  .pk:hover, .pk:focus-visible { background: var(--fill-hover); }
+  /* Like a native menu: the item under the pointer or focus fills with the accent. */
+  .pk:hover, .pk:focus-visible { background: var(--accent); color: var(--on-accent); }
+  .pk:hover .pk-m, .pk:focus-visible .pk-m { color: inherit; }
   .pk:focus-visible { outline-offset: -2px; }
   .pk-t { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); font: 12px/18px var(--font-mono); }
   .pk-m { font-size: var(--fs-footnote); line-height: var(--lh-footnote); color: var(--text-3); font-variant-numeric: tabular-nums; }

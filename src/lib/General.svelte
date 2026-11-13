@@ -165,4 +165,4 @@
 </section>
 
 <!-- Desert Ant's license asks for this credit; their SDK ships in every build, so it always shows. -->
-<p class="foot">Free and open source, MIT license. Voz speech-to-text <a href="https://desertant.com" onclick={(e) => { e.preventDefault(); invoke("open_link", { url: "https://desertant.com" }); }}>powered by Desert Ant Labs</a>.</p>
+<p class="foot">Free and open source, MIT license. Voz speech-to-text and Who speaker diarization <a href="https://desertant.com" onclick={(e) => { e.preventDefault(); invoke("open_link", { url: "https://desertant.com" }); }}>powered by Desert Ant Labs</a>.</p>

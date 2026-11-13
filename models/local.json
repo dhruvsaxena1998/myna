@@ -151,6 +151,7 @@
       "default": true,
       "size": 80000000,
       "min_macos": 15,
+      "sdk": true,
       "repo": "desert-ant-labs/who",
       "revision": "9b7037848b9e03988f0157e6be26607b36fe452b",
       "files": []

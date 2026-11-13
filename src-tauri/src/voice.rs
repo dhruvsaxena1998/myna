@@ -1,6 +1,7 @@
 //! Voice typing's own settings: on or off, its two shortcuts (Dictate, and Dictate with cleanup), and whether you hold or tap them.
 
-use rusqlite::{Connection, OptionalExtension};
+use crate::storage::{read_choice, read_switch, read_text, write_switch, write_text};
+use rusqlite::Connection;
 use tauri_plugin_global_shortcut::Shortcut;
 
 pub const MODES: [&str; 2] = ["hold", "tap"];
@@ -42,23 +43,19 @@ fn on() -> bool {
     true
 }
 
-fn read(conn: &Connection, key: &str) -> Result<Option<String>, String> {
-    conn.query_row("SELECT value FROM setting WHERE key = ?1", [key], |r| r.get(0))
-        .optional()
-        .map_err(|e| format!("Couldn't read voice typing's settings: {e}"))
-}
-
 pub fn get(conn: &Connection) -> Result<Voice, String> {
+    let err = |e: rusqlite::Error| format!("Couldn't read voice typing's settings: {e}");
+    let shortcut = |k: &str| read_text(conn, k).map(|v| v.filter(|k| valid(k)));
     Ok(Voice {
-        on: read(conn, "voice_on")?.is_none_or(|v| v == "1"),
-        key: read(conn, "voice_key")?.filter(|k| valid(k)).unwrap_or("Alt+Space".into()),
-        clean: read(conn, "voice_key_clean")?.filter(|k| valid(k)),
-        key2: read(conn, "voice_key_2")?.filter(|k| valid(k)),
-        clean2: read(conn, "voice_key_clean_2")?.filter(|k| valid(k)),
-        mode: read(conn, "voice_mode")?.filter(|m| MODES.contains(&m.as_str())).unwrap_or(MODES[0].into()),
-        paste: read(conn, "voice_paste")?.filter(|m| PASTES.contains(&m.as_str())).unwrap_or(PASTES[0].into()),
-        rate: read(conn, "voice_rate")?.is_some_and(|v| v == "1"),
-        sounds: read(conn, "voice_sounds")?.is_none_or(|v| v == "1"),
+        on: read_switch(conn, "voice_on", true).map_err(err)?,
+        key: shortcut("voice_key").map_err(err)?.unwrap_or("Alt+Space".into()),
+        clean: shortcut("voice_key_clean").map_err(err)?,
+        key2: shortcut("voice_key_2").map_err(err)?,
+        clean2: shortcut("voice_key_clean_2").map_err(err)?,
+        mode: read_choice(conn, "voice_mode", &MODES, MODES[0]).map_err(err)?,
+        paste: read_choice(conn, "voice_paste", &PASTES, PASTES[0]).map_err(err)?,
+        rate: read_switch(conn, "voice_rate", false).map_err(err)?,
+        sounds: read_switch(conn, "voice_sounds", true).map_err(err)?,
     })
 }
 
@@ -88,26 +85,21 @@ pub fn set(conn: &Connection, v: &Voice) -> Result<(), String> {
         return Err(format!("{} can't be a shortcut.", v.key));
     }
     let keys = v.keys();
-    for (i, (k, _)) in keys.iter().enumerate() {
+    for (k, _) in &keys {
         if !valid(k) {
             return Err(format!("{k} can't be a shortcut."));
-        }
-        // The earlier one names the action the key already belongs to.
-        if let Some((_, was_clean)) = keys[..i].iter().find(|(o, _)| o == k) {
-            let other = if *was_clean { "Dictate with cleanup" } else { "Dictate" };
-            return Err(format!("{k} is already the {other} shortcut. Pick another key."));
         }
     }
     if v.clean2.is_some() && v.clean.is_none() {
         return Err("Set the first Dictate with cleanup key before a second one.".into());
     }
-    let switch = |on: bool| if on { "1" } else { "0" };
-    let (on, rate, sounds) = (switch(v.on), switch(v.rate), switch(v.sounds));
     let opt = |o: &Option<String>| o.clone().unwrap_or_default();
-    let (clean, key2, clean2) = (opt(&v.clean), opt(&v.key2), opt(&v.clean2));
-    for (k, val) in [("voice_on", on), ("voice_key", &v.key), ("voice_key_clean", &clean), ("voice_key_2", &key2), ("voice_key_clean_2", &clean2), ("voice_mode", &v.mode), ("voice_paste", &v.paste), ("voice_rate", rate), ("voice_sounds", sounds)] {
-        conn.execute("INSERT INTO setting(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2", [k, val])
-            .map_err(|e| format!("Couldn't save voice typing's settings: {e}"))?;
+    let err = |e: rusqlite::Error| format!("Couldn't save voice typing's settings: {e}");
+    for (k, on) in [("voice_on", v.on), ("voice_rate", v.rate), ("voice_sounds", v.sounds)] {
+        write_switch(conn, k, on).map_err(err)?;
+    }
+    for (k, val) in [("voice_key", &v.key), ("voice_key_clean", &opt(&v.clean)), ("voice_key_2", &opt(&v.key2)), ("voice_key_clean_2", &opt(&v.clean2)), ("voice_mode", &v.mode), ("voice_paste", &v.paste)] {
+        write_text(conn, k, val).map_err(err)?;
     }
     Ok(())
 }
@@ -143,7 +135,6 @@ mod tests {
         let with = |c: Option<&str>| Voice { clean: c.map(Into::into), ..v.clone() };
         set(&conn, &with(Some("Alt+Shift+Space"))).unwrap();
         assert_eq!(get(&conn).unwrap().clean.as_deref(), Some("Alt+Shift+Space"));
-        assert!(set(&conn, &with(Some("Alt+Space"))).unwrap_err().contains("already the Dictate shortcut"));
         assert!(set(&conn, &with(Some("Alt+Nope"))).is_err());
         assert_eq!(get(&conn).unwrap().clean.as_deref(), Some("Alt+Shift+Space"), "a refused save changes nothing");
         set(&conn, &with(None)).unwrap();
@@ -160,7 +151,7 @@ mod tests {
     }
 
     #[test]
-    fn each_action_takes_a_second_key_and_no_key_is_used_twice() {
+    fn each_action_takes_a_second_key() {
         let tmp = tempfile::tempdir().unwrap();
         let conn = crate::storage::open(tmp.path()).unwrap();
         let v = Voice { key: "Fn".into(), key2: Some("PageDown".into()), clean: Some("Alt+Space".into()), clean2: Some("End".into()), ..get(&conn).unwrap() };
@@ -168,9 +159,6 @@ mod tests {
         assert_eq!(get(&conn), Ok(v.clone()));
         assert!(v.is_clean("End") && v.is_clean("Alt+Space") && !v.is_clean("PageDown") && !v.is_clean("Fn"));
         for (bad, says) in [
-            (Voice { key2: Some("Fn".into()), ..v.clone() }, "Fn is already the Dictate shortcut"),
-            (Voice { clean2: Some("PageDown".into()), ..v.clone() }, "PageDown is already the Dictate shortcut"),
-            (Voice { clean2: Some("Alt+Space".into()), ..v.clone() }, "Alt+Space is already the Dictate with cleanup shortcut"),
             (Voice { key2: Some("Alt+Nope".into()), ..v.clone() }, "can't be a shortcut"),
             (Voice { clean: None, ..v.clone() }, "first Dictate with cleanup key"),
         ] {
@@ -207,5 +195,34 @@ mod tests {
         let old: Voice = serde_json::from_str(r#"{"on":true,"key":"Alt+Space","clean":null,"mode":"hold","paste":"clipboard"}"#).unwrap();
         assert!(old.sounds, "a page from before the switch leaves it on");
     }
-}
 
+    #[test]
+    fn missing_unknown_and_invalid_saved_values_fall_back() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = crate::storage::open(tmp.path()).unwrap();
+        let plant = |rows: &[(&str, &str)]| for (k, val) in rows {
+            conn.execute("INSERT INTO setting(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2", [k, val]).unwrap();
+        };
+        plant(&[("voice_on", "maybe"), ("voice_rate", "yes"), ("voice_sounds", "maybe"), ("voice_key", ""), ("voice_key_clean", ""), ("voice_key_2", ""), ("voice_key_clean_2", "Alt+Nope"), ("voice_mode", "shout"), ("voice_paste", "fax")]);
+        let v = get(&conn).unwrap();
+        assert!(!v.on && !v.rate && !v.sounds, "anything but 1 is off");
+        assert_eq!((v.key.as_str(), v.clean, v.key2, v.clean2), ("Alt+Space", None, None, None));
+        assert_eq!((v.mode.as_str(), v.paste.as_str()), ("hold", "clipboard"));
+        plant(&[("voice_key", "Nope+Nope")]);
+        assert_eq!(get(&conn).unwrap().key, "Alt+Space");
+        plant(&[("voice_on", "1"), ("voice_key", "Fn"), ("voice_mode", "tap"), ("voice_paste", "type"), ("voice_key_2", "Ctrl+KeyD")]);
+        let v = get(&conn).unwrap();
+        assert_eq!((v.on, v.key.as_str(), v.mode.as_str(), v.paste.as_str(), v.key2.as_deref()), (true, "Fn", "tap", "type", Some("Ctrl+KeyD")));
+    }
+
+    #[test]
+    fn saving_writes_every_key_as_text_and_an_unset_key_as_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = crate::storage::open(tmp.path()).unwrap();
+        set(&conn, &get(&conn).unwrap()).unwrap();
+        let rows: Vec<(String, String)> = conn.prepare("SELECT key, value FROM setting ORDER BY key").unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+        let want = [("voice_key", "Alt+Space"), ("voice_key_2", ""), ("voice_key_clean", ""), ("voice_key_clean_2", ""), ("voice_mode", "hold"), ("voice_on", "1"), ("voice_paste", "clipboard"), ("voice_rate", "0"), ("voice_sounds", "1")];
+        assert_eq!(rows, want.map(|(k, v)| (k.to_string(), v.to_string())));
+    }
+}

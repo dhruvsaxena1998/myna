@@ -56,6 +56,10 @@ _Avoid_: summary, compaction, memory
 The part of Myna that runs one dictation, from the shortcut to the paste: the checks before recording, the recording, transcription, rules cleanup, the paste and what the pill shows. It also keeps the speech model loaded between dictations and frees it after the idle time. It reaches the Mac only through one port, so tests run it with a fake.
 _Avoid_: dictation flow, dictation handler
 
+**Meeting session**:
+The part of Myna that runs one meeting recording, from the shortcut to the write-up: the checks before recording, the clock and the "can't hear the others" warning while it runs, stopping and keeping it, writing the notes up, trying again, finishing meetings cut off by a quit, and what the browser add-on reports during the call. It owns the app's recorder and reaches the Mac only through one port, so tests run it with a fake.
+_Avoid_: meeting flow, meeting handler
+
 **Rules cleanup**:
 The deterministic pass that removes filler words, collapses repeated words, writes spoken numbers as digits and applies the user's words to remember. It only deletes listed words, writes a number in digits, respells words the user listed, and repairs the gap left behind; it never adds, reorders or rephrases. It is on by default and the user can switch it off for dictation; words to remember always apply. It needs no AI provider.
 
@@ -82,6 +86,12 @@ _Avoid_: mode, tone, preset
 **Off-device**:
 True when a request goes to a host other than this Mac's loopback address, including another machine on the LAN. Off-device features carry the "sends text off this Mac" pill.
 _Avoid_: cloud, remote
+
+## Shortcuts
+
+**Shortcut**:
+A key or key combination, set in Settings, that runs one action from any app: Dictate, Dictate with cleanup, or starting and stopping meeting notes. One key runs one action. The Shortcuts module registers them with macOS and decides which action a press runs.
+_Avoid_: hotkey, keybinding
 
 ## Updates
 
@@ -116,3 +126,13 @@ _Avoid_: edit (a rule's change), feedback (a 👎)
 **Correction rate**:
 The share of a dictation's pasted text the user changed through corrections: 0% untouched, 100% rewritten.
 _Avoid_: accuracy, error rate
+
+## Browser add-on
+
+**Add-on protocol**:
+The messages and audio frames on the browser add-on's socket, in both directions. `tests/extension/protocol.json` defines them, and Myna's tests and the add-on's tests both check their code against that file.
+_Avoid_: API, wire format
+
+**Add-on event**:
+What the add-on module reports to the app, as one enum: connected, selectors changed, disconnected, mute, caption, captions unavailable and the tab's start, audio and stop. The app handles every event in one match.
+_Avoid_: add-on message, callback

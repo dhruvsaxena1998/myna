@@ -8,6 +8,7 @@ mod feedback;
 mod fnkey;
 mod look;
 mod meeting;
+mod meeting_session;
 mod models;
 mod notify;
 mod permissions;
@@ -15,12 +16,14 @@ mod pill;
 mod rules;
 mod runtime;
 mod session;
+mod shortcuts;
 mod speakers;
 mod storage;
 mod trace;
 mod update;
 mod voice;
 mod voz;
+mod who;
 
 use rusqlite::Connection;
 use std::collections::HashMap;
@@ -32,8 +35,10 @@ use tauri::image::Image;
 use tauri::menu::{Menu, MenuBuilder, MenuItem, MenuItemBuilder, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{ActivationPolicy, AppHandle, Emitter, Listener, Manager, WindowEvent, Wry};
+use meeting_session::MeetingSession;
 use session::Session;
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
+use shortcuts::{Do, Shortcuts};
+use tauri_plugin_global_shortcut::ShortcutState;
 
 /// Result of creating the data folder and database: the folder path, or the error to show.
 struct Storage(Result<String, String>);
@@ -45,12 +50,6 @@ struct Data {
     macos: u32,
     /// Model id -> cancel flag, for each download in progress.
     downloads: Mutex<HashMap<String, Arc<AtomicBool>>>,
-    /// The shortcuts registered with macOS right now: Dictate's keys, and Dictate with cleanup's if set.
-    shortcut: Mutex<Vec<String>>,
-    /// Set while Settings records a new shortcut, so pressing the old one types into the recorder.
-    paused: AtomicBool,
-    /// The meeting notes shortcut registered with macOS right now.
-    meeting_shortcut: Mutex<Option<String>>,
     /// API keys for AI providers: the Keychain.
     keys: Arc<dyn ai::Keys>,
 }
@@ -135,7 +134,9 @@ fn model_download(app: AppHandle, d: tauri::State<Data>, id: String) -> Result<(
             apple::download(|done| progress((done.clamp(0.0, 1.0) * 100.0) as u64)).map(|()| true)
         } else if m.sdk {
             // shortcut: the SDK's download can't be canceled, so the row shows no Cancel; add one if users ask.
-            voz::download(&dir.join(&m.id), |done| progress((done.clamp(0.0, 1.0) * 100.0) as u64)).map(|()| true)
+            let pct = |done: f64| progress((done.clamp(0.0, 1.0) * 100.0) as u64);
+            let dir = dir.join(&m.id);
+            if m.id == "who" { who::download(&dir, pct) } else { voz::download(&dir, pct) }.map(|()| true)
         } else {
             let get = |x: &models::Model, p: &mut dyn FnMut(u64)| download::fetch(download::HF, x, &dir, &cancel, p);
             download::install(&m, &dir, &get, &mut progress)
@@ -437,29 +438,41 @@ fn voice_get(d: tauri::State<Data>) -> Result<voice::Voice, String> {
     voice::get(&d.db.lock().unwrap())
 }
 
-/// Saves voice typing's settings and registers the shortcut at once. If macOS won't take the new
-/// shortcut (another app has it), puts everything back as it was and says so.
+/// Saves voice typing's settings and registers the shortcut at once. A key another action already has, or one
+/// macOS won't give (another app has it), puts everything back as it was and says so. Either way the recorder
+/// is done, so the paused keys come back.
 #[tauri::command]
 fn voice_set(app: AppHandle, d: tauri::State<Data>, voice: voice::Voice) -> Result<(), String> {
     let was = voice::get(&d.db.lock().unwrap())?;
-    voice::set(&d.db.lock().unwrap(), &voice)?;
-    d.paused.store(false, Ordering::SeqCst);
-    if let Err(e) = sync_shortcut(&app) {
-        voice::set(&d.db.lock().unwrap(), &was)?;
-        let _ = sync_shortcut(&app);
-        let _ = sync_meeting(&app);
-        return Err(e);
+    let notes = meeting::get(&d.db.lock().unwrap())?;
+    let back = |e: String| {
+        let _ = app.state::<Shortcuts>().pause(false, &was, &notes);
+        voice_menu(&app, &was);
+        Err(e)
+    };
+    if let Some(e) = shortcuts::refused((&was, &notes), (&voice, &notes), shortcuts::Side::Voice) {
+        return back(e);
     }
-    let _ = sync_meeting(&app); // unpaused: meeting notes take their shortcut back; its own page reports a failure
+    if let Err(e) = voice::set(&d.db.lock().unwrap(), &voice) {
+        return back(e);
+    }
+    // Meeting notes' own page reports its failure to take its key back.
+    if let (Err(e), _) = app.state::<Shortcuts>().pause(false, &voice, &notes) {
+        voice::set(&d.db.lock().unwrap(), &was)?;
+        return back(e);
+    }
+    voice_menu(&app, &voice);
     Ok(())
 }
 
 /// Lets go of every shortcut (voice typing's and meeting notes') while Settings records a new one, and takes them back after.
 #[tauri::command]
 fn voice_pause(app: AppHandle, d: tauri::State<Data>, paused: bool) -> Result<(), String> {
-    d.paused.store(paused, Ordering::SeqCst);
-    let voice = sync_shortcut(&app);
-    sync_meeting(&app).and(voice)
+    let v = voice::get(&d.db.lock().unwrap())?;
+    let n = meeting::get(&d.db.lock().unwrap())?;
+    let (voice_keys, meeting_key) = app.state::<Shortcuts>().pause(paused, &v, &n);
+    voice_menu(&app, &v);
+    meeting_key.and(voice_keys)
 }
 
 #[tauri::command]
@@ -472,17 +485,30 @@ fn meeting_get(d: tauri::State<Data>) -> Result<meeting::Notes, String> {
 #[tauri::command]
 async fn meeting_set(app: AppHandle, d: tauri::State<'_, Data>, notes: meeting::Notes) -> Result<(), String> {
     let was = meeting::get(&d.db.lock().unwrap())?;
-    meeting::set(&d.db.lock().unwrap(), &notes)?;
-    d.paused.store(false, Ordering::SeqCst); // a recorder saving its pick is done recording
-    if let Err(e) = sync_meeting(&app) {
-        meeting::set(&d.db.lock().unwrap(), &was)?;
+    let v = voice::get(&d.db.lock().unwrap())?;
+    let back = |e: String| {
+        let _ = app.state::<Shortcuts>().pause(false, &v, &was);
         let _ = sync_meeting(&app);
-        let _ = sync_shortcut(&app);
-        return Err(e);
+        Err(e)
+    };
+    if let Some(e) = shortcuts::refused((&v, &was), (&v, &notes), shortcuts::Side::Meeting) {
+        return back(e);
     }
-    let _ = sync_shortcut(&app); // unpaused: voice typing takes its shortcuts back; Listen reports a failure
+    if let Err(e) = meeting::set(&d.db.lock().unwrap(), &notes) {
+        return back(e);
+    }
+    let (voice_keys, meeting_key) = app.state::<Shortcuts>().pause(false, &v, &notes);
+    if voice_keys.is_err() {
+        eprintln!("dictation: couldn't take the keys back"); // Listen reports a failure
+    }
+    voice_menu(&app, &v);
+    if let Err(e) = meeting_key {
+        meeting::set(&d.db.lock().unwrap(), &was)?;
+        return back(e);
+    }
+    let _ = sync_meeting(&app);
     if !notes.on {
-        stop_meeting(&app);
+        app.state::<Arc<MeetingSession>>().stop();
     }
     Ok(())
 }
@@ -519,12 +545,8 @@ fn storage_reveal(storage: tauri::State<Storage>) -> Result<(), String> {
 
 /// Try again on a meeting whose notes failed. Its progress and result come as `meeting-notes` events.
 #[tauri::command]
-fn meeting_retry(app: AppHandle, id: i64) -> Result<(), String> {
-    if !app.state::<meeting::Meetings>().failed(id) {
-        return Err("That meeting isn't waiting to be tried again.".into());
-    }
-    write_up_meeting(&app, id);
-    Ok(())
+fn meeting_retry(s: tauri::State<Arc<MeetingSession>>, id: i64) -> Result<(), String> {
+    s.retry(id)
 }
 
 /// Every meeting, newest first, for the Meetings list.
@@ -539,60 +561,26 @@ fn meeting_page(d: tauri::State<Data>, id: i64) -> Result<meeting::Page, String>
     meeting::page(&d.db.lock().unwrap(), id)
 }
 
-/// The recording in progress, `{ id, started, source }` (source: the app on the call, once heard), for the Meetings
+/// The recording in progress, `{ id, started, source, mic }` (source: the app on the call, once heard), for the Meetings
 /// list's live card; none when not recording.
 #[tauri::command]
-fn meeting_running(d: tauri::State<Data>, m: tauri::State<meeting::Meetings>) -> Option<serde_json::Value> {
-    let (id, started) = m.running()?;
-    Some(running_json(&d.db.lock().unwrap(), id, started, m.muted()))
+fn meeting_running(s: tauri::State<Arc<MeetingSession>>) -> Option<serde_json::Value> {
+    s.running()
 }
 
-/// `mic`: "live" or "muted" while the add-on mirrors the mute button, else null.
-fn running_json(db: &rusqlite::Connection, id: i64, started: i64, muted: Option<bool>) -> serde_json::Value {
-    let source: Option<String> = db.query_row("SELECT source_app FROM meeting WHERE id = ?1", [id], |r| r.get(0)).ok().flatten();
-    serde_json::json!({ "id": id, "started": started, "source": source, "mic": mic_word(muted) })
-}
-
-fn mic_word(muted: Option<bool>) -> Option<&'static str> {
-    muted.map(|m| if m { "muted" } else { "live" })
-}
-
-/// The add-on read a caption off Teams, or says it can't: kept on the meeting for naming its voices.
-fn on_caption(app: &AppHandle, m: addon::Msg) {
-    let meetings = app.state::<meeting::Meetings>();
-    match m {
-        addon::Msg::Caption { name, at, text } => meetings.caption(&name, at, text.as_deref(), now_ms()),
-        addon::Msg::Captions { .. } => meetings.captions_unavailable(),
+/// What the add-on reports: Settings hears about its connection here, the Meeting session about the call.
+fn on_addon(app: &AppHandle, e: addon::AddonEvent) {
+    use addon::AddonEvent as E;
+    match e {
+        E::Connected | E::SelectorsChanged => {
+            let _ = app.emit("addon-status", true);
+        }
+        E::Disconnected => {
+            let _ = app.emit("addon-status", false);
+        }
         _ => {}
     }
-}
-
-/// The add-on saw the Teams mute button change (or dropped, which is `Unknown`): the timeline, then the pill, menu and live card.
-fn on_mute(app: &AppHandle, state: addon::MuteState, at: i64) {
-    let m = app.state::<meeting::Meetings>();
-    m.mute(state, at, now_ms());
-    let Some((id, started)) = m.running() else { return };
-    show_menu_recording(app, Some((id, started)));
-    pill::meeting(app, Some(started), mic_word(m.muted()));
-    let _ = app.emit("meeting-running", Some(running_json(&app.state::<Data>().db.lock().unwrap(), id, started, m.muted())));
-}
-
-/// The add-on streams the Teams tab's sound (07.3): a start begins a meeting if none is recording.
-fn on_tab(app: &AppHandle, t: addon::Tab) {
-    let m = app.state::<meeting::Meetings>();
-    match t {
-        addon::Tab::Audio { at, ts, samples } => m.tab_audio(at, ts, &samples),
-        addon::Tab::Stop => m.tab_stop(),
-        addon::Tab::Start => {
-            if m.running().is_none() {
-                start_meeting(app);
-            }
-            if m.tab_start("Teams (Chrome tab)") {
-                let Some((id, started)) = m.running() else { return };
-                let _ = app.emit("meeting-running", Some(running_json(&app.state::<Data>().db.lock().unwrap(), id, started, m.muted())));
-            }
-        }
-    }
+    app.state::<Arc<MeetingSession>>().addon(e);
 }
 
 /// "Start notes" and "Stop" in the Meetings list: what the shortcut does.
@@ -725,69 +713,28 @@ fn tell_update(app: &AppHandle, mode: &str, manual: bool) {
     }
 }
 
-/// Registers the saved shortcuts while voice typing is on (and not paused), and drops them otherwise.
-/// The new ones are taken before the old ones go, so a failure leaves the old ones working.
+/// Registers the saved voice typing keys through the Shortcuts module, then sets the menu items to match.
 fn sync_shortcut(app: &AppHandle) -> Result<(), String> {
-    let d = app.state::<Data>();
-    let v = voice::get(&d.db.lock().unwrap())?;
-    let want: Vec<String> = if v.on && !d.paused.load(Ordering::SeqCst) { v.keys().into_iter().map(|(k, _)| k).collect() } else { vec![] };
-    let mut have = d.shortcut.lock().unwrap();
-    if *have != want {
-        let gs = app.global_shortcut();
-        let mut taken = vec![];
-        for k in want.iter().filter(|k| *k != voice::FN && !have.contains(k)) {
-            if let Err(e) = gs.register(k.as_str()) {
-                eprintln!("dictation: couldn't use {k}: {e}");
-                taken.iter().for_each(|k: &&String| drop(gs.unregister(k.as_str())));
-                return Err("Another app is using that shortcut. Pick a different one.".into());
-            }
-            taken.push(k);
-        }
-        for k in have.iter().filter(|k| *k != voice::FN && !want.contains(k)) {
-            let _ = gs.unregister(k.as_str());
-        }
-        *have = want;
-    }
-    drop(have);
-    // The recorder hears fn from the tap too, so it watches while paused.
-    if v.on && (v.keys().iter().any(|(k, _)| k == voice::FN) || d.paused.load(Ordering::SeqCst)) {
-        let app = app.clone();
-        fnkey::watch(move |down| on_fn(&app, down));
-    }
+    let v = voice::get(&app.state::<Data>().db.lock().unwrap())?;
+    app.state::<Shortcuts>().sync_voice(&v)?;
+    voice_menu(app, &v);
+    Ok(())
+}
+
+fn voice_menu(app: &AppHandle, v: &voice::Voice) {
     if let Some(item) = app.try_state::<VoiceItem>() {
         // A menu can't show fn alone as its shortcut.
         let _ = item.0.set_accelerator((v.key != voice::FN).then_some(v.key.as_str()));
         let _ = item.0.set_enabled(v.on);
     }
     sync_clean_item(app);
-    Ok(())
 }
 
-/// The shortcut to register: none while off, empty, or paused for a recorder in Settings.
-fn meeting_want(n: &meeting::Notes, paused: bool) -> Option<String> {
-    (n.on && !n.key.is_empty() && !paused).then(|| n.key.clone())
-}
-
-/// Registers the meeting notes shortcut while they're on, and sets the menu item and its note to match.
+/// Registers the meeting notes shortcut while they're on, and sets the add-on, the menu item and its note to match.
 fn sync_meeting(app: &AppHandle) -> Result<(), String> {
     let d = app.state::<Data>();
     let n = meeting::get(&d.db.lock().unwrap())?;
-    let want = meeting_want(&n, d.paused.load(Ordering::SeqCst));
-    let mut have = d.meeting_shortcut.lock().unwrap();
-    if *have != want {
-        let gs = app.global_shortcut();
-        if let Some(k) = &want {
-            gs.register(k.as_str()).map_err(|e| {
-                eprintln!("meeting notes: couldn't use {k}: {e}");
-                "Another app is using that shortcut. Pick a different one.".to_string()
-            })?;
-        }
-        if let Some(k) = have.as_ref() {
-            let _ = gs.unregister(k.as_str());
-        }
-        *have = want;
-    }
-    drop(have);
+    app.state::<Shortcuts>().sync_meeting(&n)?;
     // The add-on's socket is open only while notes are on.
     if let Some(a) = app.try_state::<addon::Addon>() {
         if n.on {
@@ -806,104 +753,10 @@ fn sync_meeting(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// The menu item's words and the menubar icon's red dot and timer, for a recording that started at `running.1`, or none.
-fn show_menu_recording(app: &AppHandle, running: Option<(i64, i64)>) {
-    let clock = running.map(|(_, started)| meeting::clock(now_ms() - started));
-    if let Some(m) = app.try_state::<MeetItem>() {
-        let _ = m.item.set_text(clock.as_ref().map_or("Start meeting notes".into(), |c| format!("Stop recording  {c}")));
-        // The note says how the mic is while recording; sync_meeting puts the usual words back.
-        match (&clock, app.state::<meeting::Meetings>().muted()) {
-            (Some(_), Some(muted)) => {
-                let _ = m.note.set_text(if muted { "Muted · mirrored from Teams" } else { "Mic live · mirrored from Teams" });
-            }
-            (Some(_), None) => {
-                let _ = m.note.set_text("Mic live");
-            }
-            (None, _) => {
-                let _ = sync_meeting(app);
-            }
-        }
-    }
-    // shortcut: a tray title is plain text, so the dot is the red emoji; draw a red icon if that looks off.
-    if let Some(t) = app.tray_by_id("myna") {
-        let _ = t.set_title(clock.map(|c| format!("🔴 {c}")));
-    }
-}
-
 /// The shortcut, or the menu item: start meeting notes, or stop if recording. Off the main thread, since the mic takes a moment.
 fn toggle_meeting(app: &AppHandle) {
     let app = app.clone();
-    std::thread::spawn(move || {
-        if app.state::<meeting::Meetings>().running().is_some() {
-            stop_meeting(&app);
-        } else {
-            start_meeting(&app);
-        }
-    });
-}
-
-fn start_meeting(app: &AppHandle) {
-    let (d, m) = (app.state::<Data>(), app.state::<meeting::Meetings>());
-    if !meeting::get(&d.db.lock().unwrap()).is_ok_and(|n| n.on) {
-        return;
-    }
-    match permissions::mic() {
-        permissions::Mic::Allowed => {}
-        permissions::Mic::Ask => return permissions::ask_mic(), // macOS's pop-up; the next press records
-        permissions::Mic::Denied => return notify::send("Needs the Microphone", pill::ALLOW),
-    }
-    let id = match m.start(now_ms()) {
-        Ok(id) => id,
-        Err(e) => return notify::send("Couldn’t start meeting notes", &e),
-    };
-    let running = m.running();
-    show_menu_recording(app, running);
-    let _ = app.emit("meeting-running", running.map(|(id, started)| running_json(&d.db.lock().unwrap(), id, started, m.muted())));
-    pill::meeting(app, running.map(|(_, s)| s), mic_word(m.muted()));
-    if let Ok(look) = pill::look(&d.db.lock().unwrap()) {
-        pill::place(app, look.place);
-    }
-    let app = app.clone();
-    std::thread::spawn(move || {
-        // Said once per meeting, over the recording pill; the mic keeps recording either way.
-        let mut warned = false;
-        let mut warn = |app: &AppHandle| {
-            if !std::mem::replace(&mut warned, true) {
-                pill::error(app, "Myna can’t hear the other people on the call", "Your mic is still recording. Allow System Audio in Settings › Meeting notes.");
-            }
-        };
-        if permissions::audio() == permissions::Audio::Denied {
-            warn(&app);
-        }
-        // The elapsed time, until this recording ends.
-        loop {
-            std::thread::sleep(std::time::Duration::from_secs(1));
-            let m = app.state::<meeting::Meetings>();
-            let running = m.running();
-            if running.is_none_or(|(i, _)| i != id) {
-                break;
-            }
-            show_menu_recording(&app, running);
-            if m.deaf() {
-                warn(&app);
-            }
-        }
-    });
-}
-
-/// Stops the recording, keeps it, and starts writing it up.
-fn stop_meeting(app: &AppHandle) {
-    if let Some(a) = app.try_state::<addon::Addon>() {
-        a.stop_tab();
-    }
-    match app.state::<meeting::Meetings>().stop() {
-        Ok(Some(id)) => write_up_meeting(app, id),
-        Ok(None) => {}
-        Err(e) => notify::send("Couldn’t save the recording", &e),
-    }
-    show_menu_recording(app, None);
-    let _ = app.emit("meeting-running", None::<()>);
-    pill::meeting(app, None, None);
+    std::thread::spawn(move || app.state::<Arc<MeetingSession>>().toggle());
 }
 
 /// The transcript as Copy and the AI features may see it: muted lines left out. See `meeting::outgoing`.
@@ -916,26 +769,6 @@ fn meeting_text(d: tauri::State<Data>, id: i64) -> Result<String, String> {
 #[tauri::command]
 fn segments_include(d: tauri::State<Data>, ids: Vec<i64>) -> Result<(), String> {
     meeting::include(&d.db.lock().unwrap(), &ids)
-}
-
-/// Writes up meeting `id` on its own thread. `meeting-notes` says how it's going to every window: the pill, and
-/// 05.4's list card. state is "transcribing" (with progress 0 to 1), "done" or "failed" (with the reason).
-fn write_up_meeting(app: &AppHandle, id: i64) {
-    let app = app.clone();
-    std::thread::spawn(move || {
-        let say = |state: &str, progress: f32, error: Option<&str>| {
-            let _ = app.emit("meeting-notes", serde_json::json!({ "id": id, "state": state, "progress": progress, "error": error }));
-        };
-        say("transcribing", 0.0, None);
-        let session = app.state::<Arc<Session>>();
-        let done = app.state::<meeting::Meetings>().transcribe(id, &**session, &**session, &mut |p| say("transcribing", p, None));
-        session.schedule_unload(); // the model idles out like after a dictation
-        match done {
-            Ok(()) => say("done", 1.0, None),
-            Err(e) => say("failed", 0.0, Some(&e)),
-        }
-        sync_recent(&app);
-    });
 }
 
 /// Puts the last 3 meetings in the menu under "Recent", or takes the section out when there are none.
@@ -996,15 +829,19 @@ fn sync_clean_item(app: &AppHandle) {
 
 /// fn went down or up: a voice typing key if fn is one of the shortcuts, the recorder's pick while Settings records one.
 fn on_fn(app: &AppHandle, down: bool) {
-    let d = app.state::<Data>();
-    if d.paused.load(Ordering::SeqCst) {
-        // On release, so the release of this press doesn't reach the new shortcut.
-        if !down {
+    let todo = app.state::<Shortcuts>().dispatch_fn(down);
+    act(app, todo);
+}
+
+/// Does what the Shortcuts module said.
+fn act(app: &AppHandle, todo: Option<Do>) {
+    match todo {
+        Some(Do::Dictate { pressed, clean }) => app.state::<Arc<Session>>().key(pressed, clean),
+        Some(Do::ToggleMeeting) => toggle_meeting(app),
+        Some(Do::TellSettings) => {
             let _ = app.emit_to("settings", "voice-fn", ());
         }
-    } else if d.shortcut.lock().unwrap().iter().any(|k| k == voice::FN) {
-        let clean = voice::get(&d.db.lock().unwrap()).is_ok_and(|v| v.is_clean(voice::FN));
-        app.state::<Arc<Session>>().key(down, clean);
+        None => {}
     }
 }
 
@@ -1055,49 +892,30 @@ pub fn run() {
                     let keys: Arc<dyn ai::Keys> = Arc::new(ai::Keychain);
                     download::sweep(&models); // before any download can start
                     app.manage(Session::new(world, db.clone(), keys.clone(), models.clone(), models::macos_major(), tap_limit, second));
-                    app.manage(meeting::Meetings::new(db.clone(), dir.clone(), Box::new(meeting::Cpal), Box::new(meeting::Tap)));
+                    let meetings = meeting::Meetings::new(db.clone(), dir.clone(), Box::new(meeting::Cpal), Box::new(meeting::Tap));
+                    app.manage(MeetingSession::new(Box::new(meeting_session::Mac(app.handle().clone())), db.clone(), meetings, second));
                     let handle = app.handle().clone();
-                    let on_drop = handle.clone();
-                    let for_mute = handle.clone();
-                    let for_tab = handle.clone();
-                    let for_caption = handle.clone();
-                    app.manage(addon::Addon::new(db.clone(), addon::ORIGIN, &addon::PORTS, move |connected| {
-                        let _ = handle.emit("addon-status", connected);
-                        if !connected {
-                            on_mute(&on_drop, addon::MuteState::Unknown, now_ms()); // Myna can't see the button anymore
-                        }
-                    }, move |state, at| on_mute(&for_mute, state, at), move |m| on_caption(&for_caption, m), move |t| on_tab(&for_tab, t)));
+                    app.manage(addon::Addon::new(db.clone(), addon::ORIGIN, &addon::PORTS, move |e| on_addon(&handle, e)));
                     app.manage(Data {
                         db,
                         models_dir: models,
                         macos: models::macos_major(),
                         downloads: Default::default(),
-                        shortcut: Default::default(),
-                        paused: Default::default(),
-                        meeting_shortcut: Default::default(),
                         keys,
                     });
+                    app.manage(Shortcuts::new(Box::new(shortcuts::Mac(app.handle().clone()))));
                     app.handle().plugin(
                         tauri_plugin_global_shortcut::Builder::new()
                             .with_handler(|app, shortcut, e| {
-                                let meeting = app.state::<Data>().meeting_shortcut.lock().unwrap().clone();
-                                if meeting.is_some_and(|k| k.parse::<Shortcut>().ok().as_ref() == Some(shortcut)) {
-                                    if e.state() == ShortcutState::Pressed {
-                                        toggle_meeting(app);
-                                    }
-                                    return;
-                                }
-                                let keys = voice::get(&app.state::<Data>().db.lock().unwrap()).map(|v| v.keys()).unwrap_or_default();
-                                let mine = keys.iter().find(|(k, _)| k.parse::<Shortcut>().ok().as_ref() == Some(shortcut));
-                                let session = app.state::<Arc<Session>>();
+                                let todo = app.state::<Shortcuts>().dispatch(shortcut, e.state() == ShortcutState::Pressed);
                                 // Esc is caught only while recording (Session::start), and never when it's a voice typing key.
-                                if mine.is_none() && shortcut.key == tauri_plugin_global_shortcut::Code::Escape {
+                                if todo.is_none() && shortcut.key == tauri_plugin_global_shortcut::Code::Escape {
                                     if e.state() == ShortcutState::Pressed {
-                                        session.cancel();
+                                        app.state::<Arc<Session>>().cancel();
                                     }
                                     return;
                                 }
-                                session.key(e.state() == ShortcutState::Pressed, mine.is_some_and(|(_, c)| *c))
+                                act(app, todo);
                             })
                             .build(),
                     )?;
@@ -1170,8 +988,8 @@ pub fn run() {
                     "settings" => open_window(app, "settings"),
                     "update" => open_update(app),
                     "quit" => {
-                        if app.try_state::<meeting::Meetings>().is_some() {
-                            stop_meeting(app); // saved, not cut off
+                        if let Some(s) = app.try_state::<Arc<MeetingSession>>() {
+                            s.stop(); // saved, not cut off
                         }
                         app.exit(0)
                     }
@@ -1188,9 +1006,7 @@ pub fn run() {
             // Meetings the app died or quit in the middle of: finish and write them up.
             if !failed {
                 sync_recent(app.handle());
-                for id in app.state::<meeting::Meetings>().unfinished() {
-                    write_up_meeting(app.handle(), id);
-                }
+                app.state::<Arc<MeetingSession>>().resume();
             }
             if failed {
                 open_window(app.handle(), "settings"); // never fail silently: Settings shows the error
@@ -1217,17 +1033,4 @@ pub fn run() {
                 open_main(app);
             }
         });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_meeting_shortcut_is_let_go_while_a_recorder_listens() {
-        let n = |on, key: &str| meeting::Notes { on, key: key.into(), keep_teams: false };
-        assert_eq!(meeting_want(&n(true, "Alt+Space"), false), Some("Alt+Space".into()));
-        assert_eq!(meeting_want(&n(true, "Alt+Space"), true), None);
-        assert_eq!((meeting_want(&n(false, "Alt+Space"), false), meeting_want(&n(true, ""), false)), (None, None));
-    }
 }

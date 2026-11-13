@@ -4,6 +4,7 @@
 use crate::addon::MuteState;
 use crate::runtime::{RATE, Segment};
 use crate::speakers;
+use crate::storage::{read_switch, read_text, write_switch, write_text};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rusqlite::{Connection, OptionalExtension};
 use std::ffi::{CStr, c_char, c_void};
@@ -27,17 +28,12 @@ pub struct Notes {
     pub keep_teams: bool,
 }
 
-fn read(conn: &Connection, key: &str) -> Result<Option<String>, String> {
-    conn.query_row("SELECT value FROM setting WHERE key = ?1", [key], |r| r.get(0))
-        .optional()
-        .map_err(|e| format!("Couldn't read meeting notes' settings: {e}"))
-}
-
 pub fn get(conn: &Connection) -> Result<Notes, String> {
+    let err = |e: rusqlite::Error| format!("Couldn't read meeting notes' settings: {e}");
     Ok(Notes {
-        on: read(conn, "meeting_on")?.is_some_and(|v| v == "1"),
-        key: read(conn, "meeting_key")?.unwrap_or(KEY.into()),
-        keep_teams: read(conn, "meeting_keep_teams")?.is_some_and(|v| v == "1"),
+        on: read_switch(conn, "meeting_on", false).map_err(err)?,
+        key: read_text(conn, "meeting_key").map_err(err)?.unwrap_or(KEY.into()),
+        keep_teams: read_switch(conn, "meeting_keep_teams", false).map_err(err)?,
     })
 }
 
@@ -46,10 +42,10 @@ pub fn set(conn: &Connection, n: &Notes) -> Result<(), String> {
     if !n.key.is_empty() && n.key.parse::<tauri_plugin_global_shortcut::Shortcut>().is_err() {
         return Err(format!("{} can't be a shortcut.", n.key));
     }
-    for (k, v) in [("meeting_on", if n.on { "1" } else { "0" }), ("meeting_key", n.key.as_str()), ("meeting_keep_teams", if n.keep_teams { "1" } else { "0" })] {
-        conn.execute("INSERT INTO setting(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2", [k, v])
-            .map_err(|e| format!("Couldn't save meeting notes' settings: {e}"))?;
-    }
+    let err = |e: rusqlite::Error| format!("Couldn't save meeting notes' settings: {e}");
+    write_switch(conn, "meeting_on", n.on).map_err(err)?;
+    write_text(conn, "meeting_key", &n.key).map_err(err)?;
+    write_switch(conn, "meeting_keep_teams", n.keep_teams).map_err(err)?;
     Ok(())
 }
 
@@ -823,11 +819,11 @@ pub fn clock(ms: i64) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// Hands `on` two seconds of a tone at once, like a mic that already heard it.
-    struct Fake(usize);
+    pub(crate) struct Fake(pub usize);
     impl Mic for Fake {
         fn open(&self, mut on: Sink) -> Result<Stop, String> {
             on(&(0..self.0).map(|i| (i as f32 / 50.0).sin() * 0.5).collect::<Vec<_>>());
@@ -836,9 +832,9 @@ mod tests {
     }
 
     /// A call: hands `on` what's in it at once, heard `at` seconds from now (before, if negative).
-    struct Call(Vec<(f64, Event)>);
+    pub(crate) struct Call(pub Vec<(f64, Event)>);
     #[derive(Clone)]
-    enum Event {
+    pub(crate) enum Event {
         Apps(&'static str),
         Audio(f32, usize),
         Failed,
@@ -1168,10 +1164,10 @@ mod tests {
     fn a_diarizer_that_fails_keeps_the_me_them_transcript_and_says_why() {
         let tmp = tempfile::tempdir().unwrap();
         let (m, id, stt, _) = call(tmp.path());
-        m.transcribe(id, &stt, &Voiced(Err("Download Sortformer in Settings › Speech models".into())), &mut |_| {}).unwrap();
+        m.transcribe(id, &stt, &Voiced(Err("Download Sortformer in Settings › Meeting notes".into())), &mut |_| {}).unwrap();
         assert_eq!(lines_of(&m, id), ["Me", "Them", "Them"]);
         assert_eq!(state(&m, id), ("done".into(), None));
-        assert_eq!(note(&m, id).unwrap(), "Couldn't tell voices apart: Download Sortformer in Settings › Speech models");
+        assert_eq!(note(&m, id).unwrap(), "Couldn't tell voices apart: Download Sortformer in Settings › Meeting notes");
         let shown = page(&m.db.lock().unwrap(), id).unwrap().meeting.note;
         assert_eq!(shown, note(&m, id));
     }
@@ -1374,6 +1370,19 @@ mod tests {
         assert_eq!(get(&conn), Ok(n(true, "Alt+Space")));
         set(&conn, &Notes { keep_teams: true, ..n(true, "") }).unwrap();
         assert!(get(&conn).unwrap().keep_teams);
+    }
+
+    #[test]
+    fn saved_meeting_settings_read_as_saved_or_fall_back() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = crate::storage::open(tmp.path()).unwrap();
+        for (k, v) in [("meeting_on", "yes"), ("meeting_keep_teams", "true"), ("meeting_key", "")] {
+            conn.execute("INSERT INTO setting(key, value) VALUES (?1, ?2)", [k, v]).unwrap();
+        }
+        assert_eq!(get(&conn), Ok(Notes { on: false, key: "".into(), keep_teams: false }), "unknown switches are off; \"\" stays no shortcut");
+        // Today a stored shortcut is returned as saved, even one this build can't parse.
+        conn.execute("UPDATE setting SET value = 'Alt+Nope' WHERE key = 'meeting_key'", []).unwrap();
+        assert_eq!(get(&conn).unwrap().key, "Alt+Nope");
     }
 
     #[test]

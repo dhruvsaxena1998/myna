@@ -15,12 +15,12 @@ unsafe extern "C" {
     fn free(p: *mut c_void);
 }
 
-fn c(dir: &Path) -> CString {
+pub(crate) fn c(dir: &Path) -> CString {
     CString::new(dir.to_string_lossy().as_bytes()).unwrap_or_default()
 }
 
 /// The Swift side returns JSON from strdup.
-fn take(p: *mut c_char) -> String {
+pub(crate) fn take(p: *mut c_char) -> String {
     let s = unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned();
     unsafe { free(p.cast()) };
     s

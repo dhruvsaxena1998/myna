@@ -12,14 +12,12 @@
   import { onMount } from "svelte";
   import Permissions, { type Perms } from "./Permissions.svelte";
   import type { Ai } from "./AiProviders.svelte";
-  import { clash } from "./shortcut";
   import { PRESS, Recorder } from "./recorder.svelte";
   import ShortcutButton from "./ShortcutButton.svelte";
 
   // `globe`: the 🌐 key is set to Do Nothing, so fn only starts voice typing.
   // `ai`: the Fast model, which Dictate with cleanup needs; `setup` opens the AI providers page.
-  // `meetKey`: Meeting notes' shortcut, which no voice typing key can match.
-  let { voice = $bindable(), globe: initial, ai, perms, setup, meetKey }: { voice: Voice; globe: boolean; ai: Ai | null; perms: Perms; setup: () => void; meetKey: string } = $props();
+  let { voice = $bindable(), globe: initial, ai, perms, setup }: { voice: Voice; globe: boolean; ai: Ai | null; perms: Perms; setup: () => void } = $props();
   const fast = $derived(!!ai?.fast && !ai.fast.gone);
   const LABEL: Record<Which, string> = { key: "Dictate", key2: "Dictate", clean: "Dictate with cleanup", clean2: "Dictate with cleanup" };
   const WHICH: Which[] = ["key", "key2", "clean", "clean2"];
@@ -31,17 +29,18 @@
   });
   const rec = new Recorder<Which>({
     fn: true,
-    save: (which, key) => save({ ...voice, [which]: key }),
-    check: (which, key) => clash(key, [...WHICH.filter((w) => w !== which).map((w): [string, string | null | undefined] => [LABEL[w], voice[w]]), ["Recording", meetKey]]),
+    save: (which, key) => save({ ...voice, [which]: key }, true),
   });
   const recording = $derived(rec.recording);
 
-  async function save(next: Voice) {
+  /** `wait`: a recorder's pick, shown once the save works, so a refused key never shows. */
+  async function save(next: Voice, wait = false) {
     const was = voice;
-    voice = next;
+    if (!wait) voice = next;
     rec.error = "";
     try {
       await invoke("voice_set", { voice: next });
+      voice = next;
     } catch (err) {
       voice = was;
       rec.error = String(err);
