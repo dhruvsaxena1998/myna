@@ -310,7 +310,7 @@ mod tests {
         MenuRunning(String),
         MenuIdle,
         Running(Option<serde_json::Value>),
-        Notes(i64, String),
+        Notes(i64, String, f32, Option<String>),
         StopTab,
         Recent,
         Idle,
@@ -319,6 +319,8 @@ mod tests {
     struct Scripted {
         mic: Mic,
         denied: bool,
+        /// While set, the speech model fails.
+        fail: Arc<std::sync::atomic::AtomicBool>,
         saw: Arc<Mutex<Vec<Saw>>>,
     }
 
@@ -330,7 +332,7 @@ mod tests {
 
     impl Stt for Scripted {
         fn transcribe(&self, _: &[f32]) -> Result<Vec<Segment>, String> {
-            Ok(vec![])
+            if self.fail.load(std::sync::atomic::Ordering::SeqCst) { Err("The model fell over.".into()) } else { Ok(vec![]) }
         }
     }
     impl Voices for Scripted {
@@ -369,8 +371,8 @@ mod tests {
         fn running(&self, card: Option<serde_json::Value>) {
             self.log(Saw::Running(card))
         }
-        fn notes(&self, id: i64, state: &str, _: f32, _: Option<&str>) {
-            self.log(Saw::Notes(id, state.into()))
+        fn notes(&self, id: i64, state: &str, progress: f32, error: Option<&str>) {
+            self.log(Saw::Notes(id, state.into(), progress, error.map(Into::into)))
         }
         fn stop_tab(&self) {
             self.log(Saw::StopTab)
@@ -384,13 +386,22 @@ mod tests {
     }
 
     fn session(notes_on: bool, mic: Mic, denied: bool) -> (Arc<MeetingSession>, Arc<Mutex<Vec<Saw>>>, tempfile::TempDir) {
+        let (s, saw, _, tmp) = rig(notes_on, mic, denied, Call(vec![]), Duration::from_secs(3600));
+        (s, saw, tmp)
+    }
+
+    type Rig = (Arc<MeetingSession>, Arc<Mutex<Vec<Saw>>>, Arc<std::sync::atomic::AtomicBool>, tempfile::TempDir);
+
+    /// A session with a call and a clock tick of its choosing; the flag makes the speech model fail.
+    fn rig(notes_on: bool, mic: Mic, denied: bool, them: impl crate::meeting::Them + 'static, tick: Duration) -> Rig {
         let tmp = tempfile::tempdir().unwrap();
         let db = Arc::new(Mutex::new(crate::storage::open(tmp.path()).unwrap()));
         meeting::set(&db.lock().unwrap(), &meeting::Notes { on: notes_on, key: meeting::KEY.into(), keep_teams: false }).unwrap();
-        let meetings = Meetings::new(db.clone(), tmp.path().into(), Box::new(Fake(crate::runtime::RATE as usize)), Box::new(Call(vec![])));
+        let meetings = Meetings::new(db.clone(), tmp.path().into(), Box::new(Fake(crate::runtime::RATE as usize)), Box::new(them));
         let saw = Arc::new(Mutex::new(vec![]));
-        let world = Scripted { mic, denied, saw: saw.clone() };
-        (MeetingSession::new(Box::new(world), db, meetings, Duration::from_secs(3600)), saw, tmp)
+        let fail = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let world = Scripted { mic, denied, fail: fail.clone(), saw: saw.clone() };
+        (MeetingSession::new(Box::new(world), db, meetings, tick), saw, fail, tmp)
     }
 
     fn saw(s: &Arc<Mutex<Vec<Saw>>>) -> Vec<Saw> {
@@ -460,7 +471,7 @@ mod tests {
         assert_eq!(seen.len(), 7, "{seen:?}");
         assert_eq!(seen[3..], [Saw::StopTab, Saw::MenuIdle, Saw::Running(None), Saw::Pill(None, None)]);
         let seen = settled(&saw_);
-        assert!(matches!(seen.iter().find(|s| matches!(s, Saw::Notes(..))), Some(Saw::Notes(_, state)) if state == "transcribing"));
+        assert!(matches!(seen.iter().find(|s| matches!(s, Saw::Notes(..))), Some(Saw::Notes(_, state, ..)) if state == "transcribing"));
     }
 
     #[test]
@@ -468,5 +479,182 @@ mod tests {
         let (s, saw_, _tmp) = session(true, Mic::Allowed, false);
         s.stop();
         assert_eq!(saw(&saw_), vec![Saw::StopTab, Saw::MenuIdle, Saw::Running(None), Saw::Pill(None, None)]);
+    }
+
+    const TICK: Duration = Duration::from_millis(5);
+
+    fn count(v: &[Saw], f: impl Fn(&Saw) -> bool) -> usize {
+        v.iter().filter(|s| f(s)).count()
+    }
+    fn menus(v: &[Saw]) -> usize {
+        count(v, |s| matches!(s, Saw::MenuRunning(_)))
+    }
+    fn warnings(v: &[Saw]) -> usize {
+        count(v, |s| matches!(s, Saw::Warning(_)))
+    }
+    fn recents(v: &[Saw]) -> usize {
+        count(v, |s| *s == Saw::Recent)
+    }
+
+    /// Waits for what the fake has recorded to satisfy `done`.
+    fn until(s: &Arc<Mutex<Vec<Saw>>>, done: impl Fn(&[Saw]) -> bool) -> Vec<Saw> {
+        for _ in 0..3000 {
+            let v = saw(s);
+            if done(&v) {
+                return v;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        panic!("timed out: {:?}", saw(s));
+    }
+
+    fn id_of(s: &MeetingSession) -> i64 {
+        s.running().unwrap()["id"].as_i64().unwrap()
+    }
+
+    /// What the write-up said, in order.
+    fn write_up_of(v: &[Saw]) -> Vec<Saw> {
+        v.iter().filter(|s| matches!(s, Saw::Notes(..) | Saw::Idle | Saw::Recent)).cloned().collect()
+    }
+
+    /// A call whose listening fails when the test says so.
+    struct Later(Arc<Mutex<Option<crate::meeting::Ear>>>);
+    impl crate::meeting::Them for Later {
+        fn open(&self, on: crate::meeting::Ear) -> Result<crate::meeting::Stop, String> {
+            *self.0.lock().unwrap() = Some(on);
+            Ok(Box::new(|| {}))
+        }
+    }
+    fn goes_deaf(ear: &Arc<Mutex<Option<crate::meeting::Ear>>>) {
+        (ear.lock().unwrap().as_mut().unwrap())(crate::meeting::Heard::Failed("denied".into()));
+    }
+
+    #[test]
+    fn the_menu_clock_ticks_while_recording_and_stops_with_the_meeting() {
+        let (s, saw_, _, _tmp) = rig(true, Mic::Allowed, false, Call(vec![]), TICK);
+        s.start();
+        until(&saw_, |v| menus(v) >= 4);
+        s.stop();
+        std::thread::sleep(TICK * 3); // a refresh already on its way lands
+        let n = menus(&saw(&saw_));
+        std::thread::sleep(TICK * 5);
+        assert_eq!(menus(&saw(&saw_)), n);
+        until(&saw_, |v| recents(v) >= 1);
+    }
+
+    #[test]
+    fn a_stopped_meetings_clock_does_not_refresh_the_next_meeting() {
+        let tick = Duration::from_millis(40);
+        let (s, saw_, _, _tmp) = rig(true, Mic::Allowed, false, Call(vec![]), tick);
+        s.start();
+        s.stop();
+        s.start(); // inside the first meeting's first tick
+        assert_eq!(menus(&saw(&saw_)), 2);
+        until(&saw_, |v| menus(v) >= 3);
+        std::thread::sleep(tick / 2);
+        assert_eq!(menus(&saw(&saw_)), 3, "one clock refreshes, not two");
+        s.stop();
+        until(&saw_, |v| recents(v) >= 2);
+    }
+
+    #[test]
+    fn system_audio_denied_warns_once_at_start_and_a_deaf_call_afterwards_stays_quiet() {
+        let ear = Arc::new(Mutex::new(None));
+        let (s, saw_, _, _tmp) = rig(true, Mic::Allowed, true, Later(ear.clone()), TICK);
+        s.start();
+        until(&saw_, |v| warnings(v) >= 1);
+        goes_deaf(&ear);
+        let n = menus(&until(&saw_, |v| menus(v) >= 2));
+        until(&saw_, |v| menus(v) >= n + 4);
+        assert_eq!(warnings(&saw(&saw_)), 1);
+        s.stop();
+        until(&saw_, |v| recents(v) >= 1);
+    }
+
+    #[test]
+    fn a_call_that_goes_deaf_mid_meeting_warns_once_however_long_it_stays_deaf() {
+        let ear = Arc::new(Mutex::new(None));
+        let (s, saw_, _, _tmp) = rig(true, Mic::Allowed, false, Later(ear.clone()), TICK);
+        s.start();
+        let n = menus(&until(&saw_, |v| menus(v) >= 3));
+        assert_eq!(warnings(&saw(&saw_)), 0);
+        goes_deaf(&ear);
+        until(&saw_, |v| warnings(v) >= 1);
+        until(&saw_, |v| menus(v) >= n + 6);
+        assert_eq!(warnings(&saw(&saw_)), 1);
+        s.stop();
+        until(&saw_, |v| recents(v) >= 1);
+    }
+
+    #[test]
+    fn each_new_meeting_can_warn_again() {
+        let (s, saw_, _, _tmp) = rig(true, Mic::Allowed, true, Call(vec![]), TICK);
+        s.start();
+        until(&saw_, |v| warnings(v) >= 1);
+        s.stop();
+        s.start();
+        until(&saw_, |v| warnings(v) >= 2);
+        s.stop();
+        until(&saw_, |v| recents(v) >= 2);
+    }
+
+    #[test]
+    fn stop_writes_the_meeting_up_transcribing_then_idle_then_done_then_recent() {
+        let (s, saw_, _, _tmp) = rig(true, Mic::Allowed, false, Call(vec![]), Duration::from_secs(3600));
+        s.start();
+        let id = id_of(&s);
+        s.stop();
+        let up = write_up_of(&until(&saw_, |v| recents(v) >= 1));
+        assert_eq!(up[0], Saw::Notes(id, "transcribing".into(), 0.0, None));
+        assert!(up[1..up.len() - 3].iter().all(|s| matches!(s, Saw::Notes(i, st, p, None) if *i == id && st == "transcribing" && (0.0..1.0).contains(p))), "{up:?}");
+        assert_eq!(up[up.len() - 3..], [Saw::Idle, Saw::Notes(id, "done".into(), 1.0, None), Saw::Recent]);
+    }
+
+    #[test]
+    fn a_failed_write_up_says_why_and_retry_writes_it_up() {
+        let (s, saw_, fail, _tmp) = rig(true, Mic::Allowed, false, Call(vec![]), Duration::from_secs(3600));
+        fail.store(true, std::sync::atomic::Ordering::SeqCst);
+        s.start();
+        let id = id_of(&s);
+        s.stop();
+        let up = write_up_of(&until(&saw_, |v| recents(v) >= 1));
+        assert_eq!(up[up.len() - 3..], [Saw::Idle, Saw::Notes(id, "failed".into(), 0.0, Some("The model fell over.".into())), Saw::Recent]);
+        fail.store(false, std::sync::atomic::Ordering::SeqCst);
+        s.retry(id).unwrap();
+        let up = write_up_of(&until(&saw_, |v| recents(v) >= 2));
+        assert_eq!(up[up.len() - 3..], [Saw::Idle, Saw::Notes(id, "done".into(), 1.0, None), Saw::Recent]);
+        let again = up.iter().rposition(|s| *s == Saw::Notes(id, "transcribing".into(), 0.0, None)).unwrap();
+        assert!(again > 3, "the retry starts from transcribing at 0: {up:?}");
+    }
+
+    #[test]
+    fn retry_on_a_meeting_that_is_not_failed_says_so_and_sends_nothing() {
+        let (s, saw_, _, _tmp) = rig(true, Mic::Allowed, false, Call(vec![]), Duration::from_secs(3600));
+        let no = Err("That meeting isn't waiting to be tried again.".to_string());
+        assert_eq!(s.retry(7), no);
+        s.start();
+        let id = id_of(&s);
+        s.stop();
+        let n = until(&saw_, |v| recents(v) >= 1).len();
+        assert_eq!(s.retry(id), no);
+        std::thread::sleep(TICK * 3);
+        assert_eq!(saw(&saw_).len(), n);
+    }
+
+    #[test]
+    fn resume_writes_up_every_unfinished_meeting() {
+        let (s, saw_, _, _tmp) = rig(true, Mic::Allowed, false, Call(vec![]), Duration::from_secs(3600));
+        let mut ids = vec![];
+        for _ in 0..2 {
+            s.start();
+            ids.push(id_of(&s));
+            s.meetings.stop().unwrap(); // recorded, never written up: the app quit here
+        }
+        assert_eq!(count(&saw(&saw_), |s| matches!(s, Saw::Notes(..))), 0);
+        s.resume();
+        let v = until(&saw_, |v| recents(v) >= 2);
+        for id in ids {
+            assert!(v.contains(&Saw::Notes(id, "done".into(), 1.0, None)), "{v:?}");
+        }
     }
 }
