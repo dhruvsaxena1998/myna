@@ -4,7 +4,8 @@
 //! binary frames: 4 bytes sequence (u32), 8 bytes capture time (i64, unix ms), then 16 kHz mono Int16 samples, all
 //! little-endian; `extension/audio.js` is the other copy.
 
-use rusqlite::{Connection, OptionalExtension};
+use crate::storage::{read_text, write_text};
+use rusqlite::Connection;
 use std::io::ErrorKind;
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
@@ -199,11 +200,11 @@ impl Shared {
     fn code(&self) -> Result<String, String> {
         let db = self.db.lock().unwrap();
         let err = |e: rusqlite::Error| format!("Couldn't read the add-on's connection code: {e}");
-        if let Some(c) = db.query_row("SELECT value FROM setting WHERE key = 'addon_code'", [], |r| r.get(0)).optional().map_err(err)? {
+        if let Some(c) = read_text(&db, "addon_code").map_err(err)? {
             return Ok(c);
         }
         let c = fresh_code();
-        db.execute("INSERT INTO setting(key, value) VALUES ('addon_code', ?1)", [&c]).map_err(err)?;
+        write_text(&db, "addon_code", &c).map_err(err)?;
         Ok(c)
     }
 
@@ -337,8 +338,7 @@ impl Addon {
     /// Cuts the add-on off: a new code, so the old one is useless, and the connection closed. Returns the new code.
     pub fn disconnect(&self) -> Result<String, String> {
         let c = fresh_code();
-        self.me.db.lock().unwrap()
-            .execute("INSERT INTO setting(key, value) VALUES ('addon_code', ?1) ON CONFLICT(key) DO UPDATE SET value = ?1", [&c])
+        write_text(&self.me.db.lock().unwrap(), "addon_code", &c)
             .map_err(|e| format!("Couldn't make a new connection code: {e}"))?;
         if let Some(k) = &self.me.st.lock().unwrap().conn {
             k.store(WRONG_CODE, Ordering::SeqCst);
