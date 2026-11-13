@@ -87,7 +87,7 @@
       {#if next}
         <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
         <div class="notes" tabindex="0" aria-label="What’s new" onclick={openLink}>
-          <h2>What’s new</h2>
+          <h2 class="label">What’s new</h2>
           {@html md.render(next.notes)}
         </div>
       {/if}
@@ -122,13 +122,14 @@
   .titlebar { display: flex; align-items: center; padding-left: 76px; font-weight: var(--fw-semibold); color: var(--text-2); }
   .panel { display: grid; grid-template-rows: minmax(0, 1fr) 56px; min-height: 0; border-radius: var(--r-xl); background: var(--bg-content); box-shadow: var(--shadow-panel); overflow: hidden; }
   .body { display: flex; flex-direction: column; min-height: 0; padding: var(--sp-4) var(--sp-5) 0; }
-  h1 { margin: 0; font-size: 18px; line-height: 24px; font-weight: var(--fw-bold); letter-spacing: -.01em; }
+  h1 { margin: 0; font-size: var(--fs-title2); line-height: var(--lh-title2); font-weight: var(--fw-semibold); }
   .lead { margin: var(--sp-1) 0 0; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: text; }
-  .lead.alert { color: var(--danger-text); white-space: normal; }
+  .lead.alert { white-space: normal; }
   .notes { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin-top: var(--sp-3); padding-bottom: var(--sp-4); border-top: 1px solid var(--line); user-select: text;
     scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
   .notes:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-  .notes h2 { margin: var(--sp-3) 0 0; font-size: var(--fs-caption); line-height: var(--lh-caption); font-weight: var(--fw-semibold); color: var(--text-3); }
+  /* Beats the release notes' heading rule below, which would make it 13px. */
+  .notes h2.label { margin: var(--sp-3) 0 0; font-size: var(--fs-caption); line-height: var(--lh-caption); font-weight: var(--fw-semibold); color: var(--text-3); }
   .notes :global(:is(h1, h2, h3, h4, h5, h6)) { margin: var(--sp-3) 0 var(--sp-1); font-size: var(--fs-body); line-height: var(--lh-body); font-weight: var(--fw-semibold); }
   .notes :global(p) { margin: var(--sp-2) 0 0; }
   .notes :global(ul), .notes :global(ol) { margin: 0; padding-left: 20px; }

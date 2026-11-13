@@ -28,6 +28,8 @@ test("an update shows its version, the Channel and What's new, with focus on Dow
   await expect(page.getByText("You have 0.1.0 · Beta")).toBeVisible();
   const notes = page.getByLabel("What’s new");
   await expect(notes.getByRole("heading", { name: "Dictation" })).toBeVisible();
+  // The label is a caption, not one of the notes' own headings.
+  await expect(notes.getByRole("heading", { name: "What’s new" })).toHaveCSS("font-size", "11px");
   await expect(notes.getByRole("listitem")).toHaveText(["Words appear faster.", "Fixed the pill."]);
   await expect(buttons(page)).toHaveText(["Later", "Download and restart"]);
   await expect(page.getByRole("button", { name: "Download and restart" })).toBeFocused();
