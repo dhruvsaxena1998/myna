@@ -203,10 +203,10 @@ test("Set records the cleanup shortcut and saves it beside Dictate's; the record
   await expect(row.getByRole("button", { name: "Dictate with cleanup shortcut: Control Shift C" })).toBeVisible();
   await row.getByRole("button", { name: "Remove the Dictate with cleanup shortcut" }).click();
   await expect(row.getByRole("button", { name: "Set the Dictate with cleanup shortcut" })).toHaveText("Set key");
-  expect((await calls(page, "voice_set")).at(-1)).toEqual({ voice: { on: true, key: "Alt+Space", clean: null, clean2: null, mode: "hold", paste: "clipboard" } });
+  expect((await calls(page, "voice_set")).at(-1)).toEqual({ voice: { on: true, key: "Alt+Space", clean: null, mode: "hold", paste: "clipboard" } });
 });
 
-test("Add another key gives each shortcut a second key; one key can't serve twice; removing the first cleanup key moves the second up", async ({ page }) => {
+test("Add another key gives each shortcut a second key; one key can't serve twice; the one × removes the last key", async ({ page }) => {
   await open(page, "Alt+Space", false, { ai: fastOn(OLLAMA, "qwen2.5:7b"), clean: "Ctrl+Shift+KeyC" });
   const add = page.getByRole("button", { name: "Add another key" });
   await expect(add).toHaveCount(2); // one per shortcut
@@ -222,8 +222,11 @@ test("Add another key gives each shortcut a second key; one key can't serve twic
   await page.getByRole("button", { name: "Add another key" }).click();
   await page.keyboard.press("End");
   expect((await calls(page, "voice_set")).at(-1)).toMatchObject({ voice: { clean: "Ctrl+Shift+KeyC", clean2: "End" } });
+  await expect(page.getByRole("button", { name: "Remove the Dictate with cleanup shortcut" })).toHaveCount(0); // one × per row
+  await page.getByRole("button", { name: "Remove the second Dictate with cleanup shortcut" }).click();
+  expect((await calls(page, "voice_set")).at(-1)).toMatchObject({ voice: { key2: "PageDown", clean: "Ctrl+Shift+KeyC", clean2: null } });
   await page.getByRole("button", { name: "Remove the Dictate with cleanup shortcut" }).click();
-  expect((await calls(page, "voice_set")).at(-1)).toMatchObject({ voice: { key2: "PageDown", clean: "End", clean2: null } });
+  expect((await calls(page, "voice_set")).at(-1)).toMatchObject({ voice: { key2: "PageDown", clean: null } });
   await page.getByRole("button", { name: "Remove the second Dictate shortcut" }).click();
   expect((await calls(page, "voice_set")).at(-1)).toMatchObject({ voice: { key2: null } });
   await expect(add).toHaveCount(2);
@@ -549,7 +552,7 @@ test("the recorders' right edges line up across Dictate and Dictate with cleanup
 test("Set up and the other end buttons share the shortcut buttons' right edge", async ({ page }) => {
   await open(page, "Fn");
   const right = async (loc: import("@playwright/test").Locator) => { const b = (await loc.boundingBox())!; return Math.round(b.x + b.width); };
-  const edge = await right(page.getByRole("button", { name: "Add another key" }));
+  const edge = await right(page.getByRole("listitem").filter({ hasText: "Adds what you said" }).locator(".end")); // the × column
   expect(await right(page.getByRole("button", { name: "Set up" }))).toBe(edge);
   expect(await right(page.getByRole("button", { name: "Open Keyboard Settings" }))).toBe(edge);
 });

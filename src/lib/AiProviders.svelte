@@ -47,6 +47,7 @@
   let draft = $state({ kind: "openai" as Provider["kind"], name: "", url: "", key: "" });
   let errs = $state<{ name?: string; url?: string; key?: string }>({});
   let addError = $state("");
+  let dtest = $state<Test | null>(null); // the draft's test; typing clears it
   let busy = $state(false);
   let picker = $state<Slot | null>(null);
   let q = $state("");
@@ -68,6 +69,7 @@
     const [, , name, url] = PRESETS.find((p) => p[0] === kind)!;
     draft = { ...draft, kind, name, url };
     errs = {};
+    dtest = null;
   }
   function validate() {
     const e: typeof errs = {};
@@ -98,6 +100,20 @@
     } finally {
       busy = false;
     }
+  }
+
+  // Tests the address and key as typed, before anything is saved.
+  async function testDraft() {
+    addError = "";
+    validate();
+    errs = { ...errs, name: undefined }; // a name isn't needed to test
+    if (errs.url || errs.key) return;
+    dtest = { st: "run" };
+    const t = await invoke<{ ms: number; models: number | null; used: number | null; limit: number | null }>("ai_test_draft", { kind: draft.kind, url: draft.url, key: draft.key }).then(
+      (t): Test => ({ st: "ok", ...t }),
+      (err): Test => ({ st: "err", msg: String(err) }),
+    );
+    if (dtest?.st === "run") dtest = t; // unless typing cleared it
   }
 
   // --- Remove
@@ -200,6 +216,7 @@
 
 {#if part === "add"}
   {@const or = draft.kind === "openrouter"}
+  {@const msg = addError || (dtest?.st === "err" ? dtest.msg : "")}
   <form onsubmit={add} novalidate aria-label="Add a provider">
     <section>
       <ul class="list">
@@ -210,15 +227,16 @@
           <input id="add-name" class="input" bind:value={draft.name} maxlength="40" placeholder={or ? "" : "Server on this Mac"} autocomplete="off" spellcheck="false" oninput={() => (errs = { ...errs, name: undefined })} aria-invalid={!!errs.name} aria-describedby="add-name-h" />
           <span class="help" class:bad={errs.name} id="add-name-h" role="status">{errs.name ?? "Shown when you pick a model."}</span></li>
         <li class="field"><label for="add-url">Address</label>
-          <input id="add-url" class="input mono" type="url" bind:value={draft.url} placeholder={or ? "" : "http://localhost:11434/v1"} autocomplete="off" spellcheck="false" oninput={() => (errs = { ...errs, url: undefined })} aria-invalid={!!errs.url} aria-describedby="add-url-h" />
+          <input id="add-url" class="input mono" type="url" bind:value={draft.url} placeholder={or ? "" : "http://localhost:11434/v1"} autocomplete="off" spellcheck="false" oninput={() => ((errs = { ...errs, url: undefined }), (dtest = null))} aria-invalid={!!errs.url} aria-describedby="add-url-h" />
           <span class="help" class:bad={errs.url} id="add-url-h" role="status">{#if errs.url}{errs.url}{:else if hostOf(draft.url)}{@render pill(!loopback(draft.url))}{:else}{or ? "OpenRouter’s address. Leave it as it is." : "Where the server listens, ending in /v1."}{/if}</span></li>
         <li class="field"><label for="add-key">{or ? "Key" : "Key (optional)"}</label>
-          <input id="add-key" class="input mono" type="password" bind:value={draft.key} autocomplete="off" spellcheck="false" placeholder={or ? "sk-or-…" : ""} oninput={() => (errs = { ...errs, key: undefined })} aria-invalid={!!errs.key} aria-describedby="add-key-h" />
+          <input id="add-key" class="input mono" type="password" bind:value={draft.key} autocomplete="off" spellcheck="false" placeholder={or ? "sk-or-…" : ""} oninput={() => ((errs = { ...errs, key: undefined }), (dtest = null))} aria-invalid={!!errs.key} aria-describedby="add-key-h" />
           <span class="help" class:bad={errs.key} id="add-key-h" role="status">{errs.key ?? `${or ? "Find it at openrouter.ai/keys." : "Only if your server asks for one."} Kept in your Mac’s Keychain.`}</span></li>
       </ul>
     </section>
     <div class="actions">
-      <p class="err" role="status">{addError}</p>
+      <p class="err" class:neutral={!msg} role="status" title={msg || undefined}>{msg || (dtest?.st === "run" ? "Checking…" : dtest?.st === "ok" ? testText(dtest) : "")}</p>
+      <button type="button" class="btn" disabled={dtest?.st === "run"} onclick={testDraft}>Test</button>
       <button type="button" class="btn" onclick={() => back()}>Cancel</button>
       <button class="btn primary" disabled={busy}>Add provider</button>
     </div>
@@ -264,7 +282,7 @@
       {#if !none}
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions (the button inside takes the keys) -->
         <li class="row go" onclick={() => openSub("add")}>
-          <span><span class="name add">Add a provider</span></span>
+          <span><span class="name addp">Add a provider</span></span>
           <span class="end"><button type="button" class="chev" aria-label="Add a provider" onclick={(e) => { e.stopPropagation(); openSub("add"); }}><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg></button></span>
         </li>
       {/if}
@@ -331,7 +349,7 @@
   .trunc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   button.chev { padding: 0; border: 0; border-radius: var(--r-xs); background: none; }
   button.chev:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-  .add { color: var(--accent-text); }
+  .addp { color: var(--accent-text); }
   /* Providers are 80px in every state: name, address, a reserved status line. */
   .prov { min-height: 80px; }
   .desc.test { margin-top: var(--sp-1); color: var(--text-3); font-variant-numeric: tabular-nums; }

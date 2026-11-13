@@ -375,19 +375,34 @@ pub fn models(db: &Mutex<Connection>, keys: &dyn Keys, id: i64, fresh: bool) -> 
     Ok(list)
 }
 
-/// Checks the address and key without spending tokens: OpenRouter's key endpoint, else the model list (cached on the way).
-pub fn test(db: &Mutex<Connection>, id: i64, p: &dyn Backend) -> Result<Check, String> {
+/// Checks the address and key without spending tokens: OpenRouter's key endpoint, else the model list (returned, to cache).
+fn check(p: &dyn Backend) -> Result<(Check, Option<Vec<Model>>), String> {
     let start = Instant::now();
-    let (mut count, mut used, mut limit) = (None, None, None);
+    let (mut list, mut used, mut limit) = (None, None, None);
     match p.key_usage()? {
         Some((u, l)) => (used, limit) = (Some(u), l),
-        None => {
-            let list = p.models()?;
-            store(&db.lock().unwrap(), id, &list)?;
-            count = Some(list.len());
-        }
+        None => list = Some(p.models()?),
     }
-    Ok(Check { ms: start.elapsed().as_millis() as u64, models: count, used, limit })
+    Ok((Check { ms: start.elapsed().as_millis() as u64, models: list.as_ref().map(Vec::len), used, limit }, list))
+}
+
+/// Tests saved provider `id`, caching its model list on the way.
+pub fn test(db: &Mutex<Connection>, id: i64, p: &dyn Backend) -> Result<Check, String> {
+    let (c, list) = check(p)?;
+    if let Some(list) = list {
+        store(&db.lock().unwrap(), id, &list)?;
+    }
+    Ok(c)
+}
+
+/// Tests a provider before it is added, with the address and key as typed (trimmed like `add`).
+pub fn test_draft(kind: &str, url: &str, key: &str) -> Result<Check, String> {
+    let (url, key) = (url.trim().trim_end_matches('/'), key.trim());
+    if host(url).is_none() {
+        return Err("Enter a web address starting with http:// or https://".into());
+    }
+    let p = OpenAi { url: url.into(), key: (!key.is_empty()).then(|| key.into()), rich: kind == "openrouter" };
+    Ok(check(&p)?.0)
 }
 
 #[cfg(test)]
@@ -674,5 +689,15 @@ pub(crate) mod tests {
         assert!(test(&db, id, &adapter(base, true)).unwrap_err().contains("refused the key"));
         let dead = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
         assert!(test(&db, id, &adapter(format!("http://{dead}"), false)).unwrap_err().starts_with("Couldn't reach"));
+    }
+
+    #[test]
+    fn a_draft_is_tested_as_typed_and_saves_nothing() {
+        let base = stub(vec![("/models", 200, LIST)]);
+        let c = test_draft("openai", &format!(" {base}/ "), "").unwrap();
+        assert_eq!((c.models, c.used), (Some(2), None));
+        let base = stub(vec![("/key", 200, r#"{"data":{"usage":0.5,"limit":null}}"#)]);
+        assert_eq!(test_draft("openrouter", &base, "sk-or-x").unwrap().used, Some(0.5));
+        assert!(test_draft("openai", "not a url", "").is_err());
     }
 }

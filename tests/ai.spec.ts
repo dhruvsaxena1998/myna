@@ -338,3 +338,27 @@ test("the host pill is the only amber on the page", async ({ page }) => {
   });
   expect(new Set(amber)).toEqual(new Set(["Sends text off this Mac"]));
 });
+
+test("Test on Add a provider checks the address and key as typed, before saving; typing clears the result", async ({ page }) => {
+  await open(page, { providers: [], main: null, fast: null }, `ai_test_draft: () => ({ ms: 400, models: 7, used: null, limit: null })`);
+  await page.getByRole("button", { name: "Add a provider" }).click();
+  await page.getByRole("button", { name: "Test" }).click();
+  await expect(page.getByText("Enter the full address, starting with http:// or https://.")).toBeVisible();
+  await expect(page.getByText("Give it a name.")).toHaveCount(0); // a name isn't needed to test
+  await page.getByLabel("Address").fill("http://localhost:11434/v1");
+  await page.getByRole("button", { name: "Test" }).click();
+  await expect(page.getByText("Works · 7 models · 0.4 s")).toBeVisible();
+  expect(await calls(page, "ai_test_draft")).toEqual([{ kind: "openai", url: "http://localhost:11434/v1", key: "" }]);
+  expect(await calls(page, "ai_add")).toEqual([]);
+  await page.getByLabel("Address").fill("http://localhost:1/v1");
+  await expect(page.getByText("Works · 7 models · 0.4 s")).toHaveCount(0);
+});
+
+test("a drill-in's title follows a breadcrumb back to its page", async ({ page }) => {
+  await open(page, { providers: [], main: null, fast: null });
+  await page.getByRole("button", { name: "Add a provider" }).click();
+  const crumbs = page.getByRole("navigation", { name: "Breadcrumbs" });
+  await expect(crumbs).toHaveText(/AI providers\s*Add a provider/);
+  await crumbs.getByRole("button", { name: "AI providers" }).click();
+  await expect(page.getByRole("heading", { name: "AI providers", level: 1 })).toBeVisible();
+});

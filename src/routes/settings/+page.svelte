@@ -42,15 +42,15 @@
     { id: "ai", title: "AI providers", icon: ICON.server },
     { id: "experimental", title: "Experimental", icon: ICON.flask },
   ];
-  // Drill-ins: a sub-page under its parent, with its own toolbar title. Pages open them with `open`.
-  const SUBS: Record<string, { parent: PageId; title: string }> = {
+  // Drill-ins: a sub-page under its parent, with its own toolbar title. Pages open them with `open`. `up`: a drill-in it sits under, for the breadcrumbs.
+  const SUBS: Record<string, { parent: PageId; title: string; up?: string }> = {
     models: { parent: "understand", title: "Speech-to-text · Voice typing" },
     mmodels: { parent: "meetings", title: "Speech-to-text · Meeting notes" },
     diar: { parent: "meetings", title: "Speaker diarization" },
     remember: { parent: "understand", title: "Custom vocabulary" },
     keep: { parent: "understand", title: "Filler exceptions" },
     styles: { parent: "write", title: "Cleanup styles" },
-    style: { parent: "write", title: "" }, // the style's own name
+    style: { parent: "write", title: "", up: "styles" }, // the style's own name
     add: { parent: "ai", title: "Add a provider" },
   };
 
@@ -134,6 +134,15 @@
     scroller?.scrollTo(0, 0);
   }
   const back = () => step(-1);
+  // Where a drill-in sits: its page, then the drill-in above it, if any. Each one goes there.
+  const crumbs = $derived.by(() => {
+    if (!view.sub) return [];
+    const up = SUBS[view.sub]?.up;
+    return [
+      { title: PAGES.find((p) => p.id === view.page)!.title, to: () => go(view.page) },
+      ...(up ? [{ title: SUBS[up].title, to: () => open(up) }] : []),
+    ];
+  });
   const same = (a: View, b: View) => a.page === b.page && a.sub === b.sub && a.arg === b.arg;
   /** Takes the views that are `gone` out of history (and the repeats that leaves). Showing one goes back to the view before it, or to `fallback`. */
   function prune(gone: (v: View) => boolean, fallback?: View) {
@@ -201,11 +210,17 @@
           page={stage} on={voice.on} mode={voice.mode} accel={voice.key || null} paste={voice.paste} {go}
           model={sttPick?.name ?? null} installed={!!sttPick && installed(sttPick)} pct={sttPick ? dl.pct[sttPick.id] : undefined}
           fast={fastRoute ? { model: fastRoute.model, off: !!ai?.providers.find((p) => p.id === fastRoute.provider)?.off_device } : null} />
-      {:else}<h1>{title}</h1>{/if}
+      {:else}
+        <nav class="crumbs" aria-label="Breadcrumbs">
+          {#each crumbs as c}<button class="crumb" onclick={c.to}>{c.title}</button><svg class="sep" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>{/each}
+          <h1>{title}</h1>
+        </nav>
+      {/if}
     </header>
     <div class="content" bind:this={scroller}>
       {#key hist.i + ":" + view.page + ":" + view.sub + ":" + view.arg}
         <div class="page prefs">
+
           <!-- Every setting lives in the database, so if it failed to open, every page shows why. -->
           {#if !data.storage.ok}
             <ErrorState title="Myna couldn't open its data folder" message={data.storage.error} />
@@ -337,8 +352,8 @@
   /* Same nav row as the main window's sidebar: 16px icon in --text-2, the selected one in --accent-text. */
   li[role="option"] { height: var(--h-row); display: flex; align-items: center; gap: var(--sp-2); padding: 0 10px; border-radius: var(--r-md); cursor: default;
     transition: background-color var(--dur-fast) var(--ease-in); }
-  li:hover:not(.selected) { background: var(--fill-hover); }
-  .ic { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; color: var(--text-2); }
+  li[role="option"]:hover:not(.selected) { background: var(--fill-hover); }
+  li .ic { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; color: var(--text-2); }
   li.selected .ic { color: var(--accent-text); }
   :global(html[data-liquid]) li.selected .ic { color: var(--on-accent); }
   /* Stronger than --accent-soft-strong: the sidebar sits on see-through material, which thins a pale wash. */
@@ -359,8 +374,16 @@
   /* The stage path (about 44px) sits in the same 56px toolbar as every other page's title, so ‹ › and the content never move between pages. */
   .hnav { display: flex; gap: 2px; flex: none; margin: 0 var(--sp-2) 0 calc(-1 * var(--sp-2)); }
   .hnav .btn { width: 28px; height: 28px; color: var(--text); }
-  .hnav .btn:disabled { color: var(--text-disabled); }
+  /* Fainter than --text-disabled: next to an enabled arrow, a dimmed one has to read as off at a glance. */
+  .hnav .btn:disabled { color: var(--text); opacity: .25; }
   /* Let drags on the title fall through to the header's drag region. */
+  /* A drill-in's title follows the pages above it, each a quiet link back, all in the title's size so the toolbar never changes height. */
+  .crumbs { flex: 1; display: flex; align-items: center; gap: var(--sp-1); min-width: 0; }
+  .crumb { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 var(--sp-1); margin: 0 calc(-1 * var(--sp-1)); border: 0; border-radius: var(--r-sm); background: none;
+    font: inherit; font-size: var(--fs-title2); line-height: var(--lh-title2); font-weight: var(--fw-semibold); color: var(--text-3); transition: background-color var(--dur-fast) var(--ease-in), color var(--dur-fast) var(--ease-in); }
+  .crumb:hover { color: var(--text-2); background: var(--fill-hover); }
+  .crumb:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+  .sep { width: 14px; height: 14px; flex: none; fill: none; stroke: var(--text-3); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   h1 { pointer-events: none; margin: 0; min-width: 0; font-size: var(--fs-title2); line-height: var(--lh-title2); font-weight: var(--fw-semibold); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   /* Empty state: a heading, one sentence, one action. */
   .empty { display: grid; justify-items: start; gap: var(--sp-1); padding: var(--sp-4); }

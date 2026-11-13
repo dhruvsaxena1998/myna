@@ -48,8 +48,8 @@
     }
   }
 
-  // Removing the first cleanup key moves the second one up, so the first is always the one set.
-  const remove = (which: Which) => save(which === "clean" ? { ...voice, clean: voice.clean2 ?? null, clean2: null } : { ...voice, [which]: null });
+  // The × removes the last key, so the first is always the one set.
+  const remove = (which: Which) => save({ ...voice, [which]: null });
 </script>
 
 <!-- Leaving the window ends recording, so the shortcut never stays switched off. -->
@@ -73,16 +73,13 @@
     <ul class="list">
       <li class="row wide">
         <span><span class="name">Dictate</span>{@render desc(recording === "key" || recording === "key2" ? PRESS : "Adds what you said. Works in any app.")}</span>
-        <span class="end">{@render recorder("key")}{@render second("key2")}</span>
+        <span class="end">{@render keys("key", "key2")}</span>
       </li>
       <li class="row" class:wide={fast}>
         <span><span class="name">Dictate with cleanup</span>
           {@render desc(recording === "clean" || recording === "clean2" ? PRESS : fast ? "Fixes punctuation, grammar slips and self-corrections." : "Fixes punctuation, grammar slips and self-corrections. Needs a Fast model.")}</span>
         {#if fast}
-          <span class="end">
-            {#if voice.clean}<button class="btn quiet icon" title="Remove" onclick={() => remove("clean")} aria-label="Remove the Dictate with cleanup shortcut">{@render x()}</button>{/if}
-            {@render recorder("clean")}{@render second("clean2")}
-          </span>
+          <span class="end">{@render keys("clean", "clean2")}</span>
         {:else}<span class="end"><button class="btn" onclick={setup}>Set up</button></span>{/if}
       </li>
       {#if WHICH.some((w) => voice[w] === "Fn") && !globe}
@@ -116,14 +113,23 @@
   <ShortcutButton id="rec-{which}" name="{which.endsWith("2") ? "second " : ""}{LABEL[which]} shortcut" key={voice[which]} recording={recording === which} onclick={() => rec.record(recording === which ? null : which)} />
 {/snippet}
 
-<!-- The optional second key: a quiet + until one is set, then its own recorder and a quiet ×. The slot at the right never changes size. -->
-{#snippet second(which: "key2" | "clean2")}
-  {#if voice[which] || recording === which}
-    {@render recorder(which)}
-    <button class="btn quiet icon" title="Remove" aria-label={voice[which] ? `Remove the second ${LABEL[which]} shortcut` : "Cancel"} onclick={() => (voice[which] ? remove(which) : rec.record(null))}>{@render x()}</button>
+<!-- Every shortcut row reads the same: the key, then the second key or a quiet + to add one, then one quiet × that removes the last key.
+     Dictate always keeps its first key, so its × only shows for a second one; its slot is kept so the keys line up with the row below. -->
+{#snippet keys(first: "key" | "clean", which: "key2" | "clean2")}
+  {@render recorder(first)}
+  {#if voice[which] || recording === which}{@render recorder(which)}
   {:else}
-    <button class="btn quiet icon" title="Add another key" aria-label="Add another key" disabled={which === "clean2" && !voice.clean} onclick={() => rec.record(which)}>
+    <button class="btn quiet icon" title="Add another key" aria-label="Add another key" disabled={!voice[first]} onclick={() => rec.record(which)}>
       <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
     </button>
   {/if}
+  {#if voice[which] || recording === which}
+    <button class="btn quiet icon" title="Remove" aria-label={voice[which] ? `Remove the second ${LABEL[which]} shortcut` : "Cancel"} onclick={() => (voice[which] ? remove(which) : rec.record(null))}>{@render x()}</button>
+  {:else if first === "clean" && voice.clean}
+    <button class="btn quiet icon" title="Remove" aria-label="Remove the Dictate with cleanup shortcut" onclick={() => remove("clean")}>{@render x()}</button>
+  {:else}<span class="slot" aria-hidden="true"></span>{/if}
 {/snippet}
+
+<style>
+  .slot { width: var(--h-ctl); flex: none; }
+</style>

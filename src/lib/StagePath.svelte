@@ -31,7 +31,7 @@
 
 <nav class="stage-path" aria-label="Where your voice goes">
   {#each STAGES as [id, name], i (id)}
-    {#if i}<span class="link" class:off={!on} aria-hidden="true"></span>{/if}
+    {#if i}<span class="link" class:off={!on} aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg></span>{/if}
     <button class="stage" class:off={!on && i > 0} aria-current={page === id ? "step" : undefined} onclick={() => go(id)}>
       <span class="sn">{name}</span>
       {#key sig[id]}
@@ -51,36 +51,32 @@
 </nav>
 
 <style>
-  .stage-path { display: flex; align-items: flex-start; min-width: 0; overflow: hidden; }
-  .stage { display: flex; flex-direction: column; align-items: flex-start; flex: none; padding: 2px var(--sp-2); margin: 0 calc(-1 * var(--sp-2)); border: 0; border-radius: var(--r-sm); background: none; text-align: left; font: inherit; color: inherit;
+  /* Three columns, the last a little wider for the cleanup model: the gaps between stages never change, and a changed value moves nothing; values end in an ellipsis. */
+  .stage-path { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1.4fr); align-items: start; min-width: 0; max-width: 640px; }
+  .stage { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; padding: 2px var(--sp-2); margin: 0 calc(-1 * var(--sp-2)); border: 0; border-radius: var(--r-sm); background: none; text-align: left; font: inherit; color: inherit;
     transition: background-color var(--dur-fast) var(--ease-in); }
   .stage:hover { background: var(--fill-hover); }
   .stage:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
-  .sn { font-size: var(--fs-body); line-height: var(--lh-body); font-weight: var(--fw-medium); color: var(--text-2); white-space: nowrap; }
-  .stage[aria-current="step"] .sn { color: var(--accent-text); }
-  .stage.off .sn { color: var(--text-3); }
-  .sv { display: flex; align-items: center; gap: var(--sp-1); height: var(--lh-footnote); font-size: var(--fs-footnote); line-height: var(--lh-footnote); color: var(--text-3);
+  /* Names at title3, the current one in --text: it reads as the page's title, the others as the way there. */
+  .sn { max-width: 100%; font-size: var(--fs-title3); line-height: var(--lh-title3); font-weight: var(--fw-semibold); color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stage[aria-current="step"] .sn { color: var(--text); }
+  .stage.off .sn { color: var(--text-disabled); }
+  .sv { display: flex; align-items: center; gap: var(--sp-1); max-width: 100%; height: var(--lh-footnote); font-size: var(--fs-footnote); line-height: var(--lh-footnote); color: var(--text-3);
     white-space: nowrap; overflow: hidden; font-variant-numeric: tabular-nums; }
   .sv :global(kbd) { height: 16px; min-width: 16px; padding: 0 4px; }
   .sv :global(.ok) { color: inherit; }
   .sv :global(.ok .ic) { width: 12px; height: 12px; }
   .sv :global(.pill) { height: 16px; padding: 0 6px; }
-  .link { flex: none; width: 16px; height: .5px; margin: 11px var(--sp-2) 0; background: var(--line-strong); }
-  .link.off { background: none; border-top: .5px dashed var(--line-strong); }
-  /* The last stage gives way, so a long model ID ends in an ellipsis. */
-  .stage:last-child { flex: 0 1 auto; min-width: 0; max-width: 100%; }
-  /* Room for the usual values (Hold or Tap with a key; a model name or a download), so a changed value doesn't push the stages after it. */
-  .stage:first-of-type { min-width: 112px; }
-  .stage:nth-of-type(2) { min-width: 168px; max-width: 220px; }
-  .stage:nth-of-type(2) .sv { max-width: 100%; }
-  .stage:last-child .sv { max-width: 100%; }
+  /* A chevron centred on the names' line (2px padding + (20 − 14) / 2). */
+  .link { width: 14px; height: 14px; margin: 5px var(--sp-3) 0; }
+  .link svg { display: block; width: 14px; height: 14px; fill: none; stroke: var(--text-3); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .link.off svg { stroke: var(--text-disabled); }
   .clip { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .sv.fresh { animation: fresh var(--dur) var(--ease-out); }
   @keyframes fresh { from { color: var(--accent-text); } }
-  /* Narrow: three equal shares, so every name shows and a changed value still moves nothing; values end in an ellipsis. */
+  /* Narrow: names drop to body size so all three fit whole. */
   @container settings (width < 460px) {
-    .link { width: 8px; margin-inline: var(--sp-1h); }
-    .stage, .stage:first-of-type, .stage:nth-of-type(2), .stage:last-child { flex: 1 1 0; min-width: 0; max-width: none; }
-    .sv { max-width: 100%; }
+    .link { margin: 3px var(--sp-1h) 0; }
+    .sn { font-size: var(--fs-body); line-height: var(--lh-body); }
   }
 </style>
