@@ -116,3 +116,9 @@ _Avoid_: edit (a rule's change), feedback (a 👎)
 **Correction rate**:
 The share of a dictation's pasted text the user changed through corrections: 0% untouched, 100% rewritten.
 _Avoid_: accuracy, error rate
+
+## Browser add-on
+
+**Add-on protocol**:
+The messages and audio frames on the browser add-on's socket, in both directions. `tests/extension/protocol.json` defines them, and Myna's tests and the add-on's tests both check their code against that file.
+_Avoid_: API, wire format

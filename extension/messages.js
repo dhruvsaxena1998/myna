@@ -1,4 +1,4 @@
-// The messages between this add-on and Myna. Keep in step with src-tauri/src/addon.rs, which is the other copy.
+// The messages between this add-on and Myna. The wire is pinned by tests/extension/protocol.json, which this file and src-tauri/src/addon.rs are both tested against.
 // Every message is JSON with `v` (the version) and `type`. A type this side doesn't know is ignored, never fatal.
 export const V = 1;
 // Tried in order; Myna takes the first free one.
@@ -6,6 +6,9 @@ export const PORTS = [47821, 47822, 47823, 47824];
 // Close codes from Myna.
 export const WRONG_CODE = 4001;
 export const REPLACED = 4002;
+// The types Myna sends, which the service worker reacts to.
+export const WELCOME = "welcome";
+export const STOP_TAB = "stop-tab";
 
 export const hello = (code) => ({ v: V, type: "hello", code });
 // `mute`, `caption` and `captions` come from the Teams content script (through the worker).

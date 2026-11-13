@@ -1,8 +1,8 @@
 //! The channel to Myna's browser add-on (07.1): a WebSocket on 127.0.0.1 while Meeting notes is on.
 //! Only the add-on's own origin gets in, and its first message must carry the connection code.
-//! The messages are in `Msg` (`stop-tab` is the one hyphenated name); `extension/messages.js` is the other copy. The Teams tab's sound (07.3) comes as
+//! The messages are in `Msg` (`stop-tab` is the one hyphenated name); `tests/extension/protocol.json` pins them for both sides. The Teams tab's sound (07.3) comes as
 //! binary frames: 4 bytes sequence (u32), 8 bytes capture time (i64, unix ms), then 16 kHz mono Int16 samples, all
-//! little-endian; `extension/audio.js` is the other copy.
+//! little-endian; the same fixture pins that layout.
 
 use crate::storage::{read_text, write_text};
 use rusqlite::Connection;
@@ -33,6 +33,9 @@ const STAY: u8 = 0;
 const STOPPED: u8 = 1;
 const WRONG_CODE: u8 = 2;
 const REPLACED: u8 = 3;
+/// The close codes the add-on hears for a wrong code and for a newer connection.
+const CLOSE_WRONG_CODE: u16 = 4001;
+const CLOSE_REPLACED: u16 = 4002;
 const ALPHABET: &[u8; 32] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no I, O, 0, 1
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq)]
@@ -64,7 +67,7 @@ pub enum Msg {
     Selectors { version: String },
     Mute { state: MuteState, at: i64 },
     /// Teams' live captions showed `name` speaking at `at` (unix ms, the add-on's clock); `text` is optional.
-    Caption { name: String, at: i64, #[serde(default)] text: Option<String> },
+    Caption { name: String, at: i64, #[serde(default, skip_serializing_if = "Option::is_none")] text: Option<String> },
     /// The add-on expects captions but can't find them on the page.
     Captions { state: CaptionsState },
     /// The Teams tab's sound starts or stops coming as binary frames. `title` is the tab's, for the add-on's own use.
@@ -237,7 +240,7 @@ impl Shared {
             _ => return,
         };
         if !right {
-            return close(&mut ws, 4001);
+            return close(&mut ws, CLOSE_WRONG_CODE);
         }
 
         let kill: Kill = Arc::new(AtomicU8::new(STAY));
@@ -258,8 +261,8 @@ impl Shared {
             match kill.load(Ordering::SeqCst) {
                 STAY => {}
                 STOPPED => break close(&mut ws, 1001),
-                WRONG_CODE => break close(&mut ws, 4001),
-                _ => break close(&mut ws, 4002),
+                WRONG_CODE => break close(&mut ws, CLOSE_WRONG_CODE),
+                _ => break close(&mut ws, CLOSE_REPLACED),
             }
             if self.stop_tab.swap(false, Ordering::SeqCst) {
                 let _ = ws.send(Message::text(encode(&Msg::StopTab)));
@@ -467,6 +470,28 @@ mod tests {
         ]
         .map(|m| serde_json::from_str::<serde_json::Value>(&encode(&m)).unwrap()["type"].as_str().unwrap().to_owned());
         assert_eq!(names, ["hello", "welcome", "ping", "selectors", "mute", "caption", "captions", "tab"]);
+    }
+
+    #[test]
+    fn the_wire_matches_the_shared_fixture() {
+        let fx: serde_json::Value = serde_json::from_str(include_str!("../../tests/extension/protocol.json")).unwrap();
+        assert_eq!(fx["version"], VERSION);
+        assert_eq!(fx["ports"], serde_json::json!(PORTS));
+        assert_eq!(fx["close"], serde_json::json!({ "wrongCode": CLOSE_WRONG_CODE, "replaced": CLOSE_REPLACED }));
+        for m in fx["messages"].as_array().unwrap() {
+            let wire = &m["wire"];
+            let msg = decode(&wire.to_string()).unwrap_or_else(|| panic!("does not decode: {wire}"));
+            let back: serde_json::Value = serde_json::from_str(&encode(&msg)).unwrap();
+            assert_eq!(&back, wire, "encodes differently");
+        }
+        for raw in fx["ignored"].as_array().unwrap() {
+            assert_eq!(decode(raw.as_str().unwrap()), None, "not ignored: {raw}");
+        }
+        for f in fx["frames"].as_array().unwrap() {
+            let bytes: Vec<u8> = f["bytes"].as_array().unwrap().iter().map(|b| b.as_u64().unwrap() as u8).collect();
+            let want: Vec<f32> = f["pcm"].as_array().unwrap().iter().map(|p| p.as_i64().unwrap() as f32 / 32768.0).collect();
+            assert_eq!(decode_frame(&bytes), Some((f["seq"].as_u64().unwrap() as u32, f["ts"].as_i64().unwrap(), want)), "frame {}", f["seq"]);
+        }
     }
 
     #[test]

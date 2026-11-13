@@ -1,4 +1,4 @@
-// The Teams tab's sound as Myna wants it: 16 kHz mono Int16 in binary frames. Keep in step with src-tauri/src/addon.rs.
+// The Teams tab's sound as Myna wants it: 16 kHz mono Int16 in binary frames. The layout is pinned by tests/extension/protocol.json, which src-tauri/src/addon.rs is also tested against.
 // A frame is 12 bytes of header, then the samples, all little-endian: seq (u32), capture time (i64, unix ms), Int16 PCM.
 export const RATE = 16000;
 export const FRAME = 1600; // samples: 100 ms, 3.2 KB, far under Myna's 64 KB cap

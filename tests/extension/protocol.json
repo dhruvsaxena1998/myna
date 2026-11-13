@@ -1,0 +1,144 @@
+{
+  "version": 1,
+  "ports": [47821, 47822, 47823, 47824],
+  "close": {
+    "wrongCode": 4001,
+    "replaced": 4002
+  },
+  "messages": [
+    {
+      "from": "addon",
+      "wire": {
+        "v": 1,
+        "type": "hello",
+        "code": "ABCD2345"
+      },
+      "args": ["ABCD2345"]
+    },
+    {
+      "from": "addon",
+      "wire": {
+        "v": 1,
+        "type": "mute",
+        "state": "muted",
+        "at": 1700000000000
+      },
+      "args": ["muted", 1700000000000]
+    },
+    {
+      "from": "addon",
+      "wire": {
+        "v": 1,
+        "type": "mute",
+        "state": "unmuted",
+        "at": 1700000000001
+      },
+      "args": ["unmuted", 1700000000001]
+    },
+    {
+      "from": "addon",
+      "wire": {
+        "v": 1,
+        "type": "mute",
+        "state": "unknown",
+        "at": 1700000000002
+      },
+      "args": ["unknown", 1700000000002]
+    },
+    {
+      "from": "addon",
+      "wire": {
+        "v": 1,
+        "type": "caption",
+        "name": "Ada",
+        "at": 1700000000003,
+        "text": "hello there"
+      },
+      "args": ["Ada", 1700000000003, "hello there"]
+    },
+    {
+      "from": "addon",
+      "wire": {
+        "v": 1,
+        "type": "caption",
+        "name": "Ada",
+        "at": 1700000000004
+      },
+      "args": ["Ada", 1700000000004]
+    },
+    {
+      "from": "addon",
+      "wire": {
+        "v": 1,
+        "type": "captions",
+        "state": "unavailable"
+      },
+      "args": ["unavailable"]
+    },
+    {
+      "from": "addon",
+      "wire": {
+        "v": 1,
+        "type": "tab",
+        "state": "start",
+        "title": "Standup | Microsoft Teams"
+      },
+      "args": ["start", "Standup | Microsoft Teams"]
+    },
+    {
+      "from": "addon",
+      "wire": {
+        "v": 1,
+        "type": "tab",
+        "state": "stop",
+        "title": "Standup | Microsoft Teams"
+      },
+      "args": ["stop", "Standup | Microsoft Teams"]
+    },
+    {
+      "from": "addon",
+      "wire": {
+        "v": 1,
+        "type": "selectors",
+        "version": "2026-11-10"
+      },
+      "args": ["2026-11-10"]
+    },
+    {
+      "from": "addon",
+      "wire": {
+        "v": 1,
+        "type": "ping"
+      },
+      "args": []
+    },
+    {
+      "from": "myna",
+      "wire": {
+        "v": 1,
+        "type": "welcome"
+      }
+    },
+    {
+      "from": "myna",
+      "wire": {
+        "v": 1,
+        "type": "stop-tab"
+      }
+    }
+  ],
+  "ignored": [
+    "{\"v\":1,\"type\":\"from-the-future\"}",
+    "{\"v\":2,\"type\":\"hello\",\"code\":\"X\"}",
+    "nonsense"
+  ],
+  "frames": [
+    {
+      "seq": 7,
+      "ts": 1700000000123,
+      "samples": [0.5, -1, 2, 0],
+      "pcm": [16384, -32767, 32767, 0],
+      "bytes": [7, 0, 0, 0, 123, 104, 229, 207, 139, 1, 0, 0, 0, 64, 1, 128, 255, 127, 0, 0]
+    }
+  ]
+}

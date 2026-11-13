@@ -1,4 +1,4 @@
-import { PORTS, REPLACED, WRONG_CODE, caption, captions, hello, mute, parse, ping, selectors as selectorsMsg, tab as tabMsg } from "./messages.js";
+import { PORTS, REPLACED, STOP_TAB, WELCOME, WRONG_CODE, caption, captions, hello, mute, parse, ping, selectors as selectorsMsg, tab as tabMsg } from "./messages.js";
 import { fetchRemote, isTeams, pick } from "./selectors.js";
 
 // The service worker sleeps, so everything here can start over: the status lives in storage, and an alarm
@@ -29,8 +29,8 @@ function tryPort(i, code) {
   s.onopen = () => s.send(JSON.stringify(hello(code)));
   s.onmessage = (e) => {
     const type = parse(e.data)?.type;
-    if (type === "stop-tab") return stopTab();
-    if (type !== "welcome") return;
+    if (type === STOP_TAB) return stopTab();
+    if (type !== WELCOME) return;
     welcome = true;
     trying = false;
     ws = s;
