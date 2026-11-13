@@ -7,7 +7,7 @@
     | { state: "listening"; hold: boolean; key: string; limit?: number }
     | { state: "writing" | "cleaning" | "added" }
     /** A meeting is recording (capsule only); `secs` is how long. */
-    | { state: "recording"; mic?: "live" | "muted" | null }
+    | { state: "recording"; words?: string }
     /** A finished meeting: being written up (`progress` 0 to 1), saved, or failed with `reason` (capsule only). */
     | { state: "notes"; progress: number }
     | { state: "notes-saved" }
@@ -24,7 +24,6 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import { keycaps } from "./shortcut";
-  import { mic } from "./meetings";
   // `wave` is the recent mic levels, 0 to 1, oldest first; its last one drives the bars and the ring.
   // `left`: seconds until tap mode stops by itself, during the last 30; otherwise null.
   // `actions`: buttons at the end of the capsule (the meeting notes' Open, Try again and dismiss).
@@ -70,7 +69,7 @@
       {:else if note}<span class="t">{note.title}</span><span class="sub">{note.hint}</span>{/if}
     </span>
   {:else if pill.state === "recording"}
-    <span class="recdot" aria-hidden="true"></span><span>Recording</span><time>{clock}</time><span class="sub">{mic(pill.mic ?? null)}</span>
+    <span class="recdot" aria-hidden="true"></span><span>Recording</span><time>{clock}</time><span class="sub">{pill.words}</span>
   {:else if pill.state === "notes"}
     <span>Writing up your notes…</span><span class="bar" aria-hidden="true"><i style:width="{Math.round(pill.progress * 100)}%"></i></span><time>{Math.round(pill.progress * 100)}%</time>
   {:else if pill.state === "notes-saved"}

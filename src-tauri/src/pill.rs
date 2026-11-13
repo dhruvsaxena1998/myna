@@ -92,9 +92,9 @@ pub fn show(app: &AppHandle, state: &str) {
 }
 
 /// Shows the meeting recording pill, for a meeting that started at `started` (unix ms), or hides it. `mic` is
-/// "live" or "muted" while the browser add-on mirrors the mute button.
-pub fn meeting(app: &AppHandle, started: Option<i64>, mic: Option<&str>) {
-    let _ = app.emit_to("pill", "meeting", serde_json::json!({ "started": started, "mic": mic }));
+/// "live" or "muted" while the browser add-on mirrors the mute button; `words` is how the pill says it.
+pub fn meeting(app: &AppHandle, started: Option<i64>, mic: Option<&str>, words: Option<&str>) {
+    let _ = app.emit_to("pill", "meeting", serde_json::json!({ "started": started, "mic": mic, "words": words }));
 }
 
 /// 👍/👎 on the pill for the dictation just saved.

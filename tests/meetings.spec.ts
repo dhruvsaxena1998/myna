@@ -49,7 +49,7 @@ test("Start notes starts, the live card shows the recording, and Stop ends it", 
   await open(page);
   await page.getByRole("button", { name: "Start notes" }).click();
   expect(await calls(page, "meeting_toggle")).toHaveLength(1);
-  await emit(page, "meeting-running", { id: 6, started: Date.now() - 65_000, source: "Google Meet" });
+  await emit(page, "meeting-running", { id: 6, started: Date.now() - 65_000, source: "Google Meet", mic: null, words: "Mic live" });
   const card = page.getByRole("region", { name: "Meeting recording in progress" });
   await expect(card).toContainText("Recording · Google Meet");
   await expect(card).toContainText("Mic live");
@@ -136,10 +136,10 @@ test("lines said while muted collapse into one row, Include keeps them with a ma
 
 test("the live card says how the mic is while the add-on mirrors it", async ({ page }) => {
   await open(page);
-  await emit(page, "meeting-running", { id: 6, started: Date.now(), source: "Microsoft Teams", mic: "live" });
+  await emit(page, "meeting-running", { id: 6, started: Date.now(), source: "Microsoft Teams", mic: "live", words: "Mic live · mirrored from Teams" });
   const card = page.getByRole("region", { name: "Meeting recording in progress" });
   await expect(card).toContainText("Mic live · mirrored from Teams");
-  await emit(page, "meeting-running", { id: 6, started: Date.now(), source: "Microsoft Teams", mic: "muted" });
+  await emit(page, "meeting-running", { id: 6, started: Date.now(), source: "Microsoft Teams", mic: "muted", words: "Muted · mirrored from Teams" });
   await expect(card).toContainText("Muted · mirrored from Teams");
 });
 

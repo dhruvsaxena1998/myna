@@ -18,8 +18,8 @@ pub trait World: Stt + Voices + 'static {
     /// System Audio is denied, so Myna can't hear the other people.
     fn audio_denied(&self) -> bool;
     fn notify(&self, title: &str, body: &str);
-    /// The recording pill with its start time and mic word, or hidden when `started` is none.
-    fn pill(&self, started: Option<i64>, mic: Option<&str>);
+    /// The recording pill with its start time, mic word and the words for it, or hidden when `started` is none.
+    fn pill(&self, started: Option<i64>, mic: Option<&str>, words: Option<&str>);
     /// A warning over the pill.
     fn pill_warning(&self, title: &str, hint: &str);
     /// Moves the pill to "bottom", "top-right", ... where the user set it.
@@ -117,7 +117,7 @@ impl MeetingSession {
         }
         self.world.menu_idle();
         self.world.running(None);
-        self.world.pill(None, None);
+        self.world.pill(None, None, None);
     }
 
     /// Try again on a meeting whose notes failed.
@@ -136,11 +136,11 @@ impl MeetingSession {
         }
     }
 
-    /// The live card: `{ id, started, source, mic }`, or none when not recording.
+    /// The live card: `{ id, started, source, mic, words }`, or none when not recording.
     pub fn running(&self) -> Option<serde_json::Value> {
         let (id, started) = self.meetings.running()?;
         let source: Option<String> = self.db.lock().unwrap().query_row("SELECT source_app FROM meeting WHERE id = ?1", [id], |r| r.get(0)).ok().flatten();
-        Some(serde_json::json!({ "id": id, "started": started, "source": source, "mic": mic_word(self.meetings.muted()) }))
+        Some(serde_json::json!({ "id": id, "started": started, "source": source, "mic": mic_word(self.meetings.muted()), "words": mic_words(self.meetings.muted()) }))
     }
 
     /// The Teams mute button changed: the timeline, then the menu, pill and live card.
@@ -182,17 +182,12 @@ impl MeetingSession {
         let Some((_, started)) = self.meetings.running() else { return };
         self.show_menu(started);
         self.world.running(self.running());
-        self.world.pill(Some(started), mic_word(self.meetings.muted()));
+        self.world.pill(Some(started), mic_word(self.meetings.muted()), Some(mic_words(self.meetings.muted())));
     }
 
     fn show_menu(&self, started: i64) {
         // The note says how the mic is while recording; the idle menu puts the usual words back.
-        let note = match self.meetings.muted() {
-            Some(true) => "Muted · mirrored from Teams",
-            Some(false) => "Mic live · mirrored from Teams",
-            None => "Mic live",
-        };
-        self.world.menu_running(&meeting::clock(now_ms() - started), note);
+        self.world.menu_running(&meeting::clock(now_ms() - started), mic_words(self.meetings.muted()));
     }
 
     /// Writes up meeting `id` on its own thread, saying how it goes with `meeting-notes`: "transcribing" with progress
@@ -216,6 +211,15 @@ impl MeetingSession {
 /// `mic`: "live" or "muted" while the add-on mirrors the mute button, else null.
 fn mic_word(muted: Option<bool>) -> Option<&'static str> {
     muted.map(|m| if m { "muted" } else { "live" })
+}
+
+/// The words for the mic while recording, on the menu, the pill and the live card.
+fn mic_words(muted: Option<bool>) -> &'static str {
+    match muted {
+        Some(true) => "Muted · mirrored from Teams",
+        Some(false) => "Mic live · mirrored from Teams",
+        None => "Mic live",
+    }
 }
 
 /// The real Mac: the app's permissions, notifications, pill, menu and windows.
@@ -246,8 +250,8 @@ impl World for Mac {
     fn notify(&self, title: &str, body: &str) {
         notify::send(title, body)
     }
-    fn pill(&self, started: Option<i64>, mic: Option<&str>) {
-        pill::meeting(&self.0, started, mic)
+    fn pill(&self, started: Option<i64>, mic: Option<&str>, words: Option<&str>) {
+        pill::meeting(&self.0, started, mic, words)
     }
     fn pill_warning(&self, title: &str, hint: &str) {
         pill::error(&self.0, title, hint)
@@ -304,7 +308,7 @@ mod tests {
     enum Saw {
         AskMic,
         Notify(String, String),
-        Pill(Option<i64>, Option<String>),
+        Pill(Option<i64>, Option<String>, Option<String>),
         Warning(String),
         Place(String),
         MenuRunning(String),
@@ -353,8 +357,8 @@ mod tests {
         fn notify(&self, title: &str, body: &str) {
             self.log(Saw::Notify(title.into(), body.into()))
         }
-        fn pill(&self, started: Option<i64>, mic: Option<&str>) {
-            self.log(Saw::Pill(started, mic.map(Into::into)))
+        fn pill(&self, started: Option<i64>, mic: Option<&str>, words: Option<&str>) {
+            self.log(Saw::Pill(started, mic.map(Into::into), words.map(Into::into)))
         }
         fn pill_warning(&self, title: &str, _: &str) {
             self.log(Saw::Warning(title.into()))
@@ -455,7 +459,7 @@ mod tests {
         assert_eq!((card["source"].clone(), card["mic"].clone()), (serde_json::Value::Null, serde_json::Value::Null));
         let seen = saw(&saw_);
         assert!(matches!(&seen[0], Saw::MenuRunning(m) if m.ends_with("| Mic live")));
-        assert_eq!(seen[1..4], [Saw::Running(Some(serde_json::json!({ "id": id, "started": started, "source": null, "mic": null }))), Saw::Pill(Some(started), None), Saw::Place("bottom".into())]);
+        assert_eq!(seen[1..4], [Saw::Running(Some(serde_json::json!({ "id": id, "started": started, "source": null, "mic": null, "words": "Mic live" }))), Saw::Pill(Some(started), None, Some("Mic live".into())), Saw::Place("bottom".into())]);
         s.stop();
         settled(&saw_);
     }
@@ -469,7 +473,7 @@ mod tests {
         assert_eq!(s.running(), None);
         let seen = without_write_up(settled(&saw_));
         assert_eq!(seen.len(), 7, "{seen:?}");
-        assert_eq!(seen[3..], [Saw::StopTab, Saw::MenuIdle, Saw::Running(None), Saw::Pill(None, None)]);
+        assert_eq!(seen[3..], [Saw::StopTab, Saw::MenuIdle, Saw::Running(None), Saw::Pill(None, None, None)]);
         let seen = settled(&saw_);
         assert!(matches!(seen.iter().find(|s| matches!(s, Saw::Notes(..))), Some(Saw::Notes(_, state, ..)) if state == "transcribing"));
     }
@@ -478,7 +482,7 @@ mod tests {
     fn stop_with_nothing_recording_still_sends_the_idle_state() {
         let (s, saw_, _tmp) = session(true, Mic::Allowed, false);
         s.stop();
-        assert_eq!(saw(&saw_), vec![Saw::StopTab, Saw::MenuIdle, Saw::Running(None), Saw::Pill(None, None)]);
+        assert_eq!(saw(&saw_), vec![Saw::StopTab, Saw::MenuIdle, Saw::Running(None), Saw::Pill(None, None, None)]);
     }
 
     const TICK: Duration = Duration::from_millis(5);
@@ -675,7 +679,7 @@ mod tests {
     /// The last menu note, pill mic and live-card mic the session showed.
     fn shown(v: &[Saw]) -> (String, Option<String>, serde_json::Value) {
         let note = v.iter().rev().find_map(|s| if let Saw::MenuRunning(m) = s { Some(m.split(" | ").nth(1).unwrap().to_string()) } else { None }).unwrap();
-        let pill = v.iter().rev().find_map(|s| if let Saw::Pill(Some(_), m) = s { Some(m.clone()) } else { None }).unwrap();
+        let pill = v.iter().rev().find_map(|s| if let Saw::Pill(Some(_), m, _) = s { Some(m.clone()) } else { None }).unwrap();
         let card = v.iter().rev().find_map(|s| if let Saw::Running(Some(c)) = s { Some(c["mic"].clone()) } else { None }).unwrap();
         (note, pill, card)
     }
@@ -692,7 +696,7 @@ mod tests {
         s.addon(muted_at_now(MuteState::Muted));
         let seen = saw(&saw_);
         // The order today: menu, then the card, then the pill.
-        assert!(matches!(&seen[0], Saw::MenuRunning(_)) && matches!(&seen[1], Saw::Running(Some(_))) && matches!(&seen[2], Saw::Pill(Some(_), _)), "{seen:?}");
+        assert!(matches!(&seen[0], Saw::MenuRunning(_)) && matches!(&seen[1], Saw::Running(Some(_))) && matches!(&seen[2], Saw::Pill(Some(_), ..)), "{seen:?}");
         assert_eq!(seen.len(), 3);
         assert_eq!(shown(&seen), ("Muted · mirrored from Teams".into(), Some("muted".into()), "muted".into()));
         s.addon(muted_at_now(MuteState::Unmuted));
@@ -772,6 +776,23 @@ mod tests {
         let captions: Option<String> = db.query_row("SELECT captions FROM meeting", [], |r| r.get(0)).unwrap();
         assert_eq!(captions.as_deref(), Some("unavailable"));
         drop(db);
+        s.stop();
+        until(&saw_, |v| recents(v) >= 1);
+    }
+
+    #[test]
+    fn the_mic_words_are_the_same_on_the_menu_the_pill_and_the_card() {
+        assert_eq!([Some(true), Some(false), None].map(mic_words), ["Muted · mirrored from Teams", "Mic live · mirrored from Teams", "Mic live"]);
+        let (s, saw_, _tmp) = recording();
+        for (state, mic, words) in [(MuteState::Muted, "muted", "Muted · mirrored from Teams"), (MuteState::Unmuted, "live", "Mic live · mirrored from Teams")] {
+            s.addon(muted_at_now(state));
+            let seen = saw(&saw_);
+            assert!(matches!(seen.last(), Some(Saw::Pill(Some(_), Some(m), Some(w))) if m == mic && w == words));
+            assert!(matches!(seen.last_chunk::<3>().unwrap(), [Saw::MenuRunning(m), Saw::Running(Some(c)), Saw::Pill(..)] if m.ends_with(&format!("| {words}")) && c["mic"] == mic && c["words"] == words));
+        }
+        s.addon(E::Disconnected);
+        assert!(matches!(saw(&saw_).last(), Some(Saw::Pill(Some(_), None, Some(w))) if w == "Mic live"));
+        assert_eq!(s.running().unwrap()["words"], "Mic live");
         s.stop();
         until(&saw_, |v| recents(v) >= 1);
     }

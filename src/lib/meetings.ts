@@ -14,8 +14,8 @@ export type Meeting = {
 export type Line = { id: number; speaker: string; /* "Me", a caption name, "Speaker 2"…, or "Them" when voices weren't told apart */ start_ms: number; text: string; muted: boolean; included: boolean; hidden: boolean };
 export type Page = Meeting & { segments: Line[] };
 /** The recording in progress, or none. */
-/** `mic`: "live" or "muted" while the browser add-on mirrors the mute button, else null. */
-export type Running = { id: number; started: number; source: string | null; mic: "live" | "muted" | null } | null;
+/** `mic`: "live" or "muted" while the browser add-on mirrors the mute button, else null. `words`: how the mic reads on the card. */
+export type Running = { id: number; started: number; source: string | null; mic: "live" | "muted" | null; words: string } | null;
 
 /** Runs of lines that are left out show as one row; the rest show as they are. */
 export function groups(lines: Line[]): ({ line: Line } | { left: Line[] })[] {
@@ -29,8 +29,6 @@ export function groups(lines: Line[]): ({ line: Line } | { left: Line[] })[] {
   return out;
 }
 
-/** The pill, menu and live card's words for the mic; plain "Mic live" when the add-on isn't mirroring. */
-export const mic = (m: "live" | "muted" | null) => (m === "muted" ? "Muted · mirrored from Teams" : m === "live" ? "Mic live · mirrored from Teams" : "Mic live");
 /** `meeting-notes`: how writing up a meeting is going. */
 export type Progress = { id: number; state: "transcribing" | "done" | "failed"; progress: number; error: string | null };
 

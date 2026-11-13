@@ -160,11 +160,11 @@ test("the recording pill says Muted or Mic live, mirrored from Teams, only while
   await page.goto("/pill");
   await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(9);
   const pill = page.getByRole("status");
-  await emit(page, "meeting", { started: Date.now(), mic: "live" });
+  await emit(page, "meeting", { started: Date.now(), mic: "live", words: "Mic live · mirrored from Teams" });
   await expect(pill).toContainText("Mic live · mirrored from Teams");
-  await emit(page, "meeting", { started: Date.now(), mic: "muted" });
+  await emit(page, "meeting", { started: Date.now(), mic: "muted", words: "Muted · mirrored from Teams" });
   await expect(pill).toContainText("Muted · mirrored from Teams");
-  await emit(page, "meeting", { started: Date.now(), mic: null });
+  await emit(page, "meeting", { started: Date.now(), mic: null, words: "Mic live" });
   await expect(pill).toHaveText(/Recording\d+:\d+Mic live$/);
 });
 
@@ -175,7 +175,7 @@ test("the recording pill shows Recording, the timer and Mic live, and goes when 
   await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(9);
   const pill = page.getByRole("status");
   await expect(pill).toBeHidden();
-  await emit(page, "meeting", { started: 100_000 - 65_000 });
+  await emit(page, "meeting", { started: 100_000 - 65_000, mic: null, words: "Mic live" });
   await expect(pill).toHaveText("Recording1:05Mic live");
   await page.clock.runFor(1000);
   await expect(pill).toHaveText("Recording1:06Mic live");
