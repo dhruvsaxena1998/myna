@@ -250,6 +250,8 @@ test("Browser add-on: not connected shows the steps, connected flips live, Disco
   await expect(group).toContainText("MYNA-4F7Q-K2");
   const connect = group.getByRole("button", { name: "Connect" });
   await expect(connect).toHaveAttribute("aria-expanded", "false");
+  const before = await status.boundingBox();
+  const connectWidth = (await connect.boundingBox())!.width;
   await connect.click();
   await expect(connect).toHaveAttribute("aria-expanded", "true");
   await expect(group).toContainText("Load unpacked");
@@ -261,6 +263,9 @@ test("Browser add-on: not connected shows the steps, connected flips live, Disco
   await expect(status).not.toContainText("Not connected");
   await expect(status).toContainText("Sees when you’re muted in Teams, and who is talking.");
   await expect(group).not.toContainText("Load unpacked");
+  // Connect and Disconnect swap words, not the row's height or the button's width.
+  expect((await status.boundingBox())!.height).toBe(before!.height);
+  expect((await group.getByRole("button", { name: "Disconnect" }).boundingBox())!.width).toBe(connectWidth);
   await group.getByRole("button", { name: "Disconnect" }).click();
   await expect(status).toContainText("Not connected");
   await expect(group).toContainText("MYNA-NEW1-23");

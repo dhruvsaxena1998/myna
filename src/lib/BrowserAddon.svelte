@@ -44,9 +44,9 @@
     <li class="row">
       <span><span class="name">{connected ? "Connected" : "Not connected"}</span><span class="desc" title={desc}>{desc}</span></span>
       {#if connected}
-        <button class="btn" onclick={disconnect}>Disconnect</button>
+        <button class="btn" style="min-width: 100px" onclick={disconnect}>Disconnect</button>
       {:else}
-        <button class="btn" aria-expanded={steps} onclick={() => (steps = !steps)}>Connect</button>
+        <button class="btn" style="min-width: 100px" aria-expanded={steps} onclick={() => (steps = !steps)}>Connect</button>
       {/if}
     </li>
     {#if steps && !connected}
@@ -61,12 +61,14 @@
     {/if}
     <li class="row">
       <span><span class="name">Pairing code</span><span class="desc">Paste this into the add-on.</span></span>
-      <span class="end"><span class="mono">{code}</span><button class="btn" disabled={!code} style="min-width: 72px" onclick={copy}>{copied ? "Copied" : "Copy"}</button></span>
+      <span class="end"><span class="mono code">{code}</span><button class="btn" disabled={!code} style="min-width: 72px" onclick={copy}>{copied ? "Copied" : "Copy"}</button></span>
     </li>
   </ul>
   <p class="err" role="status">{error}</p>
 </section>
 
 <style>
-  .steps { margin: 0; padding-left: 18px; display: grid; gap: 2px; color: var(--text-2); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
+  .steps { margin: 0; padding-left: var(--sp-4); display: grid; gap: var(--sp-1); color: var(--text-2); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
+  /* A value to copy, not a label. */
+  .code { color: var(--text-2); }
 </style>
