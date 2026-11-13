@@ -52,7 +52,7 @@ test("Stats for nerds leaves the Settings sidebar; its switch stays in Experimen
   await open(page);
   await page.goto("/settings");
   await expect(page.getByRole("option", { name: "Stats for nerds" })).toHaveCount(0);
-  await page.getByRole("option", { name: "Experimental features" }).click();
+  await page.getByRole("option", { name: "Experimental" }).click();
   await expect(page.getByRole("switch", { name: "Stats for nerds" })).toBeChecked();
 });
 

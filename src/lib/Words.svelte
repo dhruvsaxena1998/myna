@@ -1,4 +1,4 @@
-<!-- Voice typing › Your words: the language, the Tidy up switch and the words to remember (docs/index.html). -->
+<!-- Understand › Your words (`part="rows"`) and its two drill-ins, Custom vocabulary (`"remember"`) and Filler exceptions (`"keep"`). One `rules`, held by the shell, so a drill-in's change shows in the rows' counts. -->
 <script lang="ts" module>
   export type Word = { spelling: string; heard: string | null };
   export type Rules = { settings: { language: string; tidy: boolean; words: Word[]; keep: string[] }; languages: [string, string][] };
@@ -7,32 +7,31 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
 
-  let { initial }: { initial: Rules } = $props();
-  let s = $derived(initial.settings); // assignable: a failed save reverts it
+  let { rules = $bindable(), part, open = () => {} }: { rules: Rules; part: "rows" | "remember" | "keep"; open?: (sub: string) => void } = $props();
+  const s = $derived(rules.settings);
   let draft = $state("");
   let error = $state("");
-  let input: HTMLInputElement;
-  let keepDraft = $state("");
-  let keepInput: HTMLInputElement;
+  let input = $state<HTMLInputElement>();
 
   async function save(next: Rules["settings"]) {
-    const was = s;
-    s = next;
+    const was = rules;
+    rules = { ...rules, settings: next };
     error = "";
     try {
       await invoke("rules_set", { rules: next });
     } catch (err) {
-      s = was;
+      rules = was;
       error = String(err);
     }
   }
 
   const label = (w: Word) => (w.heard ? `${w.heard} → ${w.spelling}` : w.spelling);
   const same = (a: Word, b: Word) => a.spelling.toLowerCase() === b.spelling.toLowerCase() && a.heard?.toLowerCase() === b.heard?.toLowerCase();
+  // "the first three, and N more", or the placeholder.
+  const first3 = (a: string[], empty: string) => (a.length ? `${a.slice(0, 3).join(", ")}${a.length > 3 ? ` and ${a.length - 3} more` : ""}` : empty);
 
   // "Drove -> Dhruv" is heard-as then spelling. Comma-separated, so a pasted list adds every word.
-  function add(text: string) {
-    draft = "";
+  function addWords(text: string) {
     const fresh: Word[] = [];
     for (const part of text.split(",")) {
       const [a, b] = part.split(/->|→/).map((x) => x.trim().slice(0, 40));
@@ -41,96 +40,83 @@
     }
     if (fresh.length) save({ ...s, words: [...s.words, ...fresh] });
   }
-
-  function remove(w: Word) {
-    save({ ...s, words: s.words.filter((x) => x !== w) });
-    input.focus();
-  }
-
   // Words Myna keeps even when a filler or repeat rule would take them out. Lowercase, no duplicates.
   function addKeep(text: string) {
-    keepDraft = "";
     const fresh = text.split(",").map((x) => x.trim().toLowerCase().slice(0, 40)).filter((x, i, all) => x && !s.keep.includes(x) && all.indexOf(x) === i);
     if (fresh.length) save({ ...s, keep: [...s.keep, ...fresh] });
   }
-
-  function removeKeep(w: string) {
-    save({ ...s, keep: s.keep.filter((x) => x !== w) });
-    keepInput.focus();
+  const isKeep = $derived(part === "keep");
+  function add(text: string) {
+    draft = "";
+    if (isKeep) addKeep(text);
+    else addWords(text);
   }
-
+  function remove(i: number) {
+    save(isKeep ? { ...s, keep: s.keep.filter((_, k) => k !== i) } : { ...s, words: s.words.filter((_, k) => k !== i) });
+    input?.focus();
+  }
   function onkeydown(e: KeyboardEvent) {
-    if (e.key === "Backspace" && !draft && s.words.length) save({ ...s, words: s.words.slice(0, -1) });
+    if (e.key !== "Backspace" || draft) return;
+    if (isKeep ? s.keep.length : s.words.length) remove((isKeep ? s.keep.length : s.words.length) - 1);
   }
+  const chips = $derived(isKeep ? s.keep.map((w) => ({ text: w, aria: `Remove ${w} from Filler exceptions` })) : s.words.map((w) => ({ text: label(w), aria: `Remove ${label(w)}` })));
+  const help = $derived(isKeep ? "Words Myna keeps even when a filler rule would take them out, like “like”." : "Names and words Myna should spell your way. For one it mishears, type Drove -> Dhruv.");
+  const tidyDesc = $derived(s.tidy ? "Removes um, uh and repeats, and writes numbers as digits." : "Pastes exactly what the model heard.");
+  const lists = $derived([
+    { sub: "remember", name: "Custom vocabulary", items: s.words.map(label), empty: "Names and words Myna should spell your way." },
+    { sub: "keep", name: "Filler exceptions", items: s.keep, empty: "Words Myna keeps even when they sound like filler." },
+  ].map((l) => ({ sub: l.sub, name: l.name, n: l.items.length, desc: first3(l.items, l.empty) })));
+  const field = $derived(isKeep ? "Add words for Myna to never remove" : "Add words for Myna to remember");
 </script>
 
-<section class="group" aria-labelledby="your-h">
-  <h2 id="your-h">Your words</h2>
-  <ul class="list">
-    <li class="row">
-      <span><label class="name" for="lang">Language you speak</label><span class="desc" id="lang-d">Myna tidies up English. In other languages it keeps your words as said.</span></span>
-      <select id="lang" class="select" aria-describedby="lang-d" value={s.language} onchange={(e) => save({ ...s, language: e.currentTarget.value })}>
-        {#each initial.languages as [code, name]}<option value={code}>{name}</option>{/each}
-      </select>
-    </li>
-    <li class="row">
-      <span><label class="name" for="tidy">Tidy up as I talk</label><span class="desc" id="tidy-d">{s.tidy ? "Removes um and uh and repeated words, and writes numbers like 25 as digits." : "Pastes exactly what the model heard. Words to remember still apply."}</span></span>
-      <input type="checkbox" role="switch" class="switch" id="tidy" aria-describedby="tidy-d" checked={s.tidy} onchange={(e) => save({ ...s, tidy: e.currentTarget.checked })} />
-    </li>
-  </ul>
-</section>
-
-<section class="group" aria-labelledby="dict-h">
-  <h2 id="dict-h">Words to remember</h2>
-  <p class="help">Names and special words Myna should spell your way.</p>
-  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (the input inside takes the keys) -->
-  <div class="chipin" onclick={() => input.focus()}>
-    {#each s.words as w (w)}
-      <span class="tag">{label(w)}<button type="button" aria-label="Remove {label(w)}" onclick={(e) => { e.stopPropagation(); remove(w); }}>
-        <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" /></svg></button></span>
-    {/each}
-    <form class="chipin-f" onsubmit={(e) => { e.preventDefault(); add(draft); }}>
-      <label class="sr-only" for="dict-in">Add words for Myna to remember</label>
-      <input id="dict-in" bind:this={input} bind:value={draft} maxlength="200" autocomplete="off" spellcheck="false" aria-describedby="dict-help"
-        placeholder={s.words.length ? "Add a word" : "Type a word, then a comma"} oninput={() => draft.includes(",") && add(draft)} {onkeydown} />
-    </form>
-  </div>
-  <p class="help after" id="dict-help">Return or comma adds a word. To fix a word Myna mishears, type it as Drove -&gt; Dhruv.</p>
-  <p class="err" role="status">{error}</p>
-</section>
-
-<section class="group" aria-labelledby="keep-h">
-  <h2 id="keep-h">Never remove</h2>
-  <p class="help">Words Myna keeps even when they sound like a filler or a repeat, like oh or the.</p>
-  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (the input inside takes the keys) -->
-  <div class="chipin" onclick={() => keepInput.focus()}>
-    {#each s.keep as w (w)}
-      <span class="tag">{w}<button type="button" aria-label="Remove {w} from Never remove" onclick={(e) => { e.stopPropagation(); removeKeep(w); }}>
-        <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" /></svg></button></span>
-    {/each}
-    <form class="chipin-f" onsubmit={(e) => { e.preventDefault(); addKeep(keepDraft); }}>
-      <label class="sr-only" for="keep-in">Add words for Myna to never remove</label>
-      <input id="keep-in" bind:this={keepInput} bind:value={keepDraft} maxlength="200" autocomplete="off" spellcheck="false"
-        placeholder={s.keep.length ? "Add a word" : "Type a word, then a comma"} oninput={() => keepDraft.includes(",") && addKeep(keepDraft)}
-        onkeydown={(e) => { if (e.key === "Backspace" && !keepDraft && s.keep.length) save({ ...s, keep: s.keep.slice(0, -1) }); }} />
-    </form>
-  </div>
-</section>
+{#if part === "rows"}
+  <section aria-labelledby="your-h">
+    <h2 id="your-h">Your words</h2>
+    <ul class="list">
+      <li class="row">
+        <span><label class="name" for="lang">Spoken language</label><span class="desc" id="lang-d" title="Myna tidies up English. Other languages stay as said.">Myna tidies up English. Other languages stay as said.</span></span>
+        <select id="lang" class="select" aria-describedby="lang-d" value={s.language} onchange={(e) => save({ ...s, language: e.currentTarget.value })}>
+          {#each rules.languages as [code, name]}<option value={code}>{name}</option>{/each}
+        </select>
+      </li>
+      <li class="row">
+        <span><label class="name" for="tidy">Filler and repeat removal</label><span class="desc" id="tidy-d" title={tidyDesc}>{tidyDesc}</span></span>
+        <input type="checkbox" role="switch" class="switch" id="tidy" aria-describedby="tidy-d" checked={s.tidy} onchange={(e) => save({ ...s, tidy: e.currentTarget.checked })} />
+      </li>
+      {#each lists as l (l.sub)}
+        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions (the button takes the keys) -->
+        <li class="row go" onclick={() => open(l.sub)}>
+          <span><span class="name">{l.name}</span><span class="desc" title={l.desc}>{l.desc}</span></span>
+          <span class="end">
+            <span class="count">{l.n || ""}</span>
+            <button class="chev" aria-label={l.name} onclick={(e) => { e.stopPropagation(); open(l.sub); }}><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg></button>
+          </span>
+        </li>
+      {/each}
+    </ul>
+    <p class="err" role="status">{error}</p>
+  </section>
+{:else}
+  <section>
+    <p class="help" id="chips-help">{help}</p>
+    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (the input inside takes the keys) -->
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <ul class="list"><li class="chips" onclick={() => input?.focus()}>
+      {#each chips as c, i (c.text)}
+        <span class="tag">{c.text}<button type="button" aria-label={c.aria} onclick={(e) => { e.stopPropagation(); remove(i); }}>
+          <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" /></svg></button></span>
+      {/each}
+      <input bind:this={input} bind:value={draft} maxlength="200" autocomplete="off" spellcheck="false" aria-label={field} aria-describedby="chips-help"
+        placeholder="Add a word" oninput={() => draft.includes(",") && add(draft)}
+        onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(draft); } else onkeydown(e); }} />
+    </li></ul>
+    <p class="err" role="status">{error}</p>
+  </section>
+  <p class="help">Return or comma adds a word. Backspace in an empty field removes the last one.</p>
+{/if}
 
 <style>
-  .row + .row { box-shadow: inset 0 .5px 0 var(--line); }
-  .help.after { margin: 6px 0 0; }
-  .chipin { display: flex; flex-wrap: wrap; align-items: center; align-content: flex-start; gap: 6px; min-height: var(--h-ctl-lg); box-sizing: border-box; padding: 6px 8px;
-    border-radius: var(--r-lg); background: var(--fill-field); box-shadow: inset 0 0 0 .5px var(--line-strong); cursor: text; }
-  .chipin:focus-within { box-shadow: inset 0 0 0 1.5px var(--accent); }
-  /* Tag: capsule, 22px (DESIGN.md), lifted off the field like a control. */
-  .tag { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 6px 0 10px; border-radius: var(--r-full); background: var(--fill-control);
-    box-shadow: inset 0 0 0 .5px var(--line-strong); white-space: nowrap; cursor: default; }
-  .tag button { display: inline-grid; place-items: center; width: 16px; height: 16px; padding: 0; border: 0; border-radius: var(--r-full); background: none; color: var(--text-3); }
-  .tag button:hover { background: var(--fill-hover); color: var(--text); }
-  .tag button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
-  .ic { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; }
-  .chipin-f { flex: 1 0 160px; margin: 0; }
-  input:not(.switch) { width: 100%; box-sizing: border-box; padding: 4px 2px; border: 0; background: none; outline: none; color: var(--text); font: inherit; }
-  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  /* The chevron is the row's keyboard stop; it looks like the bare icon. */
+  button.chev { padding: 0; border: 0; border-radius: var(--r-xs); background: none; color: inherit; }
+  button.chev:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 </style>

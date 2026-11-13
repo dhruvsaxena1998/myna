@@ -14,8 +14,8 @@ use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-/// The shortcuts to pick from; "" is no shortcut.
-pub const KEYS: [&str; 3] = ["Ctrl+Alt+KeyM", "Ctrl+Alt+KeyN", ""];
+/// The shortcut until one is chosen. "" is no shortcut.
+pub const KEY: &str = "Ctrl+Alt+KeyM";
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
 pub struct Notes {
@@ -36,14 +36,15 @@ fn read(conn: &Connection, key: &str) -> Result<Option<String>, String> {
 pub fn get(conn: &Connection) -> Result<Notes, String> {
     Ok(Notes {
         on: read(conn, "meeting_on")?.is_some_and(|v| v == "1"),
-        key: read(conn, "meeting_key")?.filter(|k| KEYS.contains(&k.as_str())).unwrap_or(KEYS[0].into()),
+        key: read(conn, "meeting_key")?.unwrap_or(KEY.into()),
         keep_teams: read(conn, "meeting_keep_teams")?.is_some_and(|v| v == "1"),
     })
 }
 
 pub fn set(conn: &Connection, n: &Notes) -> Result<(), String> {
-    if !KEYS.contains(&n.key.as_str()) {
-        return Err(format!("{} isn't one of the choices.", n.key));
+    // fn alone isn't a global shortcut; the recorder refuses it too.
+    if !n.key.is_empty() && n.key.parse::<tauri_plugin_global_shortcut::Shortcut>().is_err() {
+        return Err(format!("{} can't be a shortcut.", n.key));
     }
     for (k, v) in [("meeting_on", if n.on { "1" } else { "0" }), ("meeting_key", n.key.as_str()), ("meeting_keep_teams", if n.keep_teams { "1" } else { "0" })] {
         conn.execute("INSERT INTO setting(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2", [k, v])
@@ -1315,7 +1316,7 @@ mod tests {
         assert!(out(&db).contains("secret") && page(&db, 1).unwrap().segments[1].included);
         db.execute("UPDATE segment SET included = 0", []).unwrap();
         assert!(!out(&db).contains("secret"));
-        set(&db, &Notes { on: true, key: KEYS[0].into(), keep_teams: true }).unwrap();
+        set(&db, &Notes { on: true, key: KEY.into(), keep_teams: true }).unwrap();
         assert!(out(&db).contains("secret"), "the setting keeps muted lines, old meetings too");
     }
 
@@ -1360,15 +1361,17 @@ mod tests {
     }
 
     #[test]
-    fn settings_default_off_and_save_only_listed_keys() {
+    fn settings_default_off_and_save_only_real_shortcuts() {
         let tmp = tempfile::tempdir().unwrap();
         let conn = crate::storage::open(tmp.path()).unwrap();
         let n = |on, key: &str| Notes { on, key: key.into(), keep_teams: false };
         assert_eq!(get(&conn), Ok(n(false, "Ctrl+Alt+KeyM")));
         set(&conn, &n(true, "")).unwrap();
         assert_eq!(get(&conn), Ok(n(true, "")));
-        assert!(set(&conn, &n(true, "Alt+Space")).is_err());
+        assert!(set(&conn, &n(true, "Fn")).is_err() && set(&conn, &n(true, "Nope")).is_err());
         assert_eq!(get(&conn), Ok(n(true, "")));
+        set(&conn, &n(true, "Alt+Space")).unwrap();
+        assert_eq!(get(&conn), Ok(n(true, "Alt+Space")));
         set(&conn, &Notes { keep_teams: true, ..n(true, "") }).unwrap();
         assert!(get(&conn).unwrap().keep_teams);
     }

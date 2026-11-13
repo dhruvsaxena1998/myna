@@ -162,9 +162,10 @@ fn model_cancel(app: AppHandle, d: tauri::State<Data>, id: String) {
     }
 }
 
-/// Returns the task's active model afterwards: deleting the chosen one falls back to the default.
+/// Returns `task`'s active model afterwards (the first task with the model when there's none): deleting the chosen one
+/// falls back to the default, and for meeting notes to voice typing's pick.
 #[tauri::command]
-async fn model_delete(d: tauri::State<'_, Data>, id: String) -> Result<Option<String>, String> {
+async fn model_delete(d: tauri::State<'_, Data>, id: String, task: Option<String>) -> Result<Option<String>, String> {
     let m = models::find(&id).ok_or_else(|| format!("Unknown model {id}"))?;
     if d.downloads.lock().unwrap().contains_key(&id) {
         return Err(format!("{} is downloading. Cancel it first.", m.name));
@@ -174,7 +175,8 @@ async fn model_delete(d: tauri::State<'_, Data>, id: String) -> Result<Option<St
     let db = d.db.lock().unwrap();
     models::forget(&db, &id)?;
     let tasks = models::list(&db, &d.models_dir, d.macos, &apple::status())?;
-    Ok(tasks.into_iter().find(|t| t.models.iter().any(|x| x.id == id)).and_then(|t| t.active))
+    let mine = |t: &models::Task| task.as_deref().map_or_else(|| t.models.iter().any(|x| x.id == id), |task| t.id == task);
+    Ok(tasks.into_iter().find(mine).and_then(|t| t.active))
 }
 
 /// `MYNA_DEBUG=1` turns on debug aids in the UI (for now: the window size while resizing).
@@ -225,6 +227,11 @@ async fn ai_test(d: tauri::State<'_, Data>, id: i64) -> Result<ai::Check, String
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn ai_test_draft(kind: String, url: String, key: String) -> Result<ai::Check, String> {
+    tauri::async_runtime::spawn_blocking(move || ai::test_draft(&kind, &url, &key)).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -440,16 +447,19 @@ fn voice_set(app: AppHandle, d: tauri::State<Data>, voice: voice::Voice) -> Resu
     if let Err(e) = sync_shortcut(&app) {
         voice::set(&d.db.lock().unwrap(), &was)?;
         let _ = sync_shortcut(&app);
+        let _ = sync_meeting(&app);
         return Err(e);
     }
+    let _ = sync_meeting(&app); // unpaused: meeting notes take their shortcut back; its own page reports a failure
     Ok(())
 }
 
-/// Lets go of the shortcut while Settings records a new one, and takes it back after.
+/// Lets go of every shortcut (voice typing's and meeting notes') while Settings records a new one, and takes them back after.
 #[tauri::command]
 fn voice_pause(app: AppHandle, d: tauri::State<Data>, paused: bool) -> Result<(), String> {
     d.paused.store(paused, Ordering::SeqCst);
-    sync_shortcut(&app)
+    let voice = sync_shortcut(&app);
+    sync_meeting(&app).and(voice)
 }
 
 #[tauri::command]
@@ -463,11 +473,14 @@ fn meeting_get(d: tauri::State<Data>) -> Result<meeting::Notes, String> {
 async fn meeting_set(app: AppHandle, d: tauri::State<'_, Data>, notes: meeting::Notes) -> Result<(), String> {
     let was = meeting::get(&d.db.lock().unwrap())?;
     meeting::set(&d.db.lock().unwrap(), &notes)?;
+    d.paused.store(false, Ordering::SeqCst); // a recorder saving its pick is done recording
     if let Err(e) = sync_meeting(&app) {
         meeting::set(&d.db.lock().unwrap(), &was)?;
         let _ = sync_meeting(&app);
+        let _ = sync_shortcut(&app);
         return Err(e);
     }
+    let _ = sync_shortcut(&app); // unpaused: voice typing takes its shortcuts back; Listen reports a failure
     if !notes.on {
         stop_meeting(&app);
     }
@@ -495,6 +508,13 @@ fn addon_folder(app: AppHandle) -> Result<(), String> {
         app.path().resource_dir().map_err(|e| e.to_string())?.join("extension")
     };
     std::process::Command::new("open").arg(&dir).spawn().map(drop).map_err(|e| format!("Couldn't open {}: {e}", dir.display()))
+}
+
+/// Shows the data folder in Finder.
+#[tauri::command]
+fn storage_reveal(storage: tauri::State<Storage>) -> Result<(), String> {
+    let dir = storage.0.clone()?;
+    std::process::Command::new("open").arg(&dir).spawn().map(drop).map_err(|e| format!("Couldn't open {dir}: {e}"))
 }
 
 /// Try again on a meeting whose notes failed. Its progress and result come as `meeting-notes` events.
@@ -743,11 +763,16 @@ fn sync_shortcut(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// The shortcut to register: none while off, empty, or paused for a recorder in Settings.
+fn meeting_want(n: &meeting::Notes, paused: bool) -> Option<String> {
+    (n.on && !n.key.is_empty() && !paused).then(|| n.key.clone())
+}
+
 /// Registers the meeting notes shortcut while they're on, and sets the menu item and its note to match.
 fn sync_meeting(app: &AppHandle) -> Result<(), String> {
     let d = app.state::<Data>();
     let n = meeting::get(&d.db.lock().unwrap())?;
-    let want = (n.on && !n.key.is_empty()).then(|| n.key.clone());
+    let want = meeting_want(&n, d.paused.load(Ordering::SeqCst));
     let mut have = d.meeting_shortcut.lock().unwrap();
     if *have != want {
         let gs = app.global_shortcut();
@@ -1007,7 +1032,7 @@ fn open_update(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![pill::pill_hit, dictation_fix, fix_take, debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, storage_status, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, meeting_get, meeting_set, meeting_text, segments_include, addon_get, addon_disconnect, addon_folder, meeting_retry, meeting_open, meetings_list, meeting_page, meeting_running, meeting_toggle, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
+        .invoke_handler(tauri::generate_handler![pill::pill_hit, dictation_fix, fix_take, debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, ai_test_draft, storage_status, storage_reveal, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, meeting_get, meeting_set, meeting_text, segments_include, addon_get, addon_disconnect, addon_folder, meeting_retry, meeting_open, meetings_list, meeting_page, meeting_running, meeting_toggle, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::Updates::default())
         .setup(|app| {
@@ -1192,4 +1217,17 @@ pub fn run() {
                 open_main(app);
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_meeting_shortcut_is_let_go_while_a_recorder_listens() {
+        let n = |on, key: &str| meeting::Notes { on, key: key.into(), keep_teams: false };
+        assert_eq!(meeting_want(&n(true, "Alt+Space"), false), Some("Alt+Space".into()));
+        assert_eq!(meeting_want(&n(true, "Alt+Space"), true), None);
+        assert_eq!((meeting_want(&n(false, "Alt+Space"), false), meeting_want(&n(true, ""), false)), (None, None));
+    }
 }

@@ -5,4 +5,4 @@ export type Rating = "up" | "down" | null;
 export type Fix = { key: string; kind: "alias" | "word" | "keep"; from: string | null; to: string; count: number };
 
 export const rate = (trace: number, rating: Rating, corrected: string | null) => invoke<Fix[]>("feedback_set", { trace, rating, corrected });
-export const fixText = (f: Fix) => (f.kind === "keep" ? `Never remove “${f.to}”` : `Add “${f.kind === "alias" ? `${f.from} → ${f.to}` : f.to}” to Words to remember`);
+export const fixText = (f: Fix) => (f.kind === "keep" ? `Add “${f.to}” to Filler exceptions` : `Add “${f.kind === "alias" ? `${f.from} → ${f.to}` : f.to}” to Custom vocabulary`);

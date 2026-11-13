@@ -1,8 +1,7 @@
-<!-- Voice typing › Suggested fixes: mistakes Myna saw in at least two rated dictations (docs/index.html). Gone when there are none. -->
+<!-- Understand › Suggested fixes: mistakes Myna saw in at least two rated dictations (docs/settings.html). Gone when there are none. -->
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import type { Fix } from "./feedback";
-  import FixRow from "./FixRow.svelte";
+  import { fixText, type Fix } from "./feedback";
 
   let { initial, onadd }: { initial: Fix[]; onadd: () => void } = $props();
   let fixes = $derived(initial); // assignable: each answer replaces it
@@ -20,11 +19,20 @@
 </script>
 
 {#if fixes.length}
-  <section class="group" aria-labelledby="fix-h">
+  <section aria-labelledby="fix-h">
     <h2 id="fix-h">Suggested fixes</h2>
     <p class="help">Mistakes Myna noticed in the dictations you rated.</p>
     <ul class="list">
-      {#each fixes as f (f.key)}<FixRow fix={f} onadd={() => act("fix_add", f.key)} onskip={() => act("fix_dismiss", f.key)} />{/each}
+      {#each fixes as f (f.key)}
+        {@const text = fixText(f)}
+        <li class="row">
+          <span><span class="name" title={text}>{text}</span><span class="desc">Came up in {f.count} dictations</span></span>
+          <span class="end">
+            <button type="button" class="btn" onclick={() => act("fix_add", f.key)}>Add</button>
+            <button type="button" class="btn quiet" onclick={() => act("fix_dismiss", f.key)}>Not now</button>
+          </span>
+        </li>
+      {/each}
     </ul>
     <p class="err" role="status">{error}</p>
   </section>

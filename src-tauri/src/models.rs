@@ -92,10 +92,14 @@ fn catalog() -> Catalog {
     serde_json::from_str(include_str!("../../models/local.json")).expect("models/local.json is valid")
 }
 
+/// Meeting notes' own speech-to-text pick, from the same catalog and downloads as voice typing's. With no row saved,
+/// meetings use the `stt` pick, so installs from before it (and older builds, which never read it) behave as before.
+pub const MEETING_STT: &str = "meeting_stt";
+
 fn task_models(task: &str) -> Option<Vec<Model>> {
     let c = catalog();
     match task {
-        "stt" => Some(c.stt),
+        "stt" | MEETING_STT => Some(c.stt),
         "diar" => Some(c.diar),
         _ => None,
     }
@@ -138,9 +142,10 @@ pub fn is_installed(m: &Model, models_dir: &Path) -> bool {
 pub fn list(conn: &Connection, models_dir: &Path, macos: u32, sys: &System) -> Result<Vec<Task>, String> {
     let rt = runtime();
     let rt_there = is_installed(&rt, models_dir);
-    ["stt", "diar"]
-        .into_iter()
-        .map(|id| {
+    let mut tasks: Vec<Task> = Vec::new();
+    // In this order: the Settings window reads them by position, and meeting_stt falls back to the stt pick.
+    for id in ["stt", "diar", MEETING_STT] {
+        tasks.push({
             let mut models = task_models(id).unwrap();
             for m in &mut models {
                 m.installed = if m.system {
@@ -164,14 +169,17 @@ pub fn list(conn: &Connection, models_dir: &Path, macos: u32, sys: &System) -> R
                 models.iter().find(|m| m.needs.is_none() && want(m)).map(|m| m.id.clone())
             };
             // The recommended model once it's downloaded; until then Apple Speech, so nobody waits on a download.
+            let fallback = (id == MEETING_STT).then(|| tasks[0].active.clone()).flatten();
             let active = usable(&|m| Some(&m.id) == saved.as_ref())
+                .or(fallback)
                 .or_else(|| usable(&|m| m.default && m.installed))
                 .or_else(|| usable(&|m| m.system))
                 .or_else(|| usable(&|m| m.default))
                 .or_else(|| usable(&|_| true));
-            Ok(Task { id, models, active })
-        })
-        .collect()
+            Task { id, models, active }
+        });
+    }
+    Ok(tasks)
 }
 
 pub fn select(conn: &Connection, task: &str, id: &str, macos: u32, sys: &System) -> Result<(), String> {
@@ -188,7 +196,7 @@ pub fn select(conn: &Connection, task: &str, id: &str, macos: u32, sys: &System)
     Ok(())
 }
 
-/// Drops `id` as any task's saved pick, so a deleted model hands over to the task's default.
+/// Drops `id` as any task's saved pick (voice typing's and meeting notes' both), so a deleted model hands over to the task's default.
 pub fn forget(conn: &Connection, id: &str) -> Result<(), String> {
     conn.execute("DELETE FROM active_model WHERE model_id = ?1", [id]).map_err(|e| format!("Couldn't update the chosen models: {e}"))?;
     Ok(())
@@ -235,8 +243,43 @@ mod tests {
         System { language: Some("English (India)".into()), installed }
     }
 
+    /// Voice typing's and diarization's picks.
     fn active(conn: &Connection, dir: &Path, macos: u32) -> Vec<Option<String>> {
-        list(conn, dir, macos, &english(true)).unwrap().into_iter().map(|t| t.active).collect()
+        list(conn, dir, macos, &english(true)).unwrap().into_iter().take(2).map(|t| t.active).collect()
+    }
+
+    /// Voice typing's and meeting notes' speech-to-text picks.
+    fn both(conn: &Connection, dir: &Path) -> (Option<String>, Option<String>) {
+        let t = list(conn, dir, 26, &english(true)).unwrap();
+        assert_eq!(t.iter().map(|t| t.id).collect::<Vec<_>>(), ["stt", "diar", MEETING_STT]);
+        (t[0].active.clone(), t[2].active.clone())
+    }
+
+    #[test]
+    fn meeting_notes_use_the_voice_typing_pick_until_they_have_their_own() {
+        let (tmp, conn) = db();
+        let w = || Some("whisper-large-v3-turbo".to_string());
+        assert_eq!(both(&conn, tmp.path()), (Some("apple-speech".into()), Some("apple-speech".into())), "an install from before: the same model");
+        select(&conn, "stt", "whisper-large-v3-turbo", 26, &english(true)).unwrap();
+        assert_eq!(both(&conn, tmp.path()), (w(), w()), "follows voice typing while it has no row");
+        select(&conn, MEETING_STT, "parakeet-tdt-v3", 26, &english(true)).unwrap();
+        select(&conn, "stt", "apple-speech", 26, &english(true)).unwrap();
+        assert_eq!(both(&conn, tmp.path()), (Some("apple-speech".into()), Some("parakeet-tdt-v3".into())), "separate picks");
+        assert!(select(&conn, MEETING_STT, "sortformer", 26, &english(true)).is_err(), "speech-to-text models only");
+    }
+
+    #[test]
+    fn deleting_a_model_forgets_it_for_voice_typing_and_meeting_notes() {
+        let (tmp, conn) = db();
+        select(&conn, "stt", "whisper-large-v3-turbo", 26, &english(true)).unwrap();
+        select(&conn, MEETING_STT, "whisper-large-v3-turbo", 26, &english(true)).unwrap();
+        forget(&conn, "whisper-large-v3-turbo").unwrap();
+        assert_eq!(both(&conn, tmp.path()), (Some("apple-speech".into()), Some("apple-speech".into())));
+        // A meeting pick of a deleted model falls back to voice typing's, not to the catalog default.
+        select(&conn, "stt", "parakeet-tdt-v3", 26, &english(true)).unwrap();
+        select(&conn, MEETING_STT, "whisper-large-v3-turbo", 26, &english(true)).unwrap();
+        forget(&conn, "whisper-large-v3-turbo").unwrap();
+        assert_eq!(both(&conn, tmp.path()).1.as_deref(), Some("parakeet-tdt-v3"));
     }
 
     #[test]
@@ -255,6 +298,8 @@ mod tests {
             assert_eq!(models.iter().filter(|m| m.default).count(), 1, "{task}: one default");
             for m in &models {
                 assert!((1..=5).contains(&m.acc) && (1..=5).contains(&m.spd), "{}", m.id);
+                // One line in a model row; "Recommended" comes from `default`, not the text.
+                assert!(m.desc.chars().count() <= 90 && !m.desc.contains("Recommended"), "{}: desc", m.id);
                 assert!(m.system || m.revision.len() == 40, "{}: pinned commit", m.id);
                 if !m.files.is_empty() {
                     assert_eq!(m.files.iter().map(|f| f.size).sum::<u64>(), m.size, "{}: size", m.id);

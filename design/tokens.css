@@ -226,52 +226,174 @@ html { background: var(--bg-desk); color: var(--text); font: var(--fs-body)/var(
   -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
 ::selection { background: var(--selection); }
 :focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+/* Controls used inside and outside Settings (the update pop-up, the main window): top level, one rule each. */
 /* Dropdowns: a capsule like every other control (DESIGN.md), one rule for every page. */
 /* appearance: none, or WebKit draws its own rounded rect; the drawn chevrons stand in for the native ones (mid grey reads on both themes). */
 .select { appearance: none; height: var(--h-ctl); padding: 0 28px 0 var(--sp-3); border: 0; border-radius: var(--r-full); color: var(--text); font: inherit;
   background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='12' fill='none' stroke='%238E8E93' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 4.5 4 1.5 7 4.5M1 7.5 4 10.5 7 7.5'/%3E%3C/svg%3E") no-repeat right 12px center, var(--fill-control);
-  box-shadow: inset 0 0 0 .5px var(--line-strong), var(--shadow-control); }
-.select:disabled { opacity: .45; }
+  box-shadow: inset 0 0 0 .5px var(--line-strong), var(--shadow-control); text-overflow: ellipsis; }
+/* Button: capsule, 30px (DESIGN.md › Button). Disabled buttons keep their fill and dim their text; every other control dims as a whole. */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-1h); height: var(--h-ctl); box-sizing: border-box; padding: 0 14px; border: 0; border-radius: var(--r-full);
+  background: var(--fill-control); color: var(--text); font: inherit; box-shadow: inset 0 0 0 .5px var(--line-strong), var(--shadow-control); white-space: nowrap;
+  transition: background-color var(--dur-fast) var(--ease-in), transform var(--dur-fast) var(--ease-in); }
+.btn:hover:not(:disabled) { background: color-mix(in srgb, var(--fill-control) 85%, var(--text)); }
+.btn:active:not(:disabled) { transform: scale(.97); }
+.btn:disabled { color: var(--text-disabled); }
+.btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.btn.primary { background: var(--accent); color: var(--on-accent); font-weight: var(--fw-medium); box-shadow: var(--shadow-solid); }
+.btn.primary:hover:not(:disabled) { background: var(--accent-hover); }
+.btn.primary:active:not(:disabled) { background: var(--accent-pressed); }
+.btn.primary:disabled { background: var(--fill-control); box-shadow: inset 0 0 0 .5px var(--line-strong); }
+.btn.danger { background: var(--danger); color: var(--on-solid); font-weight: var(--fw-medium); box-shadow: var(--shadow-solid); }
+.btn.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--danger) 88%, #FFFFFF); }
+.btn.quiet { background: none; box-shadow: none; padding: 0 10px; color: var(--text-2); }
+.btn.quiet:hover:not(:disabled) { background: var(--fill-hover); }
+.btn.icon { width: var(--h-ctl); padding: 0; }
+.btn.sm { height: var(--h-ctl-sm); padding: 0 10px; }
+.btn.icon.sm { width: var(--h-ctl-sm); padding: 0; }
+/* :where keeps these at one class, so a component's own icon size wins. */
+.btn :where(.ic), .search > :where(.ic) { width: var(--ic-sm); height: var(--ic-sm); flex: none; fill: none; stroke: currentColor; stroke-width: var(--ic-stroke); stroke-linecap: round; stroke-linejoin: round; }
+/* Field (DESIGN.md › Field). Invalid: a 1.5px danger ring; the message sits under it. */
+.input { height: var(--h-ctl); box-sizing: border-box; padding: 0 var(--sp-3); border: 0; border-radius: var(--r-md); background: var(--fill-field); color: var(--text); font: inherit;
+  box-shadow: inset 0 0 0 .5px var(--line-strong); caret-color: var(--accent); }
+textarea.input { height: auto; padding: var(--sp-2) var(--sp-3); border-radius: var(--r-lg); line-height: var(--lh-body); }
+.input::placeholder { color: var(--text-3); }
+.input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.input[aria-invalid="true"] { box-shadow: inset 0 0 0 1.5px var(--danger); }
+/* Search: a capsule field with its icon. <label class="search"><svg class="ic">…</svg><input type="search"></label> */
+.search { position: relative; display: flex; align-items: center; }
+.search > .ic { position: absolute; left: 10px; top: 50%; translate: 0 -50%; color: var(--text-3); pointer-events: none; }
+.search input { appearance: none; width: 100%; height: var(--h-ctl); box-sizing: border-box; padding: 0 30px; border: 0; border-radius: var(--r-full); background: var(--fill-field);
+  box-shadow: inset 0 0 0 .5px var(--line-strong); color: var(--text); font: inherit; caret-color: var(--accent); }
+.search input::placeholder { color: var(--text-3); }
+.search input::-webkit-search-cancel-button { display: none; }
+.search input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.select:disabled, .input:disabled { opacity: .45; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 /* Settings grammar (DESIGN.md › Grouped list): one copy for every Settings page, under .prefs (the page's scroller).
    Sections sit 24px apart; a section's reserved error line hangs inside that gap, so every gap is the same. */
-.prefs { display: flex; flex-direction: column; gap: var(--sp-5); }
+.prefs { display: flex; flex-direction: column; gap: var(--sp-5); container-type: inline-size; }
 .prefs section { margin: 0; }
-.prefs h2 { margin: 0 0 var(--sp-2); font-size: var(--fs-title3); line-height: var(--lh-title3); font-weight: var(--fw-semibold); }
+/* Section heading: a quiet label over its list (docs/settings.html), not a headline. */
+.prefs h2 { margin: 0 0 var(--sp-2); font-size: var(--fs-body); line-height: var(--lh-body); font-weight: var(--fw-semibold); color: var(--text-2); }
 .prefs h2:has(+ .help) { margin-bottom: var(--sp-1); }
 .prefs .help { margin: 0; color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
 .prefs h2 + .help { margin-bottom: var(--sp-3); }
 .prefs .help.after { margin-top: var(--sp-2); }
+/* A drill-in has no heading: its help line tucks up into the page gap, 8px above its list. */
+.prefs section > .help:first-child { margin: calc(-1 * var(--sp-1)) 0 var(--sp-2); }
+/* In-list sub-label, e.g. a vendor heading between two lists. */
+.prefs h3 { margin: var(--sp-3) 0 var(--sp-1); padding: 0 var(--sp-4); font-size: var(--fs-footnote); line-height: var(--lh-footnote); font-weight: var(--fw-semibold); color: var(--text-2); }
+.prefs .list + h3 { margin-top: var(--sp-4); }
 .prefs .list { list-style: none; margin: 0; padding: 0; border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); }
-.prefs .list > li + li { border-top: 1px solid var(--line); }
-.prefs .row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-3); align-items: center; padding: var(--sp-3) var(--sp-4); }
-.prefs .name { display: block; font-weight: var(--fw-semibold); }
-.prefs .desc { display: block; margin-top: 2px; color: var(--text-2); }
+/* The separator is a background line inset 16px from the left, so it adds no height; hover fills set background-color and keep it. */
+.prefs .list > li + li { background-image: linear-gradient(var(--line), var(--line)); background-repeat: no-repeat; background-position: var(--sp-4) 0; background-size: calc(100% - var(--sp-4)) 1px; }
+/* A list whose rows lead with a radio (models): the line starts at the text, 48px in. */
+.prefs .list.radios > li + li { background-position: 48px 0; background-size: calc(100% - 48px) 1px; }
+.prefs .list > li:first-child { border-radius: var(--r-xl) var(--r-xl) 0 0; }
+.prefs .list > li:last-child { border-radius: 0 0 var(--r-xl) var(--r-xl); }
+.prefs .list > li:only-child { border-radius: var(--r-xl); }
+/* Row: 60px for one line of description (12 + 18 + 2 + 16 + 12): title, description, trailing control. */
+.prefs .row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-3); align-items: center; align-content: center; min-height: 60px; box-sizing: border-box; padding: var(--sp-3) var(--sp-4); }
+.prefs .row > :first-child { min-width: 0; }
+.prefs .name { display: block; font-weight: var(--fw-medium); }
+.prefs .desc { display: block; margin-top: 2px; font-size: var(--fs-footnote); line-height: var(--lh-footnote); color: var(--text-2); }
+/* One line, so rows stay 60px; the full text goes in the row's title. A narrow page lets it wrap. */
+.prefs .row .desc { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* A row that opens a drill-in: a count in --text-3 and a chevron. */
+.prefs .row.go { cursor: default; transition: background-color var(--dur-fast) var(--ease-in); }
+.prefs .row.go:hover { background-color: var(--fill-hover); }
+.prefs .end { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); }
+.prefs .count { color: var(--text-3); font-variant-numeric: tabular-nums; }
+.prefs .chev { display: inline-flex; color: var(--text-3); }
+:where(.prefs, .stage-path) .ic { width: var(--ic); height: var(--ic); flex: none; fill: none; stroke: currentColor; stroke-width: var(--ic-stroke); stroke-linecap: round; stroke-linejoin: round; }
 .prefs .err { margin: var(--sp-1) 0 0; min-height: var(--lh-footnote); color: var(--danger-text); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
 .prefs section > .err:last-child { margin-bottom: calc(-1 * (var(--sp-1) + var(--lh-footnote))); }
 /* A page-wide error line after the last section: 4px under it, not a whole gap. */
 .prefs > .err { margin-top: calc(var(--sp-1) - var(--sp-5)); }
-.prefs .add { display: flex; gap: var(--sp-2); margin-top: var(--sp-3); }
-/* Button: capsule, 30px (DESIGN.md). Variants stay with the component that uses them. */
-.prefs .btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-1h); height: var(--h-ctl); padding: 0 14px; border: 0; border-radius: var(--r-full);
-  background: var(--fill-control); color: var(--text); font: inherit; box-shadow: inset 0 0 0 .5px var(--line-strong), var(--shadow-control); white-space: nowrap; }
-.prefs .btn:hover:not(:disabled) { background: color-mix(in srgb, var(--fill-control) 85%, var(--text)); }
-.prefs .btn:disabled { color: var(--text-disabled); }
+/* Pill (DESIGN.md › Pill): neutral by default, .status, .caution. */
+:is(.prefs, .stage-path) .pill { display: inline-flex; align-items: center; gap: var(--sp-1); height: 20px; padding: 0 var(--sp-2); border-radius: var(--r-full); font-size: var(--fs-caption); line-height: var(--lh-caption);
+  font-weight: var(--fw-semibold); white-space: nowrap; flex: none; background: var(--fill-hover); color: var(--text-2); }
+:is(.prefs, .stage-path) .pill.status { background: var(--accent-soft); color: var(--accent-text); }
+:is(.prefs, .stage-path) .pill.caution { background: var(--caution-soft); color: var(--caution-text); }
+:is(.prefs, .stage-path) .pill .ic { width: 12px; height: 12px; }
+/* Allowed / installed: a check plus a word. */
+:is(.prefs, .stage-path) .ok { display: inline-flex; align-items: center; gap: var(--sp-1); color: var(--text-2); white-space: nowrap; }
+:is(.prefs, .stage-path) .ok .ic { width: var(--ic-sm); height: var(--ic-sm); color: var(--ok-text); stroke-width: 2; }
+/* Something you'd copy: a path, an address, a code. */
+.prefs .mono { font: 12px/var(--lh-footnote) var(--font-mono); overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; cursor: text; }
+.prefs .desc .mono { display: inline; }
+/* Keycaps. */
+:is(.prefs, .stage-path) kbd { display: inline-grid; place-items: center; min-width: 20px; height: 20px; box-sizing: border-box; padding: 0 5px; border-radius: var(--r-xs); background: var(--fill-field);
+  box-shadow: inset 0 0 0 .5px var(--line-strong); font: var(--fs-footnote)/1 var(--font); color: var(--text); }
+:is(.prefs, .stage-path) .keys { display: inline-flex; gap: 3px; }
+/* Word chips: tags in a list row, the input at the end (docs/settings.html .chips). */
+.prefs .chips { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); min-height: 60px; box-sizing: border-box; padding: var(--sp-3) var(--sp-4); cursor: text; }
+.prefs .chips:focus-within { box-shadow: inset 0 0 0 2px var(--focus-ring); }
+.prefs .chips input { flex: 1 1 140px; min-width: 120px; height: 24px; padding: 0 var(--sp-1); border: 0; background: none; outline: none; color: var(--text); font: inherit; caret-color: var(--accent); }
+.prefs .chips input::placeholder { color: var(--text-3); }
+.prefs .tag { display: inline-flex; align-items: center; gap: 2px; height: 24px; box-sizing: border-box; padding: 0 var(--sp-1) 0 10px; border-radius: var(--r-full); background: var(--fill-field);
+  box-shadow: inset 0 0 0 .5px var(--line); white-space: nowrap; cursor: default; }
+.prefs .tag button { display: inline-grid; place-items: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: var(--r-full); background: none; color: var(--text-3); }
+.prefs .tag button:hover { background: var(--fill-hover); color: var(--text); }
+.prefs .tag button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.prefs .tag .ic { width: 12px; height: 12px; }
 /* Switch, 38×22. */
 .prefs .switch { appearance: none; width: 38px; height: 22px; margin: 0; border-radius: 11px; position: relative; flex: none; background: var(--fill-track);
   transition: background var(--dur) var(--ease-out); }
 .prefs .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, .3); transition: transform var(--dur) var(--ease-out); }
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .3), inset 0 0 0 .5px var(--line-strong); transition: transform var(--dur) var(--ease-out); }
 .prefs .switch:checked { background: var(--accent); }
 .prefs .switch:checked::after { transform: translateX(16px); }
-/* Segmented control: a capsule track with a raised thumb. data-l on the label keeps room for the bold one, so choosing never widens it. */
-.prefs .seg { display: inline-flex; gap: 2px; margin: 0; padding: 3px; border: 0; border-radius: var(--r-full); background: var(--fill-field); }
+/* Segmented control: a capsule track, equal segments; the raised thumb is the only cue, so choosing never changes a width. */
+.prefs .seg { display: inline-grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 2px; margin: 0; padding: 3px; border: 0; border-radius: var(--r-full); background: var(--fill-field); }
 .prefs .seg label { position: relative; }
 .prefs .seg input { position: absolute; inset: 0; margin: 0; opacity: 0; }
-.prefs .seg span { display: grid; align-content: center; justify-items: center; height: 26px; padding: 0 14px; border-radius: var(--r-full); color: var(--text-2); white-space: nowrap; }
-.prefs .seg span::after { content: attr(data-l); height: 0; overflow: hidden; visibility: hidden; font-weight: var(--fw-medium); }
-.prefs .seg input:checked + span { background: var(--fill-control-on); color: var(--text); font-weight: var(--fw-medium); box-shadow: 0 0 0 .5px var(--line-strong), 0 1px 2px rgba(0, 0, 0, .1); }
+.prefs .seg span { display: grid; place-items: center; height: 24px; padding: 0 14px; border-radius: var(--r-full); color: var(--text-2); white-space: nowrap;
+  transition: background-color var(--dur-fast) var(--ease-in), color var(--dur-fast) var(--ease-in); }
+.prefs .seg input:checked + span { background: var(--fill-control-on); color: var(--text); box-shadow: 0 0 0 .5px var(--line-strong), 0 1px 2px rgba(0, 0, 0, .1); }
 .prefs .seg input:focus-visible + span { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+/* Accent swatches: a 24px hit area, a 16px dot in its own colour; the chosen one shows a pip in --on (dark on yellow), so it reads on every colour. */
+.prefs .swatches { display: flex; gap: var(--sp-1); margin: 0; padding: 0; border: 0; min-width: 0; }
+.prefs .sw { --on: #fff; position: relative; display: grid; place-items: center; width: 24px; height: 24px; }
+.prefs .sw:has(input[value="yellow"]) { --on: #1D1D1F; }
+.prefs .sw input { position: absolute; inset: 0; margin: 0; opacity: 0; }
+.prefs .sw .dot { display: grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: var(--c); box-shadow: inset 0 0 0 .5px var(--line-strong); }
+.prefs .sw .pip { width: 6px; height: 6px; border-radius: 50%; background: var(--on); visibility: hidden; }
+.prefs .sw input:checked + .dot .pip { visibility: visible; }
+.prefs .sw input:focus-visible + .dot { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+/* The page's last line (docs/settings.html .foot). */
+.prefs .foot { margin: 0; color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
+.prefs .foot a { color: var(--accent-text); text-decoration: none; }
+.prefs .foot a:hover { text-decoration: underline; text-underline-offset: 2px; }
+/* Slider: 4px track, accent left of a 20px white knob; --v is the fill's width. A glyph sits at each end. */
+.prefs .slider { display: flex; align-items: center; gap: var(--sp-2); width: 100%; max-width: 260px; color: var(--text-3); }
+.prefs .slider input[type="range"] { appearance: none; display: block; flex: 1; min-width: 0; height: 20px; margin: 0; background: none; }
+.prefs .slider input[type="range"]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: linear-gradient(to right, var(--accent) var(--v, 50%), var(--fill-track) var(--v, 50%)); }
+.prefs .slider input[type="range"]::-webkit-slider-thumb { appearance: none; width: 20px; height: 20px; margin-top: -8px; border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .3), inset 0 0 0 .5px var(--line-strong); }
+.prefs .slider input[type="range"]:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: 10px; }
+/* One disabled look for everything that isn't a button. */
+.prefs .switch:disabled, .prefs .seg:disabled, .prefs .slider:has(input:disabled) { opacity: .45; }
+/* Field row on a drill-in (docs/settings.html .field): label column, control column, the help under the control. `.one` is a 60px row with no help line. */
+.prefs .field { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: var(--sp-1) var(--sp-4); align-items: start; box-sizing: border-box; padding: var(--sp-3) var(--sp-4); }
+.prefs .field.one { min-height: 60px; align-items: center; align-content: center; }
+.prefs .field > label, .prefs .field > .name { font-weight: var(--fw-medium); line-height: var(--h-ctl); }
+.prefs .field .help { grid-column: 2; min-height: var(--lh-footnote); }
+.prefs .field .input, .prefs .field .select { min-width: 0; }
+.prefs .field .select { justify-self: start; max-width: 220px; }
+.prefs .actions { display: flex; gap: var(--sp-2); }
+/* Narrow page: a wide control (select, segmented, keycaps, slider, swatches) drops under its text; switches, checks, buttons and chevrons stay right. */
+@container (max-width: 480px) {
+  .prefs .row:is(.wide, :has(> :is(.select, .seg, .slider, .swatches))) { grid-template-columns: minmax(0, 1fr); gap: var(--sp-2); }
+  .prefs .row:is(.wide, :has(> :is(.select, .seg, .slider, .swatches))) > :last-child { justify-self: start; }
+  .prefs .row.wide > .end { justify-content: flex-start; }
+  .prefs .row .desc { white-space: normal; }
+  .prefs .field { grid-template-columns: minmax(0, 1fr); }
+  .prefs .field .help { grid-column: 1; }
+  .prefs .field > label, .prefs .field > .name { line-height: var(--lh-body); }
+}
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   :root[data-theme] { --mat-window: var(--bg-inset); --mat-sidebar: var(--bg-sidebar); --mat-menu: var(--bg-raised); --hud-bg: var(--hud-bg-solid); }
 }

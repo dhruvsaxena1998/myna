@@ -11,7 +11,7 @@ async function open(page: Page, extra = "") {
     ${extra}
   }`);
   await page.goto("/settings");
-  await page.getByRole("option", { name: "About" }).click();
+  await page.getByRole("option", { name: "General" }).click();
   await expect.poll(() => page.evaluate(() => (window as any).__calls.some((c: any) => c[0] === "plugin:event|listen" && c[1].event === "update-state"))).toBe(true);
 }
 const emit = (page: Page, s: object) => page.evaluate((s) => (window as any).__emit("update-state", s), s);
@@ -19,23 +19,26 @@ const calls = (page: Page, cmd: string) => page.evaluate((cmd) => (window as any
 
 test("the Version row shows each update state without moving", async ({ page }) => {
   await open(page);
-  const row = page.getByRole("listitem").filter({ hasText: "0.1.0" });
+  const row = page.getByRole("listitem").filter({ hasText: "Version 0.1.0" });
   const before = await row.boundingBox();
-  const slot = row.locator(".slot");
-  const width = (await slot.boundingBox())!.width;
-  const states: [object, string][] = [
-    [{ state: "checking" }, "Checking…"],
-    [{ state: "available", version: "0.0.2-beta.2", notes: "" }, "Update available · 0.0.2-beta.2"],
-    [{ state: "downloading", version: "0.0.2-beta.2", notes: "", pct: 42 }, "Downloading 42%"],
-    [{ state: "downloaded", version: "0.0.2-beta.2", notes: "" }, "Restart to update"],
-    [{ state: "error", kind: "check", message: "Couldn’t reach GitHub. Check your connection." }, "Update failedTry again"],
-    [{ state: "uptodate" }, "Check for updates"],
+  const btn = row.getByRole("button");
+  const width = (await btn.boundingBox())!.width;
+  const v = "0.0.2-beta.2";
+  const states: [object, string, string][] = [
+    [{ state: "checking" }, "Checking…", ""],
+    [{ state: "available", version: v, notes: "" }, "View update", ` · ${v} is available`],
+    [{ state: "downloading", version: v, notes: "", pct: 42 }, "Downloading 42%", ` · ${v} is available`],
+    [{ state: "downloaded", version: v, notes: "" }, "Restart to update", ` · ${v} is ready`],
+    [{ state: "error", kind: "check", message: "Couldn’t reach GitHub. Check your connection." }, "Try again", ""],
+    [{ state: "uptodate" }, "Check for updates", " · Up to date"],
   ];
-  for (const [s, text] of states) {
+  for (const [s, text, note] of states) {
     await emit(page, s);
-    await expect(slot).toHaveText(text);
+    await expect(btn).toHaveText(text);
+    await expect(row).toContainText("Version 0.1.0 · dev");
+    if (note) await expect(row).toContainText(note);
     expect(await row.boundingBox()).toEqual(before);
-    expect((await slot.boundingBox())!.width).toBe(width);
+    expect((await btn.boundingBox())!.width).toBe(width);
   }
 });
 
@@ -48,47 +51,72 @@ test("Check for updates and Try again check; an error shows its message", async 
   expect(await calls(page, "update_check")).toBe(2);
 });
 
+test("a failed update says so once", async ({ page }) => {
+  await open(page);
+  await emit(page, { state: "error", kind: "check", message: "Couldn’t reach GitHub. Check your connection." });
+  await expect(page.getByText("Couldn’t reach GitHub. Check your connection.")).toHaveCount(1);
+  await expect(page.getByText("Update failed")).toHaveCount(0);
+});
+
+test("Show in Finder reveals the data folder, and says why if it can't", async ({ page }) => {
+  await open(page, `storage_reveal: () => { throw "Couldn't open /tmp/Myna: nope"; }`);
+  await expect(page.locator(".mono")).toHaveText("/tmp/Myna");
+  await page.getByRole("button", { name: "Show in Finder" }).click();
+  expect(await calls(page, "storage_reveal")).toBe(1);
+  await expect(page.getByText("Couldn't open /tmp/Myna: nope")).toBeVisible();
+});
+
+test("Check frequency is hidden while Update mode is Off, and the rows below keep their height", async ({ page }) => {
+  await open(page);
+  const mode = page.getByRole("combobox", { name: "Update mode" });
+  await expect(page.getByRole("combobox", { name: "Check frequency" })).toBeVisible();
+  const row = page.getByRole("listitem").filter({ hasText: "Update channel" });
+  const h = (await row.boundingBox())!.height;
+  await mode.selectOption("off");
+  await expect(page.getByRole("combobox", { name: "Check frequency" })).toHaveCount(0);
+  expect((await row.boundingBox())!.height).toBe(h);
+  await mode.selectOption("check");
+  await expect(page.getByRole("combobox", { name: "Check frequency" })).toBeVisible();
+});
+
 test("Update available and Restart to update open the update pop-up", async ({ page }) => {
   await open(page, `update_open: () => null`);
   await emit(page, { state: "available", version: "0.0.2-beta.2", notes: "" });
-  await page.getByRole("button", { name: "Update available · 0.0.2-beta.2" }).click();
+  await page.getByRole("button", { name: "View update" }).click();
   await emit(page, { state: "downloaded", version: "0.0.2-beta.2", notes: "" });
   await page.getByRole("button", { name: "Restart to update" }).click();
   expect(await calls(page, "update_open")).toBe(2);
   expect(await calls(page, "update_download") + (await calls(page, "update_restart"))).toBe(0);
 });
 
-test("Update mode and Channel show their hints and persist across a restart", async ({ page }) => {
+test("Update mode and Update channel show their hints and persist across a restart", async ({ page }) => {
   await open(page);
   const mode = page.getByRole("combobox", { name: "Update mode" });
   await expect(mode).toHaveValue("auto");
-  await expect(page.getByText("Checks on its own, downloads in the background, then asks you to restart.")).toBeVisible();
+  await expect(page.getByText("Downloads in the background, then asks you to restart.")).toBeVisible();
   await expect(page.getByRole("radio", { name: "Beta" })).toBeChecked();
-  await expect(page.getByText("Beta also gets newer stable releases.", { exact: false })).toBeVisible();
+  await expect(page.getByText("Gets pre-releases as well as stable releases.")).toBeVisible();
 
   await mode.selectOption("off");
-  await expect(page.getByText("Never checks on its own. Use Check for updates when you want to.")).toBeVisible();
+  await expect(page.getByText("Only checks when you click Check for updates.")).toBeVisible();
   await page.getByRole("radio", { name: "Stable" }).check();
 
   await page.reload();
-  await page.getByRole("option", { name: "About" }).click();
+  await page.getByRole("option", { name: "General" }).click();
   await expect(page.getByRole("combobox", { name: "Update mode" })).toHaveValue("off");
   await expect(page.getByRole("radio", { name: "Stable" })).toBeChecked();
 });
 
-test("How often to check persists, and is off while Update mode is Off", async ({ page }) => {
+test("Check frequency persists", async ({ page }) => {
   await open(page);
-  const every = page.getByRole("combobox", { name: "How often to check" });
+  const every = page.getByRole("combobox", { name: "Check frequency" });
   await expect(every).toHaveValue("launch");
   await every.selectOption("week");
   await expect(page.getByText("Checks once a week, even if you quit and reopen Myna.")).toBeVisible();
-  await page.getByRole("combobox", { name: "Update mode" }).selectOption("off");
-  await expect(every).toBeDisabled();
-  await expect(page.getByText("Update mode is Off.")).toBeVisible();
 
   await page.reload();
-  await page.getByRole("option", { name: "About" }).click();
-  await expect(page.getByRole("combobox", { name: "How often to check" })).toHaveValue("week");
+  await page.getByRole("option", { name: "General" }).click();
+  await expect(page.getByRole("combobox", { name: "Check frequency" })).toHaveValue("week");
 });
 
 test("a failed save puts the old choice back and says why", async ({ page }) => {
@@ -100,6 +128,6 @@ test("a failed save puts the old choice back and says why", async ({ page }) => 
 
 test("the dev build label sits after the version with a space either side of the dot", async ({ page }) => {
   await open(page);
-  // The dev server always has a build label (vite.config.js), so the row reads "0.1.0 · dev …".
-  await expect(page.getByText(/^0\.1\.0 · dev/)).toBeVisible();
+  // The dev server always has a build label (vite.config.js), so the row reads "Version 0.1.0 · dev …".
+  await expect(page.getByText(/^Version 0\.1\.0 · dev/)).toBeVisible();
 });

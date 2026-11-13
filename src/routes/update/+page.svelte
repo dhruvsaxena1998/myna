@@ -141,12 +141,5 @@
   .pct { min-width: 4ch; text-align: right; font-variant-numeric: tabular-nums; }
   .bar { flex: 1; height: 4px; border-radius: 2px; background: var(--line-strong); overflow: hidden; }
   .bar b { display: block; height: 100%; background: var(--accent); transform-origin: left; }
-  .btn { display: inline-flex; align-items: center; height: var(--h-ctl); padding: 0 14px; border: 0; border-radius: var(--r-full);
-    background: var(--fill-control); color: var(--text); font: inherit; box-shadow: inset 0 0 0 .5px var(--line-strong), var(--shadow-control); white-space: nowrap; }
-  .btn:hover { background: color-mix(in srgb, var(--fill-control) 85%, var(--text)); }
-  .btn.primary { background: var(--accent); color: var(--on-accent); font-weight: var(--fw-medium); box-shadow: 0 1px 2px rgba(0, 0, 0, .14); }
-  .btn.primary:hover { background: var(--accent-hover); }
-  .btn:disabled { opacity: .5; }
-  .btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   .quiet .btn:focus-visible { outline: none; }
 </style>

@@ -83,16 +83,16 @@
     {#if style === "wave"}
       <span class="mic">{@render icon("mic")}</span>
       <span class="trace" aria-hidden="true">{#each wave as l}<i style:height="{3 + 21 * l}px"></i>{/each}</span>
-      <span class="sr">Listening</span>{#if left !== null}<time class="end">{fmt(left)} left</time>{:else}<time>{clock}</time>{/if}
+      <span class="sr-only">Listening</span>{#if left !== null}<time class="end">{fmt(left)} left</time>{:else}<time>{clock}</time>{/if}
     {:else}
       {@render bars()}
-      {#if quiet}<span class="sr">Listening</span>{#if left !== null}<span class="end" aria-label={hint}>{left}</span>{/if}
+      {#if quiet}<span class="sr-only">Listening</span>{#if left !== null}<span class="end" aria-label={hint}>{left}</span>{/if}
       {:else}<span>Listening</span><span class="sub" class:end={left !== null}>{#if left !== null}{hint}{:else}{@render ends(pill.hold)}{/if}</span>{/if}
     {/if}
   {:else if pill.state === "writing" || pill.state === "cleaning"}
-    {#if style !== "capsule"}<span class="spin" aria-hidden="true"></span>{/if}<span class:sr={quiet}>{pill.state === "writing" ? "Writing…" : "Cleaning up…"}</span>
+    {#if style !== "capsule"}<span class="spin" aria-hidden="true"></span>{/if}<span class:sr-only={quiet}>{pill.state === "writing" ? "Writing…" : "Cleaning up…"}</span>
   {:else}
-    {@render icon("check")}<span class:sr={quiet}>Added where you were typing</span>
+    {@render icon("check")}<span class:sr-only={quiet}>Added where you were typing</span>
   {/if}
 </div>
 
@@ -101,7 +101,6 @@
   .hud { display: inline-flex; align-items: center; gap: 10px; box-sizing: border-box; background: var(--hud-bg); color: var(--hud-fg); white-space: nowrap;
     -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%); box-shadow: inset 0 0 0 0.5px var(--hud-edge), var(--shadow-hud); }
   .sub { color: var(--hud-2); }
-  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   .ic { width: var(--ic); height: var(--ic); flex: none; stroke: currentColor; fill: none; stroke-width: var(--ic-stroke); stroke-linecap: round; stroke-linejoin: round; }
   .spin { width: 14px; height: 14px; flex: none; box-sizing: border-box; border-radius: 50%; border: 2px solid var(--hud-fill); border-top-color: var(--hud-fg); animation: spin .8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }

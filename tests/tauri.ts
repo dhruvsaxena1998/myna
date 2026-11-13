@@ -46,3 +46,9 @@ export async function fakeTauri(page: Page, handlers: string) {
     };
   }, handlers);
 }
+
+/** One installed speech-to-text model, enough for Understand to list. Use as `models_list: () => ${MODELS}`. */
+export const MODELS = JSON.stringify([
+  { id: "stt", active: "p", models: [{ id: "p", name: "Model P", vendor: "V", desc: "d", acc: 4, spd: 4, default: true, size: 1, min_macos: 0, repo: "r", revision: "x", files: [{}], system: false, runtime: false, installed: true, needs: null }] },
+  { id: "diar", active: null, models: [] },
+]);

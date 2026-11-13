@@ -108,6 +108,8 @@ pub struct Session {
     recording: Mutex<Option<Active>>,
     /// The loaded speech-to-text model and its id, kept between dictations (loading takes seconds).
     transcriber: Mutex<Loaded>,
+    /// Meeting notes' model, when it isn't voice typing's (the same one shares `transcriber`, so it's in memory once).
+    meeting_transcriber: Mutex<Loaded>,
     /// Bumped by every dictation and every new unload timer; a timer frees the model only if it's still the latest.
     unload_gen: AtomicU64,
     /// Tap mode stops by itself after this long.
@@ -118,8 +120,8 @@ pub struct Session {
 
 impl Session {
     pub fn new(world: Box<dyn World>, db: Arc<Mutex<Connection>>, keys: Arc<dyn ai::Keys>, models_dir: PathBuf, macos: u32, tap_limit: Duration, second: Duration) -> Arc<Self> {
-        let (recording, transcriber, unload_gen) = Default::default();
-        Arc::new(Session { world, db, keys, models_dir, macos, recording, transcriber, unload_gen, tap_limit, second })
+        let (recording, transcriber, meeting_transcriber, unload_gen) = Default::default();
+        Arc::new(Session { world, db, keys, models_dir, macos, recording, transcriber, meeting_transcriber, unload_gen, tap_limit, second })
     }
 
     /// A global shortcut went down (`pressed`) or up; `clean`: it's the Dictate with cleanup one. Hold mode starts on
@@ -164,7 +166,7 @@ impl Session {
         self.recording.lock().unwrap().is_some() || self.transcriber.try_lock().is_err()
     }
 
-    /// Frees the speech-to-text model once it has sat unused for the chosen time.
+    /// Frees the speech-to-text models (voice typing's and meeting notes') once they have sat unused for the chosen time.
     pub fn schedule_unload(self: &Arc<Self>) {
         let mine = self.unload_gen.fetch_add(1, Ordering::SeqCst) + 1;
         let secs = models::unload_after(&self.db.lock().unwrap()).unwrap_or(-1);
@@ -177,19 +179,26 @@ impl Session {
             // Never mid-dictation: a recording bumps the generation, and a timer set during one finds it here.
             if s.unload_gen.load(Ordering::SeqCst) == mine && s.recording.lock().unwrap().is_none() {
                 *s.transcriber.lock().unwrap() = None;
+                *s.meeting_transcriber.lock().unwrap() = None;
             }
         });
     }
 
-    /// The active speech-to-text model's id, if it's downloaded.
+    /// Voice typing's speech-to-text model's id, if it's downloaded.
     fn active_stt(&self) -> Result<String, String> {
+        self.active_for("stt")
+    }
+
+    /// The active model's id for `task` ("stt" or meeting notes' `MEETING_STT`), if it's downloaded.
+    fn active_for(&self, task: &str) -> Result<String, String> {
         let tasks = models::list(&self.db.lock().unwrap(), &self.models_dir, self.macos, &self.world.speech())?;
-        let stt = tasks.into_iter().find(|t| t.id == "stt").ok_or("No speech-to-text task.")?;
+        let stt = tasks.into_iter().find(|t| t.id == task).ok_or("No speech-to-text task.")?;
         let id = stt.active.ok_or("No speech-to-text model runs on this Mac")?;
+        let page = if task == "stt" { "Understand" } else { "Meeting notes" };
         match stt.models.iter().find(|m| m.id == id) {
             Some(m) if m.installed => Ok(id),
-            Some(m) if m.system => Err(format!("Download {}’s language in Settings › Speech models", m.name)),
-            Some(m) => Err(format!("Download {} in Settings › Speech models", m.name)),
+            Some(m) if m.system => Err(format!("Download {}’s language in Settings › {page}", m.name)),
+            Some(m) => Err(format!("Download {} in Settings › {page}", m.name)),
             None => Err(format!("Unknown model {id}")),
         }
     }
@@ -356,13 +365,20 @@ impl Session {
     }
 }
 
-/// A meeting's audio goes through the dictation's loaded model, one chunk at a time: the lock is let go between
-/// chunks, so a dictation waits for at most the chunk in progress.
+/// A meeting's audio goes through meeting notes' model, one chunk at a time. When that's voice typing's model too, it
+/// shares the dictation's slot: the lock is let go between chunks, so a dictation waits for at most the chunk in
+/// progress. A different model has its own slot, so neither swaps the other out.
 impl crate::meeting::Stt for Session {
     fn transcribe(&self, audio: &[f32]) -> Result<Vec<runtime::Segment>, String> {
         self.unload_gen.fetch_add(1, Ordering::SeqCst); // a pending unload must not fire between chunks
-        let id = self.active_stt()?;
-        let mut slot = self.transcriber.lock().unwrap();
+        let id = self.active_for(models::MEETING_STT)?;
+        let shared = self.active_stt().is_ok_and(|v| v == id);
+        let mut slot = if shared {
+            *self.meeting_transcriber.lock().unwrap() = None; // the picks became the same: one copy is enough
+            self.transcriber.lock().unwrap()
+        } else {
+            self.meeting_transcriber.lock().unwrap()
+        };
         self.load(&mut slot, &id)?;
         let model = slot.as_mut().unwrap().1.as_mut();
         model.bias(""); // the last dictation's words are not this meeting's
@@ -763,7 +779,7 @@ mod tests {
     #[test]
     fn checks_before_recording_run_mic_then_accessibility_then_model() {
         let (s, mac, _tmp) = session("hold");
-        let no_model = "Download Parakeet TDT v3 in Settings › Speech models";
+        let no_model = "Download Parakeet TDT v3 in Settings › Understand";
         let press = |set: &dyn Fn(&mut Log)| {
             set(&mut mac.0.lock().unwrap());
             mac.0.lock().unwrap().shown.clear();
@@ -1158,6 +1174,45 @@ mod tests {
         assert_eq!(esc_keys(&v("Alt+Space", Some("Cmd+Shift+D"), None)), ["Alt+Escape", "Cmd+Shift+Escape", "Escape"]);
         assert_eq!(esc_keys(&v(voice::FN, None, None)), ["Escape"]);
         assert_eq!(esc_keys(&v("Alt+Space", None, Some("Alt+Escape"))), ["Escape"]);
+    }
+
+    /// Whisper downloaded: a sparse file at its catalog size.
+    fn whisper(tmp: &tempfile::TempDir) {
+        let dir = tmp.path().join("models/whisper-large-v3-turbo");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::File::create(dir.join("ggml-large-v3-turbo.bin")).unwrap().set_len(1624555275).unwrap();
+    }
+
+    #[test]
+    fn meetings_and_dictation_share_one_loaded_model_while_they_pick_the_same() {
+        let (s, mac, _tmp) = session("hold");
+        crate::meeting::Stt::transcribe(&*s, &[0.1; 16_000]).unwrap();
+        assert_eq!(dictate(&s, &mac, false), [Pill::Writing, Pill::Added]);
+        crate::meeting::Stt::transcribe(&*s, &[0.1; 16_000]).unwrap();
+        assert_eq!(mac.0.lock().unwrap().loaded, ["apple-speech"], "loaded once, for both");
+    }
+
+    #[test]
+    fn meetings_load_their_own_model_and_dictation_keeps_its_own_then_both_idle_out() {
+        let (s, mac, tmp) = session_timed("hold", Duration::from_secs(300), Duration::from_millis(1));
+        whisper(&tmp);
+        models::select(&s.db.lock().unwrap(), models::MEETING_STT, "whisper-large-v3-turbo", 26, &mac.speech()).unwrap();
+        unload_after(&s, 60);
+        crate::meeting::Stt::transcribe(&*s, &[0.1; 16_000]).unwrap();
+        assert_eq!(dictate(&s, &mac, false), [Pill::Writing, Pill::Added]);
+        crate::meeting::Stt::transcribe(&*s, &[0.1; 16_000]).unwrap();
+        assert_eq!(mac.0.lock().unwrap().loaded, ["whisper-large-v3-turbo", "apple-speech"], "each loaded once, neither swapped out");
+        assert_eq!(freed(&mac), 0);
+        s.schedule_unload(); // as after a meeting is written up
+        mac.wait(|l| l.freed.len() == 2);
+    }
+
+    #[test]
+    fn a_meeting_model_not_downloaded_says_where_to_get_it() {
+        let (s, mac, _tmp) = session("hold");
+        models::select(&s.db.lock().unwrap(), models::MEETING_STT, "whisper-large-v3-turbo", 26, &mac.speech()).unwrap();
+        let err = crate::meeting::Stt::transcribe(&*s, &[0.1; 16_000]).unwrap_err();
+        assert_eq!(err, "Download Whisper large-v3-turbo in Settings › Meeting notes");
     }
 
     #[test]

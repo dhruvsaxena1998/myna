@@ -1,34 +1,26 @@
-<!-- Settings › Meeting notes › Browser add-on: its status, the steps to load it, and the code to type into it (prototype: `sgroup('Browser add-on', …)`). -->
+<!-- Settings › Meeting notes › Browser add-on: its status, the steps to load it, and the code to paste into it (docs/settings.html, VIEWS.meetings).
+     The page loads its state before paint and listens for `addon-status`, so `connected` and `code` come in as props. -->
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import { listen } from "@tauri-apps/api/event";
-  import { onMount } from "svelte";
 
-  let connected = $state(false);
-  let code = $state("");
-  let selectors = $state<string | null>(null);
+  let { connected = $bindable(), code = $bindable(), loadError }: { connected: boolean; code: string; loadError: string } = $props();
   let steps = $state(false);
   let copied = $state(false);
-  let error = $state("");
+  let failed = $state("");
+  const error = $derived(failed || loadError);
   let timer: ReturnType<typeof setTimeout>;
 
-  onMount(() => {
-    const load = (all: boolean) => invoke<{ connected: boolean; code: string; selectors: string | null }>("addon_get").then((a) => (all ? ({ connected, code, selectors } = a) : (selectors = a.selectors)), (e) => (error = String(e)));
-    load(true);
-    // Myna fires this again when the add-on reports its selector version, so ask again for it.
-    const off = listen<boolean>("addon-status", (e) => {
-      connected = e.payload;
-      if (connected) (steps = false), load(false);
-    });
-    return () => void off.then((f) => f());
+  // Connecting (the page hears `addon-status`) closes the steps.
+  $effect(() => {
+    if (connected) steps = false;
   });
 
   async function run(f: () => Promise<void>) {
-    error = "";
+    failed = "";
     try {
       await f();
     } catch (e) {
-      error = String(e);
+      failed = String(e);
     }
   }
   const disconnect = () => run(async () => {
@@ -43,13 +35,14 @@
       clearTimeout(timer);
       timer = setTimeout(() => (copied = false), 1500);
     });
+  const desc = $derived(connected ? "Sees when you’re muted in Teams, and who is talking." : "Add it to Chrome to keep your voice when muted in Teams.");
 </script>
 
-<section class="group" aria-labelledby="addon-h">
+<section aria-labelledby="addon-h">
   <h2 id="addon-h">Browser add-on</h2>
   <ul class="list">
     <li class="row">
-      <span><span class="name">Status</span><span class="desc">{connected ? `Connected${selectors ? ` · selectors ${selectors}` : ""}. Myna can see when you’re muted in Teams, and who is talking.` : "Not connected. Install the Myna add-on in your browser, then connect it here."}</span></span>
+      <span><span class="name">{connected ? "Connected" : "Not connected"}</span><span class="desc" title={desc}>{desc}</span></span>
       {#if connected}
         <button class="btn" onclick={disconnect}>Disconnect</button>
       {:else}
@@ -59,23 +52,21 @@
     {#if steps && !connected}
       <li class="row">
         <ol class="steps">
-          <li>Show the add-on’s folder.</li>
-          <li>In Chrome, open <span class="mono">chrome://extensions</span>, turn on Developer mode and choose Load unpacked.</li>
+          <li>Click Show folder.</li>
+          <li>In Chrome, open <span class="mono">chrome://extensions</span>, turn on Developer mode, then Load unpacked.</li>
           <li>Pick that folder, click the Myna icon and paste the code below.</li>
         </ol>
-        <button class="btn" onclick={folder}>Show folder</button>
+        <span class="end"><button class="btn" onclick={folder}>Show folder</button></span>
       </li>
     {/if}
     <li class="row">
-      <span><span class="name">Connection code</span><span class="desc">Type this into the add-on so it can talk to Myna.</span></span>
-      <span class="code"><span class="mono">{code}</span><button class="btn" onclick={copy}>{copied ? "Copied" : "Copy"}</button></span>
+      <span><span class="name">Pairing code</span><span class="desc">Paste this into the add-on.</span></span>
+      <span class="end"><span class="mono">{code}</span><button class="btn" disabled={!code} style="min-width: 72px" onclick={copy}>{copied ? "Copied" : "Copy"}</button></span>
     </li>
   </ul>
   <p class="err" role="status">{error}</p>
 </section>
 
 <style>
-  .steps { margin: 0; padding-left: 1.2em; font: var(--text-sm, 13px/1.4 inherit); }
-  .mono { font: 12px/var(--lh-body) var(--font-mono); overflow-wrap: anywhere; }
-  .code { display: flex; align-items: center; gap: 10px; }
+  .steps { margin: 0; padding-left: 18px; display: grid; gap: 2px; color: var(--text-2); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
 </style>

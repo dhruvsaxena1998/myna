@@ -131,12 +131,7 @@
 <style>
   .grow { flex: 1; }
   .ic { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-  .search { position: relative; display: flex; align-items: center; flex: 0 1 220px; min-width: 120px; }
-  .search > .ic { position: absolute; left: 10px; color: var(--text-3); pointer-events: none; }
-  .search input { width: 100%; box-sizing: border-box; height: var(--h-ctl); padding: 0 30px; border: 0; border-radius: var(--r-full); background: var(--fill-field);
-    box-shadow: inset 0 0 0 .5px var(--line-strong); color: var(--text); font: inherit; outline: none; -webkit-appearance: none; appearance: none; }
-  .search input::-webkit-search-cancel-button { display: none; }
-  .search input:focus-visible { box-shadow: inset 0 0 0 1.5px var(--accent); }
+  .search { flex: 0 1 220px; min-width: 120px; }
   .search kbd { position: absolute; right: 8px; padding: 1px 6px; border-radius: 5px; font: 500 11px/1.4 var(--font); color: var(--text-3); box-shadow: inset 0 0 0 .5px var(--line-strong); pointer-events: none; }
   .search input:focus + kbd, .search input:not(:placeholder-shown) + kbd { display: none; }
   .note { margin: 0; color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }

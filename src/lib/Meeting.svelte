@@ -71,7 +71,7 @@
   .btn.plain:hover { background: var(--fill-hover); }
   .btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   article { max-width: var(--w-doc, 720px); margin: 0 auto; user-select: text; }
-  h1 { margin: 0; font-size: var(--fs-title1); line-height: 1.2; font-weight: var(--fw-bold, 700); letter-spacing: -.02em; }
+  h1 { margin: 0; font-size: var(--fs-title1); line-height: 1.2; font-weight: var(--fw-bold, 700); }
   .meta { margin: var(--sp-1) 0 0; color: var(--text-3); font-variant-numeric: tabular-nums; }
   .note { margin: var(--sp-1) 0 0; color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
   .err { margin: var(--sp-1) 0; min-height: var(--lh-footnote); color: var(--danger-text); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
