@@ -657,4 +657,122 @@ mod tests {
             assert!(v.contains(&Saw::Notes(id, "done".into(), 1.0, None)), "{v:?}");
         }
     }
+
+    use crate::addon::AddonEvent as E;
+
+    fn muted_at_now(state: MuteState) -> E {
+        E::Mute { state, at: now_ms() }
+    }
+
+    /// The session, already recording, with what start showed cleared from the record.
+    fn recording() -> (Arc<MeetingSession>, Arc<Mutex<Vec<Saw>>>, tempfile::TempDir) {
+        let (s, saw_, _, tmp) = rig(true, Mic::Allowed, false, Call(vec![]), Duration::from_secs(3600));
+        s.start();
+        saw_.lock().unwrap().clear();
+        (s, saw_, tmp)
+    }
+
+    /// The last menu note, pill mic and live-card mic the session showed.
+    fn shown(v: &[Saw]) -> (String, Option<String>, serde_json::Value) {
+        let note = v.iter().rev().find_map(|s| if let Saw::MenuRunning(m) = s { Some(m.split(" | ").nth(1).unwrap().to_string()) } else { None }).unwrap();
+        let pill = v.iter().rev().find_map(|s| if let Saw::Pill(Some(_), m) = s { Some(m.clone()) } else { None }).unwrap();
+        let card = v.iter().rev().find_map(|s| if let Saw::Running(Some(c)) = s { Some(c["mic"].clone()) } else { None }).unwrap();
+        (note, pill, card)
+    }
+
+    fn marks(s: &MeetingSession) -> Vec<String> {
+        let db = s.db.lock().unwrap();
+        let mut q = db.prepare("SELECT state FROM mute_event ORDER BY id").unwrap();
+        q.query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect()
+    }
+
+    #[test]
+    fn a_mute_report_while_recording_updates_the_menu_the_pill_and_the_card() {
+        let (s, saw_, _tmp) = recording();
+        s.addon(muted_at_now(MuteState::Muted));
+        let seen = saw(&saw_);
+        // The order today: menu, then the card, then the pill.
+        assert!(matches!(&seen[0], Saw::MenuRunning(_)) && matches!(&seen[1], Saw::Running(Some(_))) && matches!(&seen[2], Saw::Pill(Some(_), _)), "{seen:?}");
+        assert_eq!(seen.len(), 3);
+        assert_eq!(shown(&seen), ("Muted · mirrored from Teams".into(), Some("muted".into()), "muted".into()));
+        s.addon(muted_at_now(MuteState::Unmuted));
+        assert_eq!(shown(&saw(&saw_)), ("Mic live · mirrored from Teams".into(), Some("live".into()), "live".into()));
+        assert_eq!(marks(&s), ["muted", "unmuted"]);
+        s.stop();
+        until(&saw_, |v| recents(v) >= 1);
+    }
+
+    #[test]
+    fn a_mute_report_while_not_recording_shows_nothing_and_a_later_meeting_knows_it() {
+        let (s, saw_, _, _tmp) = rig(true, Mic::Allowed, false, Call(vec![]), Duration::from_secs(3600));
+        s.addon(muted_at_now(MuteState::Muted));
+        assert_eq!((saw(&saw_), marks(&s)), (vec![], vec![]));
+        s.start();
+        assert_eq!(shown(&saw(&saw_)), ("Muted · mirrored from Teams".into(), Some("muted".into()), "muted".into()));
+        assert_eq!(s.running().unwrap()["mic"], "muted");
+        s.stop();
+        until(&saw_, |v| recents(v) >= 1);
+    }
+
+    #[test]
+    fn the_add_on_dropping_mid_meeting_puts_the_words_back_to_mic_live() {
+        let (s, saw_, _tmp) = recording();
+        s.addon(muted_at_now(MuteState::Muted));
+        for gone in [|s: &Arc<MeetingSession>| s.dropped(), |s: &Arc<MeetingSession>| s.addon(E::Disconnected)] {
+            s.addon(muted_at_now(MuteState::Muted));
+            gone(&s);
+            assert_eq!(shown(&saw(&saw_)), ("Mic live".into(), None, serde_json::Value::Null));
+        }
+        assert_eq!(marks(&s), ["muted", "muted", "unknown", "muted", "unknown"]);
+        s.stop();
+        until(&saw_, |v| recents(v) >= 1);
+    }
+
+    #[test]
+    fn tab_start_with_nothing_recording_starts_a_meeting_sourced_from_the_tab() {
+        let (s, saw_, _, _tmp) = rig(true, Mic::Allowed, false, Call(vec![]), Duration::from_secs(3600));
+        s.addon(E::TabStart);
+        assert!(s.running().is_some());
+        assert_eq!(s.running().unwrap()["source"], "Teams (Chrome tab)");
+        let card = saw(&saw_).into_iter().rev().find_map(|s| if let Saw::Running(Some(c)) = s { Some(c) } else { None }).unwrap();
+        assert_eq!(card["source"], "Teams (Chrome tab)");
+        s.stop();
+        until(&saw_, |v| recents(v) >= 1);
+    }
+
+    #[test]
+    fn tab_start_with_notes_off_starts_nothing_and_shows_nothing() {
+        let (s, saw_, _, _tmp) = rig(false, Mic::Allowed, false, Call(vec![]), Duration::from_secs(3600));
+        s.addon(E::TabStart);
+        assert_eq!((saw(&saw_), s.running()), (vec![], None));
+    }
+
+    #[test]
+    fn tab_start_during_a_recording_keeps_the_meeting_and_sets_its_source() {
+        let (s, saw_, _tmp) = recording();
+        let id = id_of(&s);
+        s.addon(E::TabStart);
+        let card = s.running().unwrap();
+        assert_eq!((card["id"].as_i64(), card["source"].clone()), (Some(id), "Teams (Chrome tab)".into()));
+        assert_eq!(count(&saw(&saw_), |s| matches!(s, Saw::Place(_))), 0, "no second start");
+        s.stop();
+        until(&saw_, |v| recents(v) >= 1);
+    }
+
+    #[test]
+    fn captions_are_kept_on_the_recording_meeting_and_unavailable_marks_it() {
+        let (s, saw_, _tmp) = recording();
+        let caption = |name: &str, text: Option<&str>| E::Caption { name: name.into(), at: now_ms(), text: text.map(Into::into) };
+        s.addon(caption("  Ana ", Some(" hello ")));
+        s.addon(E::Connected); // ignored
+        s.addon(E::CaptionsUnavailable);
+        let db = s.db.lock().unwrap();
+        let rows: Vec<(String, Option<String>)> = db.prepare("SELECT name, text FROM caption_event").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+        assert_eq!(rows, [("Ana".to_string(), Some("hello".to_string()))]);
+        let captions: Option<String> = db.query_row("SELECT captions FROM meeting", [], |r| r.get(0)).unwrap();
+        assert_eq!(captions.as_deref(), Some("unavailable"));
+        drop(db);
+        s.stop();
+        until(&saw_, |v| recents(v) >= 1);
+    }
 }
