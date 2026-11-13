@@ -117,6 +117,8 @@ test("picking Main by search and Fast by keyboard", async ({ page }) => {
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("ArrowDown");
   await expect(page.getByRole("menuitemradio").nth(1)).toBeFocused();
+  // Like a native menu: the focused item fills with the accent (blue by default).
+  await expect(page.getByRole("menuitemradio").nth(1)).toHaveCSS("background-color", "rgb(10, 100, 216)");
   await page.keyboard.press("Enter");
   await expect(page.getByRole("button", { name: "Ollama on this Mac · llama3.2:3b" })).toBeVisible();
 
