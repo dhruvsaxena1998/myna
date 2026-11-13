@@ -57,6 +57,13 @@ fn spoken(accel: &str) -> String {
         .join(" ")
 }
 
+/// What a save from `side` is refused with: a clash the save brings in, not one the saved settings already had (data
+/// from before the check), so a user with an old clash can still flip a switch or fix one of the two keys.
+pub fn refused(was: (&Voice, &Notes), now: (&Voice, &Notes), side: Side) -> Option<String> {
+    let e = clash(now.0, now.1, side)?;
+    (clash(was.0, was.1, side).as_ref() != Some(&e)).then_some(e)
+}
+
 /// The refusal for giving two actions one key, or None. Takes both features' settings as they'd be after the save, and
 /// the side being saved. Keys clash whether each feature is on or off. Voice typing's keys are walked in order (Dictate,
 /// its second, cleanup, its second); the first repeat names the earlier key's action. The meeting action is "Recording".
@@ -364,6 +371,22 @@ mod tests {
         }
         assert_eq!(clash(&voice(true, "Alt+Space", None, None, None), &notes(true, ""), Side::Voice), None);
         assert_eq!(clash(&voice(true, "Alt+Space", None, None, None), &notes(true, ""), Side::Meeting), None);
+    }
+
+    #[test]
+    fn a_save_is_refused_only_for_a_clash_it_brings_in() {
+        let (n, m) = (notes(false, "Ctrl+Alt+KeyM"), "Ctrl+Alt+KeyM");
+        let (old, clashing) = (voice(true, "Alt+Space", None, None, None), voice(true, m, None, None, None));
+        let says = Some("Control Option M is already the Recording shortcut. Pick another key.".to_string());
+        assert_eq!(refused((&old, &n), (&clashing, &n), Side::Voice), says, "picking the meeting key");
+        // Saved before the check existed: turning voice typing off, or back on, still saves.
+        let off = voice(false, m, None, None, None);
+        assert_eq!(refused((&clashing, &n), (&off, &n), Side::Voice), None);
+        assert_eq!(refused((&off, &n), (&clashing, &n), Side::Voice), None);
+        assert_eq!(refused((&clashing, &n), (&clashing, &notes(true, m)), Side::Meeting), None, "turning notes on");
+        // A second, different clash is still refused.
+        let both = voice(true, m, None, Some("Alt+Space"), Some("Alt+Space"));
+        assert!(refused((&clashing, &n), (&both, &n), Side::Voice).is_some());
     }
 
     #[test]

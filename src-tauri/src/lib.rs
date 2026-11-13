@@ -450,7 +450,7 @@ fn voice_set(app: AppHandle, d: tauri::State<Data>, voice: voice::Voice) -> Resu
         voice_menu(&app, &was);
         Err(e)
     };
-    if let Some(e) = shortcuts::clash(&voice, &notes, shortcuts::Side::Voice) {
+    if let Some(e) = shortcuts::refused((&was, &notes), (&voice, &notes), shortcuts::Side::Voice) {
         return back(e);
     }
     if let Err(e) = voice::set(&d.db.lock().unwrap(), &voice) {
@@ -491,7 +491,7 @@ async fn meeting_set(app: AppHandle, d: tauri::State<'_, Data>, notes: meeting::
         let _ = sync_meeting(&app);
         Err(e)
     };
-    if let Some(e) = shortcuts::clash(&v, &notes, shortcuts::Side::Meeting) {
+    if let Some(e) = shortcuts::refused((&v, &was), (&v, &notes), shortcuts::Side::Meeting) {
         return back(e);
     }
     if let Err(e) = meeting::set(&d.db.lock().unwrap(), &notes) {
