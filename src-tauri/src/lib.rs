@@ -8,6 +8,7 @@ mod feedback;
 mod fnkey;
 mod look;
 mod meeting;
+mod meeting_session;
 mod models;
 mod notify;
 mod permissions;
@@ -33,6 +34,7 @@ use tauri::image::Image;
 use tauri::menu::{Menu, MenuBuilder, MenuItem, MenuItemBuilder, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{ActivationPolicy, AppHandle, Emitter, Listener, Manager, WindowEvent, Wry};
+use meeting_session::MeetingSession;
 use session::Session;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
@@ -485,7 +487,7 @@ async fn meeting_set(app: AppHandle, d: tauri::State<'_, Data>, notes: meeting::
     }
     let _ = sync_shortcut(&app); // unpaused: voice typing takes its shortcuts back; Listen reports a failure
     if !notes.on {
-        stop_meeting(&app);
+        app.state::<Arc<MeetingSession>>().stop();
     }
     Ok(())
 }
@@ -522,12 +524,8 @@ fn storage_reveal(storage: tauri::State<Storage>) -> Result<(), String> {
 
 /// Try again on a meeting whose notes failed. Its progress and result come as `meeting-notes` events.
 #[tauri::command]
-fn meeting_retry(app: AppHandle, id: i64) -> Result<(), String> {
-    if !app.state::<meeting::Meetings>().failed(id) {
-        return Err("That meeting isn't waiting to be tried again.".into());
-    }
-    write_up_meeting(&app, id);
-    Ok(())
+fn meeting_retry(s: tauri::State<Arc<MeetingSession>>, id: i64) -> Result<(), String> {
+    s.retry(id)
 }
 
 /// Every meeting, newest first, for the Meetings list.
@@ -542,62 +540,26 @@ fn meeting_page(d: tauri::State<Data>, id: i64) -> Result<meeting::Page, String>
     meeting::page(&d.db.lock().unwrap(), id)
 }
 
-/// The recording in progress, `{ id, started, source }` (source: the app on the call, once heard), for the Meetings
+/// The recording in progress, `{ id, started, source, mic }` (source: the app on the call, once heard), for the Meetings
 /// list's live card; none when not recording.
 #[tauri::command]
-fn meeting_running(d: tauri::State<Data>, m: tauri::State<meeting::Meetings>) -> Option<serde_json::Value> {
-    let (id, started) = m.running()?;
-    Some(running_json(&d.db.lock().unwrap(), id, started, m.muted()))
+fn meeting_running(s: tauri::State<Arc<MeetingSession>>) -> Option<serde_json::Value> {
+    s.running()
 }
 
-/// `mic`: "live" or "muted" while the add-on mirrors the mute button, else null.
-fn running_json(db: &rusqlite::Connection, id: i64, started: i64, muted: Option<bool>) -> serde_json::Value {
-    let source: Option<String> = db.query_row("SELECT source_app FROM meeting WHERE id = ?1", [id], |r| r.get(0)).ok().flatten();
-    serde_json::json!({ "id": id, "started": started, "source": source, "mic": mic_word(muted) })
-}
-
-fn mic_word(muted: Option<bool>) -> Option<&'static str> {
-    muted.map(|m| if m { "muted" } else { "live" })
-}
-
-/// The Teams mute button changed (or dropped, which is `Unknown`): the timeline, then the pill, menu and live card.
-fn on_mute(app: &AppHandle, state: addon::MuteState, at: i64) {
-    let m = app.state::<meeting::Meetings>();
-    m.mute(state, at, now_ms());
-    let Some((id, started)) = m.running() else { return };
-    show_menu_recording(app, Some((id, started)));
-    pill::meeting(app, Some(started), mic_word(m.muted()));
-    let _ = app.emit("meeting-running", Some(running_json(&app.state::<Data>().db.lock().unwrap(), id, started, m.muted())));
-}
-
-/// What the add-on reports. Mute and a drop (which is `Unknown`) go to the timeline, then the pill, menu and live card;
-/// captions are kept on the meeting for naming its voices; the Teams tab's sound (07.3) starts a meeting if none is recording.
+/// What the add-on reports: Settings hears about its connection here, the Meeting session about the call.
 fn on_addon(app: &AppHandle, e: addon::AddonEvent) {
     use addon::AddonEvent as E;
-    let m = app.state::<meeting::Meetings>();
     match e {
         E::Connected | E::SelectorsChanged => {
             let _ = app.emit("addon-status", true);
         }
         E::Disconnected => {
             let _ = app.emit("addon-status", false);
-            on_mute(app, addon::MuteState::Unknown, now_ms()); // Myna can't see the button anymore
         }
-        E::Mute { state, at } => on_mute(app, state, at),
-        E::Caption { name, at, text } => m.caption(&name, at, text.as_deref(), now_ms()),
-        E::CaptionsUnavailable => m.captions_unavailable(),
-        E::TabAudio { at, ts, samples } => m.tab_audio(at, ts, &samples),
-        E::TabStop => m.tab_stop(),
-        E::TabStart => {
-            if m.running().is_none() {
-                start_meeting(app);
-            }
-            if m.tab_start("Teams (Chrome tab)") {
-                let Some((id, started)) = m.running() else { return };
-                let _ = app.emit("meeting-running", Some(running_json(&app.state::<Data>().db.lock().unwrap(), id, started, m.muted())));
-            }
-        }
+        _ => {}
     }
+    app.state::<Arc<MeetingSession>>().addon(e);
 }
 
 /// "Start notes" and "Stop" in the Meetings list: what the shortcut does.
@@ -811,104 +773,10 @@ fn sync_meeting(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// The menu item's words and the menubar icon's red dot and timer, for a recording that started at `running.1`, or none.
-fn show_menu_recording(app: &AppHandle, running: Option<(i64, i64)>) {
-    let clock = running.map(|(_, started)| meeting::clock(now_ms() - started));
-    if let Some(m) = app.try_state::<MeetItem>() {
-        let _ = m.item.set_text(clock.as_ref().map_or("Start meeting notes".into(), |c| format!("Stop recording  {c}")));
-        // The note says how the mic is while recording; sync_meeting puts the usual words back.
-        match (&clock, app.state::<meeting::Meetings>().muted()) {
-            (Some(_), Some(muted)) => {
-                let _ = m.note.set_text(if muted { "Muted · mirrored from Teams" } else { "Mic live · mirrored from Teams" });
-            }
-            (Some(_), None) => {
-                let _ = m.note.set_text("Mic live");
-            }
-            (None, _) => {
-                let _ = sync_meeting(app);
-            }
-        }
-    }
-    // shortcut: a tray title is plain text, so the dot is the red emoji; draw a red icon if that looks off.
-    if let Some(t) = app.tray_by_id("myna") {
-        let _ = t.set_title(clock.map(|c| format!("🔴 {c}")));
-    }
-}
-
 /// The shortcut, or the menu item: start meeting notes, or stop if recording. Off the main thread, since the mic takes a moment.
 fn toggle_meeting(app: &AppHandle) {
     let app = app.clone();
-    std::thread::spawn(move || {
-        if app.state::<meeting::Meetings>().running().is_some() {
-            stop_meeting(&app);
-        } else {
-            start_meeting(&app);
-        }
-    });
-}
-
-fn start_meeting(app: &AppHandle) {
-    let (d, m) = (app.state::<Data>(), app.state::<meeting::Meetings>());
-    if !meeting::get(&d.db.lock().unwrap()).is_ok_and(|n| n.on) {
-        return;
-    }
-    match permissions::mic() {
-        permissions::Mic::Allowed => {}
-        permissions::Mic::Ask => return permissions::ask_mic(), // macOS's pop-up; the next press records
-        permissions::Mic::Denied => return notify::send("Needs the Microphone", pill::ALLOW),
-    }
-    let id = match m.start(now_ms()) {
-        Ok(id) => id,
-        Err(e) => return notify::send("Couldn’t start meeting notes", &e),
-    };
-    let running = m.running();
-    show_menu_recording(app, running);
-    let _ = app.emit("meeting-running", running.map(|(id, started)| running_json(&d.db.lock().unwrap(), id, started, m.muted())));
-    pill::meeting(app, running.map(|(_, s)| s), mic_word(m.muted()));
-    if let Ok(look) = pill::look(&d.db.lock().unwrap()) {
-        pill::place(app, look.place);
-    }
-    let app = app.clone();
-    std::thread::spawn(move || {
-        // Said once per meeting, over the recording pill; the mic keeps recording either way.
-        let mut warned = false;
-        let mut warn = |app: &AppHandle| {
-            if !std::mem::replace(&mut warned, true) {
-                pill::error(app, "Myna can’t hear the other people on the call", "Your mic is still recording. Allow System Audio in Settings › Meeting notes.");
-            }
-        };
-        if permissions::audio() == permissions::Audio::Denied {
-            warn(&app);
-        }
-        // The elapsed time, until this recording ends.
-        loop {
-            std::thread::sleep(std::time::Duration::from_secs(1));
-            let m = app.state::<meeting::Meetings>();
-            let running = m.running();
-            if running.is_none_or(|(i, _)| i != id) {
-                break;
-            }
-            show_menu_recording(&app, running);
-            if m.deaf() {
-                warn(&app);
-            }
-        }
-    });
-}
-
-/// Stops the recording, keeps it, and starts writing it up.
-fn stop_meeting(app: &AppHandle) {
-    if let Some(a) = app.try_state::<addon::Addon>() {
-        a.stop_tab();
-    }
-    match app.state::<meeting::Meetings>().stop() {
-        Ok(Some(id)) => write_up_meeting(app, id),
-        Ok(None) => {}
-        Err(e) => notify::send("Couldn’t save the recording", &e),
-    }
-    show_menu_recording(app, None);
-    let _ = app.emit("meeting-running", None::<()>);
-    pill::meeting(app, None, None);
+    std::thread::spawn(move || app.state::<Arc<MeetingSession>>().toggle());
 }
 
 /// The transcript as Copy and the AI features may see it: muted lines left out. See `meeting::outgoing`.
@@ -921,26 +789,6 @@ fn meeting_text(d: tauri::State<Data>, id: i64) -> Result<String, String> {
 #[tauri::command]
 fn segments_include(d: tauri::State<Data>, ids: Vec<i64>) -> Result<(), String> {
     meeting::include(&d.db.lock().unwrap(), &ids)
-}
-
-/// Writes up meeting `id` on its own thread. `meeting-notes` says how it's going to every window: the pill, and
-/// 05.4's list card. state is "transcribing" (with progress 0 to 1), "done" or "failed" (with the reason).
-fn write_up_meeting(app: &AppHandle, id: i64) {
-    let app = app.clone();
-    std::thread::spawn(move || {
-        let say = |state: &str, progress: f32, error: Option<&str>| {
-            let _ = app.emit("meeting-notes", serde_json::json!({ "id": id, "state": state, "progress": progress, "error": error }));
-        };
-        say("transcribing", 0.0, None);
-        let session = app.state::<Arc<Session>>();
-        let done = app.state::<meeting::Meetings>().transcribe(id, &**session, &**session, &mut |p| say("transcribing", p, None));
-        session.schedule_unload(); // the model idles out like after a dictation
-        match done {
-            Ok(()) => say("done", 1.0, None),
-            Err(e) => say("failed", 0.0, Some(&e)),
-        }
-        sync_recent(&app);
-    });
 }
 
 /// Puts the last 3 meetings in the menu under "Recent", or takes the section out when there are none.
@@ -1060,7 +908,8 @@ pub fn run() {
                     let keys: Arc<dyn ai::Keys> = Arc::new(ai::Keychain);
                     download::sweep(&models); // before any download can start
                     app.manage(Session::new(world, db.clone(), keys.clone(), models.clone(), models::macos_major(), tap_limit, second));
-                    app.manage(meeting::Meetings::new(db.clone(), dir.clone(), Box::new(meeting::Cpal), Box::new(meeting::Tap)));
+                    let meetings = meeting::Meetings::new(db.clone(), dir.clone(), Box::new(meeting::Cpal), Box::new(meeting::Tap));
+                    app.manage(MeetingSession::new(Box::new(meeting_session::Mac(app.handle().clone())), db.clone(), meetings, second));
                     let handle = app.handle().clone();
                     app.manage(addon::Addon::new(db.clone(), addon::ORIGIN, &addon::PORTS, move |e| on_addon(&handle, e)));
                     app.manage(Data {
@@ -1166,8 +1015,8 @@ pub fn run() {
                     "settings" => open_window(app, "settings"),
                     "update" => open_update(app),
                     "quit" => {
-                        if app.try_state::<meeting::Meetings>().is_some() {
-                            stop_meeting(app); // saved, not cut off
+                        if let Some(s) = app.try_state::<Arc<MeetingSession>>() {
+                            s.stop(); // saved, not cut off
                         }
                         app.exit(0)
                     }
@@ -1184,9 +1033,7 @@ pub fn run() {
             // Meetings the app died or quit in the middle of: finish and write them up.
             if !failed {
                 sync_recent(app.handle());
-                for id in app.state::<meeting::Meetings>().unfinished() {
-                    write_up_meeting(app.handle(), id);
-                }
+                app.state::<Arc<MeetingSession>>().resume();
             }
             if failed {
                 open_window(app.handle(), "settings"); // never fail silently: Settings shows the error

@@ -819,11 +819,11 @@ pub fn clock(ms: i64) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// Hands `on` two seconds of a tone at once, like a mic that already heard it.
-    struct Fake(usize);
+    pub(crate) struct Fake(pub usize);
     impl Mic for Fake {
         fn open(&self, mut on: Sink) -> Result<Stop, String> {
             on(&(0..self.0).map(|i| (i as f32 / 50.0).sin() * 0.5).collect::<Vec<_>>());
@@ -832,9 +832,9 @@ mod tests {
     }
 
     /// A call: hands `on` what's in it at once, heard `at` seconds from now (before, if negative).
-    struct Call(Vec<(f64, Event)>);
+    pub(crate) struct Call(pub Vec<(f64, Event)>);
     #[derive(Clone)]
-    enum Event {
+    pub(crate) enum Event {
         Apps(&'static str),
         Audio(f32, usize),
         Failed,
