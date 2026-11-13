@@ -1168,10 +1168,10 @@ mod tests {
     fn a_diarizer_that_fails_keeps_the_me_them_transcript_and_says_why() {
         let tmp = tempfile::tempdir().unwrap();
         let (m, id, stt, _) = call(tmp.path());
-        m.transcribe(id, &stt, &Voiced(Err("Download Sortformer in Settings › Speech models".into())), &mut |_| {}).unwrap();
+        m.transcribe(id, &stt, &Voiced(Err("Download Sortformer in Settings › Meeting notes".into())), &mut |_| {}).unwrap();
         assert_eq!(lines_of(&m, id), ["Me", "Them", "Them"]);
         assert_eq!(state(&m, id), ("done".into(), None));
-        assert_eq!(note(&m, id).unwrap(), "Couldn't tell voices apart: Download Sortformer in Settings › Speech models");
+        assert_eq!(note(&m, id).unwrap(), "Couldn't tell voices apart: Download Sortformer in Settings › Meeting notes");
         let shown = page(&m.db.lock().unwrap(), id).unwrap().meeting.note;
         assert_eq!(shown, note(&m, id));
     }

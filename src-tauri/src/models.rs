@@ -151,7 +151,8 @@ pub fn list(conn: &Connection, models_dir: &Path, macos: u32, sys: &System) -> R
                 m.installed = if m.system {
                     sys.installed
                 } else if m.sdk {
-                    crate::voz::installed(&models_dir.join(&m.id))
+                    let dir = models_dir.join(&m.id);
+                    if m.id == "who" { crate::who::installed(&dir) } else { crate::voz::installed(&dir) }
                 } else { is_installed(m, models_dir) && (rt_there || !m.runtime) };
                 if m.runtime && !rt_there {
                     m.size += rt.size; // one combined size

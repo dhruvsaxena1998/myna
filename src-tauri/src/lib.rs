@@ -21,6 +21,7 @@ mod trace;
 mod update;
 mod voice;
 mod voz;
+mod who;
 
 use rusqlite::Connection;
 use std::collections::HashMap;
@@ -135,7 +136,9 @@ fn model_download(app: AppHandle, d: tauri::State<Data>, id: String) -> Result<(
             apple::download(|done| progress((done.clamp(0.0, 1.0) * 100.0) as u64)).map(|()| true)
         } else if m.sdk {
             // shortcut: the SDK's download can't be canceled, so the row shows no Cancel; add one if users ask.
-            voz::download(&dir.join(&m.id), |done| progress((done.clamp(0.0, 1.0) * 100.0) as u64)).map(|()| true)
+            let pct = |done: f64| progress((done.clamp(0.0, 1.0) * 100.0) as u64);
+            let dir = dir.join(&m.id);
+            if m.id == "who" { who::download(&dir, pct) } else { voz::download(&dir, pct) }.map(|()| true)
         } else {
             let get = |x: &models::Model, p: &mut dyn FnMut(u64)| download::fetch(download::HF, x, &dir, &cancel, p);
             download::install(&m, &dir, &get, &mut progress)
