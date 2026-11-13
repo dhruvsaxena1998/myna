@@ -438,20 +438,28 @@ fn voice_get(d: tauri::State<Data>) -> Result<voice::Voice, String> {
     voice::get(&d.db.lock().unwrap())
 }
 
-/// Saves voice typing's settings and registers the shortcut at once. If macOS won't take the new
-/// shortcut (another app has it), puts everything back as it was and says so.
+/// Saves voice typing's settings and registers the shortcut at once. A key another action already has, or one
+/// macOS won't give (another app has it), puts everything back as it was and says so. Either way the recorder
+/// is done, so the paused keys come back.
 #[tauri::command]
 fn voice_set(app: AppHandle, d: tauri::State<Data>, voice: voice::Voice) -> Result<(), String> {
     let was = voice::get(&d.db.lock().unwrap())?;
-    voice::set(&d.db.lock().unwrap(), &voice)?;
-    // A recorder saving its pick is done recording: unpaused, both groups take their keys.
     let notes = meeting::get(&d.db.lock().unwrap())?;
-    let (voice_keys, _) = app.state::<Shortcuts>().pause(false, &voice, &notes); // meeting notes' own page reports its failure
-    if let Err(e) = voice_keys {
-        voice::set(&d.db.lock().unwrap(), &was)?;
+    let back = |e: String| {
         let _ = app.state::<Shortcuts>().pause(false, &was, &notes);
         voice_menu(&app, &was);
-        return Err(e);
+        Err(e)
+    };
+    if let Some(e) = shortcuts::clash(&voice, &notes, shortcuts::Side::Voice) {
+        return back(e);
+    }
+    if let Err(e) = voice::set(&d.db.lock().unwrap(), &voice) {
+        return back(e);
+    }
+    // Meeting notes' own page reports its failure to take its key back.
+    if let (Err(e), _) = app.state::<Shortcuts>().pause(false, &voice, &notes) {
+        voice::set(&d.db.lock().unwrap(), &was)?;
+        return back(e);
     }
     voice_menu(&app, &voice);
     Ok(())
@@ -477,9 +485,18 @@ fn meeting_get(d: tauri::State<Data>) -> Result<meeting::Notes, String> {
 #[tauri::command]
 async fn meeting_set(app: AppHandle, d: tauri::State<'_, Data>, notes: meeting::Notes) -> Result<(), String> {
     let was = meeting::get(&d.db.lock().unwrap())?;
-    meeting::set(&d.db.lock().unwrap(), &notes)?;
-    // A recorder saving its pick is done recording: unpaused, both groups take their keys.
     let v = voice::get(&d.db.lock().unwrap())?;
+    let back = |e: String| {
+        let _ = app.state::<Shortcuts>().pause(false, &v, &was);
+        let _ = sync_meeting(&app);
+        Err(e)
+    };
+    if let Some(e) = shortcuts::clash(&v, &notes, shortcuts::Side::Meeting) {
+        return back(e);
+    }
+    if let Err(e) = meeting::set(&d.db.lock().unwrap(), &notes) {
+        return back(e);
+    }
     let (voice_keys, meeting_key) = app.state::<Shortcuts>().pause(false, &v, &notes);
     if voice_keys.is_err() {
         eprintln!("dictation: couldn't take the keys back"); // Listen reports a failure
@@ -487,9 +504,7 @@ async fn meeting_set(app: AppHandle, d: tauri::State<'_, Data>, notes: meeting::
     voice_menu(&app, &v);
     if let Err(e) = meeting_key {
         meeting::set(&d.db.lock().unwrap(), &was)?;
-        let _ = app.state::<Shortcuts>().pause(false, &v, &was);
-        let _ = sync_meeting(&app);
-        return Err(e);
+        return back(e);
     }
     let _ = sync_meeting(&app);
     if !notes.on {

@@ -6,7 +6,8 @@ const SHIPPED: Record<string, string> = { default: BASE, code: BASE + " Keep cod
 const style = (id: string, name: string, apps: string[], text = SHIPPED[id] ?? BASE, extra = {}) => ({ id, name, apps, text, shipped: SHIPPED[id] ?? null, newer: false, ...extra });
 const STYLES = [style("default", "Default", []), style("code", "Code", ["Xcode", "Cursor"]), style("message", "Message", ["Slack"], "Keep it casual and short.", { newer: true }), style("email", "Email", ["Mail"])];
 
-// `voice_set` fails for any shortcut using Ctrl+Alt, like a shortcut another app holds.
+// `voice_set` answers like the backend: a key another action has is refused naming it (the fake's Recording shortcut
+// is Ctrl+Alt+KeyM), and any other Ctrl+Alt key fails like a shortcut another app holds.
 // `__globe` stands for the 🌐 key's setting being Do Nothing.
 async function open(page: Page, key = "Alt+Space", globe = false, extra: { clean?: string | null; ai?: object; at?: string; on?: boolean } = {}) {
   await page.addInitScript((g) => ((window as any).__globe = g), globe);
@@ -21,7 +22,14 @@ async function open(page: Page, key = "Alt+Space", globe = false, extra: { clean
     },
     ai_get: () => (${JSON.stringify(extra.ai ?? { providers: [], main: null, fast: null })}),
     globe_ok: () => window.__globe, globe_open: () => {},
-    voice_set: ({ voice }) => { if (voice.key.startsWith("Ctrl+Alt")) throw "Another app is using that shortcut. Pick a different one."; },
+    voice_set: ({ voice }) => {
+      const say = { "Alt+Space": "Option Space", PageDown: "Page Down", "Ctrl+Shift+KeyC": "Control Shift C", "Ctrl+Alt+KeyM": "Control Option M" };
+      const keys = [["Dictate", voice.key], ["Dictate", voice.key2], ["Dictate with cleanup", voice.clean], ["Dictate with cleanup", voice.clean2]].filter(([, k]) => k);
+      const twice = keys.find(([, k], i) => keys.slice(0, i).some(([, o]) => o === k));
+      if (twice) throw say[twice[1]] + " is already the " + keys.find(([, k]) => k === twice[1])[0] + " shortcut. Pick another key.";
+      if (keys.some(([, k]) => k === "Ctrl+Alt+KeyM")) throw say["Ctrl+Alt+KeyM"] + " is already the Recording shortcut. Pick another key.";
+      if (voice.key.startsWith("Ctrl+Alt")) throw "Another app is using that shortcut. Pick a different one.";
+    },
     voice_pause: () => {},
   }`);
   await page.goto("/settings");
@@ -237,8 +245,8 @@ test("a key Meeting notes already uses is refused, naming it", async ({ page }) 
   await dictateKey(page).click();
   await page.keyboard.press("Control+Alt+KeyM");
   await expect(page.getByText("Control Option M is already the Recording shortcut. Pick another key.")).toBeVisible();
-  expect(await calls(page, "voice_set")).toEqual([]);
-  expect((await calls(page, "voice_pause")).at(-1)).toEqual({ paused: false });
+  await expect(dictateKey(page)).toHaveText("⌥Space");
+  await expect(dictateKey(page)).toBeFocused();
 });
 
 test("a key already used by the other shortcut is refused with the reason", async ({ page }) => {
@@ -246,8 +254,7 @@ test("a key already used by the other shortcut is refused with the reason", asyn
   await cleanRow(page).getByRole("button", { name: "Set the Dictate with cleanup shortcut" }).click();
   await page.keyboard.press("Alt+Space");
   await expect(page.getByText("Option Space is already the Dictate shortcut. Pick another key.")).toBeVisible();
-  expect(await calls(page, "voice_set")).toEqual([]);
-  expect((await calls(page, "voice_pause")).at(-1)).toEqual({ paused: false });
+  await expect(cleanRow(page).getByRole("button", { name: "Set the Dictate with cleanup shortcut" })).toBeFocused(); // the old (no) key stays
   // And the other way round.
   await dictateKey(page).click();
   await page.keyboard.press("Control+Shift+KeyC");

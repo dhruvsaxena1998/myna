@@ -29,6 +29,58 @@ pub trait Registrar: Send + Sync + 'static {
     fn watch_fn(&self);
 }
 
+/// Which feature's settings are being saved.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Side {
+    Voice,
+    Meeting,
+}
+
+/// Words for a key, as the Settings page says them to screen readers: "Control Shift D".
+fn spoken(accel: &str) -> String {
+    accel
+        .split('+')
+        .map(|k| match k {
+            "Ctrl" => "Control".into(),
+            "Alt" => "Option".into(),
+            "Shift" => "Shift".into(),
+            "Super" => "Command".into(),
+            "Fn" => "fn".into(),
+            "Comma" => ",".into(), "Period" => ".".into(), "Slash" => "/".into(), "Semicolon" => ";".into(), "Quote" => "'".into(),
+            "BracketLeft" => "[".into(), "BracketRight" => "]".into(), "Backslash" => "\\".into(), "Minus" => "-".into(),
+            "Equal" => "=".into(), "Backquote" => "`".into(), "Enter" => "Return".into(),
+            "ArrowUp" => "↑".into(), "ArrowDown" => "↓".into(), "ArrowLeft" => "←".into(), "ArrowRight" => "→".into(),
+            "PageUp" => "Page Up".into(), "PageDown" => "Page Down".into(),
+            _ => k.strip_prefix("Key").or_else(|| k.strip_prefix("Digit")).unwrap_or(k).to_string(),
+        })
+        .collect::<Vec<String>>()
+        .join(" ")
+}
+
+/// The refusal for giving two actions one key, or None. Takes both features' settings as they'd be after the save, and
+/// the side being saved. Keys clash whether each feature is on or off. Voice typing's keys are walked in order (Dictate,
+/// its second, cleanup, its second); the first repeat names the earlier key's action. The meeting action is "Recording".
+pub fn clash(v: &Voice, n: &Notes, side: Side) -> Option<String> {
+    let msg = |key: &str, action: &str| Some(format!("{} is already the {action} shortcut. Pick another key.", spoken(key)));
+    let name = |clean: bool| if clean { "Dictate with cleanup" } else { "Dictate" };
+    let keys = v.keys();
+    if side == Side::Voice {
+        for (i, (k, _)) in keys.iter().enumerate() {
+            if let Some((_, was)) = keys[..i].iter().find(|(o, _)| o == k) {
+                return msg(k, name(*was));
+            }
+        }
+    }
+    if n.key.is_empty() {
+        return None;
+    }
+    let (k, clean) = keys.iter().find(|(k, _)| *k == n.key)?;
+    match side {
+        Side::Voice => msg(k, "Recording"),
+        Side::Meeting => msg(k, name(*clean)),
+    }
+}
+
 /// One feature's keys: what's registered now, with whether each runs Dictate with cleanup (always false for meeting notes).
 #[derive(Default)]
 struct Group {
@@ -253,6 +305,65 @@ mod tests {
         s.sync_voice(&voice(true, "Alt+D", None, Some("Alt+Space"), None)).unwrap();
         assert_eq!(f.calls(), ["+Alt+D"]);
         assert_eq!(s.dispatch(&key("Alt+Space"), true), Some(Do::Dictate { pressed: true, clean: true }));
+    }
+
+    #[test]
+    fn spoken_keys_read_as_the_settings_page_says_them() {
+        for (k, says) in [
+            ("Alt+Space", "Option Space"), ("Ctrl+Shift+KeyC", "Control Shift C"), ("PageDown", "Page Down"), ("PageUp", "Page Up"),
+            ("Fn", "fn"), ("Ctrl+Alt+KeyM", "Control Option M"), ("Super+Digit1", "Command 1"), ("Alt+Enter", "Option Return"),
+            ("Ctrl+ArrowLeft", "Control ←"), ("Alt+Comma", "Option ,"), ("Alt+Backslash", "Option \\"), ("End", "End"),
+        ] {
+            assert_eq!(spoken(k), says);
+        }
+    }
+
+    #[test]
+    fn a_repeated_voice_key_names_the_action_that_had_it_first_on_or_off() {
+        let n = notes(false, "");
+        for (v, says) in [
+            (voice(true, "Alt+Space", Some("Fn"), Some("Alt+C"), None), None),
+            (voice(true, "Fn", Some("Fn"), None, None), Some("fn is already the Dictate shortcut. Pick another key.")),
+            (voice(false, "Alt+Space", None, Some("Alt+Space"), None), Some("Option Space is already the Dictate shortcut. Pick another key.")),
+            (voice(true, "Fn", Some("PageDown"), Some("Alt+Space"), Some("PageDown")), Some("Page Down is already the Dictate shortcut. Pick another key.")),
+            (voice(true, "Fn", Some("PageDown"), Some("Alt+Space"), Some("Alt+Space")), Some("Option Space is already the Dictate with cleanup shortcut. Pick another key.")),
+        ] {
+            assert_eq!(clash(&v, &n, Side::Voice).as_deref(), says);
+        }
+    }
+
+    #[test]
+    fn any_voice_key_equal_to_the_meeting_key_is_refused_from_the_voice_side_naming_recording() {
+        let n = notes(true, "Ctrl+Alt+KeyM");
+        let m = "Ctrl+Alt+KeyM";
+        for v in [
+            voice(true, m, None, None, None),
+            voice(true, "Alt+Space", Some(m), None, None),
+            voice(true, "Alt+Space", None, Some(m), None),
+            voice(true, "Alt+Space", None, Some("Alt+C"), Some(m)),
+        ] {
+            assert_eq!(clash(&v, &n, Side::Voice).as_deref(), Some("Control Option M is already the Recording shortcut. Pick another key."));
+        }
+    }
+
+    #[test]
+    fn the_meeting_key_equal_to_a_voice_key_is_refused_from_the_meeting_side_naming_that_action() {
+        let n = notes(true, "Ctrl+Alt+KeyM");
+        let m = "Ctrl+Alt+KeyM";
+        assert_eq!(clash(&voice(true, "Alt+Space", Some(m), None, None), &n, Side::Meeting).as_deref(), Some("Control Option M is already the Dictate shortcut. Pick another key."));
+        assert_eq!(clash(&voice(true, "Alt+Space", None, Some(m), None), &n, Side::Meeting).as_deref(), Some("Control Option M is already the Dictate with cleanup shortcut. Pick another key."));
+        assert_eq!(clash(&all(), &n, Side::Meeting), None);
+    }
+
+    #[test]
+    fn keys_clash_whether_a_feature_is_on_or_off_but_no_key_never_clashes() {
+        let m = "Alt+Space";
+        for (von, non) in [(true, true), (true, false), (false, true), (false, false)] {
+            let (v, n) = (voice(von, "Alt+Space", None, None, None), notes(non, m));
+            assert!(clash(&v, &n, Side::Voice).is_some() && clash(&v, &n, Side::Meeting).is_some(), "voice {von}, notes {non}");
+        }
+        assert_eq!(clash(&voice(true, "Alt+Space", None, None, None), &notes(true, ""), Side::Voice), None);
+        assert_eq!(clash(&voice(true, "Alt+Space", None, None, None), &notes(true, ""), Side::Meeting), None);
     }
 
     #[test]

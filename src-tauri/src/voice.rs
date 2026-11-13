@@ -85,14 +85,9 @@ pub fn set(conn: &Connection, v: &Voice) -> Result<(), String> {
         return Err(format!("{} can't be a shortcut.", v.key));
     }
     let keys = v.keys();
-    for (i, (k, _)) in keys.iter().enumerate() {
+    for (k, _) in &keys {
         if !valid(k) {
             return Err(format!("{k} can't be a shortcut."));
-        }
-        // The earlier one names the action the key already belongs to.
-        if let Some((_, was_clean)) = keys[..i].iter().find(|(o, _)| o == k) {
-            let other = if *was_clean { "Dictate with cleanup" } else { "Dictate" };
-            return Err(format!("{k} is already the {other} shortcut. Pick another key."));
         }
     }
     if v.clean2.is_some() && v.clean.is_none() {
@@ -140,7 +135,6 @@ mod tests {
         let with = |c: Option<&str>| Voice { clean: c.map(Into::into), ..v.clone() };
         set(&conn, &with(Some("Alt+Shift+Space"))).unwrap();
         assert_eq!(get(&conn).unwrap().clean.as_deref(), Some("Alt+Shift+Space"));
-        assert!(set(&conn, &with(Some("Alt+Space"))).unwrap_err().contains("already the Dictate shortcut"));
         assert!(set(&conn, &with(Some("Alt+Nope"))).is_err());
         assert_eq!(get(&conn).unwrap().clean.as_deref(), Some("Alt+Shift+Space"), "a refused save changes nothing");
         set(&conn, &with(None)).unwrap();
@@ -157,7 +151,7 @@ mod tests {
     }
 
     #[test]
-    fn each_action_takes_a_second_key_and_no_key_is_used_twice() {
+    fn each_action_takes_a_second_key() {
         let tmp = tempfile::tempdir().unwrap();
         let conn = crate::storage::open(tmp.path()).unwrap();
         let v = Voice { key: "Fn".into(), key2: Some("PageDown".into()), clean: Some("Alt+Space".into()), clean2: Some("End".into()), ..get(&conn).unwrap() };
@@ -165,9 +159,6 @@ mod tests {
         assert_eq!(get(&conn), Ok(v.clone()));
         assert!(v.is_clean("End") && v.is_clean("Alt+Space") && !v.is_clean("PageDown") && !v.is_clean("Fn"));
         for (bad, says) in [
-            (Voice { key2: Some("Fn".into()), ..v.clone() }, "Fn is already the Dictate shortcut"),
-            (Voice { clean2: Some("PageDown".into()), ..v.clone() }, "PageDown is already the Dictate shortcut"),
-            (Voice { clean2: Some("Alt+Space".into()), ..v.clone() }, "Alt+Space is already the Dictate with cleanup shortcut"),
             (Voice { key2: Some("Alt+Nope".into()), ..v.clone() }, "can't be a shortcut"),
             (Voice { clean: None, ..v.clone() }, "first Dictate with cleanup key"),
         ] {

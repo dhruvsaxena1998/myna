@@ -243,7 +243,7 @@
             {#if !voice}
               <ErrorState title="Myna couldn't read voice typing's settings" message={data.voice?.ok === false ? data.voice.error : ""} />
             {:else}
-              <VoiceShortcut bind:voice globe={data.globe} {ai} perms={data.perms} setup={() => go("ai")} meetKey={notes?.key ?? ""} />
+              <VoiceShortcut bind:voice globe={data.globe} {ai} perms={data.perms} setup={() => go("ai")} />
               {#if voice.on}
                 {#if data.look?.ok}<PillLook initial={data.look.look} listening={{ state: "listening", hold: voice.mode === "hold", key: voice.key }} />
                 {:else}<ErrorState title="Myna couldn't read the pill's look" message={data.look?.error ?? ""} />{/if}
@@ -292,7 +292,7 @@
               <Write bind:voice {ai} {cleanup} perms={data.perms} {go} {open} />
             {/if}
           {:else if view.page === "meetings"}
-            {#if notes}<MeetingNotes bind:notes {voice} perms={data.perms} bind:connected={addonOn} bind:code={addonCode} loadError={data.addon?.ok === false ? data.addon.error : ""}>
+            {#if notes}<MeetingNotes bind:notes perms={data.perms} bind:connected={addonOn} bind:code={addonCode} loadError={data.addon?.ok === false ? data.addon.error : ""}>
               {#snippet models()}
                 {#if meet || diar}
                   {@const pick = meet?.models.find((m) => m.id === meetActive)}

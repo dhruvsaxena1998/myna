@@ -31,9 +31,3 @@ export function fromKey(e: KeyboardEvent): string | null | { error: string } {
   if (types && mods.every((m) => m === "Shift")) return { error: "Add ⌘, ⌥ or ⌃, so the key still types normally." };
   return [...mods, e.code].join("+");
 }
-
-/** The error for a key another shortcut already holds, or null. `held` is every other shortcut's [name, key], on any page. */
-export function clash(key: string, held: [string, string | null | undefined][]): string | null {
-  const other = held.find(([, k]) => k === key);
-  return other ? `${spoken(key)} is already the ${other[0]} shortcut. Pick another key.` : null;
-}
