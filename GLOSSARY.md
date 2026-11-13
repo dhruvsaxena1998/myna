@@ -87,6 +87,12 @@ _Avoid_: mode, tone, preset
 True when a request goes to a host other than this Mac's loopback address, including another machine on the LAN. Off-device features carry the "sends text off this Mac" pill.
 _Avoid_: cloud, remote
 
+## Shortcuts
+
+**Shortcut**:
+A key or key combination, set in Settings, that runs one action from any app: Dictate, Dictate with cleanup, or starting and stopping meeting notes. One key runs one action. The Shortcuts module registers them with macOS and decides which action a press runs.
+_Avoid_: hotkey, keybinding
+
 ## Updates
 
 **Channel**:

@@ -16,6 +16,7 @@ mod pill;
 mod rules;
 mod runtime;
 mod session;
+mod shortcuts;
 mod speakers;
 mod storage;
 mod trace;
@@ -36,7 +37,8 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{ActivationPolicy, AppHandle, Emitter, Listener, Manager, WindowEvent, Wry};
 use meeting_session::MeetingSession;
 use session::Session;
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
+use shortcuts::{Do, Shortcuts};
+use tauri_plugin_global_shortcut::{Shortcut, ShortcutState};
 
 /// Result of creating the data folder and database: the folder path, or the error to show.
 struct Storage(Result<String, String>);
@@ -48,10 +50,6 @@ struct Data {
     macos: u32,
     /// Model id -> cancel flag, for each download in progress.
     downloads: Mutex<HashMap<String, Arc<AtomicBool>>>,
-    /// The shortcuts registered with macOS right now: Dictate's keys, and Dictate with cleanup's if set.
-    shortcut: Mutex<Vec<String>>,
-    /// Set while Settings records a new shortcut, so pressing the old one types into the recorder.
-    paused: AtomicBool,
     /// The meeting notes shortcut registered with macOS right now.
     meeting_shortcut: Mutex<Option<String>>,
     /// API keys for AI providers: the Keychain.
@@ -448,7 +446,7 @@ fn voice_get(d: tauri::State<Data>) -> Result<voice::Voice, String> {
 fn voice_set(app: AppHandle, d: tauri::State<Data>, voice: voice::Voice) -> Result<(), String> {
     let was = voice::get(&d.db.lock().unwrap())?;
     voice::set(&d.db.lock().unwrap(), &voice)?;
-    d.paused.store(false, Ordering::SeqCst);
+    app.state::<Shortcuts>().set_paused(false);
     if let Err(e) = sync_shortcut(&app) {
         voice::set(&d.db.lock().unwrap(), &was)?;
         let _ = sync_shortcut(&app);
@@ -462,8 +460,8 @@ fn voice_set(app: AppHandle, d: tauri::State<Data>, voice: voice::Voice) -> Resu
 /// Lets go of every shortcut (voice typing's and meeting notes') while Settings records a new one, and takes them back after.
 #[tauri::command]
 fn voice_pause(app: AppHandle, d: tauri::State<Data>, paused: bool) -> Result<(), String> {
-    d.paused.store(paused, Ordering::SeqCst);
-    let voice = sync_shortcut(&app);
+    let v = voice::get(&d.db.lock().unwrap())?;
+    let voice = app.state::<Shortcuts>().pause(paused, &v).map(|()| voice_menu(&app, &v));
     sync_meeting(&app).and(voice)
 }
 
@@ -478,7 +476,7 @@ fn meeting_get(d: tauri::State<Data>) -> Result<meeting::Notes, String> {
 async fn meeting_set(app: AppHandle, d: tauri::State<'_, Data>, notes: meeting::Notes) -> Result<(), String> {
     let was = meeting::get(&d.db.lock().unwrap())?;
     meeting::set(&d.db.lock().unwrap(), &notes)?;
-    d.paused.store(false, Ordering::SeqCst); // a recorder saving its pick is done recording
+    app.state::<Shortcuts>().set_paused(false); // a recorder saving its pick is done recording
     if let Err(e) = sync_meeting(&app) {
         meeting::set(&d.db.lock().unwrap(), &was)?;
         let _ = sync_meeting(&app);
@@ -692,42 +690,21 @@ fn tell_update(app: &AppHandle, mode: &str, manual: bool) {
     }
 }
 
-/// Registers the saved shortcuts while voice typing is on (and not paused), and drops them otherwise.
-/// The new ones are taken before the old ones go, so a failure leaves the old ones working.
+/// Registers the saved voice typing keys through the Shortcuts module, then sets the menu items to match.
 fn sync_shortcut(app: &AppHandle) -> Result<(), String> {
-    let d = app.state::<Data>();
-    let v = voice::get(&d.db.lock().unwrap())?;
-    let want: Vec<String> = if v.on && !d.paused.load(Ordering::SeqCst) { v.keys().into_iter().map(|(k, _)| k).collect() } else { vec![] };
-    let mut have = d.shortcut.lock().unwrap();
-    if *have != want {
-        let gs = app.global_shortcut();
-        let mut taken = vec![];
-        for k in want.iter().filter(|k| *k != voice::FN && !have.contains(k)) {
-            if let Err(e) = gs.register(k.as_str()) {
-                eprintln!("dictation: couldn't use {k}: {e}");
-                taken.iter().for_each(|k: &&String| drop(gs.unregister(k.as_str())));
-                return Err("Another app is using that shortcut. Pick a different one.".into());
-            }
-            taken.push(k);
-        }
-        for k in have.iter().filter(|k| *k != voice::FN && !want.contains(k)) {
-            let _ = gs.unregister(k.as_str());
-        }
-        *have = want;
-    }
-    drop(have);
-    // The recorder hears fn from the tap too, so it watches while paused.
-    if v.on && (v.keys().iter().any(|(k, _)| k == voice::FN) || d.paused.load(Ordering::SeqCst)) {
-        let app = app.clone();
-        fnkey::watch(move |down| on_fn(&app, down));
-    }
+    let v = voice::get(&app.state::<Data>().db.lock().unwrap())?;
+    app.state::<Shortcuts>().sync(&v)?;
+    voice_menu(app, &v);
+    Ok(())
+}
+
+fn voice_menu(app: &AppHandle, v: &voice::Voice) {
     if let Some(item) = app.try_state::<VoiceItem>() {
         // A menu can't show fn alone as its shortcut.
         let _ = item.0.set_accelerator((v.key != voice::FN).then_some(v.key.as_str()));
         let _ = item.0.set_enabled(v.on);
     }
     sync_clean_item(app);
-    Ok(())
 }
 
 /// The shortcut to register: none while off, empty, or paused for a recorder in Settings.
@@ -739,9 +716,10 @@ fn meeting_want(n: &meeting::Notes, paused: bool) -> Option<String> {
 fn sync_meeting(app: &AppHandle) -> Result<(), String> {
     let d = app.state::<Data>();
     let n = meeting::get(&d.db.lock().unwrap())?;
-    let want = meeting_want(&n, d.paused.load(Ordering::SeqCst));
+    let want = meeting_want(&n, app.state::<Shortcuts>().paused());
     let mut have = d.meeting_shortcut.lock().unwrap();
     if *have != want {
+        use tauri_plugin_global_shortcut::GlobalShortcutExt;
         let gs = app.global_shortcut();
         if let Some(k) = &want {
             gs.register(k.as_str()).map_err(|e| {
@@ -849,15 +827,18 @@ fn sync_clean_item(app: &AppHandle) {
 
 /// fn went down or up: a voice typing key if fn is one of the shortcuts, the recorder's pick while Settings records one.
 fn on_fn(app: &AppHandle, down: bool) {
-    let d = app.state::<Data>();
-    if d.paused.load(Ordering::SeqCst) {
-        // On release, so the release of this press doesn't reach the new shortcut.
-        if !down {
+    let todo = app.state::<Shortcuts>().dispatch_fn(down);
+    act(app, todo);
+}
+
+/// Does what the Shortcuts module said.
+fn act(app: &AppHandle, todo: Option<Do>) {
+    match todo {
+        Some(Do::Dictate { pressed, clean }) => app.state::<Arc<Session>>().key(pressed, clean),
+        Some(Do::TellSettings) => {
             let _ = app.emit_to("settings", "voice-fn", ());
         }
-    } else if d.shortcut.lock().unwrap().iter().any(|k| k == voice::FN) {
-        let clean = voice::get(&d.db.lock().unwrap()).is_ok_and(|v| v.is_clean(voice::FN));
-        app.state::<Arc<Session>>().key(down, clean);
+        None => {}
     }
 }
 
@@ -917,11 +898,10 @@ pub fn run() {
                         models_dir: models,
                         macos: models::macos_major(),
                         downloads: Default::default(),
-                        shortcut: Default::default(),
-                        paused: Default::default(),
                         meeting_shortcut: Default::default(),
                         keys,
                     });
+                    app.manage(Shortcuts::new(Box::new(shortcuts::Mac(app.handle().clone()))));
                     app.handle().plugin(
                         tauri_plugin_global_shortcut::Builder::new()
                             .with_handler(|app, shortcut, e| {
@@ -932,17 +912,15 @@ pub fn run() {
                                     }
                                     return;
                                 }
-                                let keys = voice::get(&app.state::<Data>().db.lock().unwrap()).map(|v| v.keys()).unwrap_or_default();
-                                let mine = keys.iter().find(|(k, _)| k.parse::<Shortcut>().ok().as_ref() == Some(shortcut));
-                                let session = app.state::<Arc<Session>>();
+                                let todo = app.state::<Shortcuts>().dispatch(shortcut, e.state() == ShortcutState::Pressed);
                                 // Esc is caught only while recording (Session::start), and never when it's a voice typing key.
-                                if mine.is_none() && shortcut.key == tauri_plugin_global_shortcut::Code::Escape {
+                                if todo.is_none() && shortcut.key == tauri_plugin_global_shortcut::Code::Escape {
                                     if e.state() == ShortcutState::Pressed {
-                                        session.cancel();
+                                        app.state::<Arc<Session>>().cancel();
                                     }
                                     return;
                                 }
-                                session.key(e.state() == ShortcutState::Pressed, mine.is_some_and(|(_, c)| *c))
+                                act(app, todo);
                             })
                             .build(),
                     )?;
