@@ -122,3 +122,7 @@ _Avoid_: accuracy, error rate
 **Add-on protocol**:
 The messages and audio frames on the browser add-on's socket, in both directions. `tests/extension/protocol.json` defines them, and Myna's tests and the add-on's tests both check their code against that file.
 _Avoid_: API, wire format
+
+**Add-on event**:
+What the add-on module reports to the app, as one enum: connected, selectors changed, disconnected, mute, caption, captions unavailable and the tab's start, audio and stop. The app handles every event in one match.
+_Avoid_: add-on message, callback

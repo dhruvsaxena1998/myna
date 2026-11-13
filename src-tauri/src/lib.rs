@@ -560,17 +560,7 @@ fn mic_word(muted: Option<bool>) -> Option<&'static str> {
     muted.map(|m| if m { "muted" } else { "live" })
 }
 
-/// The add-on read a caption off Teams, or says it can't: kept on the meeting for naming its voices.
-fn on_caption(app: &AppHandle, m: addon::Msg) {
-    let meetings = app.state::<meeting::Meetings>();
-    match m {
-        addon::Msg::Caption { name, at, text } => meetings.caption(&name, at, text.as_deref(), now_ms()),
-        addon::Msg::Captions { .. } => meetings.captions_unavailable(),
-        _ => {}
-    }
-}
-
-/// The add-on saw the Teams mute button change (or dropped, which is `Unknown`): the timeline, then the pill, menu and live card.
+/// The Teams mute button changed (or dropped, which is `Unknown`): the timeline, then the pill, menu and live card.
 fn on_mute(app: &AppHandle, state: addon::MuteState, at: i64) {
     let m = app.state::<meeting::Meetings>();
     m.mute(state, at, now_ms());
@@ -580,13 +570,25 @@ fn on_mute(app: &AppHandle, state: addon::MuteState, at: i64) {
     let _ = app.emit("meeting-running", Some(running_json(&app.state::<Data>().db.lock().unwrap(), id, started, m.muted())));
 }
 
-/// The add-on streams the Teams tab's sound (07.3): a start begins a meeting if none is recording.
-fn on_tab(app: &AppHandle, t: addon::Tab) {
+/// What the add-on reports. Mute and a drop (which is `Unknown`) go to the timeline, then the pill, menu and live card;
+/// captions are kept on the meeting for naming its voices; the Teams tab's sound (07.3) starts a meeting if none is recording.
+fn on_addon(app: &AppHandle, e: addon::AddonEvent) {
+    use addon::AddonEvent as E;
     let m = app.state::<meeting::Meetings>();
-    match t {
-        addon::Tab::Audio { at, ts, samples } => m.tab_audio(at, ts, &samples),
-        addon::Tab::Stop => m.tab_stop(),
-        addon::Tab::Start => {
+    match e {
+        E::Connected | E::SelectorsChanged => {
+            let _ = app.emit("addon-status", true);
+        }
+        E::Disconnected => {
+            let _ = app.emit("addon-status", false);
+            on_mute(app, addon::MuteState::Unknown, now_ms()); // Myna can't see the button anymore
+        }
+        E::Mute { state, at } => on_mute(app, state, at),
+        E::Caption { name, at, text } => m.caption(&name, at, text.as_deref(), now_ms()),
+        E::CaptionsUnavailable => m.captions_unavailable(),
+        E::TabAudio { at, ts, samples } => m.tab_audio(at, ts, &samples),
+        E::TabStop => m.tab_stop(),
+        E::TabStart => {
             if m.running().is_none() {
                 start_meeting(app);
             }
@@ -1060,16 +1062,7 @@ pub fn run() {
                     app.manage(Session::new(world, db.clone(), keys.clone(), models.clone(), models::macos_major(), tap_limit, second));
                     app.manage(meeting::Meetings::new(db.clone(), dir.clone(), Box::new(meeting::Cpal), Box::new(meeting::Tap)));
                     let handle = app.handle().clone();
-                    let on_drop = handle.clone();
-                    let for_mute = handle.clone();
-                    let for_tab = handle.clone();
-                    let for_caption = handle.clone();
-                    app.manage(addon::Addon::new(db.clone(), addon::ORIGIN, &addon::PORTS, move |connected| {
-                        let _ = handle.emit("addon-status", connected);
-                        if !connected {
-                            on_mute(&on_drop, addon::MuteState::Unknown, now_ms()); // Myna can't see the button anymore
-                        }
-                    }, move |state, at| on_mute(&for_mute, state, at), move |m| on_caption(&for_caption, m), move |t| on_tab(&for_tab, t)));
+                    app.manage(addon::Addon::new(db.clone(), addon::ORIGIN, &addon::PORTS, move |e| on_addon(&handle, e)));
                     app.manage(Data {
                         db,
                         models_dir: models,
