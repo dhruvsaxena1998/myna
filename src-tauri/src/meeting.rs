@@ -344,6 +344,8 @@ impl Track {
 struct Active {
     id: i64,
     started: i64,
+    /// When `start` ran, so `stop` knows how long the meeting really lasted.
+    begun: Instant,
     stop: Stop,
     wav: Arc<Mutex<Option<Wav>>>,
     stop_them: Option<Stop>,
@@ -371,6 +373,9 @@ const QUIET: i16 = 160;
 /// A possibly-muted stretch is widened this much (ms) each way before the rest goes to an Endpoint: the add-on sees the
 /// mute button a moment after it's pressed.
 const MUTE_PAD: i64 = 1000;
+/// Past this much (ms) between how long the meeting ran and how long mic.wav is, the mute timeline can't be trusted to
+/// line up with the mic's samples, so none of the mic goes to an Endpoint.
+const MAX_DRIFT: i64 = 500;
 /// Chunks sent to an Endpoint at once.
 const PARALLEL: usize = 3;
 /// Tries after a chunk's first fails, with doubling waits.
@@ -591,6 +596,7 @@ impl Meetings {
     }
 
     pub fn start(&self, now: i64) -> Result<i64, String> {
+        let begun = Instant::now();
         let mut slot = self.active.lock().unwrap();
         if let Some(a) = slot.as_ref() {
             return Ok(a.id);
@@ -642,7 +648,7 @@ impl Meetings {
                 eprintln!("meeting: can't hear the call: {e}");
                 them.lock().unwrap().failed = true;
             });
-            Ok(Active { id, started: now, stop, wav, stop_them: stop_them.ok(), them, origin: clock })
+            Ok(Active { id, started: now, begun, stop, wav, stop_them: stop_them.ok(), them, origin: clock })
         };
         match open() {
             Ok(a) => {
@@ -720,6 +726,12 @@ impl Meetings {
         Ok(rows.into_iter().map(|(at, s)| (at, match s.as_str() { "muted" => MuteState::Muted, "unmuted" => MuteState::Unmuted, _ => MuteState::Unknown })).collect())
     }
 
+    /// Whether mic.wav (`len` samples) is more than `MAX_DRIFT` off how long meeting `id` ran, or that isn't known.
+    fn drifted(&self, id: i64, len: usize) -> Result<bool, String> {
+        let (started, ended): (i64, Option<i64>) = self.db.lock().unwrap().query_row("SELECT started, ended FROM meeting WHERE id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?))).map_err(|e| format!("Couldn't read the meeting: {e}"))?;
+        Ok(ended.is_none_or(|e| (e - started - len as i64 * 1000 / RATE as i64).abs() > MAX_DRIFT))
+    }
+
     /// The meeting's captions: `(ms from its start, name)`, in time order.
     fn captions(&self, id: i64) -> Result<Vec<(i64, String)>, String> {
         let db = self.db.lock().unwrap();
@@ -742,8 +754,9 @@ impl Meetings {
         let rate = RATE as f64;
         let events = self.timeline(id)?;
         let local = matches!(via, Via::Local);
-        // With an Endpoint in play the mic is cut at its possibly-muted stretches too, so they stay on this Mac.
-        let hidden = if local { vec![] } else { private(&events, mic.len()) };
+        // With an Endpoint in play the mic is cut at its possibly-muted stretches too, so they stay on this Mac. The
+        // timeline counts wall-clock ms, the mic samples: if they drifted apart, or a build before `ended` recorded it, all of the mic stays here.
+        let hidden = if local { vec![] } else if !events.is_empty() && self.drifted(id, mic.len())? { vec![(0, mic.len())] } else { private(&events, mic.len()) };
         let track = |who: &str| if who == "Me" { &mic } else { &them };
         let mut pieces = vec![];
         for (who, s) in [("Me", &mic), ("Them", &them)] {
@@ -911,7 +924,7 @@ impl Meetings {
         self.db
             .lock()
             .unwrap()
-            .execute("UPDATE meeting SET duration_ms = ?1, state = 'recorded' WHERE id = ?2", (ms, a.id))
+            .execute("UPDATE meeting SET duration_ms = ?1, state = 'recorded', ended = ?3 WHERE id = ?2", (ms, a.id, a.started + a.begun.elapsed().as_millis() as i64))
             .map_err(|e| format!("Couldn't save the meeting: {e}"))?;
         Ok(Some(a.id))
     }
@@ -1283,6 +1296,8 @@ pub(crate) mod tests {
             .unwrap();
         assert_eq!(row, (id, 1_000, 2_000, None, "Untitled meeting".into(), "recorded".into()));
         assert_eq!(db.query_row("SELECT count(*) FROM meeting", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+        let ended: i64 = db.query_row("SELECT ended FROM meeting", [], |r| r.get(0)).unwrap();
+        assert!((1_000..1_000 + 5_000).contains(&ended), "when it really stopped, on the clock it started on: {ended}");
     }
 
     #[test]
@@ -1766,6 +1781,7 @@ pub(crate) mod tests {
         let mic: Vec<i16> = [wave(true, 3.0), vec![MARK; 4 * r], wave(true, 3.0)].concat();
         write_samples(tmp.path(), id, "mic.wav", &mic);
         write_track(tmp.path(), id, "them.wav", &[(false, 10.0)]);
+        m.db.lock().unwrap().execute("UPDATE meeting SET ended = started + 10000 WHERE id = ?1", [id]).unwrap();
         for (at, s) in [(0, "unmuted"), (3000, "muted"), (7000, "unmuted")] {
             m.db.lock().unwrap().execute("INSERT INTO mute_event(meeting, at_ms, state, source) VALUES (?1, ?2, ?3, 'teams')", (id, at, s)).unwrap();
         }
@@ -1782,6 +1798,33 @@ pub(crate) mod tests {
         // Try again on the same meeting: the muted stretch stays local.
         m.transcribe(id, &local, &Voiced(Err("x".into())), Via::Endpoint(Ok(&e)), &mut |_| {}).unwrap();
         assert!(bodies.lock().unwrap().iter().all(|b| !has_mark(b)));
+    }
+
+    #[test]
+    fn a_mic_track_that_drifted_from_the_mute_timeline_or_an_old_meeting_never_reaches_the_endpoint() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (m, id, e, bodies) = endpoint_meeting(tmp.path(), Default::default());
+        // The meeting ran 10 s but the mic track is 8 s: muted 3 to 5 s on the clock is later in the samples.
+        let r = RATE as usize;
+        write_samples(tmp.path(), id, "mic.wav", &vec![MARK; 8 * r]);
+        write_samples(tmp.path(), id, "them.wav", &wave(true, 8.0));
+        for (at, s) in [(0, "unmuted"), (3000, "muted"), (5000, "unmuted")] {
+            m.db.lock().unwrap().execute("INSERT INTO mute_event(meeting, at_ms, state, source) VALUES (?1, ?2, ?3, 'teams')", (id, at, s)).unwrap();
+        }
+        let local = Count::default();
+        let none = || bodies.lock().unwrap().iter().all(|b| !has_mark(b)) && !bodies.lock().unwrap().is_empty();
+        // No `ended`: recorded by an older build.
+        m.transcribe(id, &local, &Voiced(Err("x".into())), Via::Endpoint(Ok(&e)), &mut |_| {}).unwrap();
+        assert!(none(), "the mic went to the Endpoint, or the call didn't");
+        assert_eq!(local.0.lock().unwrap().iter().sum::<usize>(), 8 * r, "the whole mic, on this Mac");
+        m.db.lock().unwrap().execute("UPDATE meeting SET ended = started + 10000 WHERE id = ?1", [id]).unwrap();
+        m.transcribe(id, &local, &Voiced(Err("x".into())), Via::Endpoint(Ok(&e)), &mut |_| {}).unwrap();
+        m.transcribe(id, &local, &Voiced(Err("x".into())), Via::Rest, &mut |_| {}).unwrap();
+        assert!(none(), "2 s of drift: the mic stays here on retry and Transcribe locally");
+        // Within half a second, the timeline is trusted and the unmuted mic goes.
+        m.db.lock().unwrap().execute("UPDATE meeting SET ended = started + 8400 WHERE id = ?1", [id]).unwrap();
+        m.transcribe(id, &local, &Voiced(Err("x".into())), Via::Endpoint(Ok(&e)), &mut |_| {}).unwrap();
+        assert!(bodies.lock().unwrap().iter().any(|b| has_mark(b)));
     }
 
     #[test]
