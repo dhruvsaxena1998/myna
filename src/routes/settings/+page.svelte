@@ -14,6 +14,7 @@
   import MeetingNotes from "$lib/MeetingNotes.svelte";
   import CleanupStyles, { type Cleanup } from "$lib/CleanupStyles.svelte";
   import SummarySettings, { type Summary } from "$lib/SummarySettings.svelte";
+  import TranscriptCleanup, { type Cleanup as Tcl } from "$lib/TranscriptCleanup.svelte";
   import Write from "$lib/Write.svelte";
   import StagePath from "$lib/StagePath.svelte";
   import type { Ai } from "$lib/AiProviders.svelte";
@@ -54,6 +55,7 @@
     style: { parent: "write", title: "", up: "styles" }, // the style's own name
     templates: { parent: "meetings", title: "Summary templates" },
     template: { parent: "meetings", title: "", up: "templates" }, // the template's own name
+    tclprompt: { parent: "meetings", title: "Cleanup instructions" },
     add: { parent: "ai", title: "Add a provider" },
   };
 
@@ -67,6 +69,8 @@
   let cleanup = $derived(data.cleanup?.ok ? data.cleanup.cleanup : null); // assignable: saves return the styles as kept
   // Shared by Meeting notes' Summary rows, the templates list and the template editor. Removing a provider can make its model Not set, so it's read again with `ai`.
   let summary = $derived(data.summary?.ok ? data.summary.summary : null); // assignable
+  // Shared by Meeting notes' Transcript cleanup rows and its instructions editor; read again with `ai` like `summary`.
+  let tcl = $derived(data.transcript?.ok ? data.transcript.prefs : null); // assignable
   // What Myna adds about spelling, so it shows in the editor with no wait. Read again when the words change.
   let spell = $derived(data.spell); // assignable
   $effect(() => {
@@ -128,6 +132,7 @@
   const leaveAi = async () => {
     ai = await invoke<Ai>("ai_get").catch(() => ai);
     if (summary) summary = { ...summary, prefs: await invoke<Summary["prefs"]>("summary_prefs_get").catch(() => summary!.prefs) };
+    if (tcl) tcl = await invoke<Tcl>("transcript_prefs_get").catch(() => tcl);
   };
   async function show(v: View, push = true) {
     if (v.page === "experimental" && !look?.experimental) v = { page: "general", sub: null, arg: null };
@@ -254,6 +259,9 @@
           {:else if view.sub === "templates" || view.sub === "template"}
             {#if summary}<SummarySettings bind:summary part={view.sub === "templates" ? "list" : "editor"} id={view.arg} {open} {drop} />
             {:else}<ErrorState title="Myna couldn't read the Summary templates" message={data.summary?.ok === false ? data.summary.error : ""} />{/if}
+          {:else if view.sub === "tclprompt"}
+            {#if tcl}<TranscriptCleanup bind:prefs={tcl} part="editor" />
+            {:else}<ErrorState title="Myna couldn't read the cleanup settings" message={data.transcript?.ok === false ? data.transcript.error : ""} />{/if}
           {:else if view.sub === "add"}
             {#if ai}<AiProviders bind:ai part="add" {back} />
             {:else}<ErrorState title="Myna couldn't read its AI providers" message={data.ai?.ok === false ? data.ai.error : ""} />{/if}
@@ -341,6 +349,8 @@
               {#snippet summaryRows()}
                 {#if summary}<SummarySettings bind:summary part="rows" {ai} {open} />
                 {:else}<ErrorState title="Myna couldn't read the Summary settings" message={data.summary?.ok === false ? data.summary.error : ""} />{/if}
+                {#if tcl}<TranscriptCleanup bind:prefs={tcl} part="rows" {ai} {open} />
+                {:else}<ErrorState title="Myna couldn't read the cleanup settings" message={data.transcript?.ok === false ? data.transcript.error : ""} />{/if}
               {/snippet}
             </MeetingNotes>
             {:else}<ErrorState title="Myna couldn't read meeting notes' settings" message={data.notes?.ok === false ? data.notes.error : ""} />{/if}

@@ -12,7 +12,8 @@ export type Meeting = {
 };
 /** `hidden`: said while muted and left out; its `text` is empty. `included`: kept by the user, shown with a marker. */
 export type Line = { id: number; speaker: string; /* "Me", a caption name, "Speaker 2"…, or "Them" when voices weren't told apart */ start_ms: number; text: string; /* as transcript cleanup wrote it, when it did */ clean: string | null; muted: boolean; included: boolean; hidden: boolean };
-export type Page = Meeting & { segments: Line[] };
+/** `cleanup`: the last transcript cleanup run, none when it never ran. */
+export type Page = Meeting & { segments: Line[]; cleanup: { provider: string; model: string; cost: Cost } | null };
 /** The recording in progress, or none. */
 /** `mic`: "live" or "muted" while the browser add-on mirrors the mute button, else null. `words`: how the mic reads on the card. */
 export type Running = { id: number; started: number; source: string | null; mic: "live" | "muted" | null; words: string } | null;
@@ -26,6 +27,35 @@ export function groups(lines: Line[]): ({ line: Line } | { left: Line[] })[] {
     else if (last && "left" in last) last.left.push(line);
     else out.push({ left: [line] });
   }
+  return out;
+}
+
+/**
+ * The cleaned line in runs of words: the ones that differ from what Myna heard carry `heard`, the words they took the
+ * place of ("" for a word cleanup added). Words cleanup only took out (filler) have nothing to mark and don't show.
+ */
+export function changes(heard: string, clean: string): { text: string; heard?: string }[] {
+  const a = heard.split(/\s+/).filter(Boolean), b = clean.split(/\s+/).filter(Boolean);
+  // lcs[i][j]: how many words a[i..] and b[j..] have in common, in order.
+  const lcs = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0));
+  for (let i = a.length - 1; i >= 0; i--) for (let j = b.length - 1; j >= 0; j--) lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+  const out: { text: string; heard?: string }[] = [];
+  let [i, j, same, added, taken] = [0, 0, [] as string[], [] as string[], [] as string[]];
+  const flush = () => {
+    if (added.length) {
+      if (same.length) out.push({ text: same.join(" ") });
+      out.push({ text: added.join(" "), heard: taken.join(" ") });
+      same = [];
+    }
+    (added = []), (taken = []);
+  };
+  while (i < a.length || j < b.length) {
+    if (i < a.length && j < b.length && a[i] === b[j]) flush(), same.push(b[j]), i++, j++;
+    else if (j < b.length && (i === a.length || lcs[i][j + 1] >= lcs[i + 1][j])) added.push(b[j++]);
+    else taken.push(a[i++]);
+  }
+  flush();
+  if (same.length) out.push({ text: same.join(" ") });
   return out;
 }
 
@@ -62,8 +92,10 @@ export function length(ms: number) {
 /** "11:00 · 42 min · Google Meet", leaving out what isn't known. */
 export const meta = (m: Meeting) => [hm(m.started), m.duration_ms === null ? "" : length(m.duration_ms), m.source_app ?? ""].filter(Boolean).join(" · ");
 
+export type Cost = { kind: "usd"; usd: number } | { kind: "free" } | { kind: "unknown" };
 /** A kept Summary version (`summary_get`). */
-export type Version = { id: number; template: string; prompt: string; provider: string; model: string; created: number; parts: number;
-  cost: { kind: "usd"; usd: number } | { kind: "free" } | { kind: "unknown" }; text: string; edited: boolean };
+export type Version = { id: number; template: string; prompt: string; provider: string; model: string; created: number; parts: number; cost: Cost; text: string; edited: boolean };
 /** `meeting-summary`: how a Summary run is going. */
 export type SummaryRun = { id: number } & ({ state: "reading"; n: number; of: number } | { state: "merging" | "skipped" } | { state: "done"; version: Version } | { state: "failed"; error: string });
+/** `meeting-cleanup`: how transcript cleanup is going. */
+export type CleanupRun = { id: number } & ({ state: "reading"; n: number; of: number } | { state: "done"; cost: Cost } | { state: "failed"; error: string });

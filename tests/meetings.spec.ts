@@ -131,7 +131,32 @@ test("lines said while muted collapse into one row, Include keeps them with a ma
   await expect(page.getByText("Said muted, kept.")).toHaveCount(2);
   await expect(page.getByText("Said while muted · left out")).toBeHidden();
   await page.getByRole("button", { name: "Copy" }).click();
-  expect(await calls(page, "meeting_text")).toEqual([{ id: 5 }]);
+  expect(await calls(page, "meeting_text")).toEqual([{ id: 5, original: false }]);
+});
+
+test("cleanup shows its progress, then the cleaned lines with changed words marked; Show original shows what was heard, and Copy follows", async ({ page }) => {
+  const clean = JSON.stringify([line(1, "Me", 12000, "so um we ship on friday", { clean: "So we ship on Friday." }), line(2, "Them", 75000, "Launch is still the 18th.")]);
+  await open(page, `meeting_page: () => ({ ...${MEETINGS}[0], ...(window.__clean ? { segments: ${clean}, cleanup: { provider: "OpenRouter", model: "small", cost: { kind: "free" } } } : { segments: ${SEGMENTS}, cleanup: null }) })`);
+  await page.getByRole("button", { name: "Untitled meeting" }).first().click();
+  await expect(page.locator(".seg")).toHaveCount(2);
+  await expect(page.getByRole("button", { name: "Show original" })).toHaveCount(0);
+  await emit(page, "meeting-cleanup", { id: 5, state: "reading", n: 1, of: 2 });
+  await expect(page.getByText("Cleaning up the transcript: part 1 of 2…")).toBeVisible();
+  await page.evaluate(() => ((window as any).__clean = true));
+  await emit(page, "meeting-cleanup", { id: 5, state: "done", cost: { kind: "free" } });
+  await expect(page.getByText("Cleaned up by small · Free. Point at an underlined word to see what Myna heard.")).toBeVisible();
+  await expect(page.locator(".seg").first()).toContainText("So we ship on Friday.");
+  const marks = page.locator("mark.chg");
+  await expect(marks).toHaveText(["So", "Friday."]);
+  await expect(marks.first()).toHaveAttribute("title", "Heard “so um”");
+  await page.getByRole("button", { name: "Copy" }).click();
+  await page.getByRole("button", { name: "Show original" }).click();
+  await expect(page.getByRole("button", { name: "Show cleaned" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByText("What Myna heard, before cleanup.")).toBeVisible();
+  await expect(page.locator(".seg").first()).toContainText("so um we ship on friday");
+  await expect(marks).toHaveCount(0);
+  await page.getByRole("button", { name: /^Cop/ }).click();
+  expect(await calls(page, "meeting_text")).toEqual([{ id: 5, original: false }, { id: 5, original: true }]);
 });
 
 test("the live card says how the mic is while the add-on mirrors it", async ({ page }) => {

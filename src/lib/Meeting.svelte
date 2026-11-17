@@ -22,10 +22,10 @@
   import { tick } from "svelte";
   import type { Ai, Model } from "./AiProviders.svelte";
   import HostPill from "./HostPill.svelte";
-  import { clock, dayHead, groups, hm, meta, writing, type Page, type Progress, type SummaryRun, type Version } from "./meetings";
+  import { changes, clock, dayHead, groups, hm, meta, writing, type CleanupRun, type Cost, type Page, type Progress, type SummaryRun, type Version } from "./meetings";
 
-  let { page, progress, summary, onback, onretry, oninclude }: {
-    page: Page; progress?: Progress; summary?: SummaryRun; onback: () => void; onretry: (id: number) => void; oninclude: (ids: number[]) => void;
+  let { page, progress, summary, cleanup, onback, onretry, oninclude }: {
+    page: Page; progress?: Progress; summary?: SummaryRun; cleanup?: CleanupRun; onback: () => void; onretry: (id: number) => void; oninclude: (ids: number[]) => void;
   } = $props();
   let copied = $state<"" | "doc" | "panel">("");
   let error = $state("");
@@ -33,6 +33,7 @@
   let sum = $state<{ versions: Version[]; showing: number | null } | null>(null);
   let ai = $state<Ai | null>(null);
   let panel = $state(false);
+  let orig = $state(false); // Show original: the transcript as Myna heard it, before cleanup
   let hit = $state<number | null>(null);
   let pop = $state<"" | "vers" | "regen">("");
   let draft = $state<string | null>(null); // the Markdown being edited
@@ -43,6 +44,7 @@
 
   const date = $derived(dayHead(page.started));
   const rows = $derived(groups(page.segments));
+  const cleaned = $derived(page.segments.some((l) => l.clean));
   const shown = $derived(sum?.versions.find((v) => v.id === sum!.showing));
   const busy = $derived(summary?.state === "reading" || summary?.state === "merging");
   let sumModel = $state<{ provider: number; model: string } | null>(null); // the Summary model (summary::model), Main's unless the user picked one
@@ -53,7 +55,8 @@
   // The cached list, plus the Summary model in case its list was never fetched.
   const ids = (p: Ai["providers"][number]) => [...new Set([...(models[p.id] ?? []).map((m) => m.id), ...(sumModel?.provider === p.id ? [sumModel.model] : [])])];
   const usd = (n: number) => "$" + (n >= 1 ? n.toFixed(2) : n.toPrecision(2));
-  const cost = (v: Version) => (v.edited ? "Edited" : v.cost.kind === "usd" ? usd(v.cost.usd) : v.cost.kind === "free" ? "Free" : "Cost unknown");
+  const price = (c: Cost) => (c.kind === "usd" ? usd(c.usd) : c.kind === "free" ? "Free" : "Cost unknown");
+  const cost = (v: Version) => (v.edited ? "Edited" : price(v.cost));
   const when = (ms: number) => `${dayHead(ms)[0]} ${hm(ms)}`;
 
   async function load() {
@@ -87,7 +90,7 @@
     error = "";
     try {
       // The backend decides what leaves the meeting: lines said while muted stay out.
-      await invoke("text_copy", { text: what === "doc" ? shown!.text : await invoke("meeting_text", { id: page.id }) });
+      await invoke("text_copy", { text: what === "doc" ? shown!.text : await invoke("meeting_text", { id: page.id, original: orig }) });
       copied = what;
       clearTimeout(timer);
       timer = setTimeout(() => (copied = ""), 1500);
@@ -296,17 +299,21 @@
     <aside class="panel" aria-labelledby="tp-h">
       <div class="panel-head">
         <h2 id="tp-h">Transcript</h2><span class="grow"></span>
+        {#if cleaned}<button class="btn" aria-pressed={orig} onclick={() => (orig = !orig)}>{orig ? "Show cleaned" : "Show original"}</button>{/if}
         <button class="btn" onclick={() => copy("panel")}>{@render copyIcon(copied === "panel")}{copied === "panel" ? "Copied" : "Copy"}</button>
         <button class="btn icon plain" aria-label="Close transcript" onclick={() => (panel = false)}>{@render icon('<path d="M7 7l10 10M17 7L7 17"/>')}</button>
       </div>
       <div class="transcript">
+        {#if cleanup?.state === "reading"}<p class="tmeta" role="status">Cleaning up the transcript: part {cleanup.n} of {cleanup.of}…</p>
+        {:else if cleanup?.state === "failed"}<p class="tmeta fail" role="status">Couldn’t clean up the transcript: {cleanup.error}</p>{/if}
+        {#if cleaned}<p class="tmeta">{orig ? "What Myna heard, before cleanup." : `Cleaned up by ${page.cleanup?.model ?? "AI"}${page.cleanup ? ` · ${price(page.cleanup.cost)}` : ""}. Point at an underlined word to see what Myna heard.`}</p>{/if}
         {#each rows as g}
           {#if "left" in g}
             <div class="seg" class:hit={hit === g.left[0].id} id="seg-{g.left[0].id}" tabindex="-1"><div class="who"><b>Me</b><time>{clock(g.left[0].start_ms)}</time></div>
               <p class="left"><span>Said while muted · left out</span><button class="btn small" onclick={() => oninclude(g.left.map((l) => l.id))}>Include</button></p></div>
           {:else}
             <div class="seg" class:hit={hit === g.line.id} id="seg-{g.line.id}" tabindex="-1"><div class="who"><b>{g.line.speaker}</b><time>{clock(g.line.start_ms)}</time></div>
-              <p>{g.line.text}{#if g.line.included}<span class="mark">Said while muted</span>{/if}</p></div>
+              <p>{#if g.line.clean && !orig}{#each changes(g.line.text, g.line.clean) as c, i}{i ? " " : ""}{#if c.heard === undefined}{c.text}{:else}<mark class="chg" title={c.heard ? `Heard “${c.heard}”` : "Added in cleanup"}>{c.text}</mark>{/if}{/each}{:else}{g.line.text}{/if}{#if g.line.included}<span class="mark">Said while muted</span>{/if}</p></div>
           {/if}
         {/each}
       </div>
@@ -350,6 +357,8 @@
   .seg p { margin: 0; font-size: var(--fs-reading); line-height: var(--lh-reading); overflow-wrap: anywhere; }
   .left { display: flex; align-items: center; gap: var(--sp-2); color: var(--text-3); font-size: var(--fs-footnote); }
   .btn.small { height: 24px; padding: 0 10px; font-size: var(--fs-footnote); }
+  .tmeta { margin: 0 0 var(--sp-2); color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
+  .chg { background: none; color: inherit; text-decoration: underline dotted var(--accent-text); text-decoration-thickness: 1.5px; text-underline-offset: 3px; cursor: help; }
   .mark { display: block; color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
   .say { margin: var(--sp-4) 0 var(--sp-3); color: var(--text-2); }
   .say.fail, .fail { color: var(--danger-text); }

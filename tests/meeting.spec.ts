@@ -414,3 +414,47 @@ test("Summary templates: a shipped one resets and offers its newer default; your
   expect(saved.at(-1).templates.map((t: { id: string }) => t.id)).toEqual(["recap", "actions"]);
   expect(saved[1].templates[2]).toMatchObject({ name: "New template", text: "Write a Recap." });
 });
+
+// Story 16: the Transcript cleanup group and its Cleanup instructions drill-in. The fake keeps what was saved, as the backend does.
+async function cleanup(page: Page, prefs: object = {}) {
+  await open(page, { on: true, key: "Ctrl+Alt+KeyM" }, "allowed", undefined, `
+    ai_get: () => ({ providers: [${JSON.stringify(OR)}], main: { provider: 1, model: "big", gone: false }, fast: { provider: 1, model: "small", gone: false } }),
+    ai_models: () => [{ id: "big" }, { id: "small" }],
+    transcript_prefs_get: () => ({ ...(window.__tcl ??= ${JSON.stringify({ on: false, model: "fast", gone: false, prompt: "Fix it.", shipped: "Fix it.", newer: false, ...prefs })}) }),
+    transcript_prefs_set: ({ prefs }) => { const p = prefs.prompt.trim() || prefs.shipped; window.__tcl = { ...prefs, prompt: p, newer: prefs.newer && p !== prefs.shipped }; },`);
+}
+
+test("Transcript cleanup: off by default; on shows the model, Uses Fast with where text goes, and the instructions row", async ({ page }) => {
+  await cleanup(page);
+  const group = page.getByRole("region", { name: "Transcript cleanup" });
+  await expect(group.getByText("Transcripts stay exactly as Myna heard them.")).toBeVisible();
+  await expect(group.getByRole("combobox", { name: "Cleanup model" })).toHaveCount(0);
+  await group.getByRole("switch", { name: "Clean up transcripts with AI" }).click();
+  await expect(group.getByText("The transcript has Show original.")).toBeVisible();
+  await expect(group.getByText("Uses the Fast model: small · OpenRouter")).toBeVisible();
+  await expect(group.getByText("Sends text off this Mac")).toBeVisible();
+  await expect(group.getByText("The default.")).toBeVisible();
+  await group.getByRole("combobox", { name: "Cleanup model" }).selectOption("1|big");
+  await expect(group.getByText("Uses the Fast model")).toHaveCount(0);
+  expect((await calls(page, "transcript_prefs_set")).map((c: any) => [c.prefs.on, c.prefs.model])).toEqual([[true, "fast"], [true, "1|big"]]);
+});
+
+test("Cleanup instructions: an edit is kept, a newer default is offered, and Reset goes back to the default", async ({ page }) => {
+  await cleanup(page, { on: true, prompt: "Mine.", newer: true });
+  const group = page.getByRole("region", { name: "Transcript cleanup" });
+  await expect(group.getByText("Edited.")).toBeVisible();
+  await expect(group.getByText("Newer default")).toBeVisible();
+  await group.getByRole("button", { name: "Cleanup instructions" }).click();
+  await expect(page.getByRole("heading", { name: "Cleanup instructions", level: 1 })).toBeVisible();
+  await expect(page.getByText("A newer default is available")).toBeVisible();
+  const text = page.getByRole("textbox", { name: "Instructions" });
+  await expect(text).toHaveValue("Mine.");
+  await page.getByRole("button", { name: "Reset to default" }).click();
+  await expect(text).toHaveValue("Fix it.");
+  await expect(page.getByRole("button", { name: "Reset to default" })).toBeDisabled();
+  await expect(page.getByText("A newer default is available")).toHaveCount(0);
+  await text.fill("Only punctuation.");
+  await text.blur();
+  await expect(page.getByRole("button", { name: "Reset to default" })).toBeEnabled();
+  expect((await calls(page, "transcript_prefs_set")).at(-1).prefs.prompt).toBe("Only punctuation.");
+});

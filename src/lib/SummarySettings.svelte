@@ -10,8 +10,8 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { tick } from "svelte";
-  import type { Ai, Model } from "./AiProviders.svelte";
-  import HostPill from "./HostPill.svelte";
+  import type { Ai } from "./AiProviders.svelte";
+  import ModelRow from "./ModelRow.svelte";
 
   // `open`: a drill-in under Meeting notes. `drop`: takes a deleted template's editor out of history.
   let { summary = $bindable(), part, ai = null, id = null, open = async () => {}, drop = () => {} }: {
@@ -23,31 +23,8 @@
   const t = $derived(templates.find((x) => x.id === id));
   let error = $state("");
   let rev = $state(0); // re-draws the fields so they show what was kept, not what was typed
-  let lists = $state<Record<number, string[]>>({});
 
   const focus = async (el: string) => { await tick(); document.getElementById(el)?.focus(); };
-  const providers = $derived(ai?.providers ?? []);
-  const split = (v: string) => [+v.slice(0, v.indexOf("|")), v.slice(v.indexOf("|") + 1)] as const;
-  // What the Summary runs on: Main's route, or the user's own pick.
-  const route = $derived.by(() => {
-    if (prefs.model === "none") return null;
-    if (prefs.model === "main") return ai?.main && !ai.main.gone ? ai.main : null;
-    const [provider, model] = split(prefs.model);
-    return { provider, model, gone: prefs.gone };
-  });
-  const provider = $derived(route ? providers.find((p) => p.id === route.provider) : undefined);
-  const desc = $derived(
-    !providers.length ? "Add a provider on AI providers first."
-      : prefs.model === "none" ? "Not set: its provider was removed."
-      : !route ? "Uses the Main model, which is Not set."
-      : `${prefs.model === "main" ? "Uses the Main model: " : ""}${route.model}${provider ? ` · ${provider.name}` : ""}`,
-  );
-  // The cached lists, plus the current pick in case its list was never fetched or no longer has it.
-  const ids = (id: number) => [...new Set([...(lists[id] ?? []), ...(route && prefs.model !== "main" && route.provider === id ? [route.model] : [])])];
-  $effect(() => {
-    if (part !== "rows") return;
-    for (const p of providers) invoke<Model[]>("ai_models", { id: p.id, fresh: false }).then((l) => (lists[p.id] = l.map((m) => m.id)), () => {});
-  });
 
   async function savePrefs(next: Prefs) {
     error = "";
@@ -101,20 +78,7 @@
         <span><label class="name" for="sum-auto">Summarize when a meeting finishes</label><span class="desc">Writes a summary as soon as the notes are ready.</span></span>
         <input id="sum-auto" type="checkbox" role="switch" class="switch" checked={prefs.auto} onchange={(e) => savePrefs({ ...prefs, auto: e.currentTarget.checked })} />
       </li>
-      <li class="row">
-        <span><label class="name" for="sum-model">Summary model</label><span class="desc" title={desc}>
-          {#if route && providers.length}{prefs.model === "main" ? "Uses the Main model: " : ""}<span class="mono">{route.model}</span>{provider ? ` · ${provider.name}` : ""}{:else}{desc}{/if}</span></span>
-        <span class="end">
-          {#if route?.gone}<span class="pill">No longer offered</span>{:else if route && provider}<HostPill off={provider.off_device} />{/if}
-          {#key rev}
-            <select id="sum-model" class="select" value={prefs.model} disabled={!providers.length} onchange={(e) => savePrefs({ ...prefs, model: e.currentTarget.value })}>
-              {#if prefs.model === "none"}<option value="none">Not set</option>{/if}
-              <option value="main">Use the Main model</option>
-              {#each providers as p (p.id)}<optgroup label={p.name}>{#each ids(p.id) as m (m)}<option value="{p.id}|{m}">{m}</option>{/each}</optgroup>{/each}
-            </select>
-          {/key}
-        </span>
-      </li>
+      <ModelRow id="sum-model" name="Summary model" base="main" value={prefs.model} gone={prefs.gone} {ai} {rev} onpick={(model) => savePrefs({ ...prefs, model })} />
       <li class="row">
         <span><label class="name" for="sum-tpl">Template for new summaries</label><span class="desc">You can pick another one when you regenerate.</span></span>
         {#key rev}
