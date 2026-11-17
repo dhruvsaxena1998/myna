@@ -262,7 +262,7 @@ async fn ai_test(d: tauri::State<'_, Data>, id: i64) -> Result<ai::Check, String
 #[tauri::command]
 async fn ai_decide_models(d: tauri::State<'_, Data>, id: i64) -> Result<Vec<ai::Model>, String> {
     let (db, keys) = (d.db.clone(), d.keys.clone());
-    tauri::async_runtime::spawn_blocking(move || ai::provider(&db.lock().unwrap(), &*keys, id)?.decision_models())
+    tauri::async_runtime::spawn_blocking(move || ai::decision_models(&db, &*keys, id))
         .await
         .map_err(|e| e.to_string())?
 }

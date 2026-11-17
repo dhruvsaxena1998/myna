@@ -401,6 +401,12 @@ pub fn stt_models(db: &Mutex<Connection>, keys: &dyn Keys, id: i64) -> Result<Ve
     a.list("/models?output_modalities=transcription")
 }
 
+/// Provider `id`'s decision models; none but OpenRouter's have any.
+pub fn decision_models(db: &Mutex<Connection>, keys: &dyn Keys, id: i64) -> Result<Vec<Model>, String> {
+    let p = provider(&db.lock().unwrap(), keys, id)?; // the lock is not held while waiting on the network
+    p.decision_models()
+}
+
 /// What Test found: how long the clip took, how many segments came back, and the cost.
 #[derive(Debug, Serialize, PartialEq)]
 pub struct SttCheck {
@@ -1150,5 +1156,20 @@ pub(crate) mod tests {
         let c = Mutex::new(c);
         assert_eq!(stt_models(&c, &keys, or).unwrap()[0].id, "openai/whisper-large-v3");
         assert!(stt_models(&c, &keys, plain).unwrap().is_empty());
+    }
+
+    #[test]
+    fn listing_decision_models_leaves_the_database_free_while_it_waits() {
+        let (_t, c) = db();
+        let keys = Memory::default();
+        let db = std::sync::Arc::new(Mutex::new(c));
+        let free = db.clone();
+        let base = server(move |_, _, _| match free.try_lock() {
+            Ok(_) => (200, r#"{"data":[{"id":"typesafe/jev-1.14"}]}"#.into()),
+            Err(_) => (500, "the database was held".into()),
+        })
+        .0;
+        let or = add_ok(&db.lock().unwrap(), &keys, "openrouter", "OR", &base, "sk-or-x").id;
+        assert_eq!(decision_models(&db, &keys, or).unwrap()[0].id, "typesafe/jev-1.14");
     }
 }
