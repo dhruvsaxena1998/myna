@@ -749,6 +749,8 @@ pub struct Line {
     pub start_ms: i64,
     /// Empty when `hidden`: what's left out never leaves the backend.
     pub text: String,
+    /// The line as transcript cleanup wrote it, when it did; none when `hidden`.
+    pub clean: Option<String>,
     /// Said while the add-on showed the mic muted.
     pub muted: bool,
     pub included: bool,
@@ -780,13 +782,13 @@ pub fn page(db: &Connection, id: i64) -> Result<Page, String> {
 
 pub(crate) fn lines(db: &Connection, id: i64) -> Result<Vec<Line>, String> {
     let keep = get(db)?.keep_teams;
-    db.prepare("SELECT id, COALESCE(label, speaker), start_ms, text, mute, included FROM segment WHERE meeting = ?1 ORDER BY start_ms, id")
+    db.prepare("SELECT id, COALESCE(label, speaker), start_ms, text, mute, included, clean FROM segment WHERE meeting = ?1 ORDER BY start_ms, id")
         .and_then(|mut q| {
             q.query_map([id], |r| {
                 let (mute, included): (Option<String>, bool) = (r.get(4)?, r.get(5)?);
                 let muted = mute.as_deref() == Some("muted");
                 let hidden = muted && !included && !keep;
-                Ok(Line { id: r.get(0)?, speaker: r.get(1)?, start_ms: r.get(2)?, text: if hidden { String::new() } else { r.get(3)? }, muted, included, hidden })
+                Ok(Line { id: r.get(0)?, speaker: r.get(1)?, start_ms: r.get(2)?, text: if hidden { String::new() } else { r.get(3)? }, clean: if hidden { None } else { r.get(6)? }, muted, included, hidden })
             })
             .and_then(|r| r.collect())
         })

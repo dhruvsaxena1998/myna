@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 const KINDS: [&str; 2] = ["openai", "openrouter"];
 const SLOTS: [&str; 2] = ["main", "fast"];
 /// Features with their own model, as a setting: (key, label, the slot it uses while the key is missing).
-const OWN: [(&str, &str, &str); 1] = [("summary_model", "Summary model", "main")];
+const OWN: [(&str, &str, &str); 2] = [("summary_model", "Summary model", "main"), ("transcript_cleanup_model", "Cleanup model", "fast")];
 const SERVICE: &str = "com.dhruvsaxena.myna.ai-provider";
 
 #[derive(Debug, Clone, PartialEq)]
