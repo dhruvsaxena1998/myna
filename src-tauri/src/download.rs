@@ -39,14 +39,17 @@ pub fn install(
     Ok(true)
 }
 
-/// Deletes `m`, and ONNX Runtime too once no other model that needs it is installed or downloading.
-pub fn remove(m: &Model, models_dir: &Path, downloading: &[String]) -> Result<(), String> {
+/// Deletes `m`, and ONNX Runtime too once no other of `all` the models that need it is installed or downloading.
+/// A custom model kept elsewhere on this Mac is the user's: it's never deleted.
+pub fn remove(m: &Model, models_dir: &Path, all: &[Model], downloading: &[String]) -> Result<(), String> {
     let rm = |x: &Model| match std::fs::remove_dir_all(models_dir.join(&x.id)) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(format!("Couldn't remove {}: {e}", x.name)),
         _ => Ok(()),
     };
-    rm(m)?;
-    let needed = models::all().iter().any(|o| o.runtime && (downloading.contains(&o.id) || models::is_installed(o, models_dir)));
+    if m.path.is_empty() {
+        rm(m)?;
+    }
+    let needed = all.iter().any(|o| o.id != m.id && o.runtime && (downloading.contains(&o.id) || models::is_installed(o, models_dir)));
     if m.runtime && !needed {
         rm(&models::runtime())?;
     }
@@ -117,7 +120,8 @@ fn files(base: &str, m: &Model, tmp: &Path, cancel: &AtomicBool, progress: &mut 
             total += n as u64;
             progress(total);
         }
-        if size != want_size || format!("{:x}", hash.finalize()) != *want_sha {
+        // A custom model's small files aren't in Git LFS, so Hugging Face has no sha256 for them; their size still counts.
+        if size != want_size || (!want_sha.is_empty() && format!("{:x}", hash.finalize()) != *want_sha) {
             return Err(format!("{} didn't download correctly (the checksum didn't match). Try again.", m.name));
         }
         if let Some(a) = &f.archive {
@@ -129,6 +133,12 @@ fn files(base: &str, m: &Model, tmp: &Path, cancel: &AtomicBool, progress: &mut 
         }
     }
     Ok(true)
+}
+
+/// The body of a small answer, like Hugging Face's description of a repo.
+pub fn get_text(url: &str) -> Result<String, String> {
+    let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(20))).build().into();
+    agent.get(url).call().and_then(|r| r.into_body().read_to_string()).map_err(|e| e.to_string())
 }
 
 /// Takes one file out of a .tgz with macOS's own tar, and leaves the archive and its folders out of `dest`'s folder.
@@ -168,9 +178,9 @@ mod tests {
 
     fn model(body: &[u8], sha256: &str) -> Model {
         Model {
-            id: "m".into(), name: "Test model".into(), vendor: String::new(), desc: String::new(), acc: 1, spd: 1, default: false,
-            size: body.len() as u64, min_macos: 0, repo: "o/r".into(), revision: "x".repeat(40), system: false, sdk: false, runtime: false, installed: false, needs: None,
+            id: "m".into(), name: "Test model".into(), acc: 1, spd: 1, size: body.len() as u64, repo: "o/r".into(), revision: "x".repeat(40),
             files: vec![File { path: "w.bin".into(), size: body.len() as u64, sha256: sha256.into(), archive: None }],
+            ..Default::default()
         }
     }
 
@@ -253,7 +263,7 @@ mod tests {
         assert_eq!(go("sortformer", &mut last), Ok(true));
         assert_eq!(log.borrow()[3..], ["sortformer"], "the second doesn't fetch it again");
 
-        let drop = |id: &str, busy: &[String]| remove(&crate::models::find(id).unwrap(), tmp.path(), busy).unwrap();
+        let drop = |id: &str, busy: &[String]| remove(&crate::models::find(id).unwrap(), tmp.path(), &crate::models::all(), busy).unwrap();
         drop("parakeet-tdt-v3", &[]);
         assert!(runtime.exists(), "Sortformer still needs it");
         drop("sortformer", &["parakeet-tdt-v3".into()]);

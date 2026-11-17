@@ -34,24 +34,32 @@ pub trait Diarizer: Send {
     fn diarize(&mut self, audio: &[f32]) -> Result<Vec<Turn>, String>;
 }
 
-/// Loads the speech-to-text model `id` from `models_dir/<id>/`.
-pub fn transcriber(id: &str, models_dir: &Path) -> Result<Box<dyn Transcriber>, String> {
-    let m = models::find(id).ok_or_else(|| format!("Unknown model {id}"))?;
-    let dir = models_dir.join(id);
+/// Which runtime runs `m`: as it was added under Advanced, or the catalog's by id.
+fn engine(m: &models::Model) -> &str {
+    match m.id.as_str() {
+        _ if !m.engine.is_empty() => &m.engine,
+        "parakeet-tdt-v3" => "parakeet-tdt",
+        "parakeet-unified-en" => "parakeet-unified",
+        id if id.starts_with("whisper-") => "whisper",
+        id => id,
+    }
+}
+
+/// Loads the speech-to-text model `m` from `models_dir/<id>/`, or from where the user keeps it.
+pub fn transcriber(m: &models::Model, models_dir: &Path) -> Result<Box<dyn Transcriber>, String> {
+    let dir = models_dir.join(&m.id);
     let err = |e: String| format!("Couldn't load {}: {e}", m.name);
-    match id {
-        "parakeet-tdt-v3" => {
+    match engine(m) {
+        "parakeet-tdt" => {
             let cfg = ort(models_dir).map_err(err)?;
-            Ok(Box::new(Parakeet(ParakeetTDT::from_pretrained(&dir, Some(cfg)).map_err(|e| err(e.to_string()))?)))
+            Ok(Box::new(Parakeet(ParakeetTDT::from_pretrained(folder(m, models_dir), Some(cfg)).map_err(|e| err(e.to_string()))?)))
         }
-        "parakeet-unified-en" => {
+        "parakeet-unified" => {
             let cfg = ort(models_dir).map_err(err)?;
-            // Its files sit in the repo's subfolder, and downloads keep that path.
-            let dir = first_file(&m, &dir).parent().unwrap().to_path_buf();
-            Ok(Box::new(Parakeet(ParakeetUnified::from_pretrained(&dir, Some(cfg)).map_err(|e| err(e.to_string()))?)))
+            Ok(Box::new(Parakeet(ParakeetUnified::from_pretrained(folder(m, models_dir), Some(cfg)).map_err(|e| err(e.to_string()))?)))
         }
-        _ if id.starts_with("whisper-") => {
-            let ctx = WhisperContext::new_with_params(first_file(&m, &dir), WhisperContextParameters::default())
+        "whisper" => {
+            let ctx = WhisperContext::new_with_params(first_file(m, models_dir), WhisperContextParameters::default())
                 .map_err(|e| err(e.to_string()))?;
             Ok(Box::new(Whisper(ctx.create_state().map_err(|e| err(e.to_string()))?, String::new())))
         }
@@ -61,19 +69,23 @@ pub fn transcriber(id: &str, models_dir: &Path) -> Result<Box<dyn Transcriber>, 
     }
 }
 
-/// Loads the diarization model `id` from `models_dir/<id>/`.
-pub fn diarizer(id: &str, models_dir: &Path) -> Result<Box<dyn Diarizer>, String> {
-    let m = models::find(id).ok_or_else(|| format!("Unknown model {id}"))?;
-    match id {
+/// Loads the diarization model `m` from `models_dir/<id>/`, or from where the user keeps it.
+pub fn diarizer(m: &models::Model, models_dir: &Path) -> Result<Box<dyn Diarizer>, String> {
+    let err = |e: String| format!("Couldn't load {}: {e}", m.name);
+    match engine(m) {
         "sortformer" => {
-            let err = |e: String| format!("Couldn't load {}: {e}", m.name);
             let cfg = ort(models_dir).map_err(err)?;
-            let model = Sortformer::with_config(first_file(&m, &models_dir.join(id)), Some(cfg), DiarizationConfig::default());
+            let model = Sortformer::with_config(first_file(m, models_dir), Some(cfg), DiarizationConfig::default());
             Ok(Box::new(Sort(model.map_err(|e| err(e.to_string()))?)))
         }
-        "who" => Ok(Box::new(crate::who::Who::load(&models_dir.join(id)).map_err(|e| format!("Couldn't load {}: {e}", m.name))?)),
+        "who" => Ok(Box::new(crate::who::Who::load(&models_dir.join(&m.id)).map_err(err)?)),
         _ => Err(format!("{} can't run in Myna yet", m.name)),
     }
+}
+
+/// Loads `m` with its runtime and lets it go: Ok if it runs, else why not.
+pub fn check(m: &models::Model, models_dir: &Path) -> Result<(), String> {
+    if models::engine_task(engine(m)) == Some("diar") { diarizer(m, models_dir).map(drop) } else { transcriber(m, models_dir).map(drop) }
 }
 
 type Loaded = Result<Box<dyn Diarizer>, String>;
@@ -93,8 +105,18 @@ pub fn pick_diarizer(active: &str, installed: &dyn Fn(&str) -> bool, load: &dyn 
     Err(err)
 }
 
-fn first_file(m: &models::Model, dir: &Path) -> PathBuf {
-    dir.join(m.files.first().map_or("", |f| f.path.as_str()))
+/// Its first file: in `models/<id>/` (where a download keeps a repo's subfolder), or the file or folder the user added.
+fn first_file(m: &models::Model, models_dir: &Path) -> PathBuf {
+    if !m.path.is_empty() {
+        return PathBuf::from(&m.path);
+    }
+    models_dir.join(&m.id).join(m.files.first().map_or("", |f| f.path.as_str()))
+}
+
+/// The folder a Parakeet model's files are in.
+fn folder(m: &models::Model, models_dir: &Path) -> PathBuf {
+    let f = first_file(m, models_dir);
+    if f.is_dir() { f } else { f.parent().map_or(f.clone(), Path::to_path_buf) }
 }
 
 /// ONNX Runtime allows one environment per process; every model shares it.
@@ -200,19 +222,21 @@ mod tests {
     fn missing_or_unsupported_models_say_so() {
         let empty = tempfile::tempdir().unwrap();
         for id in ["parakeet-tdt-v3", "parakeet-unified-en", "whisper-small", "whisper-medium", "whisper-large-v3-turbo", "whisper-large-v3"] {
-            let err = transcriber(id, empty.path()).err().unwrap();
+            let err = transcriber(&models::find(id).unwrap(), empty.path()).err().unwrap();
             assert!(err.starts_with("Couldn't load"), "{id}: {err}");
         }
-        assert!(diarizer("sortformer", empty.path()).err().unwrap().starts_with("Couldn't load Sortformer"));
-        assert_eq!(transcriber("voz", empty.path()).err().unwrap(), "Couldn't load Desert Ant Voz: Voz is missing. Download it again.");
-        assert_eq!(diarizer("nope", empty.path()).err().unwrap(), "Unknown model nope");
+        assert!(diarizer(&models::find("sortformer").unwrap(), empty.path()).err().unwrap().starts_with("Couldn't load Sortformer"));
+        assert_eq!(transcriber(&models::find("voz").unwrap(), empty.path()).err().unwrap(), "Couldn't load Desert Ant Voz: Voz is missing. Download it again.");
+        assert_eq!(diarizer(&models::find("parakeet-tdt-v3").unwrap(), empty.path()).err().unwrap(), "Parakeet TDT v3 can't run in Myna yet");
     }
 
     #[test]
     fn a_missing_or_corrupt_runtime_is_an_error_not_a_crash() {
         let tmp = tempfile::tempdir().unwrap();
         let (parakeet, sortformer) = ("Couldn't load Parakeet TDT v3: ONNX Runtime", "Couldn't load Sortformer: ONNX Runtime");
-        let both = |dir: &Path| (transcriber("parakeet-tdt-v3", dir).err().unwrap(), diarizer("sortformer", dir).err().unwrap());
+        let both = |dir: &Path| {
+            (transcriber(&models::find("parakeet-tdt-v3").unwrap(), dir).err().unwrap(), diarizer(&models::find("sortformer").unwrap(), dir).err().unwrap())
+        };
 
         let (p, s) = both(tmp.path());
         assert_eq!(p, format!("{parakeet} is missing. Download it again."));
@@ -298,7 +322,7 @@ mod tests {
     }
 
     fn transcribes_the_fixture(id: &str) {
-        let mut t = transcriber(id, &models_dir()).unwrap();
+        let mut t = transcriber(&models::find(id).unwrap(), &models_dir()).unwrap();
         let heard: Vec<_> = t.transcribe(&fixture()).unwrap().into_iter().map(|s| s.text).collect();
         let heard = heard.join(" ");
         assert!(wer(SAID, &heard) < 0.2, "{id} heard: {heard}");
@@ -346,7 +370,7 @@ mod tests {
     }
 
     fn tells_the_two_voices_apart(id: &str) {
-        let turns = diarizer(id, &models_dir()).unwrap().diarize(&fixture()).unwrap();
+        let turns = diarizer(&models::find(id).unwrap(), &models_dir()).unwrap().diarize(&fixture()).unwrap();
         let at = |t: f32| turns.iter().find(|s| s.start <= t && t <= s.end).map(|s| s.speaker);
         let (first, second) = (at(2.0), at(7.0));
         assert!(first.is_some() && second.is_some() && first != second, "{turns:?}");

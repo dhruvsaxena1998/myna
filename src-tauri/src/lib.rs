@@ -106,8 +106,9 @@ pub(crate) fn model_event(app: &AppHandle, id: &str, state: &str, extra: serde_j
 
 #[tauri::command]
 fn model_download(app: AppHandle, d: tauri::State<Data>, id: String) -> Result<(), String> {
-    let m = models::find(&id).ok_or_else(|| format!("Unknown model {id}"))?;
-    if m.files.is_empty() && !m.system && !m.sdk {
+    let all = models::everything(&d.db.lock().unwrap())?;
+    let m = all.iter().find(|m| m.id == id).cloned().ok_or_else(|| format!("Unknown model {id}"))?;
+    if m.files.is_empty() && !m.system && !m.sdk && m.path.is_empty() {
         return Err(format!("{} can't be downloaded yet.", m.name));
     }
     if let Some(n) = models::needs(&m, d.macos, &apple::status()) {
@@ -116,7 +117,7 @@ fn model_download(app: AppHandle, d: tauri::State<Data>, id: String) -> Result<(
     let cancel = Arc::new(AtomicBool::new(false));
     let mut downloads = d.downloads.lock().unwrap();
     // Two models that need ONNX Runtime would fetch it at the same time and trip over each other's temp folder.
-    if let Some(o) = models::all().iter().find(|o| m.runtime && o.runtime && o.id != id && downloads.contains_key(&o.id)) {
+    if let Some(o) = all.iter().find(|o| m.runtime && o.runtime && o.id != id && downloads.contains_key(&o.id)) {
         return Err(format!("{} is downloading. Wait for it to finish.", o.name));
     }
     if downloads.insert(id.clone(), cancel.clone()).is_some() {
@@ -144,6 +145,17 @@ fn model_download(app: AppHandle, d: tauri::State<Data>, id: String) -> Result<(
             let get = |x: &models::Model, p: &mut dyn FnMut(u64)| download::fetch(download::HF, x, &dir, &cancel, p);
             download::install(&m, &dir, &get, &mut progress)
         };
+        // A model added under Advanced is checked by loading it once it has everything; one that won't load says why and can't be picked.
+        let result = result.and_then(|done| match done && !m.engine.is_empty() {
+            false => Ok(done),
+            true => runtime::check(&m, &dir).map(|()| true).inspect_err(|e| {
+                let d = app.state::<Data>();
+                let db = d.db.lock().unwrap();
+                let _ = models::mark_broken(&db, &m.id, e);
+                let busy: Vec<String> = d.downloads.lock().unwrap().keys().cloned().collect();
+                let _ = download::remove(&m, &dir, &models::everything(&db).unwrap_or_default(), &busy); // never the user's own files
+            }),
+        });
         if cancel.load(Ordering::Relaxed) {
             return; // model_cancel already answered, and a retry may own the entry now
         }
@@ -170,17 +182,31 @@ fn model_cancel(app: AppHandle, d: tauri::State<Data>, id: String) {
 /// falls back to the default, and for meeting notes to voice typing's pick.
 #[tauri::command]
 async fn model_delete(d: tauri::State<'_, Data>, id: String, task: Option<String>) -> Result<Option<String>, String> {
-    let m = models::find(&id).ok_or_else(|| format!("Unknown model {id}"))?;
+    let all = models::everything(&d.db.lock().unwrap())?;
+    let m = all.iter().find(|m| m.id == id).ok_or_else(|| format!("Unknown model {id}"))?;
     if d.downloads.lock().unwrap().contains_key(&id) {
         return Err(format!("{} is downloading. Cancel it first.", m.name));
     }
     let downloading: Vec<String> = d.downloads.lock().unwrap().keys().cloned().collect();
-    download::remove(&m, &d.models_dir, &downloading)?;
+    download::remove(m, &d.models_dir, &all, &downloading)?;
     let db = d.db.lock().unwrap();
     models::forget(&db, &id)?;
+    if !m.engine.is_empty() {
+        models::remove_custom(&db, &id)?; // off the list too; a file on this Mac stays where it is
+    }
     let tasks = models::list(&db, &d.models_dir, d.macos, &apple::status())?;
     let mine = |t: &models::Task| task.as_deref().map_or_else(|| t.models.iter().any(|x| x.id == id), |task| t.id == task);
     Ok(tasks.into_iter().find(mine).and_then(|t| t.active))
+}
+
+/// Advanced: adds a model from a file or folder on this Mac or a Hugging Face repo (`models::add`).
+/// It asks Hugging Face and loads models, so it runs off the main thread.
+#[tauri::command]
+async fn model_add(d: tauri::State<'_, Data>, engine: String, source: String) -> Result<models::Model, String> {
+    let (db, dir) = (d.db.clone(), d.models_dir.clone());
+    tauri::async_runtime::spawn_blocking(move || models::add(&db, &dir, &engine, &source, &download::get_text, &|m| runtime::check(m, &dir)))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// `MYNA_DEBUG=1` turns on debug aids in the UI (for now: the window size while resizing).
@@ -1086,7 +1112,7 @@ fn open_update(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![pill::pill_hit, dictation_fix, fix_take, debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, ai_test_draft, ai_decide_models, ai_decide_set, ai_decide, storage_status, storage_reveal, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, meeting_get, meeting_set, meeting_text, segments_include, addon_get, addon_disconnect, addon_folder, meeting_retry, meeting_open, meetings_list, meeting_page, meeting_running, meeting_toggle, call_start, call_dismiss, call_keep, call_stop, summary_get, summary_pick, summary_delete, summary_edit, summary_run, summary_estimate, summary_model, summary_prefs_get, summary_prefs_set, summary_templates_get, summary_templates_set, transcript_prefs_get, transcript_prefs_set, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
+        .invoke_handler(tauri::generate_handler![pill::pill_hit, dictation_fix, fix_take, debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, ai_test_draft, ai_decide_models, ai_decide_set, ai_decide, storage_status, storage_reveal, models_list, model_select, model_download, model_cancel, model_delete, model_add, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, meeting_get, meeting_set, meeting_text, segments_include, addon_get, addon_disconnect, addon_folder, meeting_retry, meeting_open, meetings_list, meeting_page, meeting_running, meeting_toggle, call_start, call_dismiss, call_keep, call_stop, summary_get, summary_pick, summary_delete, summary_edit, summary_run, summary_estimate, summary_model, summary_prefs_get, summary_prefs_set, summary_templates_get, summary_templates_set, transcript_prefs_get, transcript_prefs_set, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::Updates::default())
         .setup(|app| {
