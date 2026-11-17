@@ -108,7 +108,7 @@
   <h2 id="updates-h">Updates</h2>
   <ul class="list">
     <li class="row">
-      <span><span class="name">Myna</span><span class="desc">Version {version}{#if import.meta.env.VITE_BUILD}{" · "}{import.meta.env.VITE_BUILD}{/if}{note}</span></span>
+      <span><span class="name">Myna <span style="font-weight: 400; color: var(--text-3)">· said <i>mai-na</i>, like <span lang="hi">मैना</span>, the bird</span></span><span class="desc">Version {version}{#if import.meta.env.VITE_BUILD}{" · "}{import.meta.env.VITE_BUILD}{/if}{note}</span></span>
       <!-- One button of one width in every state, so nothing moves the row. -->
       <div class="end">
         {#if upd.s.state === "checking"}<button class="btn" style="min-width: 148px" disabled>Checking…</button>

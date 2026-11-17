@@ -1,6 +1,6 @@
 # Myna
 
-Myna is a macOS menu bar app for voice typing and, later, meeting notes. Speech-to-text runs on your Mac, and Myna runs no AI model of its own: text cleanup uses an AI provider you add.
+Myna (said “mai-na”, like the मैना bird) is a macOS menu bar app for voice typing and, later, meeting notes. Speech-to-text runs on your Mac, and Myna runs no AI model of its own: text cleanup uses an AI provider you add.
 
 The app is in beta. Voice typing works today. Meeting notes are planned and not built.
 
