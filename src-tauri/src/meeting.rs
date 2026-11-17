@@ -406,6 +406,8 @@ pub struct Meetings {
     chunk: usize,
     /// The mirrored mute state last heard, recording or not, so a meeting starts knowing it. `Unknown` once the add-on drops.
     mirrored: Mutex<Option<MuteState>>,
+    /// The mic's loudness right now, 0 to 1, as `f32` bits; 0 when not recording.
+    level: Arc<std::sync::atomic::AtomicU32>,
 }
 
 /// `at` on the meeting clock that starts at `origin`.
@@ -415,7 +417,7 @@ fn on_clock(origin: Instant, at: Instant) -> u64 {
 
 impl Meetings {
     pub fn new(db: Arc<Mutex<Connection>>, dir: PathBuf, mic: Box<dyn Mic>, them: Box<dyn Them>) -> Self {
-        Meetings { db, dir, mic, them, active: Default::default(), job: Default::default(), chunk: CHUNK, mirrored: Default::default() }
+        Meetings { db, dir, mic, them, active: Default::default(), job: Default::default(), chunk: CHUNK, mirrored: Default::default(), level: Default::default() }
     }
 
     /// Whether Myna can't hear the other people on the call (the mic records regardless).
@@ -473,6 +475,11 @@ impl Meetings {
     }
 
     /// Starts a meeting at `now` (unix ms). Returns its id; one already recording is left alone.
+    /// How loud the mic is right now, 0 to 1; 0 when not recording.
+    pub fn level(&self) -> f32 {
+        f32::from_bits(self.level.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
     pub fn start(&self, now: i64) -> Result<i64, String> {
         let mut slot = self.active.lock().unwrap();
         if let Some(a) = slot.as_ref() {
@@ -489,9 +496,10 @@ impl Meetings {
             let them = Arc::new(Mutex::new(Track { wav: Some(create(folder.join("them.wav"))?), ..Default::default() }));
             // The meeting clock starts with the mic's first sample.
             let origin = Arc::new(OnceLock::<Instant>::new());
-            let (w, o) = (wav.clone(), origin.clone());
+            let (w, o, level) = (wav.clone(), origin.clone(), self.level.clone());
             let mut since_flush = 0;
             let on = move |samples: &[f32]| {
+                level.store(crate::dictation::loudness(samples).to_bits(), std::sync::atomic::Ordering::Relaxed);
                 o.get_or_init(|| Instant::now().checked_sub(Duration::from_secs_f64(samples.len() as f64 / RATE as f64)).unwrap_or_else(Instant::now));
                 if let Some(wav) = w.lock().unwrap().as_mut() {
                     write(wav, &mut since_flush, samples);
@@ -682,6 +690,7 @@ impl Meetings {
     pub fn stop(&self) -> Result<Option<i64>, String> {
         let Some(a) = self.active.lock().unwrap().take() else { return Ok(None) };
         (a.stop)();
+        self.level.store(0, std::sync::atomic::Ordering::Relaxed);
         if let Some(stop) = a.stop_them {
             stop();
         }
@@ -1041,7 +1050,9 @@ pub(crate) mod tests {
         let id = m.start(1_000).unwrap();
         assert_eq!(m.start(2_000), Ok(id), "a second start leaves the recording alone");
         assert_eq!(m.running(), Some((id, 1_000)));
+        assert!(m.level() > 0.5, "the fake mic is loud: {}", m.level());
         assert_eq!(m.stop().unwrap(), Some(id));
+        assert_eq!(m.level(), 0.0, "the menu bar wave goes flat once it stops");
         assert_eq!((m.running(), m.stop()), (None, Ok(None)));
         let r = hound::WavReader::open(tmp.path().join(format!("meetings/{id}/mic.wav"))).unwrap();
         assert_eq!((r.spec().sample_rate, r.spec().channels, r.spec().bits_per_sample), (16_000, 1, 16));
