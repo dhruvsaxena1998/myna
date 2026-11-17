@@ -13,7 +13,7 @@
 
   const opts = () => items.filter((x): x is Extract<Item, { kind: "opt" }> => x.kind === "opt");
 
-  function open(s: HTMLSelectElement) {
+  function open(s: HTMLSelectElement, byKey: boolean) {
     sel = s;
     items = [];
     for (const child of s.children) {
@@ -22,7 +22,7 @@
         for (const o of child.querySelectorAll("option")) items.push({ kind: "opt", i: o.index, label: o.text, disabled: o.disabled || child.disabled });
       } else if (child instanceof HTMLOptionElement) items.push({ kind: "opt", i: child.index, label: child.text, disabled: child.disabled });
     }
-    active = s.selectedIndex;
+    active = byKey ? s.selectedIndex : -1; // like a native menu: nothing lit until the pointer or a key picks a row
     const r = s.getBoundingClientRect();
     const below = innerHeight - r.bottom - 8, above = r.top - 8;
     const up = below < 160 && above > below;
@@ -50,7 +50,7 @@
   function move(step: number) {
     const list = opts().filter((o) => !o.disabled);
     if (!list.length) return;
-    const at = list.findIndex((o) => o.i === active);
+    const at = list.findIndex((o) => o.i === (active < 0 ? sel!.selectedIndex : active));
     active = list[at < 0 ? 0 : Math.max(0, Math.min(list.length - 1, at + step))].i;
     menu!.querySelector<HTMLElement>(`[data-i="${active}"]`)?.scrollIntoView({ block: "nearest" });
   }
@@ -83,11 +83,11 @@
       if (!s || e.button !== 0) return;
       e.preventDefault(); // stops WebKit opening its own menu
       s.focus();
-      open(s);
+      open(s, false);
     };
     const key = (e: KeyboardEvent) => {
       const s = target(e);
-      if (s && [" ", "Enter", "ArrowDown", "ArrowUp"].includes(e.key) && !e.metaKey) (e.preventDefault(), open(s));
+      if (s && [" ", "Enter", "ArrowDown", "ArrowUp"].includes(e.key) && !e.metaKey) (e.preventDefault(), open(s, true));
     };
     const shut = () => close(false);
     // The menu is pinned to where the select was; a page scroll would leave it floating.
@@ -109,7 +109,7 @@
 
 <div bind:this={menu} popover="manual" class="menu" role="listbox" tabindex="-1" aria-activedescendant={active >= 0 ? `sm-${active}` : undefined} aria-label={sel?.getAttribute("aria-label") ?? sel?.labels?.[0]?.textContent ?? undefined}
   style:left="{pos.left}px" style:top="{pos.top}px" style:min-width="{pos.minWidth}px" style:max-height="{pos.maxHeight}px"
-  onkeydown={keys} ontoggle={(e) => { if (e.newState === "closed") sel = null; }}>
+  onkeydown={keys} onpointerleave={() => (active = -1)} ontoggle={(e) => { if (e.newState === "closed") sel = null; }}>
   {#each items as it}
     {#if it.kind === "head"}
       <div class="head" role="presentation">{it.label}</div>
