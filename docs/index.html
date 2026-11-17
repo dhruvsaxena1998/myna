@@ -48,6 +48,7 @@
   --accent: #0A64D8; --on-accent: #FFFFFF; --accent-text-l: #0A5BC4; --accent-text-d: #6AAEFF; --accent-text: var(--accent-text-l);
   --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent); --accent-soft-strong: color-mix(in srgb, var(--accent) 20%, transparent);
   --ok: #1E7B34; --warn: #8A5300; --alert: #B3261E; --alert-soft: rgba(179,38,30,.08);
+  --caution: #C77700; --caution-text: #8A5300; --caution-soft: rgba(199,119,0,.10);
   /* Liquid Glass materials */
   --glass-base: rgba(255,255,255,.56); --glass-strong-base: rgba(250,250,252,.84); --win-glass-base: rgba(244,244,247,.70);
   --glass: var(--glass-base); --glass-strong: var(--glass-strong-base); --win-glass: var(--win-glass-base);
@@ -69,6 +70,7 @@
     --text: #ECECEF; --text-2: #B3B3B9; --text-3: #929298;
     --accent-text: var(--accent-text-d);
     --ok: #4CD964; --warn: #FFD60A; --alert: #FF6961; --alert-soft: rgba(255,105,97,.12);
+    --caution: #FFB340; --caution-text: #FFC266; --caution-soft: rgba(255,179,64,.12);
     --glass-base: rgba(44,44,48,.55); --glass-strong-base: rgba(40,40,44,.82); --win-glass-base: rgba(24,24,26,.62);
     --glass-edge: rgba(255,255,255,.12); --glass-line: rgba(255,255,255,.08);
     --field: rgba(255,255,255,.07); --btn-bg: rgba(255,255,255,.10); --btn-sel: rgba(255,255,255,.18);
@@ -83,6 +85,7 @@
     --text: #ECECEF; --text-2: #B3B3B9; --text-3: #929298;
     --accent-text: var(--accent-text-d);
     --ok: #4CD964; --warn: #FFD60A; --alert: #FF6961; --alert-soft: rgba(255,105,97,.12);
+    --caution: #FFB340; --caution-text: #FFC266; --caution-soft: rgba(255,179,64,.12);
     --glass-base: rgba(44,44,48,.55); --glass-strong-base: rgba(40,40,44,.82); --win-glass-base: rgba(24,24,26,.62);
     --glass-edge: rgba(255,255,255,.12); --glass-line: rgba(255,255,255,.08);
     --field: rgba(255,255,255,.07); --btn-bg: rgba(255,255,255,.10); --btn-sel: rgba(255,255,255,.18);
@@ -145,6 +148,7 @@ ul { margin: 0; padding: 0; list-style: none; }
 .pill { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 8px; border-radius: 10px; font-size: var(--fs-xs); font-weight: 500; white-space: nowrap; background: var(--hover); color: var(--text-2); }
 .pill.status { background: var(--accent-soft); color: var(--accent-text); }
 .pill.alert { background: var(--alert-soft); color: var(--alert); }
+.pill.caution { background: var(--caution-soft); color: var(--caution-text); }
 .pill.ok { color: var(--ok); background: transparent; padding: 0; }
 .tag { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 7px; border-radius: 4px; border: 1px solid var(--line); font-size: var(--fs-s); color: var(--text-2); white-space: nowrap; }
 .tag i { width: 7px; height: 7px; border-radius: 50%; background: var(--dot, var(--text-3)); flex: none; }
@@ -381,9 +385,9 @@ button.mpill { font: inherit; }
 .add-h { font-weight: 600; }
 .sgroup .list + .cloud { margin-top: var(--s3); }
 .sgroup .list.empty { padding: var(--s6) var(--s5); }
-.notset { color: var(--alert); }
-.notice { display: flex; align-items: center; gap: var(--s2); margin-bottom: var(--s4); padding: var(--s2) var(--s2) var(--s2) var(--s4); border-radius: 12px; background: var(--alert-soft); color: var(--text); }
-.notice > .ic { color: var(--alert); flex: none; }
+.notset { color: var(--caution-text); }
+.notice { display: flex; align-items: center; gap: var(--s2); margin-bottom: var(--s4); padding: var(--s2) var(--s2) var(--s2) var(--s4); border-radius: 12px; background: var(--caution-soft); color: var(--text); }
+.notice > .ic { color: var(--caution-text); flex: none; }
 .pk-btn { max-width: 300px; gap: 6px; }
 .pkpop { width: min(420px, calc(100vw - 48px)); padding: 5px; }
 .pkpop .search { margin: 3px 3px 5px; }
@@ -688,6 +692,27 @@ body { letter-spacing: -.005em; text-rendering: optimizeLegibility; }
 .sumdoc .sum-lead, .sumdoc .sum li { font-size: var(--fs-body); line-height: 1.6; color: var(--text); }
 .sumdoc .sum h2 { font-family: var(--font-display); font-size: 16px; letter-spacing: -.01em; }
 .seg-text, .clip p { font-size: 14px; line-height: 1.6; }
+/* Summary and transcript cleanup (story 16) */
+.sum-bar .grow { flex: 1; }
+.sum-cost { margin-top: var(--s5); padding-top: var(--s2); border-top: .5px solid var(--line); color: var(--text-3); font-size: var(--fs-s); font-variant-numeric: tabular-nums; }
+.sum-prog { margin-top: var(--s4); color: var(--text-2); font-size: var(--fs-s); }
+.sum-prog .err { display: inline-flex; gap: 4px; align-items: center; }
+.sumdoc .sum p { font-size: var(--fs-body); line-height: 1.6; margin: 0 0 var(--s2); }
+.ts { border: 0; padding: 0 2px; border-radius: 4px; background: none; color: var(--accent-text); font: inherit; font-size: .88em; font-variant-numeric: tabular-nums; cursor: pointer; }
+.ts:hover { text-decoration: underline; }
+.ts:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pop.vmenu { width: 340px; padding: 5px; left: 0; right: auto; }
+.vrow { display: flex; align-items: center; gap: 2px; }
+.vrow .mitem { flex: 1; min-width: 0; }
+.vmenu .pk-t { font: inherit; }
+.sum-edit { margin-top: var(--s4); display: grid; gap: var(--s2); }
+.sum-edit textarea { min-height: 300px; font-family: ui-monospace, "SF Mono", monospace; font-size: 13px; line-height: 1.55; }
+.sum-empty { margin-top: var(--s5); padding: var(--s5); border-radius: 14px; background: var(--inset); display: grid; gap: var(--s2); justify-items: start; }
+.sum-empty h2 { font-size: var(--fs-body); font-weight: 600; }
+.est { color: var(--text-2); font-size: var(--fs-s); }
+.chg { background: none; color: inherit; text-decoration: underline dotted var(--accent-text); text-decoration-thickness: 1.5px; text-underline-offset: 3px; cursor: help; }
+.dp-meta { margin: 0 0 var(--s2); color: var(--text-3); font-size: var(--fs-s); }
+.dpanel .seg-row.hit { background: var(--accent-soft); border-radius: 8px; margin: 0 calc(-1 * var(--s2)); padding-left: var(--s2); padding-right: var(--s2); }
 .sgroup h2 { font-family: var(--font-display); font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
 .side h2 { font-size: var(--fs-xs); font-weight: 600; letter-spacing: .01em; color: var(--text-3); }
 .nav[aria-current="true"] { background: var(--accent-soft-strong); }
@@ -858,19 +883,20 @@ const MEETINGS = [
   { id:'m1', title:'Design review: Meetings module', date:'Wed 29 Oct', time:'11:00', dur:'42 min', source:'Google Meet', folder:'Platform team', tags:['design','roadmap'],
     transcript:[
       ['Priya Nair','11:02','Okay, so the thing I keep coming back to is the mute case. If I am muted in Meet and the app keeps recording, what ends up in the transcript?'],
-      ['Me','11:03','Audio is always kept on disk, but anything said while muted is collapsed. It only enters the transcript if you include it.'],
-      ['Tom Okafor','11:05','And when we cannot read the mute state at all, say in Safari?'],
+      ['Me','11:03','Audio is always kept on disk, but anything said while muted is collapsed. It only enters the transcript if you include it.', [['disk','disc']]],
+      ['Tom Okafor','11:05','And when we cannot read the mute state at all, say in Safari?', [['Safari','sapphire']]],
       ['Me','11:05','Then it is unknown, and unknown is treated the same as muted. The popover says "manual" so you know.'],
       ['Lena Fischer','11:08','I like that. Can we rename a speaker once and have every line follow?'],
       ['Me','11:09','Yes. Rename once, and it remembers the voice as a suggestion for the next meeting.'],
       ['Priya Nair','11:14','Screenshots every fifteen seconds feels like a lot of disk.'],
-      ['Tom Okafor','11:15','We drop near-duplicates with a perceptual hash. Most calls keep under ten frames.'],
-      ['Lena Fischer','11:31','For the extension, Meet first and Teams web second?'],
+      ['Tom Okafor','11:15','We drop near-duplicates with a perceptual hash. Most calls keep under ten frames.', [['perceptual','perception']]],
+      ['Lena Fischer','11:31','For the extension, Meet first and Teams web second?', [['Meet','meat'], ['Teams','teens']]],
       ['Me','11:32','Agreed. Zoom mute mirroring moves to phase 2.']
     ],
-    summary:{ text:'Three-person review of the Meetings module. The group agreed that mic capture follows the meeting app’s mute state and that unknown states are treated as muted. Rename-once propagation and remembered voices were confirmed.',
-      decisions:['Muted and unknown segments are collapsed and never sent to a provider unless included.','Browser extension ships for Meet first, Teams web second.','Zoom mute mirroring moves to phase 2.'],
-      actions:['Priya: write the extension’s mute-state message schema.','Tom: measure the screenshot hash threshold on five real calls.','Lena: draft copy for the "possibly muted" group.'] } },
+    cleaned:{ via:'qwen2.5:7b-instruct on Ollama on this Mac', cost:'Free · runs on your server' },
+    summary:{ text:'Three-person review of the Meetings module. The group agreed that mic capture follows the meeting app’s mute state and that unknown states are treated as muted [11:05]. Rename-once propagation and remembered voices were confirmed [11:09].',
+      decisions:['Muted and unknown segments are collapsed and never sent to a provider unless included [11:03].','Browser extension ships for Meet first, Teams web second [11:32].','Zoom mute mirroring moves to phase 2 [11:32].'],
+      actions:['Priya: write the extension’s mute-state message schema [11:02].','Tom: measure the screenshot hash threshold on five real calls [11:15].','Lena: draft copy for the "possibly muted" group [11:08].'] } },
   { id:'m2', title:'Acme onboarding kickoff', date:'Tue 28 Oct', time:'15:30', dur:'35 min', source:'Microsoft Teams', folder:'Acme', tags:['client','kickoff'],
     transcript:[
       ['Daniel Reyes','15:31','Thanks for making time. Our main goal this quarter is getting the support team off spreadsheets.'],
@@ -928,11 +954,19 @@ const MEETINGS = [
     summary:{ text:'Short huddle to share the staging build link.', decisions:[], actions:['Speaker 2: send the staging build link.'] } }
 ];
 
+/* Summary templates (story 16): only the instruction text is editable; the wrapper (data tags, included lines only, Markdown out, [hh:mm:ss] timestamps) is fixed */
+const TPL_DEF = {
+  't-recap': 'Start with a short summary of the meeting in plain language. Then list the decisions, and the action items with their owners and any dates.',
+  't-actions': 'List every action item with its owner and any date mentioned. Keep each item to one line.',
+  't-decisions': 'List the decisions made in this meeting, and what was left open.'
+};
+// shortcut: Decisions is a fixed sample of an edited template with a newer default; the real app compares the shipped text with the one the edit started from
 const BUILTIN_TEMPLATES = [
-  { id:'t-summary', name:'Summary', prompt:'Write a short recap of this meeting in plain language. Then list decisions and action items with owners.' },
-  { id:'t-actions', name:'Action items', prompt:'List every action item with its owner and any date mentioned. Keep each item to one line.' },
-  { id:'t-decisions', name:'Decisions', prompt:'List the decisions made in this meeting, and what was left open.' }
+  { id:'t-recap', name:'Recap', text:null },
+  { id:'t-actions', name:'Action items', text:null },
+  { id:'t-decisions', name:'Decisions', text:'List the decisions, one per line, with who made them.', newer:true }
 ];
+const TCL_DEF = 'Fix punctuation, capitals and words that were clearly misheard. Take out filler words. Write dates, times, phone numbers, versions and decades in digits. Keep every line’s meaning, words and order: don’t rephrase, merge, split or drop lines.';
 
 const STT_LOCAL = [
   { id:'parakeet', name:'Parakeet TDT v3', vendor:'NVIDIA', desc:'Fast and accurate in English and 24 other European languages. Recommended.', size:'670 MB', acc:5, spd:5 },
@@ -965,6 +999,10 @@ const CLOUD_MODELS = {
 /* USD per 1M input tokens; shortcut: hard-coded sample prices, the real app reads them from the provider or a maintained list */
 const PRICE = { 'gpt-4.1-mini':0.40, 'gpt-4.1':2.00, 'openai/gpt-4.1-mini':0.40, 'anthropic/claude-sonnet-4.5':3.00, 'google/gemini-2.5-flash':0.30 };
 
+/* ---------- Summary (story 16) ---------- */
+const parts = m => Math.max(1, Math.ceil(parseInt(m.dur) / 4));   // fixed 4-minute windows; the app splits one further only if it overflows the model's window
+const toMd = d => d.text + (d.decisions.length ? '\n\n## Decisions\n' + d.decisions.map(x => '- ' + x).join('\n') : '') + (d.actions.length ? '\n\n## Action items\n' + d.actions.map(x => '- ' + x).join('\n') : '');
+
 /* ---------- state ---------- */
 const S = {
   view:'onboarding', step:0,
@@ -980,7 +1018,7 @@ const S = {
   filter:{ type:'all' }, addingFolder:false, drawer:false, listScroll:0,
   current:null,
   templates:BUILTIN_TEMPLATES.slice(),
-  sums:{}, regen:{ mode:null, tpl:'t-summary', saving:false, draft:'' },
+  sums:{}, regen:{ tpl:'t-recap', draft:'', model:'' }, orig:false, hit:null,
   pop:null, panel:null, copied:null, folderIcon:{}, clipQ:'', mq:'', modelQ:'', modelSort:'rec', undoClip:null, clipConfirm:false, clipOpen:{}, suggOff:{}, rate:{ c3:'up' }, mean:null, meanDone:false,
   clips:[
     { id:'c1', text:'Can we move the design review to Thursday afternoon? Wednesday is packed.', raw:'Um, can we move the the design review to Thursday afternoon? Wednesday is packed.', src:'Slack', t:'Today 11:52' },
@@ -1012,7 +1050,8 @@ S.set = { modules:S.modules, hotkey:'fn', mode:'hold', sounds:true, paste:'clipb
   capture:'shots', interval:'15', apps:{ meet:false, teams:false, zoom:false, slack:false }, ext:false, retention:'30', folder:true, dataPath:'~/Library/Application Support/Myna', dataMoved:false,
   meetKey:'ctrl-opt-m', appearance:'auto', accent:'blue', glass:'clear', liquid:false, liquidFrost:50, expOn:false, detect:true,
   diar:'who', updMode:'auto', updEvery:'launch', channel:'beta',
-  exp:{ diarOn:false, uhmD:false, uhmM:false, llmM:false, triage:false, relevance:false, shotsAI:false, nerds:false },
+  autoSum:true, sumTpl:'t-recap', tclean:false, tclText:null, tplOpen:null,
+  exp:{ diarOn:false, uhmD:false, uhmM:false, triage:false, relevance:false, shotsAI:false, nerds:false },
   yours:{ period:'7' },
   nerds:{ period:'7', model:'all', app:'all', sample:'full', pick:null } };
 S.mb = { open:false };
@@ -1022,7 +1061,11 @@ S.u = { state:'idle', ver:UPD_CUR, open:false, pct:0, err:'', bad:false, toast:n
 S.dictS = { state:null };
 S.rec = { state:null };
 S.detect = { state:null, menu:false, ignored:false };
-MEETINGS.forEach(m => S.sums[m.id] = { tplName:'Summary', at:'11:44', custom:false, data:m.summary, loading:false });
+// Sample data: every meeting has one Recap; the first also has an Action items run and an edit of it
+const SAMPLE_VIA = { via:'anthropic/claude-sonnet-4.5 on OpenRouter', off:true };
+MEETINGS.forEach(m => S.sums[m.id] = { cur:0, vers:[{ tpl:'Recap', prompt:TPL_DEF['t-recap'], ...SAMPLE_VIA, at:'Today 11:44', parts:parts(m), cost:'$0.012', md:toMd(m.summary) }] });
+(s => { const a = { tpl:'Action items', prompt:TPL_DEF['t-actions'], ...SAMPLE_VIA, at:'Today 11:52', parts:parts(MEETINGS[0]), reused:true, cost:'$0.003', md:toMd({ text:'Three action items came out of this review.', decisions:[], actions:MEETINGS[0].summary.actions }) };
+  s.vers.push(a, { tpl:'Edited', at:'Today 12:05', from:'Action items, 11:52', md:a.md.replace('Three action items came out of this review.', 'Three action items came out of this review. Lena shares her draft before Friday’s sync.') }); s.cur = 2; })(S.sums[MEETINGS[0].id]);
 
 /* ---------- helpers ---------- */
 const $ = s => document.querySelector(s);
@@ -1040,7 +1083,7 @@ function fuzzy(q, text) {
   return q.toLowerCase().split(/\s+/).filter(Boolean).every(t => hay.includes(t) || words.some(w => near(t, w)));
 }
 console.assert(fuzzy('prya', 'Priya Nair') && fuzzy('acme pricng', 'Acme pricing follow-up') && fuzzy('desgn', 'Design review') && !fuzzy('zebra', 'Acme pricing'), 'fuzzy search self-check');
-const meetHay = m => [m.title, m.folder, m.tags.join(' '), [...new Set(m.transcript.map(r => r[0]))].join(' '), S.sums[m.id].data.text].join(' ');
+const meetHay = m => [m.title, m.folder, m.tags.join(' '), [...new Set(m.transcript.map(r => r[0]))].join(' '), m.summary.text].join(' ');
 // shortcut: keyword hints stand in for the summary model's folder suggestion
 const FOLDER_HINTS = { 'Acme':['acme','pricing','billing','pilot'], 'Platform team':['staging','build','frontend','extension','diarization','platform','hiring'], '1:1s':['1:1'] };
 function suggestFolder(m) {
@@ -1053,14 +1096,14 @@ const fIcon = f => S.folderIcon[f] || (f === 'Inbox' ? 'inbox' : 'folder');
 const allTags = () => [...new Set(MEETINGS.flatMap(m => m.tags))].sort();
 const llmCloud = () => S.tasks.llm.route === 'cloud';
 const llmLabel = () => llmCloud() ? `${S.tasks.llm.provider === 'openai' ? 'OpenAI' : 'OpenRouter'} · ${S.tasks.llm.model}` : `${LLM_LOCAL.find(x => x.id === S.tasks.llm.local).name} · on this Mac`;
-const offBadge = (what='text', past) => `<span class="pill alert">${icon('cloud','ic-s')}${past ? 'Made online' : `Sends ${({ text:'your words', audio:'your voice', images:'pictures' })[what]} online`}</span>`;
+const offBadge = (what='text') => `<span class="pill caution">${icon('cloud','ic-s')}Sends ${({ text:'text', audio:'your voice', images:'pictures' })[what]} off this Mac</span>`;
 // shortcut: curated 1–5 ratings typed in by hand; the real list ships them with each model
 const ACC_WORD = ['', 'Basic', 'Fair', 'Good', 'Great', 'Best'], SPD_WORD = ['', 'Slow', 'Steady', 'Quick', 'Fast', 'Fastest'];
 const rating = (label, n, words) => `<span class="rate" role="img" aria-label="${label}: ${words[n]}, ${n} out of 5"><span class="rate-l">${label}</span><span class="pips" aria-hidden="true">${[1,2,3,4,5].map(i => `<i class="${i <= n ? 'on' : ''}"></i>`).join('')}</span><span class="rate-w">${words[n]}</span></span>`;
 const ratings = m => m.acc ? `<span class="rates">${rating('Accuracy', m.acc, ACC_WORD)}${rating('Speed', m.spd, SPD_WORD)}</span>` : '';
 const localBadge = () => `<span class="pill status">${icon('mac','ic-s')}Private · stays on this Mac</span>`;
 const fmtTok = n => n >= 1000 ? (n/1000).toFixed(1) + 'k' : String(n);
-const ctxChars = ids => ids.reduce((a, id) => { const m = byId(id); return a + m.transcript.reduce((b, r) => b + r[2].length + r[0].length, 0) + JSON.stringify(S.sums[id].data).length; }, 0);
+const ctxChars = ids => ids.reduce((a, id) => { const m = byId(id); return a + m.transcript.reduce((b, r) => b + r[2].length + r[0].length, 0) + JSON.stringify(m.summary).length; }, 0);
 
 /* ---------- onboarding ---------- */
 const LANGS = [['en','English'],['de','German'],['fr','French'],['es','Spanish'],['it','Italian'],['nl','Dutch'],['pt','Portuguese']]; // the active model's languages, pre-filled from the Mac's
@@ -1539,71 +1582,121 @@ function detail() {
       ${p ? sidePanel(m, p) : ''}
     </div>`;
 }
+// The transcript as shown: cleaned with the changed words marked, or what Myna heard (Show original)
+const heard = row => (row[3] || []).reduce((t, [c, h]) => t.replace(c, h), row[2]);
+const shownText = (m, row) => S.orig || !m.cleaned ? heard(row) : row[2];
+const marked = row => (row[3] || []).reduce((h, [c, w]) => h.replace(esc(c), `<mark class="chg" title="Heard “${esc(w)}”">${esc(c)}</mark>`), esc(row[2]));
 function sidePanel(m, p) {
-  const tr = p === 'transcript';
+  const tr = p === 'transcript', cl = tr && m.cleaned;
   return `<aside class="dpanel" id="dpanel" aria-labelledby="dp-h">
       <div class="dp-head"><h2 id="dp-h">${tr ? 'Transcript' : 'Chat'}</h2><span class="grow"></span>
+        ${cl ? `<button class="btn" id="orig-btn" data-act="orig" aria-pressed="${S.orig}">${S.orig ? 'Show cleaned' : 'Show original'}</button>` : ''}
         ${tr ? `<button class="btn" id="copy-tr" data-act="copy-tr" data-id="${m.id}">${icon(S.copied === m.id ? 'check' : 'copy','ic-s')}<span>${S.copied === m.id ? 'Copied' : 'Copy'}</span></button>` : ''}
         <button class="btn icon plain" id="dp-close" data-act="panel" data-p="${p}" aria-label="Close ${tr ? 'transcript' : 'chat'}">${icon('x')}</button></div>
-      ${tr ? `<div class="dp-body od-scroll transcript">${m.transcript.map(([who, t, text]) => `<div class="seg-row"><div class="seg-who"><b>${esc(who)}</b><time>${t}</time></div><p class="seg-text">${esc(text)}</p></div>`).join('')}</div>`
+      ${tr ? `<div class="dp-body od-scroll transcript">${cl ? `<p class="dp-meta">${S.orig ? 'What Myna heard, before cleanup.' : `Cleaned up by ${esc(m.cleaned.via)} · ${esc(m.cleaned.cost)}. Point at an underlined word to see what Myna heard.`}</p>` : ''}${m.transcript.map((row, i) => `<div class="seg-row${S.hit === i ? ' hit' : ''}" id="seg-${i}" tabindex="-1"><div class="seg-who"><b>${esc(row[0])}</b><time>${row[1]}</time></div><p class="seg-text">${cl && !S.orig ? marked(row) : esc(shownText(m, row))}</p></div>`).join('')}</div>`
         : chatView(m.id, [m.id])}
     </aside>`;
 }
-function summaryDoc(m) {
-  const s = S.sums[m.id];
-  const body = s.loading ? `<div class="skel" role="status" aria-label="Generating summary"><i></i><i></i><i></i><i></i><i></i><i></i></div>`
-    : `<div class="sum"><p class="sum-lead">${esc(s.data.text)}</p>
-        ${s.data.decisions.length ? `<h2>Decisions</h2><ul>${s.data.decisions.map(d => `<li>${esc(d)}</li>`).join('')}</ul>` : ''}
-        ${s.data.actions.length ? `<h2>Action items</h2><ul>${s.data.actions.map(d => `<li>${esc(d)}</li>`).join('')}</ul>` : ''}</div>`;
-  return `<section class="sumdoc" aria-label="Summary">
-      <div class="sum-bar"><div class="sum-meta od-fill"><span>Written ${s.at} · ${esc(s.custom ? 'Your instructions' : s.tplName)}</span><span class="od-truncate">${esc(llmLabel())}</span></div>
-        <div class="popwrap" data-pop><button class="btn" id="regen-btn" data-act="pop" data-p="regen" aria-haspopup="dialog" aria-expanded="${S.pop === 'regen'}" ${s.loading ? 'disabled' : ''}>${icon('refresh','ic-s')}Rewrite</button>${S.pop === 'regen' ? regenPop(m) : ''}</div></div>
-      ${llmCloud() ? `<div style="margin-top:6px">${offBadge('text', true)}</div>` : ''}
-      ${body}</section>`;
+
+// shortcut: the few Markdown shapes a template asks for (headings, bullets, paragraphs, bold, timestamps); the app renders with markdown-it, links and HTML off
+function md(src) {
+  const inl = t => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\[(\d{1,2}:\d{2}(?::\d{2})?)\]/g, (_, t) => `<button class="ts" data-act="ts" data-t="${t}" aria-label="Show ${t} in the transcript">${t}</button>`);
+  let h = '', list = [];
+  const flush = () => { if (list.length) h += `<ul>${list.map(l => `<li>${inl(l)}</li>`).join('')}</ul>`; list = []; };
+  for (const l of src.split('\n')) {
+    if (/^\s*[-*] /.test(l)) { list.push(l.replace(/^\s*[-*] /, '')); continue; }
+    flush();
+    if (/^#{1,3} /.test(l)) h += `<h2>${inl(l.replace(/^#+ /, ''))}</h2>`;
+    else if (l.trim()) h += `<p>${inl(l)}</p>`;
+  }
+  flush(); return h;
 }
+console.assert(md('Hi **you** [11:05]\n\n## D\n- a\n- b') === '<p>Hi <b>you</b> <button class="ts" data-act="ts" data-t="11:05" aria-label="Show 11:05 in the transcript">11:05</button></p><h2>D</h2><ul><li>a</li><li>b</li></ul>' && md('<x>') === '<p>&lt;x&gt;</p>', 'markdown self-check');
+
+const tplText = t => t.text ?? TPL_DEF[t.id] ?? '';
+const tplBy = id => S.templates.find(t => t.id === id);
+// A feature's model: 'main' or 'fast' inherits, {pid, model} is the user's pick, null is Not set (its provider was removed; never rebound)
+const feat = slot => { const v = S.ai[slot]; return v === 'main' ? S.ai.main : v === 'fast' ? S.ai.fast : v; };
+const featLabel = slot => S.ai[slot] === 'main' ? 'Main model' : S.ai[slot] === 'fast' ? 'Fast model' : routeName(S.ai[slot]);
+const viaName = r => `${r.model} on ${prov(r.pid).name}`;
+// shortcut: about 210 tokens a minute of talk (an hour is 12–13K), 300 tokens of notes per part; the app counts characters ÷ 4 and prices from the model list
+function estimate(m, r, mergeOnly) {
+  const p = prov(r.pid), mod = modelsOf(p).find(x => x.id === r.model) || {}, n = parts(m), talk = parseInt(m.dur) * 210;
+  if (p.preset !== 'openrouter') return { usd:0, label: loopback(p.url) ? 'Free · runs on your server' : 'cost unknown' };
+  const v = ((mergeOnly ? 0 : talk) + n * 300 + 400) * mod.inP / 1e6 + ((mergeOnly ? 0 : n * 300) + 600) * mod.outP / 1e6;
+  return { usd:v, label:usd(v) };
+}
+function runSummary(m, tplId, prompt, r) {
+  const s = S.sums[m.id], t = tplBy(tplId), n = parts(m), key = r.pid + '|' + r.model;
+  const reuse = (s.notes || []).includes(key);   // chunk notes are keyed by their input and model: same lines and model, so only the merge runs
+  const fail = S.ai.fail; S.ai.fail = false;
+  s.run = { part: reuse ? n : 0, parts:n, reuse, tpl:t.name, via:viaName(r) }; s.err = null; s.editing = false;
+  const paint = () => { if (S.view === 'detail' && S.current === m.id) render(); };
+  const step = () => {
+    if (fail && s.run.part >= Math.ceil(n / 2)) { s.run = null; s.err = `${prov(r.pid).name} didn’t answer within 2 minutes on part ${Math.ceil(n / 2)} of ${n}.`; paint(); return; }
+    if (s.run.part < n) { s.run.part++; paint(); setTimeout(step, 220); return; }
+    s.run.merging = true; paint();
+    setTimeout(() => {
+      s.notes = [...new Set([...(s.notes || []), key])];
+      const d = t.id === 't-actions' ? { text:`${m.summary.actions.length} action item${m.summary.actions.length === 1 ? '' : 's'} came out of this meeting.`, decisions:[], actions:m.summary.actions }
+        : t.id === 't-decisions' ? { text:`${m.summary.decisions.length || 'No'} decision${m.summary.decisions.length === 1 ? ' was' : 's were'} made.`, decisions:m.summary.decisions, actions:[] } : m.summary;
+      s.vers.push({ tpl:t.name, prompt, via:viaName(r), off:!loopback(prov(r.pid).url), at:'Today ' + now(), parts:n, reused:reuse, cost:estimate(m, r, reuse).label, md:toMd(d) });
+      s.cur = s.vers.length - 1; s.run = null; paint(); $('#regen-btn')?.focus({ preventScroll:true });
+    }, 700);
+  };
+  paint(); setTimeout(step, 300);
+}
+const costLine = v => v.tpl === 'Edited' ? `Edited by you · ${v.at} · from ${esc(v.from)}`
+  : `${esc(v.tpl)} · ${esc(v.via)} · ${v.at} · ${v.reused ? `reused the notes of ${v.parts} parts` : `read in ${v.parts} part${v.parts === 1 ? '' : 's'}`} · ${esc(v.cost)}`;
+function versMenu(m) {
+  const s = S.sums[m.id], one = s.vers.length === 1;
+  return `<div class="pop menu vmenu" role="menu" aria-label="Versions">${s.vers.map((v, i) => [v, i]).reverse().map(([v, i]) => `<div class="vrow">
+      <button class="mitem pk" role="menuitemradio" aria-checked="${i === s.cur}" data-act="ver" data-i="${i}" data-id="${m.id}"><span class="pk-t"><span class="od-truncate">${esc(v.tpl)}${v.tpl === 'Edited' ? '' : ` · ${esc(v.via.split(' on ')[0])}`}</span>${i === s.cur ? icon('check','ic-s') : ''}</span><span class="pk-m">${v.at}${v.cost ? ' · ' + esc(v.cost) : ''}</span></button>
+      <button class="btn icon plain sm" data-act="ver-del" data-i="${i}" data-id="${m.id}" aria-label="Delete ${esc(v.tpl)} version from ${v.at}" ${one ? 'disabled title="The only version can’t be deleted"' : ''}>${icon('x','ic-s')}</button></div>`).join('')}</div>`;
+}
+function summaryDoc(m) {
+  const s = S.sums[m.id], v = s.vers[s.cur], r = feat('sum'), n = s.vers.length;
+  const notSet = S.ai.sum === 'main' ? 'Set a Main model to summarize' : 'Set a Summary model to summarize';
+  if (!v && !s.run) return `<section class="sumdoc" aria-label="Summary">${s.err ? `<p class="sum-prog"><span class="err">${icon('alert','ic-s')}Couldn’t summarize: ${esc(s.err)}</span></p>` : ''}
+      <div class="sum-empty">${r ? `<h2>No summary yet</h2><p class="help">${S.set.autoSum ? '' : 'Summarize when a meeting finishes is off. '}Summarize reads the transcript in ${parts(m)} parts.</p><div class="popwrap" data-pop><button class="btn primary" id="regen-btn" data-act="pop" data-p="regen" aria-haspopup="dialog" aria-expanded="${S.pop === 'regen'}">${icon('refresh','ic-s')}${s.err ? 'Try again' : 'Summarize'}</button>${S.pop === 'regen' ? regenPop(m) : ''}</div>`
+        : `<h2>${notSet}</h2><p class="help">Summaries are written by an AI model you choose. Myna runs none itself.</p><button class="btn" data-act="go-ai">Set up</button>`}</div></section>`;
+  const busy = !!s.run, ru = s.run;
+  const prog = busy ? `<p class="sum-prog" role="status">${ru.merging ? `Writing the ${esc(ru.tpl)}…` : ru.reuse ? `Reusing the notes of ${ru.parts} parts…` : `Summarizing in ${ru.parts} parts… ${ru.part} of ${ru.parts} read`}</p>`
+    : s.err ? `<p class="sum-prog" role="status"><span class="err">${icon('alert','ic-s')}Couldn’t summarize: ${esc(s.err)}</span> <button class="btn plain sm" data-act="pop" data-p="regen">Try again</button></p>` : '';
+  const body = s.editing
+    ? `<form class="sum-edit" data-form="sum-edit" data-id="${m.id}"><label class="sr-only" for="sum-md">Summary text, in Markdown</label><textarea class="textarea" id="sum-md">${esc(v.md)}</textarea>
+        <div class="od-row"><span class="help od-fill">Saving adds an Edited version. Regenerate never overwrites it.</span><button type="button" class="btn" data-act="sum-edit-x">Cancel</button><button class="btn primary">Save</button></div></form>`
+    : !v ? `<div class="skel" role="presentation"><i></i><i></i><i></i><i></i><i></i><i></i></div>`
+    : `<div class="sum">${md(v.md)}</div><p class="sum-cost">${costLine(v)}</p>`;
+  return `<section class="sumdoc" aria-label="Summary">
+      <div class="sum-bar">${n > 1 ? `<div class="popwrap" data-pop><button class="btn plain" id="vers-btn" data-act="pop" data-p="vers" aria-haspopup="menu" aria-expanded="${S.pop === 'vers'}">${n} versions${icon('chev','ic-s')}</button>${S.pop === 'vers' ? versMenu(m) : ''}</div>` : ''}
+        <span class="grow"></span>${r ? hostPill(prov(r.pid).url) : `<span class="notset">${notSet}</span>`}
+        <button class="btn" data-act="sum-edit" data-id="${m.id}" ${busy || s.editing || !v ? 'disabled' : ''}>Edit</button>
+        <div class="popwrap" data-pop><button class="btn" id="regen-btn" data-act="pop" data-p="regen" aria-haspopup="dialog" aria-expanded="${S.pop === 'regen'}" ${busy || s.editing ? 'disabled' : ''}>${icon('refresh','ic-s')}Regenerate</button>${S.pop === 'regen' ? regenPop(m) : ''}</div></div>
+      ${prog}${body}</section>`;
+}
+// The model menu lists every configured provider's last model list; picking one here doesn't change Settings
 function regenPop(m) {
-  const r = S.regen;
-  const card = (k, t, d) => `<button type="button" class="rcard" data-act="regen-mode" data-mode="${k}" aria-pressed="${r.mode === k}"><span class="rc-t">${t}</span><span class="rc-d">${d}</span></button>`;
-  const body = r.mode === 'tpl'
-    ? `<fieldset class="tpls"><legend class="sr-only">Template</legend>${S.templates.map(t => `<label class="tplopt"><input type="radio" name="tpl" value="${t.id}" data-bind="tpl" ${t.id === r.tpl ? 'checked' : ''}><span class="od-field"><span>${esc(t.name)}${t.user ? ' · saved' : ''}</span><span class="help od-clamp-2">${esc(t.prompt)}</span></span></label>`).join('')}</fieldset>`
-    : r.mode === 'custom'
-    ? `<div class="od-field" style="--od-gap:4px"><label class="label" for="prompt">Your instructions</label><textarea class="textarea" id="prompt" rows="4" placeholder="e.g. Write a recap for the client: what we agreed, what they owe us, and dates.">${esc(r.draft)}</textarea><span class="err" id="prompt-e" role="status"></span></div>
-       ${r.saving ? `<div class="od-field" style="--od-gap:4px"><label class="label" for="tplname">Template name</label>
-          <div class="od-row"><input class="input od-fill" id="tplname" maxlength="40" placeholder="e.g. Client recap"><button type="button" class="btn" data-act="tpl-save">Save</button></div>
-          <span class="err" id="tplname-e" role="status"></span></div>` : ''}`
-    : '';
+  const g = S.regen, ps = S.ai.providers;
+  if (!ps.length) return `<div class="pop regen" role="dialog" aria-labelledby="rg-h"><h3 id="rg-h">Regenerate the summary</h3><p class="help">Add an AI provider to summarize. Myna runs no AI itself.</p><div class="od-row"><span class="od-fill"></span><button class="btn" data-act="go-ai">Set up</button></div></div>`;
+  const [pid, model] = g.model.split('|'), r = { pid, model }, est = estimate(m, r, (S.sums[m.id].notes || []).includes(g.model));
   return `<form class="pop regen" data-form="regen" data-id="${m.id}" role="dialog" aria-labelledby="rg-h">
-      <h3 id="rg-h">Rewrite the summary</h3>
-      <div class="rcards">${card('tpl', 'Use a template', `Pick from ${S.templates.length} ready-made styles, including ones you saved.`)}${card('custom', 'Say what you want', 'Tell Myna in your own words how to write it.')}</div>
-      ${body}
-      ${r.mode ? `<div class="od-row">${r.mode === 'custom' && !r.saving ? `<button type="button" class="btn" data-act="tpl-saving">Save as template</button>` : ''}<span class="od-fill"></span><button type="submit" class="btn primary">${icon('refresh','ic-s')}Rewrite</button></div>` : ''}
-      ${llmCloud() && r.mode ? `<div>${offBadge()}</div>` : ''}
+      <h3 id="rg-h">${S.sums[m.id].vers.length ? 'Regenerate the summary' : 'Summarize this meeting'}</h3>
+      <div class="od-field" style="--od-gap:4px"><label class="label" for="rg-tpl">Template</label>
+        <select class="select" id="rg-tpl" data-bind="rg-tpl">${S.templates.map(t => `<option value="${t.id}" ${t.id === g.tpl ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select></div>
+      <div class="od-field" style="--od-gap:4px"><label class="label" for="prompt">Instructions</label><textarea class="textarea" id="prompt" rows="4" aria-describedby="prompt-h prompt-e">${esc(g.draft)}</textarea>
+        <span class="help" id="prompt-h">Changes here are for this version only. Templates live in Settings › Meeting notes.</span><span class="err" id="prompt-e" role="status"></span></div>
+      <div class="od-field" style="--od-gap:4px"><label class="label" for="rg-model">Model</label>
+        <select class="select" id="rg-model" data-bind="rg-model">${ps.map(p => `<optgroup label="${esc(p.name)}">${modelsOf(p).map(x => `<option value="${p.id}|${esc(x.id)}" ${g.model === p.id + '|' + x.id ? 'selected' : ''}>${esc(x.id)}</option>`).join('')}</optgroup>`).join('')}</select>
+        <span class="help">Your Summary model is ${esc(featLabel('sum') === 'Main model' ? 'the Main model' : featLabel('sum'))}. Picking another here doesn’t change it.</span></div>
+      ${est.usd > 1 ? `<p class="est" role="status">${icon('alert','ic-s')} About ${est.label} for this meeting: ${parts(m)} parts and the merge.</p>` : ''}
+      <div class="od-row">${hostPill(prov(pid).url)}<span class="od-fill"></span><button type="submit" class="btn primary">${icon('refresh','ic-s')}${S.sums[m.id].vers.length ? 'Regenerate' : 'Summarize'}</button></div>
     </form>`;
 }
 function addDict(str) {
   str.split(',').map(w => w.trim().replace(/\s*->\s*/, ' → ').slice(0, 40)).filter(Boolean).forEach(w => { if (!S.set.dict.some(x => x.toLowerCase() === w.toLowerCase())) S.set.dict.push(w); });
   render(); $('#dict-in').focus();
 }
-function saveTpl() {
-  const name = $('#tplname').value.trim(), p = S.regen.draft.trim();
-  const err = msg => { $('#tplname-e').innerHTML = icon('alert','ic-s') + msg; $('#tplname').setAttribute('aria-invalid','true'); $('#tplname').focus(); };
-  if (!p) return err('Write your instructions first.');
-  if (!name) return err('Give the template a name.');
-  if (S.templates.some(t => t.name.toLowerCase() === name.toLowerCase())) return err('A template with this name exists. Pick another name.');
-  const t = { id:'u' + Date.now(), name, prompt:p, user:true }; S.templates.push(t);
-  Object.assign(S.regen, { mode:'tpl', tpl:t.id, saving:false }); render(); $('.tplopt input:checked')?.focus();
-}
-function generate(m, tplId, prompt) {
-  const tpl = S.templates.find(t => t.id === tplId);
-  const custom = prompt.trim() !== tpl.prompt.trim();
-  const base = m.summary;
-  let data;
-  if (!custom && tplId === 't-actions') data = { text:`${base.actions.length} action item${base.actions.length === 1 ? '' : 's'} came out of this meeting.`, decisions:[], actions:base.actions };
-  else if (!custom && tplId === 't-decisions') data = { text:`${base.decisions.length || 'No'} decision${base.decisions.length === 1 ? ' was' : 's were'} made.`, decisions:base.decisions, actions:[] };
-  else data = { ...base };
-  return { tplName:tpl.name, custom, data, at:now(), loading:false };
-}
-
 /* chat — shared by the meeting tab and the app-level screen */
 function chatView(key, ids) {
   const msgs = key === 'global' ? S.global.msgs : (S.chats[key] = S.chats[key] || []);
@@ -1639,7 +1732,7 @@ function search(q) {
   const words = (q.toLowerCase().match(/[a-z0-9:]+/g) || []).filter(w => w.length > 2 && !STOP.has(w));
   if (!words.length) return MEETINGS.slice(0, 4).map(m => m.id); // no topic named: use the most recent meetings
   return MEETINGS.map(m => {
-    const hay = [m.title, m.folder, m.tags.join(' '), m.transcript.map(r => r[0] + ' ' + r[2]).join(' '), JSON.stringify(S.sums[m.id].data)].join(' ').toLowerCase();
+    const hay = [m.title, m.folder, m.tags.join(' '), m.transcript.map(r => r[0] + ' ' + r[2]).join(' '), JSON.stringify(m.summary)].join(' ').toLowerCase();
     return [m.id, words.filter(w => hay.includes(w)).length];
   }).filter(x => x[1]).sort((a, b) => b[1] - a[1]).slice(0, 4).map(x => x[0]);
 }
@@ -1652,7 +1745,7 @@ function appChat() {
 function reply(ids, q, withTitle) {
   const s = q.toLowerCase();
   const pick = id => {
-    const m = byId(id), d = S.sums[id].data;
+    const m = byId(id), d = m.summary;
     if (/action|todo|next step|follow/.test(s)) return d.actions.length ? d.actions.map(a => '• ' + a).join('\n') : 'No action items.';
     if (/decid|decision|agree/.test(s)) return d.decisions.length ? d.decisions.map(a => '• ' + a).join('\n') : 'Nothing was decided.';
     if (/who|spoke|speaker|most/.test(s)) {
@@ -1753,6 +1846,32 @@ function styleEditor(st) {
 }
 const styleMeta = st => (st.id === 'default' ? 'Every other app' : st.apps.length ? st.apps.join(', ') : 'No apps yet')
   + (st.text != null && st.id in STYLE_DEF ? ' · edited' : '');
+function featHelp(slot) {
+  const v = S.ai[slot], r = feat(slot), base = slot === 'sum' ? 'Main' : 'Fast';
+  if (!S.ai.providers.length) return '<span class="notset">Not set. Add a provider on AI provider first.</span>';
+  if (v === null) return `<span class="notset">Not set. Its provider was removed. Pick a model, or use the ${base} model again.</span>`;
+  if (!r) return `<span class="notset">Uses the ${base} model, which is Not set. Pick one here or on AI provider.</span>`;
+  return (typeof v === 'string' ? `Uses the ${base} model: ${esc(routeName(r))}.` : `Your pick, instead of the ${base} model.`) + '<br>' + hostPill(prov(r.pid).url);
+}
+function templatesGroup() {
+  const x = S.set;
+  return `<section class="sgroup"><h2>Summary templates</h2><p class="help">What the summary should say. Myna always asks for Markdown with timestamps that link to the transcript, from the lines you kept.</p><ul class="list">${S.templates.map(t => `<li class="srow"><div class="od-field od-fill"><span class="label">${esc(t.name)}${t.newer ? ' <span class="pill status">Newer default</span>' : ''}</span><span class="help od-clamp-2">${esc(tplText(t))}</span></div>
+      <div class="od-fixed"><button class="btn" id="te-${t.id}" data-act="tpl-open" data-id="${t.id}" aria-expanded="${x.tplOpen === t.id}" aria-controls="ted-${t.id}">${x.tplOpen === t.id ? 'Done' : 'Edit'}</button></div></li>
+      ${x.tplOpen === t.id ? `<li class="style-li"><div class="style-ed" id="ted-${t.id}">
+        ${t.id in TPL_DEF ? '' : `<div class="od-field" style="--od-gap:4px"><label class="label" for="tn-${t.id}">Name</label><input class="input" id="tn-${t.id}" data-tpl="${t.id}" data-f="name" value="${esc(t.name)}" maxlength="32" autocomplete="off"></div>`}
+        <div class="od-field" style="--od-gap:4px"><label class="label" for="tt-${t.id}">Instructions</label><textarea class="textarea" id="tt-${t.id}" rows="4" data-tpl="${t.id}" data-f="text">${esc(tplText(t))}</textarea></div>
+        ${t.newer ? `<p class="style-newer" role="status"><span class="od-fill">A newer default is available. Your edit is kept until you choose.</span><button class="btn" data-act="tpl-reset" data-id="${t.id}">Use the new default</button></p>` : ''}
+        <div class="style-acts">${t.id in TPL_DEF ? `<button class="btn" id="tr-${t.id}" data-act="tpl-reset" data-id="${t.id}" ${t.text == null ? 'disabled' : ''}>Reset to default</button>` : `<button class="btn danger" data-act="tpl-del" data-id="${t.id}">Delete template</button>`}</div>
+      </div></li>` : ''}`).join('')}</ul>
+    <div style="margin-top:var(--s2)"><button class="btn" id="tpl-add" data-act="tpl-add">Add template</button></div></section>`;
+}
+function tclEditor() {
+  const t = S.set.tclText ?? TCL_DEF;
+  return `<section class="sgroup"><h2>Cleanup instructions</h2><div class="list"><div class="style-ed">
+    <div class="od-field" style="--od-gap:4px"><label class="label" for="tcl-text">Instructions</label><textarea class="textarea" id="tcl-text" rows="4">${esc(t)}</textarea>
+      <span class="help">Myna always adds: “Spell these exactly as written: ${esc(spellList().join(', '))}.” Lines go in as text to clean up, never as instructions. A line that comes back changed too much keeps what Myna heard.</span></div>
+    <div class="style-acts"><button class="btn" id="tcl-reset" data-act="tcl-reset" ${S.set.tclText == null ? 'disabled' : ''}>Reset to default</button></div></div></div></section>`;
+}
 function stylesGroup() {
   const x = S.set, head = `<h2>Cleanup styles</h2><p class="help">Dictate with cleanup picks a style by the app you’re in. Only Myna sees the app; its name is never sent.</p>`;
   return `<section class="sgroup">${head}<ul class="list">${x.styles.map(st => `<li class="srow"><div class="od-field od-fill"><span class="label">${esc(st.name)}${st.newer ? ' <span class="pill status">Newer default</span>' : ''}</span><span class="help">${esc(styleMeta(st))}</span></div>
@@ -1776,6 +1895,7 @@ const OR_MODELS = [
   { id:'openai/gpt-5-mini', inP:0.25, outP:2, ctx:'400K', img:true },
   { id:'google/gemini-2.5-flash', inP:0.30, outP:2.50, ctx:'1M', img:true },
   { id:'qwen/qwen3.7-flash', inP:0.05, outP:0.40, ctx:'128K', img:false },
+  { id:'openai/o1-pro', inP:150, outP:600, ctx:'200K', img:true },
   { id:'meta-llama/llama-3.3-70b-instruct', inP:0.13, outP:0.40, ctx:'128K', img:false }
 ];
 const LOCAL_MODELS = ['qwen2.5:7b-instruct', 'llama3.2:3b', 'gemma3:4b'].map(id => ({ id }));
@@ -1786,13 +1906,13 @@ const PRESETS = [
   ['openrouter', 'OpenRouter', 'OpenRouter', 'https://openrouter.ai/api/v1']
 ];
 const DEC_Q = { q:'Which folder should this meeting go in?', ctx:'“Acme pricing follow-up”, starting: “Thanks for joining. Let’s go over the pilot pricing…”', opts:['Inbox', 'Acme', 'Platform team', '1:1s', 'None of these'] };
-S.ai = { providers:[], main:null, fast:null, dec:null, add:null, confirm:null, notice:'', test:{}, decTest:null, fail:false, q:'' };
+S.ai = { providers:[], main:null, fast:null, dec:null, sum:'main', tcl:'fast', add:null, confirm:null, notice:'', test:{}, decTest:null, fail:false, q:'' };
 
 const hostOf = u => { try { return new URL(u).hostname.replace(/^\[|\]$/g, ''); } catch { return ''; } };
 const loopback = u => /^(localhost|127(\.\d{1,3}){3}|::1)$/.test(hostOf(u));
 console.assert(loopback('http://localhost:11434/v1') && loopback('http://127.0.0.1:8000/v1') && loopback('http://[::1]:1234/v1')
   && !loopback('http://192.168.1.20:11434/v1') && !loopback('https://openrouter.ai/api/v1') && !loopback('http://localhost.example.com'), 'loopback self-check');
-const hostPill = u => loopback(u) ? `<span class="pill status">${icon('mac','ic-s')}Stays on this Mac</span>` : `<span class="pill alert">${icon('cloud','ic-s')}Sends text off this Mac</span>`;
+const hostPill = u => loopback(u) ? `<span class="pill status">${icon('mac','ic-s')}Stays on this Mac</span>` : `<span class="pill caution">${icon('cloud','ic-s')}Sends text off this Mac</span>`;
 const prov = id => S.ai.providers.find(p => p.id === id);
 const orProv = () => S.ai.providers.find(p => p.preset === 'openrouter');
 const modelsOf = p => p.preset === 'openrouter' ? OR_MODELS : LOCAL_MODELS;
@@ -1820,6 +1940,8 @@ function pickerItems(slot) {
     if (ms.length) html += `<div class="pk-h">OpenRouter decision models</div>` + (or ? '' : `<p class="pk-note">Add an OpenRouter provider on AI provider to use these.</p>`)
       + ms.map(m => item(`data-m="${esc(m.id)}"`, S.ai.dec === m.id, m.id, `${usd(m.inP)} per 1M input tokens · no output cost`, !or)).join('');
   } else {
+    if (slot === 'sum' || slot === 'tcl') { const base = slot === 'sum' ? 'main' : 'fast', r = S.ai[base], name = slot === 'sum' ? 'Main model' : 'Fast model';
+      if (hit(name)) html += `<div class="pk-h">Default</div>` + item('data-m=""', S.ai[slot] === base, name, r ? 'Uses ' + routeName(r) : `Not set: pick a ${name} on AI provider`); }
     const cur = S.ai[slot];
     S.ai.providers.forEach(p => {
       const ms = modelsOf(p).filter(m => hit(p.name + ' ' + m.id));
@@ -1829,7 +1951,7 @@ function pickerItems(slot) {
   return html || `<p class="pk-note">No models match “${esc(S.ai.q)}”.</p>`;
 }
 function picker(slot) {
-  const label = { main:'Main model', fast:'Fast model', dec:'Decision provider' }[slot];
+  const label = { main:'Main model', fast:'Fast model', dec:'Decision provider', sum:'Summary model', tcl:'Transcript cleanup model' }[slot];
   return `<div class="pop pkpop" role="dialog" aria-label="Choose ${label}">
     <div class="search" role="search"><label class="sr-only" for="pk-q">Search models</label>${icon('search','ic-s')}<input class="input" id="pk-q" type="search" placeholder="Search models" value="${esc(S.ai.q)}" autocomplete="off"></div>
     <div class="pk-list" id="pk-list" role="menu" aria-label="${label}">${pickerItems(slot)}</div>
@@ -1883,6 +2005,8 @@ function removeProvider(id) {
   const p = prov(id), gone = [];
   if (S.ai.main?.pid === id) { S.ai.main = null; gone.push('Main model'); }
   if (S.ai.fast?.pid === id) { S.ai.fast = null; gone.push('Fast model'); }
+  if (S.ai.sum?.pid === id) { S.ai.sum = null; gone.push('Summary model'); }   // a feature's own pick turns Not set, never falls back to Main or Fast
+  if (S.ai.tcl?.pid === id) { S.ai.tcl = null; gone.push('Transcript cleanup model'); }
   S.ai.providers = S.ai.providers.filter(x => x.id !== id);
   if (S.ai.dec && !orProv()) { S.ai.dec = null; gone.push('Decision provider'); }
   delete S.ai.test[id]; S.ai.confirm = null;
@@ -1953,7 +2077,7 @@ function aiPage() {
     + sgroup('Prototype controls', [
       srow('Fill with sample providers', 'Ollama on this Mac, OpenRouter, and Ollama on another Mac on the network.', `<button class="btn" data-act="ai-sample">Fill</button>`),
       srow('Back to a fresh install', 'No providers, Main and Fast Not set.', `<button class="btn" data-act="ai-reset">Reset</button>`),
-      srow('Simulate: next test fails', 'The next Test on this page or Decision provider fails.', `<input type="checkbox" role="switch" class="switch" data-bind="ai-fail" ${A.fail ? 'checked' : ''} aria-label="Simulate: next test fails">`)
+      srow('Simulate: next test fails', 'The next Test here or on Decision provider, or the next Summary, fails.', `<input type="checkbox" role="switch" class="switch" data-bind="ai-fail" ${A.fail ? 'checked' : ''} aria-label="Simulate: next test fails">`)
     ], '<p class="help">Prototype only. Not part of the app.</p>');
 }
 function decPage() {
@@ -2012,7 +2136,14 @@ function settingsPage() {
         srow('Use meeting notes', 'Record your calls and get notes, a summary and answers to your questions.', sw('modules.meetings', 'Use meeting notes'))
       ]) + (!S.modules.meetings ? '' : sgroup('Shortcut', [
         srow('Start or stop notes', 'Works from any app, even when the Myna window is closed.', sel('meetKey', [['ctrl-opt-m','⌃⌥M'],['ctrl-opt-n','⌃⌥N'],['none','No shortcut']], 'Meeting notes shortcut'))
-      ]) + sgroup('Notice calls', [
+      ]) + sgroup('Summary', [
+        srow('Summarize when a meeting finishes', 'Writes a summary as soon as the notes are ready.', sw('autoSum', 'Summarize when a meeting finishes')),
+        srow('Summary model', featHelp('sum'), pickerBtn('sum', featLabel('sum'), !S.ai.providers.length)),
+        srow('Template for new summaries', 'You can pick another one when you regenerate.', sel('sumTpl', S.templates.map(t => [t.id, t.name]), 'Template for new summaries'))
+      ]) + templatesGroup() + sgroup('Transcript cleanup', [
+        srow('Clean up transcripts with AI', 'Fixes punctuation and words Myna misheard, line by line. Never changes what was said, and Show original brings back what Myna heard.', sw('tclean', 'Clean up transcripts with AI')),
+        ...(x.tclean ? [srow('Cleanup model', featHelp('tcl'), pickerBtn('tcl', featLabel('tcl'), !S.ai.providers.length))] : [])
+      ]) + (x.tclean ? tclEditor() : '') + sgroup('Notice calls', [
         srow('Offer to take notes when a call starts', 'When Zoom, Meet, Teams or another app starts using your microphone, Myna asks first. Nothing is recorded until you say yes.', sw('detect', 'Offer to take notes when a call starts'))
       ]) + sgroup('Pictures of the call', [
         srow('Save the call window', { off:'Only the sound is saved.', shots:'Saves a picture of the call window every few seconds.', video:'Saves a video of the call window. Video takes more space and always stays on this Mac.' }[x.capture],
@@ -2059,7 +2190,6 @@ function settingsPage() {
         ]) + sgroup('Meeting notes', [
           row('Tell voices apart', 'Works out who said what, so notes show names instead of one long block. Stays on this Mac.', 'exp.diarOn'),
           row('Remove “um” and “uh”', 'Takes out filler words from the notes. Stays on this Mac.', 'exp.uhmM'),
-          row('Tidy up with AI', 'Cleans up the notes after the call.', 'exp.llmM', llmCloud() && offBadge()),
           row('Decide on muted speech', 'Lets the Decision provider choose if what you said while muted belongs in the notes.', 'exp.triage', (S.ai.dec || (S.ai.fast && !loopback(prov(S.ai.fast.pid).url))) && offBadge()),
           row('Keep only useful pictures', 'Skips pictures where nothing changed on screen.', 'exp.relevance', llmCloud() && offBadge('images')),
           row('Use pictures in summaries', 'Lets the AI look at up to 20 pictures from the call, if it can.', 'exp.shotsAI', llmCloud() && offBadge('images'))
@@ -2303,7 +2433,9 @@ function stopRec() {
         ? { text:'Short sync on launch timing and the pricing page.', decisions:['Launch stays on the 18th.'], actions:['Me: send the final pricing numbers.'] }
         : { text:'Too little speech to summarize.', decisions:[], actions:[] } };
     MEETINGS.unshift(m);
-    S.sums[id] = { tplName:'Summary', at:now(), custom:false, data:m.summary, loading:false };
+    S.sums[id] = { cur:0, vers:[] };
+    const sr = feat('sum');
+    if (S.set.autoSum && sr) runSummary(m, S.set.sumTpl, tplText(tplBy(S.set.sumTpl)), sr);
     r.state = 'saved'; r.savedId = id;
     if (S.view === 'meetings') render(); else renderOverlay();
     setTimeout(() => { if (S.rec === r && r.state === 'saved') { S.rec = { state:null }; renderOverlay(); } }, 8000);
@@ -2359,7 +2491,7 @@ document.addEventListener('click', e => {
     case 'drawer': S.drawer = !S.drawer; render(); if (S.drawer) $('.side .nav').focus(); break;
     case 'filter': S.listScroll = 0; go('meetings', { filter: el.dataset.type === 'all' ? { type:'all' } : { type:el.dataset.type, v:el.dataset.v } }); break;
     case 'add-folder': S.addingFolder = true; render(); $('#nf').focus(); break;
-    case 'open': S.mb.open = false; if (S.rec.state === 'saved') S.rec = { state:null }; go('detail', { current:id, panel:null, regen:{ ...S.regen, mode:null, saving:false, draft:'' } }); break;
+    case 'open': S.mb.open = false; if (S.rec.state === 'saved') S.rec = { state:null }; go('detail', { current:id, panel:null, hit:null }); break;
     case 'back': go('meetings'); break;
     case 'go-chat': go('chat'); break;
     case 'go-clips': go('clips', { undoClip:null, clipConfirm:false }); break;
@@ -2371,14 +2503,15 @@ document.addEventListener('click', e => {
     case 'rec-show': S.rec.open = true; renderOverlay(); $('#rec-hide')?.focus(); break;
     case 'pop': {
       const p = el.dataset.p; S.pop = S.pop === p ? null : p;
-      if (p === 'regen') Object.assign(S.regen, { mode:null, saving:false });
+      if (p === 'regen') { const r = feat('sum') || (S.ai.providers[0] && { pid:S.ai.providers[0].id, model:modelsOf(S.ai.providers[0])[0].id });
+        Object.assign(S.regen, { tpl:S.set.sumTpl, draft:tplText(tplBy(S.set.sumTpl)), model: r ? r.pid + '|' + r.model : '' }); }
       if (p.startsWith('pick-')) S.ai.q = '';
-      render(); (S.pop ? $(p === 'regen' ? '.rcard' : p.startsWith('pick-') ? '#pk-q' : '.pop .mitem') : $('#' + el.id))?.focus({ preventScroll:true });
+      render(); (S.pop ? $(p === 'regen' ? '#rg-tpl, .pop.regen .btn' : p.startsWith('pick-') ? '#pk-q' : '.pop .mitem') : $('#' + el.id))?.focus({ preventScroll:true });
       $('.pop')?.scrollIntoView({ block:'nearest' }); break;
     }
     case 'ai-pick': {
       const slot = el.dataset.slot, m = el.dataset.m;
-      if (slot === 'dec') { S.ai.dec = m || null; S.ai.decTest = null; } else S.ai[slot] = { pid:el.dataset.pid, model:m };
+      if (slot === 'dec') { S.ai.dec = m || null; S.ai.decTest = null; } else if (!el.dataset.pid) S.ai[slot] = slot === 'sum' ? 'main' : 'fast'; else S.ai[slot] = { pid:el.dataset.pid, model:m };
       S.pop = null; render(); $('#pick-' + slot).focus(); break;
     }
     case 'ai-add': S.ai.add = { preset:'openai', name:'', url:'', key:'', err:{} }; S.ai.notice = ''; render(); $('#add-preset').focus(); break;
@@ -2389,17 +2522,31 @@ document.addEventListener('click', e => {
     case 'ai-rm-yes': removeProvider(id); render(); $('.notice button')?.focus(); break;
     case 'ai-notice-x': S.ai.notice = ''; render(); $('#ai-add-btn')?.focus(); break;
     case 'ai-sample': aiSample(); render(); break;
-    case 'ai-reset': Object.assign(S.ai, { providers:[], main:null, fast:null, dec:null, add:null, confirm:null, notice:'', test:{}, decTest:null }); render(); break;
+    case 'ai-reset': Object.assign(S.ai, { providers:[], main:null, fast:null, dec:null, sum:'main', tcl:'fast', add:null, confirm:null, notice:'', test:{}, decTest:null }); render(); break;
     case 'dec-test': decTest(); break;
     case 'move': byId(id).folder = el.dataset.f; S.pop = null; render(); $('#move-btn').focus(); break;
     case 'panel': { const p = el.dataset.p; S.panel = S.panel === p ? null : p; render(); $(S.panel ? '#dp-close' : `.toolbar [data-act=panel][data-p=${p}]`)?.focus(); break; }
     case 'copy-tr': {
-      const m = byId(id), text = m.transcript.map(([w, t, x]) => `${w} (${t}): ${x}`).join('\n');
+      const m = byId(id), text = m.transcript.map(r => `${r[0]} (${r[1]}): ${shownText(m, r)}`).join('\n');
       navigator.clipboard?.writeText(text).catch(() => {});
       S.copied = id; render(); $('#copy-tr').focus();
       setTimeout(() => { if (S.copied === id) { S.copied = null; const b = $('#copy-tr'); if (b) b.innerHTML = icon('copy','ic-s') + '<span>Copy</span>'; } }, 1600); break;
     }
-    case 'regen-mode': Object.assign(S.regen, { mode:el.dataset.mode, saving:false }); render(); $(S.regen.mode === 'tpl' ? '.tplopt input:checked' : '#prompt')?.focus(); break;
+    case 'go-ai': S.pop = null; go('settings', { setPage:'ai' }); break;
+    case 'ver': S.sums[id].cur = +el.dataset.i; S.pop = null; render(); $('#vers-btn')?.focus(); break;
+    case 'ver-del': { const s = S.sums[id], i = +el.dataset.i; if (s.vers.length < 2) break;
+      s.vers.splice(i, 1); if (s.cur >= i && s.cur > 0) s.cur--; if (s.vers.length < 2) S.pop = null; render(); $(S.pop ? '.vmenu .mitem' : '#regen-btn')?.focus(); break; }
+    case 'sum-edit': S.sums[id].editing = true; render(); $('#sum-md').focus(); break;
+    case 'sum-edit-x': S.sums[S.current].editing = false; render(); $('#regen-btn').focus(); break;
+    case 'orig': S.orig = !S.orig; render(); $('#orig-btn').focus(); break;
+    case 'ts': { const m = byId(S.current), t = el.dataset.t, i = m.transcript.findIndex(r => r[1] >= t);
+      S.panel = 'transcript'; S.hit = i < 0 ? m.transcript.length - 1 : i; render();
+      const row = $('#seg-' + S.hit); row?.scrollIntoView({ block:'center' }); row?.focus({ preventScroll:true }); break; }
+    case 'tpl-open': S.set.tplOpen = S.set.tplOpen === el.dataset.id ? null : el.dataset.id; render(); $('#te-' + el.dataset.id).focus(); break;
+    case 'tpl-add': { const id = 'u' + Date.now(); S.templates.push({ id, name:'New template', text:TPL_DEF['t-recap'] }); S.set.tplOpen = id; render(); $('#tn-' + id).select(); break; }
+    case 'tpl-del': S.templates = S.templates.filter(t => t.id !== el.dataset.id); if (S.set.sumTpl === el.dataset.id) S.set.sumTpl = 't-recap'; S.set.tplOpen = null; render(); $('#tpl-add').focus(); break;
+    case 'tpl-reset': { const t = tplBy(el.dataset.id); t.text = null; t.newer = false; render(); $('#tt-' + t.id).focus(); break; }
+    case 'tcl-reset': S.set.tclText = null; render(); $('#tcl-text').focus(); break;
     case 'side-menu': {
       const k = el.dataset.kind, v = el.dataset.v, same = S.pop && S.pop.kind === k && S.pop.v === v;
       S.pop = same ? null : { kind:k, v }; render();
@@ -2473,8 +2620,6 @@ document.addEventListener('click', e => {
     case 'upd-restart': if (!updBusy()) updRestart(); break;
     case 'new-chat': S.global.msgs = []; S.tokensSent.global = 0; render(); break;
     case 'untag': { const m = byId(id); m.tags = m.tags.filter(t => t !== el.dataset.tag); render(); $('#newtag').focus(); break; }
-    case 'tpl-saving': S.regen.saving = true; render(); $('#tplname').focus(); break;
-    case 'tpl-save': saveTpl(); break;
     case 'ask': send(el.dataset.key, el.dataset.q); break;
   }
 });
@@ -2497,7 +2642,8 @@ document.addEventListener('change', e => {
       S.set.styles.forEach(o => { o.apps = o.apps.filter(x => x !== a); }); st.apps.push(a);   // an app belongs to one style, so adding it moves it
       render(); $(`[data-bind=style-app][data-id="${st.id}"]`).focus(); break; }
     case 'ai-add': if (el.dataset.f === 'preset') { const pr = PRESETS.find(x => x[0] === el.value); Object.assign(S.ai.add, { preset:pr[0], name:pr[2], url:pr[3], err:{} }); render(); $('#add-preset').focus(); } break;
-    case 'tpl': S.regen.tpl = el.value; break;
+    case 'rg-tpl': S.regen.tpl = el.value; S.regen.draft = tplText(tplBy(el.value)); $('#prompt').value = S.regen.draft; break;
+    case 'rg-model': S.regen.model = el.value; render(); $('#rg-model').focus(); break;
   }
 });
 document.addEventListener('input', e => {
@@ -2505,6 +2651,10 @@ document.addEventListener('input', e => {
   if (el.dataset.bind === 'key') S.tasks[el.dataset.k].key = el.value;
   if (el.dataset.path === 'liquidFrost') el.style.setProperty('--v', el.value + '%'); // live fill; the change event commits
   if (el.id === 'prompt') S.regen.draft = el.value;
+  if (el.dataset.tpl) { const t = tplBy(el.dataset.tpl);
+    if (el.dataset.f === 'name') t.name = el.value.trim() || 'Untitled';
+    else { t.text = el.value === TPL_DEF[t.id] ? null : el.value; const r = $('#tr-' + t.id); if (r) r.disabled = t.text == null; } }
+  if (el.id === 'tcl-text') { S.set.tclText = el.value === TCL_DEF ? null : el.value; $('#tcl-reset').disabled = S.set.tclText == null; }
   if (el.dataset.style) { const st = styleBy(el.dataset.style);
     if (el.dataset.f === 'name') st.name = el.value.trim() || 'Untitled';
     else { st.text = el.value === STYLE_DEF[st.id] ? null : el.value; const r = $('#reset-' + st.id); if (r) r.disabled = st.text == null; } }
@@ -2542,13 +2692,14 @@ document.addEventListener('submit', e => {
     render(); $('#newtag').focus();
   }
   if (kind === 'regen') {
-    if (document.activeElement?.id === 'tplname') { saveTpl(); return; }   // Enter in the name field saves, not regenerates
-    const m = byId(f.dataset.id), mode = S.regen.mode, tpl = mode === 'custom' ? 't-summary' : S.regen.tpl;
-    if (!mode) return;
-    const p = mode === 'custom' ? S.regen.draft.trim() : S.templates.find(t => t.id === tpl).prompt;
-    if (!p) { $('#prompt-e').innerHTML = icon('alert','ic-s') + 'Write what you want first, or pick a template.'; $('#prompt').setAttribute('aria-invalid','true'); $('#prompt').focus(); return; }
-    S.sums[m.id] = { ...S.sums[m.id], loading:true }; S.pop = null; render();
-    setTimeout(() => { S.sums[m.id] = { ...generate(m, tpl, p), ...(mode === 'custom' ? { custom:true } : {}) }; if (S.current === m.id) render(); $('#regen-btn')?.focus(); }, 1400);
+    const m = byId(f.dataset.id), g = S.regen, p = g.draft.trim(), [pid, model] = g.model.split('|');
+    if (!p) { $('#prompt-e').innerHTML = icon('alert','ic-s') + 'Write the instructions, or pick a template.'; $('#prompt').setAttribute('aria-invalid','true'); $('#prompt').focus(); return; }
+    S.pop = null; runSummary(m, g.tpl, p, { pid, model });
+  }
+  if (kind === 'sum-edit') {
+    const s = S.sums[f.dataset.id], v = s.vers[s.cur], text = $('#sum-md').value.trim();
+    if (text && text !== v.md) { s.vers.push({ tpl:'Edited', at:'Today ' + now(), from: v.tpl === 'Edited' ? `your edit, ${v.at.replace('Today ', '')}` : `${v.tpl}, ${v.at.replace('Today ', '')}`, md:text }); s.cur = s.vers.length - 1; }
+    s.editing = false; render(); $('#regen-btn').focus();
   }
   if (kind === 'dict') addDict($('#dict-in').value);
   if (kind === 'keep') { $('#keep-in').value.split(',').map(w => w.trim().toLowerCase().slice(0, 40)).filter(Boolean).forEach(w => { if (!S.set.keep.includes(w)) S.set.keep.push(w); }); render(); $('#keep-in').focus(); }
@@ -2608,7 +2759,7 @@ document.addEventListener('keydown', e => {
     if (S.rec.open) { S.rec.open = false; renderOverlay(); $('#rec-pill')?.focus(); return; }
     if (S.pop) {
       const p = S.pop; S.pop = null; render();
-      $(typeof p === 'object' ? `[data-act=side-menu][data-kind=${p.kind}][data-v="${CSS.escape(p.v)}"]` : p === 'move' ? '#move-btn' : p === 'data' ? '#data-btn' : p.startsWith('pick-') ? '#' + p : '#regen-btn')?.focus(); return;
+      $(typeof p === 'object' ? `[data-act=side-menu][data-kind=${p.kind}][data-v="${CSS.escape(p.v)}"]` : p === 'move' ? '#move-btn' : p === 'vers' ? '#vers-btn' : p === 'data' ? '#data-btn' : p.startsWith('pick-') ? '#' + p : '#regen-btn')?.focus(); return;
     }
     if (S.panel && S.view === 'detail') { const p = S.panel; S.panel = null; render(); $(`.toolbar [data-act=panel][data-p=${p}]`)?.focus(); return; }
     if (S.drawer) { S.drawer = false; render(); return; }
