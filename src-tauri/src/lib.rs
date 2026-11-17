@@ -148,7 +148,7 @@ fn model_download(app: AppHandle, d: tauri::State<Data>, id: String) -> Result<(
         // A model added under Advanced is checked by loading it once it has everything; one that won't load says why and can't be picked.
         let result = result.and_then(|done| match done && !m.engine.is_empty() {
             false => Ok(done),
-            true => runtime::check(&m, &dir).map(|()| true).inspect_err(|e| {
+            true => runtime::check(&m, &dir).map(|()| true).inspect(|_| drop(models::mark_checked(&app.state::<Data>().db.lock().unwrap(), &m.id))).inspect_err(|e| {
                 let d = app.state::<Data>();
                 let db = d.db.lock().unwrap();
                 let _ = models::mark_broken(&db, &m.id, e);

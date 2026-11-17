@@ -68,6 +68,9 @@ pub struct Model {
     /// A custom model the user keeps on this Mac: its file or folder, used in place. Empty when it's in `models/<id>/`.
     #[serde(default)]
     pub path: String,
+    /// A model added under Advanced has loaded here: until it has, it can't be picked and offers Download, which checks it.
+    #[serde(default)]
+    pub checked: bool,
 }
 
 /// What macOS says about Apple Speech on this Mac.
@@ -176,7 +179,7 @@ pub fn list(conn: &Connection, models_dir: &Path, macos: u32, sys: &System) -> R
                 } else if m.sdk {
                     let dir = models_dir.join(&m.id);
                     if m.id == "who" { crate::who::installed(&dir) } else { crate::voz::installed(&dir) }
-                } else { is_installed(m, models_dir) && (rt_there || !m.runtime) };
+                } else { is_installed(m, models_dir) && (rt_there || !m.runtime) && (m.engine.is_empty() || m.checked) };
                 if m.runtime && !rt_there {
                     m.size += rt.size; // one combined size
                 }
@@ -190,7 +193,7 @@ pub fn list(conn: &Connection, models_dir: &Path, macos: u32, sys: &System) -> R
                 .optional()
                 .map_err(|e| format!("Couldn't read the chosen models: {e}"))?;
             let usable = |want: &dyn Fn(&Model) -> bool| {
-                models.iter().find(|m| m.needs.is_none() && want(m)).map(|m| m.id.clone())
+                models.iter().find(|m| m.needs.is_none() && (m.engine.is_empty() || m.checked) && want(m)).map(|m| m.id.clone())
             };
             // The recommended model once it's downloaded; until then Apple Speech, so nobody waits on a download.
             let fallback = (id == MEETING_STT).then(|| tasks[0].active.clone()).flatten();
@@ -211,6 +214,9 @@ pub fn select(conn: &Connection, task: &str, id: &str, macos: u32, sys: &System)
     let m = models.iter().find(|m| m.id == id).ok_or_else(|| format!("Unknown model {id}"))?;
     if let Some(n) = needs(m, macos, sys).or(m.needs.clone()) {
         return Err(format!("{}: {n}.", m.name));
+    }
+    if !m.engine.is_empty() && !m.checked {
+        return Err(format!("{} hasn't loaded yet. Download it to check it.", m.name));
     }
     conn.execute(
         "INSERT INTO active_model(task, model_id) VALUES (?1, ?2) ON CONFLICT(task) DO UPDATE SET model_id = ?2",
@@ -296,6 +302,7 @@ pub fn add(
     if m.installed {
         load(&m)?;
     }
+    m.checked = m.installed;
     let conn = db.lock().unwrap();
     let all = saved(&conn)?;
     let paths = |m: &Model| m.files.iter().map(|f| f.path.clone()).collect::<Vec<_>>();
@@ -320,8 +327,25 @@ pub fn remove_custom(conn: &Connection, id: &str) -> Result<(), String> {
 pub fn mark_broken(conn: &Connection, id: &str, why: &str) -> Result<(), String> {
     let mut all = saved(conn)?;
     for v in all.iter_mut().filter(|v| v["id"] == id) {
+        if v["was"].is_null() {
+            v["was"] = v["desc"].clone(); // what `desc` said before the reason replaced it
+        }
         v["needs"] = "Won't load".into();
         v["desc"] = why.into();
+        v["checked"] = false.into();
+    }
+    save(conn, &all)
+}
+
+/// A model added under Advanced loaded: it can be picked, and a mark from an earlier failed load is gone.
+pub fn mark_checked(conn: &Connection, id: &str) -> Result<(), String> {
+    let mut all = saved(conn)?;
+    for v in all.iter_mut().filter(|v| v["id"] == id) {
+        if let Some(was) = v.as_object_mut().and_then(|o| o.remove("was")) {
+            v["desc"] = was;
+        }
+        v["needs"] = serde_json::Value::Null;
+        v["checked"] = true.into();
     }
     save(conn, &all)
 }
@@ -796,5 +820,47 @@ mod tests {
         let row = list(&conn, &models, 26, &english(true)).unwrap().remove(0).models.into_iter().find(|x| x.id == m.id).unwrap();
         assert_eq!((row.needs.as_deref(), row.desc.as_str()), (Some("Won't load"), "Couldn't load ggml-small.bin: bad magic"));
         assert_eq!(select(&conn, "stt", &m.id, 26, &english(true)).unwrap_err(), "ggml-small.bin: Won't load.");
+    }
+
+    #[test]
+    fn an_onnx_model_added_before_onnx_runtime_cant_be_picked_until_it_loads() {
+        let (tmp, conn) = db();
+        let db = locked(conn);
+        let models = tmp.path().join("models");
+        let mine = tmp.path().join("diar.onnx");
+        std::fs::write(&mine, b"weights").unwrap();
+        let m = add(&db, &models, "sortformer", mine.to_str().unwrap(), &no_hf, &|_| panic!("no ONNX Runtime to load it on")).unwrap();
+        assert!(!m.installed && !m.checked);
+        // Another model's download installs ONNX Runtime.
+        let rt = runtime();
+        for f in &rt.files {
+            let at = models.join(&rt.id).join(&f.path);
+            std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+            std::fs::File::create(at).unwrap().set_len(f.size).unwrap();
+        }
+        let conn = db.lock().unwrap();
+        let row = |conn: &Connection| list(conn, &models, 26, &english(true)).unwrap().remove(1).models.into_iter().find(|x| x.id == m.id).unwrap();
+        assert!(!row(&conn).installed, "never loaded: it offers Download, which checks it");
+        assert_eq!(select(&conn, "diar", &m.id, 26, &english(true)).unwrap_err(), "diar.onnx hasn't loaded yet. Download it to check it.");
+        mark_checked(&conn, &m.id).unwrap();
+        assert!(row(&conn).installed);
+        select(&conn, "diar", &m.id, 26, &english(true)).unwrap();
+    }
+
+    #[test]
+    fn a_custom_model_that_loads_after_failing_can_be_picked_again() {
+        let (tmp, conn) = db();
+        let db = locked(conn);
+        let models = tmp.path().join("models");
+        let m = add(&db, &models, "whisper", "o/r", &|_| Ok(REPO.to_string()), &|_| Ok(())).unwrap();
+        std::fs::create_dir_all(models.join(&m.id)).unwrap();
+        std::fs::File::create(models.join(&m.id).join("ggml-small.bin")).unwrap().set_len(487).unwrap();
+        let conn = db.lock().unwrap();
+        mark_broken(&conn, &m.id, "Couldn't load ggml-small.bin: bad magic").unwrap();
+        mark_broken(&conn, &m.id, "Couldn't load ggml-small.bin: still bad").unwrap();
+        mark_checked(&conn, &m.id).unwrap(); // Download again, and this time it loads
+        let row = list(&conn, &models, 26, &english(true)).unwrap().remove(0).models.into_iter().find(|x| x.id == m.id).unwrap();
+        assert_eq!((row.needs, row.desc.as_str(), row.installed), (None, "Whisper · o/r", true));
+        select(&conn, "stt", &m.id, 26, &english(true)).unwrap();
     }
 }
