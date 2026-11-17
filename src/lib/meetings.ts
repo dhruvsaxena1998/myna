@@ -9,11 +9,13 @@ export type Meeting = {
   failure: string | null;
   /** Worth knowing about a finished meeting, like why voices weren't told apart. */
   note: string | null;
+  /** Failed with an Endpoint's chunks undone: Transcribe locally is offered beside Try again. */
+  incomplete: boolean;
 };
 /** `hidden`: said while muted and left out; its `text` is empty. `included`: kept by the user, shown with a marker. */
 export type Line = { id: number; speaker: string; /* "Me", a caption name, "Speaker 2"…, or "Them" when voices weren't told apart */ start_ms: number; text: string; /* as transcript cleanup wrote it, when it did */ clean: string | null; muted: boolean; included: boolean; hidden: boolean };
-/** `cleanup`: the last transcript cleanup run, none when it never ran. */
-export type Page = Meeting & { segments: Line[]; cleanup: { provider: string; model: string; cost: Cost } | null };
+/** `cleanup`: the last transcript cleanup run, none when it never ran. `stt`: the Endpoint that transcribed it (no cost while it runs), none for the Local model. */
+export type Page = Meeting & { segments: Line[]; cleanup: { provider: string; model: string; cost: Cost } | null; stt: { provider: string; model: string; off: boolean; cost?: Cost } | null };
 /** The recording in progress, or none. */
 /** `mic`: "live" or "muted" while the browser add-on mirrors the mute button, else null. `words`: how the mic reads on the card. */
 export type Running = { id: number; started: number; source: string | null; mic: "live" | "muted" | null; words: string } | null;

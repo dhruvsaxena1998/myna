@@ -2,7 +2,7 @@
 //! It owns the app's `Meetings` and reaches the Mac only through `World`, so tests drive it with a fake.
 
 use crate::addon::{AddonEvent, MuteState};
-use crate::meeting::{self, Meetings, Stt, Voices};
+use crate::meeting::{self, Meetings, Stt, Via, Voices};
 use crate::permissions::Mic;
 use crate::{notify, now_ms, permissions, pill};
 use rusqlite::Connection;
@@ -45,6 +45,8 @@ pub trait World: Stt + Voices + 'static {
     fn clean(&self, id: i64);
     /// Meeting `id` is written up: its Summary may run now (story 16), in the background.
     fn summarize(&self, id: i64);
+    /// Where AI providers' keys are, for meeting speech-to-text on an Endpoint.
+    fn keys(&self) -> &dyn crate::ai::Keys;
 }
 
 pub struct MeetingSession {
@@ -148,7 +150,7 @@ impl MeetingSession {
     pub fn stop(self: &Arc<Self>) {
         self.world.stop_tab();
         match self.meetings.stop() {
-            Ok(Some(id)) => self.write_up(id),
+            Ok(Some(id)) => self.write_up(id, false),
             Ok(None) => {}
             Err(e) => self.world.notify("Couldn’t save the recording", &e),
         }
@@ -162,14 +164,23 @@ impl MeetingSession {
         if !self.meetings.failed(id) {
             return Err("That meeting isn't waiting to be tried again.".into());
         }
-        self.write_up(id);
+        self.write_up(id, false);
+        Ok(())
+    }
+
+    /// Transcribe locally, on a meeting an Endpoint left incomplete: keeps the chunks it did.
+    pub fn retry_local(self: &Arc<Self>, id: i64) -> Result<(), String> {
+        if !self.meetings.failed(id) {
+            return Err("That meeting isn't waiting to be tried again.".into());
+        }
+        self.write_up(id, true);
         Ok(())
     }
 
     /// At launch: finishes and writes up the meetings the app died or quit in the middle of.
     pub fn resume(self: &Arc<Self>) {
         for id in self.meetings.unfinished() {
-            self.write_up(id);
+            self.write_up(id, false);
         }
     }
 
@@ -228,13 +239,26 @@ impl MeetingSession {
     }
 
     /// Writes up meeting `id` on its own thread, saying how it goes with `meeting-notes`: "transcribing" with progress
-    /// 0 to 1, then "done" or "failed" with the reason.
-    fn write_up(self: &Arc<Self>, id: i64) {
+    /// 0 to 1, then "done" or "failed" with the reason. Meeting speech-to-text's setting picks the Local model or an
+    /// Endpoint; `rest` keeps what an Endpoint did and transcribes the rest locally.
+    fn write_up(self: &Arc<Self>, id: i64, rest: bool) {
         let this = self.clone();
         std::thread::spawn(move || {
             let w = &*this.world;
+            let endpoint = if rest { None } else { Some(crate::ai::stt_endpoint(&this.db.lock().unwrap(), w.keys())) };
+            let via = match &endpoint {
+                None => Via::Rest,
+                Some(Ok(None)) => Via::Local,
+                Some(Ok(Some(e))) => Via::Endpoint(Ok(e)),
+                Some(Err(e)) => Via::Endpoint(Err(e.clone())),
+            };
+            if let Via::Endpoint(Ok(e)) = &via {
+                // Before "transcribing" is said, so the meeting page shows where its audio goes while it runs.
+                let json = serde_json::json!({ "provider": e.provider, "model": e.model, "off": e.off }).to_string();
+                let _ = this.db.lock().unwrap().execute("UPDATE meeting SET stt = ?1 WHERE id = ?2", (json, id));
+            }
             w.notes(id, "transcribing", 0.0, None);
-            let done = this.meetings.transcribe(id, w, w, &mut |p| w.notes(id, "transcribing", p, None));
+            let done = this.meetings.transcribe(id, w, w, via, &mut |p| w.notes(id, "transcribing", p, None));
             w.idle(); // the model idles out like after a dictation
             match done {
                 Ok(()) => {
@@ -383,6 +407,9 @@ impl World for Mac {
     fn summarize(&self, id: i64) {
         crate::summarize(&self.0, id);
     }
+    fn keys(&self) -> &dyn crate::ai::Keys {
+        &*self.0.state::<crate::Data>().inner().keys
+    }
 }
 
 #[cfg(test)]
@@ -418,6 +445,7 @@ mod tests {
         /// While set, the speech model fails.
         fail: Arc<std::sync::atomic::AtomicBool>,
         saw: Arc<Mutex<Vec<Saw>>>,
+        keys: crate::ai::tests::Memory,
     }
 
     impl Scripted {
@@ -487,6 +515,9 @@ mod tests {
         fn summarize(&self, id: i64) {
             self.log(Saw::Summarize(id))
         }
+        fn keys(&self) -> &dyn crate::ai::Keys {
+            &self.keys
+        }
     }
 
     fn session(notes_on: bool, mic: Mic, denied: bool) -> (Arc<MeetingSession>, Arc<Mutex<Vec<Saw>>>, tempfile::TempDir) {
@@ -504,7 +535,7 @@ mod tests {
         let meetings = Meetings::new(db.clone(), tmp.path().into(), Box::new(Fake(crate::runtime::RATE as usize)), Box::new(them));
         let saw = Arc::new(Mutex::new(vec![]));
         let fail = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let world = Scripted { mic: Mutex::new(mic), on_ask: mic, denied, fail: fail.clone(), saw: saw.clone() };
+        let world = Scripted { mic: Mutex::new(mic), on_ask: mic, denied, fail: fail.clone(), saw: saw.clone(), keys: Default::default() };
         (MeetingSession::new(Box::new(world), db, meetings, tick), saw, fail, tmp)
     }
 
@@ -887,7 +918,7 @@ mod tests {
         meeting::set(&db.lock().unwrap(), &meeting::Notes { on: true, key: meeting::KEY.into(), keep_teams: false, offer_calls: true, stop_on_end: true }).unwrap();
         let meetings = Meetings::new(db.clone(), tmp.path().into(), Box::new(Fake(crate::runtime::RATE as usize)), Box::new(Call(vec![])));
         let saw = Arc::new(Mutex::new(vec![]));
-        let world = Scripted { mic: Mutex::new(Mic::Ask), on_ask: answer, denied: false, fail: Default::default(), saw: saw.clone() };
+        let world = Scripted { mic: Mutex::new(Mic::Ask), on_ask: answer, denied: false, fail: Default::default(), saw: saw.clone(), keys: Default::default() };
         (MeetingSession::new(Box::new(world), db, meetings, Duration::from_secs(3600)), saw, tmp)
     }
 
@@ -936,4 +967,52 @@ mod tests {
         s.stop();
         until(&saw_, |v| recents(v) >= 1);
     }
+
+    /// A provider on a local server that answers any transcription and keeps what it was sent, with Main and Fast on it.
+    fn cloud(s: &MeetingSession) -> (i64, Arc<Mutex<Vec<Vec<u8>>>>) {
+        let (base, bodies) = crate::ai::tests::server(|_, _, _| (200, r#"{"segments":[{"start":0.1,"end":0.5,"text":"hi"}],"usage":{"cost":0.001}}"#.into()));
+        let db = s.db.lock().unwrap();
+        let keys = crate::ai::tests::Memory::default();
+        let id = serde_json::to_value(crate::ai::add(&db, &keys, "openai", "Cloud", &base, "").unwrap()).unwrap()["id"].as_i64().unwrap();
+        crate::ai::set(&db, "main", id, "m").unwrap();
+        crate::ai::set(&db, "fast", id, "m").unwrap();
+        (id, bodies)
+    }
+
+    fn one_meeting(s: &Arc<MeetingSession>, saw_: &Arc<Mutex<Vec<Saw>>>) -> i64 {
+        s.start();
+        let id = id_of(s);
+        s.stop();
+        until(saw_, |v| recents(v) >= 1);
+        id
+    }
+
+    #[test]
+    fn with_the_local_model_picked_nothing_leaves_the_mac() {
+        let (s, saw_, _, _tmp) = rig(true, Mic::Allowed, false, Call(vec![]), Duration::from_secs(3600));
+        let (_, bodies) = cloud(&s);
+        let id = one_meeting(&s, &saw_);
+        assert!(saw(&saw_).contains(&Saw::Notes(id, "done".into(), 1.0, None)));
+        assert!(bodies.lock().unwrap().is_empty(), "a provider with Main and Fast on it still got nothing");
+        assert!(meeting::page(&s.db.lock().unwrap(), id).unwrap().stt.is_none());
+    }
+
+    #[test]
+    fn a_picked_endpoint_transcribes_and_once_its_provider_is_removed_new_meetings_say_not_set() {
+        let (s, saw_, _, _tmp) = rig(true, Mic::Allowed, false, Call(vec![]), Duration::from_secs(3600));
+        let (p, bodies) = cloud(&s);
+        crate::ai::feature_set(&s.db.lock().unwrap(), crate::ai::STT, &format!("{p}|whisper")).unwrap();
+        let id = one_meeting(&s, &saw_);
+        assert_eq!(bodies.lock().unwrap().len(), 1, "the mic's second of tone; the silent call isn't sent");
+        assert_eq!(meeting::page(&s.db.lock().unwrap(), id).unwrap().stt.unwrap()["provider"], "Cloud");
+        crate::ai::remove(&mut s.db.lock().unwrap(), &crate::ai::tests::Memory::default(), p).unwrap();
+        saw_.lock().unwrap().clear();
+        let id = one_meeting(&s, &saw_);
+        let failed = Saw::Notes(id, "failed".into(), 0.0, Some("Transcription incomplete (0 of 1): Meeting speech-to-text: Not set".into()));
+        assert!(saw(&saw_).contains(&failed), "{:?}", saw(&saw_));
+        assert_eq!(bodies.lock().unwrap().len(), 1);
+        s.retry_local(id).unwrap();
+        until(&saw_, |v| v.contains(&Saw::Notes(id, "done".into(), 1.0, None)));
+    }
 }
+

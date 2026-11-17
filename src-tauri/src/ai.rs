@@ -13,10 +13,21 @@ use std::time::{Duration, Instant};
 const KINDS: [&str; 2] = ["openai", "openrouter"];
 const SLOTS: [&str; 2] = ["main", "fast"];
 /// Features with their own model, as a setting: (key, label, the slot it uses while the key is missing).
-const OWN: [(&str, &str, &str); 3] =
-    [("summary_model", "Summary model", "main"), ("transcript_cleanup_model", "Cleanup model", "fast"), (DECIDE, "Decision model", "fast")];
+/// Meeting speech-to-text's "slot" is "local": while its key is missing, the Local model transcribes.
+const OWN: [(&str, &str, &str); 4] = [
+    ("summary_model", "Summary model", "main"),
+    ("transcript_cleanup_model", "Cleanup model", "fast"),
+    (DECIDE, "Decision model", "fast"),
+    (STT, "Meeting speech-to-text", "local"),
+];
 /// The Decision model: a decision model picked from an OpenRouter Endpoint, else the Fast model with a JSON schema.
 const DECIDE: &str = "decision_model";
+/// Meeting speech-to-text on an Endpoint (#45), after the meeting only.
+pub const STT: &str = "meeting_stt_endpoint";
+/// Their models aren't in the saved (chat) model list, so missing from it says nothing.
+const UNLISTED: [&str; 2] = [DECIDE, STT];
+/// About 5 s of speech, sent by Test: a model is picked only if its reply carries segment timestamps.
+const CLIP: &[u8] = include_bytes!("../sounds/stt-test.wav");
 const SERVICE: &str = "com.dhruvsaxena.myna.ai-provider";
 
 #[derive(Debug, Clone, PartialEq)]
@@ -170,6 +181,11 @@ pub struct OpenAi {
 
 impl OpenAi {
     fn send(&self, path: &str, body: Option<String>, secs: u64) -> Result<Value, String> {
+        self.send_as(path, body.map(|b| (b.into_bytes(), "application/json".to_string())), secs)
+    }
+
+    /// `send` with a body of any type: (bytes, Content-Type).
+    fn send_as(&self, path: &str, body: Option<(Vec<u8>, String)>, secs: u64) -> Result<Value, String> {
         let unreachable = |e: String| format!("Couldn't reach {}: {e}", self.url);
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .timeout_connect(Some(Duration::from_secs(5)))
@@ -177,10 +193,11 @@ impl OpenAi {
             .http_status_as_error(false)
             .build()
             .into();
+        let (body, kind) = body.map_or((None, "application/json".into()), |(b, k)| (Some(b), k));
         let mut req = ureq::http::Request::builder()
             .method(if body.is_some() { "POST" } else { "GET" })
             .uri(format!("{}{path}", self.url))
-            .header("Content-Type", "application/json");
+            .header("Content-Type", kind);
         if let Some(k) = &self.key {
             req = req.header("Authorization", format!("Bearer {k}"));
         }
@@ -315,6 +332,99 @@ impl Backend for OpenAi {
         };
         Ok(Decision { choice: picked(c)?, confidence: a["confidence"].as_f64(), cost: cost_of(u["cost"].as_f64(), price, tokens, false), ms: 0 })
     }
+}
+
+impl OpenAi {
+    /// One WAV to `{url}/audio/transcriptions`: its segments, times in seconds from its start, and the cost.
+    /// A reply without `segments` is an error: Myna can't place untimed words in a meeting.
+    pub fn transcribe(&self, model: &str, wav: &[u8], secs: u64) -> Result<(Vec<crate::runtime::Segment>, Cost), String> {
+        const B: &str = "myna-form-boundary-7d1c";
+        let mut body = Vec::with_capacity(wav.len() + 600);
+        for (k, v) in [("model", model), ("response_format", "verbose_json"), ("timestamp_granularities[]", "segment")] {
+            body.extend_from_slice(format!("--{B}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n").as_bytes());
+        }
+        body.extend_from_slice(format!("--{B}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\nContent-Type: audio/wav\r\n\r\n").as_bytes());
+        body.extend_from_slice(wav);
+        body.extend_from_slice(format!("\r\n--{B}--\r\n").as_bytes());
+        let json = self.send_as("/audio/transcriptions", Some((body, format!("multipart/form-data; boundary={B}"))), secs)?;
+        let segs = json["segments"].as_array().ok_or("it sent no segment timestamps")?;
+        let segs = segs
+            .iter()
+            .map(|s| Some(crate::runtime::Segment { start: s["start"].as_f64()? as f32, end: s["end"].as_f64()? as f32, text: s["text"].as_str()?.into() }))
+            .collect::<Option<Vec<_>>>()
+            .ok_or("it sent segments without times")?;
+        Ok((segs, cost_of(json["usage"]["cost"].as_f64(), None, None, !off_device(&self.url))))
+    }
+}
+
+/// Meeting speech-to-text's Endpoint: who and which model, ready to send to.
+pub struct SttEndpoint {
+    pub provider: String,
+    pub model: String,
+    pub off: bool,
+    api: OpenAi,
+}
+
+impl SttEndpoint {
+    /// One chunk, within OpenRouter's 60 s upstream timeout (plus the upload).
+    pub fn send(&self, wav: &[u8]) -> Result<(Vec<crate::runtime::Segment>, Cost), String> {
+        self.api.transcribe(&self.model, wav, 90)
+    }
+}
+
+/// Meeting speech-to-text's Endpoint: None while the Local model is picked (the default), else the provider and model,
+/// or "Meeting speech-to-text: Not set" once its provider was removed.
+pub fn stt_endpoint(db: &Connection, keys: &dyn Keys) -> Result<Option<SttEndpoint>, String> {
+    if matches!(own(db, STT)?, Own::Slot) {
+        return Ok(None);
+    }
+    let (r, model) = feature(db, STT)?;
+    Ok(Some(SttEndpoint { provider: r.name, model, off: off_device(&r.url), api: adapter(db, keys, r.id)? }))
+}
+
+/// Meeting speech-to-text, in `feature_get`'s form: "local", "none" or "<provider id>|<model>".
+pub fn stt_get(db: &Connection) -> Result<String, String> {
+    Ok(feature_get(db, STT)?.0)
+}
+
+/// Back to the Local model. An Endpoint is only picked through `stt_test`.
+pub fn stt_local(db: &Connection) -> Result<(), String> {
+    feature_set(db, STT, "local")
+}
+
+/// OpenRouter's transcription models; other providers have their model id typed in, so none.
+pub fn stt_models(db: &Mutex<Connection>, keys: &dyn Keys, id: i64) -> Result<Vec<Model>, String> {
+    let a = adapter(&db.lock().unwrap(), keys, id)?; // the lock is not held while waiting on the network
+    if !a.rich {
+        return Ok(vec![]);
+    }
+    a.list("/models?output_modalities=transcription")
+}
+
+/// What Test found: how long the clip took, how many segments came back, and the cost.
+#[derive(Debug, Serialize, PartialEq)]
+pub struct SttCheck {
+    ms: u64,
+    segments: usize,
+    cost: Cost,
+}
+
+/// Sends the bundled clip to `model` on provider `id`; picks it for meetings only if the reply has timestamped segments.
+/// Called without the database held: it waits on the network.
+pub fn stt_test(db: &Mutex<Connection>, keys: &dyn Keys, id: i64, model: &str) -> Result<SttCheck, String> {
+    let model = model.trim();
+    if model.is_empty() {
+        return Err("Enter a model".into());
+    }
+    let a = adapter(&db.lock().unwrap(), keys, id)?;
+    let start = Instant::now();
+    let (segs, cost) = a.transcribe(model, CLIP, 90).map_err(|e| format!("{model} can't transcribe meetings: {e}"))?;
+    if segs.is_empty() {
+        return Err(format!("{model} can't transcribe meetings: it sent no segment timestamps"));
+    }
+    let ms = start.elapsed().as_millis() as u64;
+    feature_set(&db.lock().unwrap(), STT, &format!("{id}|{model}"))?;
+    Ok(SttCheck { ms, segments: segs.len(), cost })
 }
 
 // ---- records ----
@@ -460,8 +570,8 @@ pub fn feature(db: &Connection, key: &str) -> Result<(Record, String), String> {
         Own::Pick(p, m) => (p, m),
     };
     let p = find(db, provider).map_err(|_| not_set())?;
-    // Decision models aren't in the saved list, so it can't tell; a retired one fails with the service's reason.
-    if key != DECIDE && gone(db, provider, &model) {
+    // Decision and transcription models aren't in the saved list, so it can't tell; a retired one fails with the service's reason.
+    if !UNLISTED.contains(&key) && gone(db, provider, &model) {
         return Err(format!("{label}: {model} is no longer offered by {}", p.name));
     }
     Ok((p, model))
@@ -473,7 +583,7 @@ pub fn feature_get(db: &Connection, key: &str) -> Result<(String, bool), String>
     Ok(match own(db, key)? {
         Own::Slot => (own_of(key).1.into(), false),
         Own::NotSet => ("none".into(), false),
-        Own::Pick(p, m) => (format!("{p}|{m}"), gone(db, p, &m)),
+        Own::Pick(p, m) => (format!("{p}|{m}"), key != STT && gone(db, p, &m)),
     })
 }
 
@@ -493,8 +603,12 @@ pub fn feature_set(db: &Connection, key: &str, value: &str) -> Result<(), String
 
 /// The adapter for provider `id`, holding its key.
 pub fn provider(db: &Connection, keys: &dyn Keys, id: i64) -> Result<Box<dyn Backend>, String> {
+    Ok(Box::new(adapter(db, keys, id)?))
+}
+
+fn adapter(db: &Connection, keys: &dyn Keys, id: i64) -> Result<OpenAi, String> {
     let r = find(db, id)?;
-    Ok(Box::new(OpenAi { key: keys.get(id)?, rich: r.kind == "openrouter", url: r.url }))
+    Ok(OpenAi { key: keys.get(id)?, rich: r.kind == "openrouter", url: r.url })
 }
 
 /// Model `model` as provider `id`'s last fetched list has it.
@@ -718,33 +832,47 @@ pub(crate) mod tests {
         assert_eq!(cost_of(None, None, Some((1, 1)), false), Cost::Unknown);
     }
 
+    /// One request off `s`: its head, lowercased, and its body.
+    fn request(s: &mut std::net::TcpStream) -> (String, Vec<u8>) {
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        let head_end = loop {
+            let n = s.read(&mut chunk).unwrap_or(0);
+            buf.extend_from_slice(&chunk[..n]);
+            if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") { break i + 4; }
+            if n == 0 { break buf.len(); }
+        };
+        let head = String::from_utf8_lossy(&buf[..head_end]).to_lowercase();
+        let want: usize = head.lines().find_map(|l| l.strip_prefix("content-length: ")?.trim().parse().ok()).unwrap_or(0);
+        while buf.len() < head_end + want {
+            let n = s.read(&mut chunk).unwrap_or(0);
+            if n == 0 { break; }
+            buf.extend_from_slice(&chunk[..n]);
+        }
+        (head, buf.split_off(head_end))
+    }
+
     /// Serves each `(path, status, body)` and records nothing; unknown paths get 404.
     pub(crate) fn stub(routes: Vec<(&'static str, u16, &'static str)>) -> String {
+        server(move |path, _, _| routes.iter().find(|r| r.0 == path).map_or((404, "{}".into()), |r| (r.1, r.2.into()))).0
+    }
+
+    /// Answers request `n` (from 0) to `path` with `reply(path, n, body)` and keeps every body it was sent.
+    pub(crate) fn server(reply: impl Fn(&str, usize, &[u8]) -> (u16, String) + Send + 'static) -> (String, std::sync::Arc<Mutex<Vec<Vec<u8>>>>) {
         let l = TcpListener::bind("127.0.0.1:0").unwrap();
         let base = format!("http://{}", l.local_addr().unwrap());
+        let bodies = std::sync::Arc::new(Mutex::new(vec![]));
+        let kept = bodies.clone();
         std::thread::spawn(move || {
             for mut s in l.incoming().flatten() {
-                let mut buf = Vec::new();
-                let mut chunk = [0u8; 4096];
-                let head_end = loop {
-                    let n = s.read(&mut chunk).unwrap_or(0);
-                    buf.extend_from_slice(&chunk[..n]);
-                    if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") { break i + 4; }
-                    if n == 0 { break buf.len(); }
-                };
-                let head = String::from_utf8_lossy(&buf[..head_end]).to_lowercase();
-                let want: usize = head.lines().find_map(|l| l.strip_prefix("content-length: ")?.trim().parse().ok()).unwrap_or(0);
-                while buf.len() < head_end + want {
-                    let n = s.read(&mut chunk).unwrap_or(0);
-                    if n == 0 { break; }
-                    buf.extend_from_slice(&chunk[..n]);
-                }
+                let (head, body) = request(&mut s);
                 let path = head.split_whitespace().nth(1).unwrap_or("").to_string();
-                let (status, body) = routes.iter().find(|r| r.0 == path).map(|r| (r.1, r.2)).unwrap_or((404, "{}"));
-                let _ = write!(s, "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                let n = { let mut b = kept.lock().unwrap(); b.push(body.clone()); b.len() - 1 };
+                let (status, out) = reply(&path, n, &body);
+                let _ = write!(s, "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{out}", out.len());
             }
         });
-        base
+        (base, bodies)
     }
 
     fn adapter(url: String, rich: bool) -> OpenAi {
@@ -951,5 +1079,76 @@ pub(crate) mod tests {
         let l = adapter(base.clone(), true).decision_models().unwrap();
         assert_eq!((l[0].id.as_str(), l[0].output_per_m), ("typesafe/jev-1.14", Some(0.0)));
         assert!(adapter(base, false).decision_models().unwrap().is_empty());
+    }
+
+    const HEARD: &str = r#"{"text":"Hello from Myna.","segments":[{"id":0,"start":0.0,"end":1.4,"text":" Hello from Myna."},{"id":1,"start":1.5,"end":4.6,"text":" This short clip."}],"usage":{"seconds":5,"cost":0.0002}}"#;
+
+    #[test]
+    fn transcription_goes_as_multipart_with_timestamps_asked_for() {
+        let (base, bodies) = server(|_, _, _| (200, HEARD.into()));
+        let (segs, cost) = adapter(base, true).transcribe("openai/whisper-large-v3", b"RIFFfake", 30).unwrap();
+        assert_eq!((segs.len(), segs[1].start, segs[1].text.as_str(), cost), (2, 1.5, " This short clip.", Cost::Usd { usd: 0.0002 }));
+        let body = String::from_utf8_lossy(&bodies.lock().unwrap()[0]).into_owned();
+        for part in ["name=\"model\"\r\n\r\nopenai/whisper-large-v3", "name=\"response_format\"\r\n\r\nverbose_json", "name=\"timestamp_granularities[]\"\r\n\r\nsegment", "filename=\"audio.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFFfake"] {
+            assert!(body.contains(part), "{part} missing from {body}");
+        }
+    }
+
+    #[test]
+    fn the_stt_test_picks_only_a_model_whose_reply_has_segment_timestamps() {
+        let (_t, c) = db();
+        let keys = Memory::default();
+        let replies = |text: &'static str| server(move |_, _, _| (200, text.into())).0;
+        let untimed = add_ok(&c, &keys, "openai", "Untimed", &replies(r#"{"text":"Hello from Myna.","usage":{"cost":0.0001}}"#), "").id;
+        let refuses = add_ok(&c, &keys, "openai", "Refuses", &stub(vec![("/audio/transcriptions", 400, r#"{"error":{"message":"response_format 'verbose_json' is not compatible with this model"}}"#)]), "").id;
+        let good = add_ok(&c, &keys, "openai", "Good", &replies(HEARD), "").id;
+        let db = Mutex::new(c);
+        assert_eq!(stt_get(&db.lock().unwrap()).unwrap(), "local", "the Local model until one passes");
+        assert_eq!(stt_test(&db, &keys, untimed, "whisper-1").unwrap_err(), "whisper-1 can't transcribe meetings: it sent no segment timestamps");
+        assert!(stt_test(&db, &keys, refuses, "openai/gpt-4o-transcribe").unwrap_err().ends_with("verbose_json' is not compatible with this model"));
+        assert!(stt_test(&db, &keys, good, "  ").is_err());
+        assert_eq!(stt_get(&db.lock().unwrap()).unwrap(), "local", "a failed Test picks nothing");
+        let c = stt_test(&db, &keys, good, "whisper-1").unwrap();
+        assert_eq!((c.segments, c.cost), (2, Cost::Usd { usd: 0.0002 }));
+        assert_eq!(stt_get(&db.lock().unwrap()).unwrap(), format!("{good}|whisper-1"));
+        let e = stt_endpoint(&db.lock().unwrap(), &keys).unwrap().unwrap();
+        assert_eq!((e.provider.as_str(), e.model.as_str(), e.off), ("Good", "whisper-1", false));
+        stt_local(&db.lock().unwrap()).unwrap();
+        assert!(stt_endpoint(&db.lock().unwrap(), &keys).unwrap().is_none());
+    }
+
+    #[test]
+    fn local_is_the_default_whatever_providers_and_slots_are_set() {
+        let (_t, c) = db();
+        let keys = Memory::default();
+        let a = add_ok(&c, &keys, "openrouter", "OpenRouter", "https://openrouter.ai/api/v1", "sk-or-x");
+        set(&c, "main", a.id, "m").unwrap();
+        set(&c, "fast", a.id, "m").unwrap();
+        assert!(stt_endpoint(&c, &keys).unwrap().is_none());
+    }
+
+    #[test]
+    fn removing_its_provider_makes_meeting_stt_not_set_never_local() {
+        let (_t, mut c) = db();
+        let keys = Memory::default();
+        let a = add_ok(&c, &keys, "openrouter", "OpenRouter", "https://openrouter.ai/api/v1", "sk-or-x");
+        feature_set(&c, STT, &format!("{}|openai/whisper-large-v3", a.id)).unwrap();
+        store(&c, a.id, &[Model { id: "a/chat".into(), ..Default::default() }]).unwrap();
+        assert!(stt_endpoint(&c, &keys).unwrap().is_some(), "a transcription model isn't gone for missing from the chat list");
+        assert_eq!(remove(&mut c, &keys, a.id).unwrap(), ["Meeting speech-to-text"]);
+        assert_eq!(stt_get(&c).unwrap(), "none");
+        assert_eq!(stt_endpoint(&c, &keys).err().unwrap(), "Meeting speech-to-text: Not set");
+    }
+
+    #[test]
+    fn openrouter_lists_its_transcription_models_and_others_type_one_in() {
+        let (_t, c) = db();
+        let keys = Memory::default();
+        let base = stub(vec![("/models?output_modalities=transcription", 200, r#"{"data":[{"id":"openai/whisper-large-v3"}]}"#)]);
+        let or = add_ok(&c, &keys, "openrouter", "OR", &base, "sk-or-x").id;
+        let plain = add_ok(&c, &keys, "openai", "Plain", &base, "").id;
+        let c = Mutex::new(c);
+        assert_eq!(stt_models(&c, &keys, or).unwrap()[0].id, "openai/whisper-large-v3");
+        assert!(stt_models(&c, &keys, plain).unwrap().is_empty());
     }
 }

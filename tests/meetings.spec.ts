@@ -45,6 +45,16 @@ test("a failed meeting says why and Try again retries it", async ({ page }) => {
   expect(await calls(page, "meeting_retry")).toEqual([{ id: 4 }]);
 });
 
+test("a meeting an Endpoint left incomplete offers Transcribe locally beside Try again; others don't", async ({ page }) => {
+  const incomplete = MEETINGS.replace(`failure: "The model fell over.", note: null }`, `failure: "Transcription incomplete (3 of 5): HTTP 500", note: null, incomplete: true }`);
+  await open(page, "meeting_local: () => {},", incomplete);
+  const row = page.getByRole("listitem").filter({ hasText: "Transcription incomplete (3 of 5)" });
+  await row.getByRole("button", { name: "Transcribe locally" }).click();
+  expect(await calls(page, "meeting_local")).toEqual([{ id: 4 }]);
+  await expect(row.getByRole("button", { name: "Try again" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Transcribe locally" })).toHaveCount(1);
+});
+
 test("Start notes starts, the live card shows the recording, and Stop ends it", async ({ page }) => {
   await open(page);
   await page.getByRole("button", { name: "Start notes" }).click();

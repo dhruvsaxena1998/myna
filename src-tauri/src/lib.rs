@@ -280,6 +280,30 @@ async fn ai_decide(d: tauri::State<'_, Data>, question: String, options: Vec<Str
         .map_err(|e| e.to_string())?
 }
 
+/// Meeting speech-to-text (#45): "local", "none" (Not set) or "<provider id>|<model>".
+#[tauri::command]
+fn meeting_stt_get(d: tauri::State<Data>) -> Result<String, String> {
+    ai::stt_get(&d.db.lock().unwrap())
+}
+
+#[tauri::command]
+fn meeting_stt_local(d: tauri::State<Data>) -> Result<(), String> {
+    ai::stt_local(&d.db.lock().unwrap())
+}
+
+#[tauri::command]
+async fn meeting_stt_models(d: tauri::State<'_, Data>, id: i64) -> Result<Vec<ai::Model>, String> {
+    let (db, keys) = (d.db.clone(), d.keys.clone());
+    tauri::async_runtime::spawn_blocking(move || ai::stt_models(&db, &*keys, id)).await.map_err(|e| e.to_string())?
+}
+
+/// Sends the bundled clip; the model becomes meeting speech-to-text only if it passes.
+#[tauri::command]
+async fn meeting_stt_test(d: tauri::State<'_, Data>, provider: i64, model: String) -> Result<ai::SttCheck, String> {
+    let (db, keys) = (d.db.clone(), d.keys.clone());
+    tauri::async_runtime::spawn_blocking(move || ai::stt_test(&db, &*keys, provider, &model)).await.map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 async fn ai_test_draft(kind: String, url: String, key: String) -> Result<ai::Check, String> {
     tauri::async_runtime::spawn_blocking(move || ai::test_draft(&kind, &url, &key)).await.map_err(|e| e.to_string())?
@@ -600,6 +624,12 @@ fn storage_reveal(storage: tauri::State<Storage>) -> Result<(), String> {
 #[tauri::command]
 fn meeting_retry(s: tauri::State<Arc<MeetingSession>>, id: i64) -> Result<(), String> {
     s.retry(id)
+}
+
+/// Transcribe locally, on a meeting an Endpoint left incomplete: what it did is kept.
+#[tauri::command]
+fn meeting_local(s: tauri::State<Arc<MeetingSession>>, id: i64) -> Result<(), String> {
+    s.retry_local(id)
 }
 
 /// Every meeting, newest first, for the Meetings list.
@@ -1112,7 +1142,7 @@ fn open_update(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![pill::pill_hit, dictation_fix, fix_take, debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, ai_test_draft, ai_decide_models, ai_decide_set, ai_decide, storage_status, storage_reveal, models_list, model_select, model_download, model_cancel, model_delete, model_add, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, meeting_get, meeting_set, meeting_text, segments_include, addon_get, addon_disconnect, addon_folder, meeting_retry, meeting_open, meetings_list, meeting_page, meeting_running, meeting_toggle, call_start, call_dismiss, call_keep, call_stop, summary_get, summary_pick, summary_delete, summary_edit, summary_run, summary_estimate, summary_model, summary_prefs_get, summary_prefs_set, summary_templates_get, summary_templates_set, transcript_prefs_get, transcript_prefs_set, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
+        .invoke_handler(tauri::generate_handler![pill::pill_hit, dictation_fix, fix_take, debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, ai_test_draft, ai_decide_models, ai_decide_set, ai_decide, storage_status, storage_reveal, models_list, model_select, model_download, model_cancel, model_delete, model_add, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, meeting_get, meeting_set, meeting_text, segments_include, addon_get, addon_disconnect, addon_folder, meeting_retry, meeting_local, meeting_stt_get, meeting_stt_local, meeting_stt_models, meeting_stt_test, meeting_open, meetings_list, meeting_page, meeting_running, meeting_toggle, call_start, call_dismiss, call_keep, call_stop, summary_get, summary_pick, summary_delete, summary_edit, summary_run, summary_estimate, summary_model, summary_prefs_get, summary_prefs_set, summary_templates_get, summary_templates_set, transcript_prefs_get, transcript_prefs_set, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::Updates::default())
         .setup(|app| {

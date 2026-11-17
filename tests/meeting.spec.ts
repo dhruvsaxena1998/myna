@@ -344,7 +344,8 @@ test("Models: the speech-to-text model and Speaker diarization, with its model's
   const diar = group.getByRole("listitem").filter({ hasText: "Speaker diarization" });
   await expect(diar).toContainText("Model D");
   await expect(diar).toContainText("Not downloaded · 500 MB");
-  expect(await heights(group.getByRole("listitem"))).toEqual([60, 60]);
+  await expect(group.getByRole("listitem").filter({ hasText: "Transcribe with" })).toContainText("Nothing leaves this Mac.");
+  expect(await heights(group.getByRole("listitem"))).toEqual([60, 60, 60]);
   await diar.getByRole("button", { name: "All models" }).click();
   await expect(page.getByRole("heading", { name: "Speaker diarization", level: 1 })).toBeVisible();
 });

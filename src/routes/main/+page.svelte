@@ -77,13 +77,14 @@
       meetingError = String(err);
     }
   }
-  async function retry(id: number) {
+  async function retry(id: number, local = false) {
     try {
-      await invoke("meeting_retry", { id });
+      await invoke(local ? "meeting_local" : "meeting_retry", { id });
     } catch (err) {
       meetingError = String(err);
     }
   }
+  const local = (id: number) => retry(id, true);
   $effect(() => {
     const un = [
       // The pill's Open and the menubar's Recent.
@@ -184,9 +185,9 @@
       <header data-tauri-drag-region><h1>All meetings</h1></header>
       <div class="content"><ErrorState title="Myna couldn't read your meetings" message={data.meetings.error} /></div>
     {:else if view === "meetings" && page}
-      {#key page.id}<Meeting {page} progress={progress[page.id]} summary={summaries[page.id]} cleanup={cleanups[page.id]} onback={() => (page = null)} onretry={retry} oninclude={include} />{/key}
+      {#key page.id}<Meeting {page} progress={progress[page.id]} summary={summaries[page.id]} cleanup={cleanups[page.id]} onback={() => (page = null)} onretry={retry} onlocal={local} oninclude={include} />{/key}
     {:else if view === "meetings"}
-      <Meetings {meetings} {running} {progress} on={notes.on} error={meetingError} onenable={enable} onopen={openMeeting} onretry={retry}
+      <Meetings {meetings} {running} {progress} on={notes.on} error={meetingError} onenable={enable} onopen={openMeeting} onretry={retry} onlocal={local}
         onstart={() => invoke("meeting_toggle")} onstop={() => invoke("meeting_toggle")} />
     {:else if !data.traces?.ok || ((view === "nerds" || view === "yours") && !data.all?.ok)}
       {@const failed = !data.traces?.ok ? data.traces : data.all}

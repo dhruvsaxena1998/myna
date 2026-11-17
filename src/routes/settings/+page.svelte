@@ -4,6 +4,7 @@
   import General from "$lib/General.svelte";
   import ErrorState from "$lib/ErrorState.svelte";
   import { glassOn, syncGlass } from "$lib/look";
+  import MeetingStt from "$lib/MeetingStt.svelte";
   import ModelList from "$lib/ModelList.svelte";
   import UnloadAfter from "$lib/UnloadAfter.svelte";
   import Experimental from "$lib/Experimental.svelte";
@@ -335,6 +336,7 @@
                           <span class="end"><button class="btn" onclick={(e) => { e.stopPropagation(); open("mmodels"); }}>All models</button></span>
                         </li>
                       {/if}
+                      <MeetingStt {ai} />
                       {#if diar}
                         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions (the button inside takes the keys) -->
                         <li class="row go" onclick={() => open("diar")}>

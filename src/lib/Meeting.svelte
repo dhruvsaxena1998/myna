@@ -24,8 +24,8 @@
   import HostPill from "./HostPill.svelte";
   import { changes, clock, dayHead, groups, hm, meta, writing, type CleanupRun, type Cost, type Page, type Progress, type SummaryRun, type Version } from "./meetings";
 
-  let { page, progress, summary, cleanup, onback, onretry, oninclude }: {
-    page: Page; progress?: Progress; summary?: SummaryRun; cleanup?: CleanupRun; onback: () => void; onretry: (id: number) => void; oninclude: (ids: number[]) => void;
+  let { page, progress, summary, cleanup, onback, onretry, onlocal, oninclude }: {
+    page: Page; progress?: Progress; summary?: SummaryRun; cleanup?: CleanupRun; onback: () => void; onretry: (id: number) => void; onlocal: (id: number) => void; oninclude: (ids: number[]) => void;
   } = $props();
   let copied = $state<"" | "doc" | "panel">("");
   let error = $state("");
@@ -287,8 +287,9 @@
       {:else if page.state === "failed"}
         <p class="say fail">{page.failure ?? "Myna couldn't write up this meeting."}</p>
         <button class="btn" onclick={() => onretry(page.id)}>Try again</button>
+        {#if page.incomplete}<button class="btn" onclick={() => onlocal(page.id)}>Transcribe locally</button>{/if}
       {:else if writing(page)}
-        <p class="say" role="status">Writing up your notes… {Math.round((progress?.progress ?? 0) * 100)}%</p>
+        <p class="say" role="status">Writing up your notes… {Math.round((progress?.progress ?? 0) * 100)}%{#if page.stt} · {page.stt.model} on {page.stt.provider} <HostPill off={page.stt.off} what="audio" />{/if}</p>
       {:else}
         <p class="say">Nobody said anything Myna could hear in this meeting.</p>
       {/if}
@@ -305,6 +306,7 @@
       <div class="transcript">
         {#if cleanup?.state === "reading"}<p class="tmeta" role="status">Cleaning up the transcript: part {cleanup.n} of {cleanup.of}…</p>
         {:else if cleanup?.state === "failed"}<p class="tmeta fail" role="status">Couldn’t clean up the transcript: {cleanup.error}</p>{/if}
+        {#if page.stt?.cost}<p class="tmeta">Transcribed by {page.stt.model} · {page.stt.provider} · {price(page.stt.cost)}</p>{/if}
         {#if cleaned}<p class="tmeta">{orig ? "What Myna heard, before cleanup." : `Cleaned up by ${page.cleanup?.model ?? "AI"}${page.cleanup ? ` · ${price(page.cleanup.cost)}` : ""}. Point at an underlined word to see what Myna heard.`}</p>{/if}
         {#each rows as g}
           {#if "left" in g}
