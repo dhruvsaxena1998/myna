@@ -195,6 +195,19 @@ pub fn auto(db: &Mutex<Connection>, open: &dyn Fn(i64) -> Result<Box<dyn Backend
     run(db, &*open(id)?, meeting, &ask, progress).map(Some)
 }
 
+/// Regenerate's estimate, in USD, for a run on provider `provider`'s `model`: the included lines and each part's
+/// prompt in tokens (characters ÷ 4), plus a quarter of that for the replies, at the model's price from its cached
+/// list. None when the price isn't known. Reused chunk notes aren't counted, so it errs high.
+pub fn estimate(db: &Connection, meeting: i64, provider: i64, model: &str) -> Result<Option<f64>, String> {
+    let Some(m) = crate::ai::model(db, provider, model) else { return Ok(None) };
+    let (Some(input), Some(output)) = (m.input_per_m, m.output_per_m) else { return Ok(None) };
+    let lines = crate::meeting::lines(db, meeting)?;
+    let window = m.context.unwrap_or(DEFAULT_CONTEXT) as usize;
+    let sent: usize = chunks(&lines, (window * 3 / 4).saturating_sub(tokens(PART))).iter().map(|p| tokens(PART) + p.iter().map(|l| tokens(&sent(l))).sum::<usize>()).sum();
+    let sent = sent as f64;
+    Ok(Some((sent * input + sent / 4.0 * output) / 1e6))
+}
+
 /// A Summary template as Settings lists it. `shipped` is the text Reset goes back to (none for the user's own);
 /// `newer`: the user edited a shipped template and Myna has shipped a different default since.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -634,6 +647,20 @@ mod tests {
         let before = fake.seen().len();
         assert_eq!(auto(&db, &open, 1, &mut |_| {}), Ok(None));
         assert_eq!(fake.seen().len(), before);
+    }
+
+    #[test]
+    fn the_estimate_prices_the_lines_and_prompt_plus_a_quarter_for_the_reply() {
+        let (db, _tmp) = meeting(&[(0, "Me", "hello")]); // "[00:00:00] Me: hello": 5 tokens
+        let db = db.lock().unwrap();
+        db.execute("INSERT INTO provider(kind, name, url) VALUES ('openrouter', 'OpenRouter', 'https://openrouter.ai/api/v1')", []).unwrap();
+        let list = r#"[{"id":"big","input_per_m":3.0,"output_per_m":15.0,"context":null,"images":null},{"id":"free-ish","input_per_m":null,"output_per_m":null,"context":null,"images":null}]"#;
+        db.execute("INSERT INTO model_list(provider_id, json, fetched) VALUES (1, ?1, 0)", [list]).unwrap();
+        let sent = (5 + tokens(PART)) as f64;
+        let usd = estimate(&db, 1, 1, "big").unwrap().unwrap();
+        assert!((usd - (sent * 3.0 + sent / 4.0 * 15.0) / 1e6).abs() < 1e-12, "{usd}");
+        assert_eq!(estimate(&db, 1, 1, "free-ish"), Ok(None), "no price");
+        assert_eq!(estimate(&db, 1, 1, "not-listed"), Ok(None));
     }
 
     #[test]

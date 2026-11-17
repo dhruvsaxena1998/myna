@@ -346,9 +346,14 @@ pub fn provider(db: &Connection, keys: &dyn Keys, id: i64) -> Result<Box<dyn Bac
     Ok(Box::new(OpenAi { key: keys.get(id)?, rich: r.kind == "openrouter", url: r.url }))
 }
 
+/// Model `model` as provider `id`'s last fetched list has it.
+pub fn model(db: &Connection, id: i64, model: &str) -> Option<Model> {
+    cached(db, id)?.into_iter().find(|m| m.id == model)
+}
+
 /// Model `model`'s context window from provider `id`'s last fetched list, when it says.
 pub fn context(db: &Connection, id: i64, model: &str) -> Option<u64> {
-    cached(db, id)?.into_iter().find(|m| m.id == model)?.context
+    self::model(db, id, model)?.context
 }
 
 fn cached(db: &Connection, id: i64) -> Option<Vec<Model>> {
