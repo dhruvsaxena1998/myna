@@ -175,18 +175,52 @@ fn keep(db: &Connection, meeting: i64, v: Version) -> Result<Version, String> {
     Ok(Version { id, ..v })
 }
 
-/// After a meeting is written up: runs the chosen template on the Main model, when "Summarize when a meeting
-/// finishes" is on. Nothing runs, and none comes back, when it's off or Main is Not set (the page says "Set a Main
-/// model to summarize"). `open` makes the adapter for a provider id.
+/// The Summary model: the user's own pick (`summary_model`), else Main; or a "Summary model: Not set" error (or
+/// Main's) when there's none to use.
+pub fn model(db: &Connection) -> Result<(crate::ai::Record, String), String> {
+    crate::ai::feature(db, "summary_model")
+}
+
+/// Settings › Meeting notes › Summary. `model` is "main" (Uses Main), "none" (Not set) or "<provider id>|<model>";
+/// `gone`, read only: that model is no longer in its provider's list.
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Prefs {
+    pub auto: bool,
+    pub model: String,
+    #[serde(default)]
+    pub gone: bool,
+    pub template: String,
+}
+
+pub fn prefs(db: &Connection) -> Result<Prefs, String> {
+    let read = |e: rusqlite::Error| format!("Couldn't read the Summary settings: {e}");
+    let (model, gone) = crate::ai::feature_get(db, "summary_model")?;
+    Ok(Prefs {
+        auto: crate::storage::read_switch(db, "summary_auto", true).map_err(read)?,
+        model,
+        gone,
+        template: crate::storage::read_text(db, "summary_template").map_err(read)?.unwrap_or_else(|| "recap".into()),
+    })
+}
+
+pub fn set_prefs(db: &Connection, p: &Prefs) -> Result<(), String> {
+    let err = |e: rusqlite::Error| format!("Couldn't save the Summary settings: {e}");
+    crate::ai::feature_set(db, "summary_model", &p.model)?;
+    crate::storage::write_switch(db, "summary_auto", p.auto).map_err(err)?;
+    crate::storage::write_text(db, "summary_template", &p.template).map_err(err)
+}
+
+/// After a meeting is written up: runs the chosen template on the Summary model, when "Summarize when a meeting
+/// finishes" is on (the default). Nothing runs, and none comes back, when it's off or there's no model to use (the
+/// page says to set one). `open` makes the adapter for a provider id.
 pub fn auto(db: &Mutex<Connection>, open: &dyn Fn(i64) -> Result<Box<dyn Backend>, String>, meeting: i64, progress: &mut dyn FnMut(Progress)) -> Result<Option<Version>, String> {
     let (ask, id) = {
         let db = db.lock().unwrap();
         let read = |e: rusqlite::Error| format!("Couldn't read the Summary settings: {e}");
-        // shortcut: off by default until Settings (16.4) shows the switch; story 16 wants it on then.
-        if !crate::storage::read_switch(&db, "summary_auto", false).map_err(read)? {
+        if !crate::storage::read_switch(&db, "summary_auto", true).map_err(read)? {
             return Ok(None);
         }
-        let Ok((provider, model)) = crate::ai::route(&db, "main") else { return Ok(None) };
+        let Ok((provider, model)) = model(&db) else { return Ok(None) };
         let chosen = crate::storage::read_text(&db, "summary_template").map_err(read)?.unwrap_or_else(|| "recap".into());
         let all = templates(&db)?;
         let t = all.iter().find(|t| t.id == chosen).unwrap_or(&all[0]); // a deleted template falls back to Recap
@@ -623,7 +657,7 @@ mod tests {
     }
 
     #[test]
-    fn auto_runs_the_chosen_template_on_main_only_when_turned_on_and_main_is_set() {
+    fn auto_is_on_by_default_and_runs_the_chosen_template_on_the_summary_model() {
         let (db, _tmp) = meeting(&[(0, "Me", "hello")]);
         let fake = Fake::default();
         let f = fake.clone();
@@ -635,18 +669,55 @@ mod tests {
             db.execute("INSERT INTO provider(kind, name, url) VALUES ('openrouter', 'OpenRouter', 'https://openrouter.ai/api/v1')", []).unwrap();
             db.execute("INSERT INTO route(slot, provider_id, model) VALUES ('main', 1, 'big')", []).unwrap();
         }
-        assert_eq!(auto(&db, &open, 1, &mut |_| {}), Ok(None), "off until the user turns it on");
-        assert!(fake.seen().is_empty());
-        crate::storage::write_text(&db.lock().unwrap(), "summary_auto", "1").unwrap();
         let v = auto(&db, &open, 1, &mut |_| {}).unwrap().unwrap();
         let recap = &templates(&db.lock().unwrap()).unwrap()[0];
         assert_eq!((v.template.as_str(), v.prompt.as_str(), v.provider.as_str(), v.model.as_str()), ("Recap", recap.text.as_str(), "OpenRouter", "big"));
         crate::storage::write_text(&db.lock().unwrap(), "summary_template", "decisions").unwrap();
-        assert_eq!(auto(&db, &open, 1, &mut |_| {}).unwrap().unwrap().template, "Decisions");
-        crate::storage::write_text(&db.lock().unwrap(), "summary_auto", "0").unwrap();
+        crate::ai::feature_set(&db.lock().unwrap(), "summary_model", "1|small").unwrap();
+        let v = auto(&db, &open, 1, &mut |_| {}).unwrap().unwrap();
+        assert_eq!((v.template.as_str(), v.model.as_str()), ("Decisions", "small"));
+        crate::ai::feature_set(&db.lock().unwrap(), "summary_model", "none").unwrap();
         let before = fake.seen().len();
+        assert_eq!(auto(&db, &open, 1, &mut |_| {}), Ok(None), "Summary model Not set");
+        crate::ai::feature_set(&db.lock().unwrap(), "summary_model", "main").unwrap();
+        crate::storage::write_text(&db.lock().unwrap(), "summary_auto", "0").unwrap();
         assert_eq!(auto(&db, &open, 1, &mut |_| {}), Ok(None));
         assert_eq!(fake.seen().len(), before);
+    }
+
+    #[test]
+    fn the_summary_model_uses_main_until_set_and_a_gone_or_removed_one_is_not_set() {
+        let (db, _tmp) = meeting(&[]);
+        let mut db = db.into_inner().unwrap();
+        let keys = crate::ai::tests::Memory::default();
+        let name = |db: &Connection| model(db).map(|(p, m)| format!("{} {m}", p.name));
+        let prefs_model = |db: &Connection| { let p = prefs(db).unwrap(); (p.model, p.gone) };
+        assert_eq!(name(&db), Err("Main model: Not set".into()), "missing: Uses Main, which is Not set");
+        assert_eq!(prefs(&db).unwrap(), Prefs { auto: true, model: "main".into(), gone: false, template: "recap".into() });
+        crate::ai::add(&db, &keys, "openai", "Ollama", "http://localhost:11434/v1", "").unwrap();
+        crate::ai::add(&db, &keys, "openai", "Other", "http://10.0.0.5/v1", "").unwrap();
+        let (a, b) = (1, 2);
+        crate::ai::set(&db, "main", a, "llama3").unwrap();
+        assert_eq!(name(&db).unwrap(), "Ollama llama3", "missing: Uses Main");
+        set_prefs(&db, &Prefs { auto: true, model: format!("{b}|qwen"), gone: false, template: "recap".into() }).unwrap();
+        assert_eq!(name(&db).unwrap(), "Other qwen");
+        assert_eq!(crate::storage::read_text(&db, "summary_model").unwrap().unwrap(), format!(r#"{{"provider":{b},"model":"qwen"}}"#));
+        let m = |id: &str| crate::ai::Model { id: id.into(), ..Default::default() };
+        crate::ai::store(&db, b, &[m("other")]).unwrap();
+        assert_eq!(name(&db), Err("Summary model: qwen is no longer offered by Other".into()));
+        assert_eq!(prefs_model(&db), (format!("{b}|qwen"), true));
+        crate::ai::store(&db, b, &[m("qwen")]).unwrap();
+        assert!(name(&db).is_ok());
+        crate::ai::feature_set(&db, "summary_model", "none").unwrap();
+        assert_eq!(name(&db), Err("Summary model: Not set".into()), "never falls back to Main");
+        crate::ai::feature_set(&db, "summary_model", "main").unwrap();
+        assert_eq!(crate::storage::read_text(&db, "summary_model").unwrap(), None);
+        crate::ai::feature_set(&db, "summary_model", &format!("{b}|qwen")).unwrap();
+        assert_eq!(crate::ai::remove(&mut db, &keys, b).unwrap(), ["Summary model"]);
+        assert_eq!(name(&db), Err("Summary model: Not set".into()), "removed: Not set, not Main");
+        assert_eq!(prefs_model(&db), ("none".into(), false));
+        assert_eq!(crate::ai::remove(&mut db, &keys, a).unwrap(), ["main"], "an override already Not set isn't named again");
+        assert!(crate::ai::feature_set(&db, "summary_model", &format!("{b}|qwen")).is_err() && crate::ai::feature_set(&db, "summary_model", "x").is_err());
     }
 
     #[test]

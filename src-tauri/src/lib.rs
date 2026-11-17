@@ -733,6 +733,23 @@ fn summary_estimate(d: tauri::State<Data>, id: i64, provider: i64, model: String
     summary::estimate(&d.db.lock().unwrap(), id, provider, &model)
 }
 
+/// The model a Summary runs on (summary::model), for the meeting page: `{provider, model}`, or why there's none.
+#[tauri::command]
+fn summary_model(d: tauri::State<Data>) -> Result<serde_json::Value, String> {
+    let (p, model) = summary::model(&d.db.lock().unwrap())?;
+    Ok(serde_json::json!({ "provider": p.id, "model": model }))
+}
+
+#[tauri::command]
+fn summary_prefs_get(d: tauri::State<Data>) -> Result<summary::Prefs, String> {
+    summary::prefs(&d.db.lock().unwrap())
+}
+
+#[tauri::command]
+fn summary_prefs_set(d: tauri::State<Data>, prefs: summary::Prefs) -> Result<(), String> {
+    summary::set_prefs(&d.db.lock().unwrap(), &prefs)
+}
+
 #[tauri::command]
 fn summary_templates_get(d: tauri::State<Data>) -> Result<Vec<summary::Template>, String> {
     summary::templates(&d.db.lock().unwrap())
@@ -1023,7 +1040,7 @@ fn open_update(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![pill::pill_hit, dictation_fix, fix_take, debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, ai_test_draft, storage_status, storage_reveal, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, meeting_get, meeting_set, meeting_text, segments_include, addon_get, addon_disconnect, addon_folder, meeting_retry, meeting_open, meetings_list, meeting_page, meeting_running, meeting_toggle, call_start, call_dismiss, call_keep, call_stop, summary_get, summary_pick, summary_delete, summary_edit, summary_run, summary_estimate, summary_templates_get, summary_templates_set, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
+        .invoke_handler(tauri::generate_handler![pill::pill_hit, dictation_fix, fix_take, debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, ai_test_draft, storage_status, storage_reveal, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, meeting_get, meeting_set, meeting_text, segments_include, addon_get, addon_disconnect, addon_folder, meeting_retry, meeting_open, meetings_list, meeting_page, meeting_running, meeting_toggle, call_start, call_dismiss, call_keep, call_stop, summary_get, summary_pick, summary_delete, summary_edit, summary_run, summary_estimate, summary_model, summary_prefs_get, summary_prefs_set, summary_templates_get, summary_templates_set, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::Updates::default())
         .setup(|app| {

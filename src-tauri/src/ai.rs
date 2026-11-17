@@ -11,6 +11,8 @@ use std::time::{Duration, Instant};
 
 const KINDS: [&str; 2] = ["openai", "openrouter"];
 const SLOTS: [&str; 2] = ["main", "fast"];
+/// Features with their own model, as a setting: (key, label, the slot it uses while the key is missing).
+const OWN: [(&str, &str, &str); 1] = [("summary_model", "Summary model", "main")];
 const SERVICE: &str = "com.dhruvsaxena.myna.ai-provider";
 
 #[derive(Debug, Clone, PartialEq)]
@@ -261,8 +263,12 @@ fn view(r: Record, keys: &dyn Keys) -> Result<Provider, String> {
 fn get_route(db: &Connection, slot: &str) -> Result<Option<Route>, String> {
     let r = db.query_row("SELECT provider_id, model FROM route WHERE slot = ?1", [slot], |r| Ok((r.get(0)?, r.get::<_, String>(1)?)))
         .optional().map_err(|e| e.to_string())?;
-    // No saved list means unknown, not gone: a failed fetch never marks a model as gone.
-    Ok(r.map(|(provider, model)| Route { gone: cached(db, provider).is_some_and(|l| !l.iter().any(|m| m.id == model)), provider, model }))
+    Ok(r.map(|(provider, model)| Route { gone: gone(db, provider, &model), provider, model }))
+}
+
+// No saved list means unknown, not gone: a failed fetch never marks a model as gone.
+fn gone(db: &Connection, provider: i64, model: &str) -> bool {
+    cached(db, provider).is_some_and(|l| !l.iter().any(|m| m.id == model))
 }
 
 pub fn get(db: &Connection, keys: &dyn Keys) -> Result<State, String> {
@@ -299,14 +305,21 @@ pub fn add(db: &Connection, keys: &dyn Keys, kind: &str, name: &str, url: &str, 
     view(find(db, id)?, keys)
 }
 
-/// Deletes the provider, its key and the routes to it; returns the slots that are now Not set.
+/// Deletes the provider, its key and the routes to it; returns the slots that are now Not set, then the label of each
+/// feature's own model that used it ("Summary model"), which is now Not set too, never back on its slot.
 pub fn remove(db: &mut Connection, keys: &dyn Keys, id: i64) -> Result<Vec<String>, String> {
     find(db, id)?;
     let tx = db.transaction().map_err(|e| e.to_string())?;
-    let slots = {
+    let mut slots = {
         let mut q = tx.prepare("SELECT slot FROM route WHERE provider_id = ?1 ORDER BY slot DESC").map_err(|e| e.to_string())?; // main before fast
         q.query_map([id], |r| r.get(0)).map_err(|e| e.to_string())?.collect::<Result<Vec<String>, _>>().map_err(|e| e.to_string())?
     };
+    for (key, label, _) in OWN {
+        if matches!(own(&tx, key)?, Own::Pick(p, _) if p == id) {
+            crate::storage::write_text(&tx, key, "none").map_err(|e| e.to_string())?;
+            slots.push(label.into());
+        }
+    }
     tx.execute("DELETE FROM route WHERE provider_id = ?1", [id]).map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM model_list WHERE provider_id = ?1", [id]).map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM provider WHERE id = ?1", [id]).map_err(|e| e.to_string())?;
@@ -340,6 +353,70 @@ pub fn route(db: &Connection, slot: &str) -> Result<(Record, String), String> {
     Ok((p, r.model))
 }
 
+/// A feature's own model as saved (`OWN`): missing uses its slot's, "none" is Not set, else {"provider": id, "model": "…"}.
+enum Own {
+    Slot,
+    NotSet,
+    Pick(i64, String),
+}
+
+#[derive(Serialize, Deserialize)]
+struct Pick {
+    provider: i64,
+    model: String,
+}
+
+fn own(db: &Connection, key: &str) -> Result<Own, String> {
+    Ok(match crate::storage::read_text(db, key).map_err(|e| e.to_string())? {
+        None => Own::Slot,
+        Some(v) => serde_json::from_str::<Pick>(&v).map_or(Own::NotSet, |p| Own::Pick(p.provider, p.model)),
+    })
+}
+
+fn own_of(key: &str) -> (&'static str, &'static str) {
+    OWN.iter().find(|o| o.0 == key).map(|o| (o.1, o.2)).expect("a feature in OWN")
+}
+
+/// The provider and model feature `key` (in `OWN`) should use, or a "Not set" error, like `route`.
+pub fn feature(db: &Connection, key: &str) -> Result<(Record, String), String> {
+    let (label, slot) = own_of(key);
+    let not_set = || format!("{label}: Not set");
+    let (provider, model) = match own(db, key)? {
+        Own::Slot => return route(db, slot),
+        Own::NotSet => return Err(not_set()),
+        Own::Pick(p, m) => (p, m),
+    };
+    let p = find(db, provider).map_err(|_| not_set())?;
+    if gone(db, provider, &model) {
+        return Err(format!("{label}: {model} is no longer offered by {}", p.name));
+    }
+    Ok((p, model))
+}
+
+/// Feature `key`'s model for Settings: its slot's name ("main"), "none", or "<provider id>|<model>"; and whether
+/// that model is gone from its provider's list.
+pub fn feature_get(db: &Connection, key: &str) -> Result<(String, bool), String> {
+    Ok(match own(db, key)? {
+        Own::Slot => (own_of(key).1.into(), false),
+        Own::NotSet => ("none".into(), false),
+        Own::Pick(p, m) => (format!("{p}|{m}"), gone(db, p, &m)),
+    })
+}
+
+/// Saves feature `key`'s model, in `feature_get`'s form.
+pub fn feature_set(db: &Connection, key: &str, value: &str) -> Result<(), String> {
+    let saved = if value == own_of(key).1 {
+        db.execute("DELETE FROM setting WHERE key = ?1", [key]).map(drop)
+    } else if value == "none" {
+        crate::storage::write_text(db, key, "none")
+    } else {
+        let (provider, model) = value.split_once('|').and_then(|(p, m)| Some((p.parse::<i64>().ok()?, m))).filter(|(_, m)| !m.trim().is_empty()).ok_or("Pick a model")?;
+        find(db, provider)?;
+        crate::storage::write_text(db, key, &serde_json::to_string(&Pick { provider, model: model.into() }).map_err(|e| e.to_string())?)
+    };
+    saved.map_err(|e| format!("Couldn't save the model: {e}"))
+}
+
 /// The adapter for provider `id`, holding its key.
 pub fn provider(db: &Connection, keys: &dyn Keys, id: i64) -> Result<Box<dyn Backend>, String> {
     let r = find(db, id)?;
@@ -361,7 +438,7 @@ fn cached(db: &Connection, id: i64) -> Option<Vec<Model>> {
     serde_json::from_str(&json).ok()
 }
 
-fn store(db: &Connection, id: i64, list: &[Model]) -> Result<(), String> {
+pub(crate) fn store(db: &Connection, id: i64, list: &[Model]) -> Result<(), String> {
     let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
     // The WHERE keeps a list from outliving a provider removed while it was being fetched.
     db.execute(
