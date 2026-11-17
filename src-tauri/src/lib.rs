@@ -20,6 +20,7 @@ mod session;
 mod shortcuts;
 mod speakers;
 mod storage;
+mod summary;
 mod trace;
 mod update;
 mod voice;

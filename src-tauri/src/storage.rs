@@ -39,6 +39,16 @@ const MIGRATIONS: &[&str] = &[
      ALTER TABLE segment ADD COLUMN label TEXT;
      ALTER TABLE meeting ADD COLUMN note TEXT;
      ALTER TABLE meeting ADD COLUMN captions TEXT;",
+    // Story 16. `chunk_note.input` is a hash of everything a part's notes were written from, so changed input is a
+    // new row and the old one is simply not read. `summary.cost` is the run's `ai::Cost` as JSON.
+    // `meeting.summary`: the version the user picked; NULL shows the newest.
+    "CREATE TABLE chunk_note(id INTEGER PRIMARY KEY, meeting INTEGER NOT NULL REFERENCES meeting(id), input TEXT NOT NULL, provider TEXT NOT NULL,
+        model TEXT NOT NULL, text TEXT NOT NULL, tokens INTEGER, cost TEXT NOT NULL, created INTEGER NOT NULL);
+     CREATE INDEX chunk_note_input ON chunk_note(meeting, input);
+     CREATE TABLE summary(id INTEGER PRIMARY KEY, meeting INTEGER NOT NULL REFERENCES meeting(id), template TEXT NOT NULL, prompt TEXT NOT NULL,
+        provider TEXT NOT NULL, model TEXT NOT NULL, created INTEGER NOT NULL, parts INTEGER NOT NULL, cost TEXT NOT NULL, text TEXT NOT NULL,
+        edited INTEGER NOT NULL DEFAULT 0);
+     ALTER TABLE meeting ADD COLUMN summary INTEGER;",
 ];
 const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
 
