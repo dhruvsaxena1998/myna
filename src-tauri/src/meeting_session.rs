@@ -6,6 +6,7 @@ use crate::meeting::{self, Meetings, Stt, Voices};
 use crate::permissions::Mic;
 use crate::{notify, now_ms, permissions, pill};
 use rusqlite::Connection;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
@@ -26,6 +27,8 @@ pub trait World: Stt + Voices + 'static {
     fn place(&self, place: String);
     /// The menu item and the tray title for a running meeting.
     fn menu_running(&self, clock: &str, note: &str);
+    /// The menu bar icon while recording: its wave follows the mic's loudness, 0 to 1.
+    fn menu_wave(&self, level: f32);
     /// The menu item, its note and the tray title for no meeting.
     fn menu_idle(&self);
     /// `meeting-running`: the live card, or none.
@@ -86,8 +89,17 @@ impl MeetingSession {
         if let Ok(look) = pill::look(&self.db.lock().unwrap()) {
             self.world.place(look.place);
         }
-        let this = self.clone();
+        let (this, that) = (self.clone(), self.clone());
         std::thread::spawn(move || this.clock(id));
+        std::thread::spawn(move || that.wave(id));
+    }
+
+    /// Until meeting `id` ends: the menu bar icon's wave, about 8 times a second.
+    fn wave(&self, id: i64) {
+        while self.meetings.running().is_some_and(|(i, _)| i == id) {
+            self.world.menu_wave(self.meetings.level());
+            std::thread::sleep(Duration::from_millis(125));
+        }
     }
 
     /// Start notes on a detected call: starts, and names the meeting after the call's app.
@@ -257,6 +269,16 @@ fn mic_words(muted: Option<bool>) -> &'static str {
 /// The real Mac: the app's permissions, notifications, pill, menu and windows.
 pub struct Mac(pub AppHandle);
 
+/// Whether the menu bar icon is in its recording look; only touched on the main thread.
+static RECORDING: AtomicBool = AtomicBool::new(false);
+
+/// Whether the menu bar the icon sits in is dark (it follows the wallpaper, not just the system appearance).
+fn menu_bar_dark(item: Option<objc2::rc::Retained<objc2_app_kit::NSStatusItem>>) -> bool {
+    use objc2_app_kit::NSAppearanceCustomization;
+    let Some(mtm) = objc2::MainThreadMarker::new() else { return false };
+    item.and_then(|i| i.button(mtm)).is_some_and(|b| b.effectiveAppearance().name().to_string().contains("Dark"))
+}
+
 impl Stt for Mac {
     fn transcribe(&self, audio: &[f32]) -> Result<Vec<crate::runtime::Segment>, String> {
         self.0.state::<Arc<crate::session::Session>>().transcribe(audio)
@@ -296,19 +318,47 @@ impl World for Mac {
             let _ = m.item.set_text(format!("Stop recording  {clock}"));
             let _ = m.note.set_text(note);
         }
-        // shortcut: a tray title is plain text, so the dot is the red emoji; draw a red icon if that looks off.
-        if let Some(t) = self.0.tray_by_id("myna") {
-            let _ = t.set_title(Some(format!("🔴 {clock}")));
-        }
+        // The icon says it's recording (menu_wave); the title is just the clock.
+        let (app, clock) = (self.0.clone(), clock.to_string());
+        let _ = self.0.run_on_main_thread(move || {
+            RECORDING.store(true, Ordering::Relaxed);
+            if let Some(t) = app.tray_by_id("myna") {
+                let _ = t.set_title(Some(clock));
+            }
+        });
+    }
+    fn menu_wave(&self, level: f32) {
+        // A coloured icon can't be a template, so there's a frame for a light menu bar and one for a dark one.
+        const FRAMES: [[&[u8]; 5]; 2] = [
+            [include_bytes!("../icons/tray-rec/light-0.png"), include_bytes!("../icons/tray-rec/light-1.png"), include_bytes!("../icons/tray-rec/light-2.png"), include_bytes!("../icons/tray-rec/light-3.png"), include_bytes!("../icons/tray-rec/light-4.png")],
+            [include_bytes!("../icons/tray-rec/dark-0.png"), include_bytes!("../icons/tray-rec/dark-1.png"), include_bytes!("../icons/tray-rec/dark-2.png"), include_bytes!("../icons/tray-rec/dark-3.png"), include_bytes!("../icons/tray-rec/dark-4.png")],
+        ];
+        let app = self.0.clone();
+        // On the main thread, like menu_idle, so a frame can never land after the icon was put back.
+        let _ = self.0.run_on_main_thread(move || {
+            let Some(t) = app.tray_by_id("myna").filter(|_| RECORDING.load(Ordering::Relaxed)) else { return };
+            let dark = t.with_inner_tray_icon(|i| menu_bar_dark(i.ns_status_item())).unwrap_or(false);
+            let frame = FRAMES[dark as usize][((level * 4.0).round() as usize).min(4)];
+            if let Ok(icon) = tauri::image::Image::from_bytes(frame) {
+                let _ = t.set_icon_with_as_template(Some(icon), false);
+            }
+        });
     }
     fn menu_idle(&self) {
         if let Some(m) = self.0.try_state::<crate::MeetItem>() {
             let _ = m.item.set_text("Start meeting notes");
             let _ = crate::sync_meeting(&self.0); // puts the usual note back
         }
-        if let Some(t) = self.0.tray_by_id("myna") {
-            let _ = t.set_title(None::<String>);
-        }
+        let app = self.0.clone();
+        let _ = self.0.run_on_main_thread(move || {
+            RECORDING.store(false, Ordering::Relaxed);
+            if let Some(t) = app.tray_by_id("myna") {
+                let _ = t.set_title(None::<String>);
+                if let Ok(icon) = tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png")) {
+                    let _ = t.set_icon_with_as_template(Some(icon), true);
+                }
+            }
+        });
     }
     fn running(&self, card: Option<serde_json::Value>) {
         let _ = self.0.emit("meeting-running", card);
@@ -412,6 +462,7 @@ mod tests {
         fn menu_running(&self, clock: &str, note: &str) {
             self.log(Saw::MenuRunning(format!("{clock} | {note}")))
         }
+        fn menu_wave(&self, _: f32) {}
         fn menu_idle(&self) {
             self.log(Saw::MenuIdle)
         }
