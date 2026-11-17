@@ -1,6 +1,7 @@
 # 16: Summary and transcript cleanup
 
 **Status:** ready
+**GitHub:** milestone "16 · Summary", #218
 **Spec stories:** 43–45, 52, 57
 **Depends on:** 10
 
@@ -36,6 +37,15 @@ Decided 2026-11-17:
 - **Later:** screenshots in Summary (needs 08), per-folder template and cleanup prompt with its "Regenerate with Hiring template?" chip (needs 11), Chat's use of chunk notes (17).
 
 ## Tickets
+Done: 1 (design) and 2 (engine, #216, in 0.0.2-beta.13). Ticket 2 shipped with `summary_auto` defaulting **off**, since nothing in the UI could show or stop it; ticket 4 turns it back on.
+Issues: 3 → #219, 4 → #220, 5 → #221, 6 → #222, 7 → #223. Build them in that order.
+
+Added while writing the issues (2026-11-17):
+- Feature model overrides are the settings `summary_model` and `transcript_cleanup_model`: missing means Uses Main or Uses Fast, `{"provider", "model"}` means that model, and `"none"` means Not set. One resolver per feature. `ai::remove` sets any override pointing at the removed provider to `"none"` and names it.
+- Regenerate's estimate comes from a `summary_estimate` command: characters ÷ 4, plus the prompt, plus 25% for the reply, at the cached list's prices. When the price is unknown, there's no estimate.
+- Transcript cleanup lives in `transcript.rs`. It adds the nullable `segment.clean` and `meeting.cleanup` (JSON: provider, model, cost) columns and sends `meeting-cleanup` progress events. The Summary sends `clean` when a line has one.
+- Header Copy copies the Summary; the transcript panel's Copy copies what it shows.
+
 1. **Design.** Update `docs/index.html` and `docs/settings.html` to this story: the Summary as the meeting's document with versions, Edit, cost line, progress and empty states; the Regenerate pop-up; the transcript side panel with Show original; Settings › Meeting notes rows for Summary and transcript cleanup. Reviewed before ticket 2 starts.
 2. **Summary engine (Rust).** New `summary.rs`. Add-only migrations: `chunk_note` (meeting, input hash, provider, model, text, tokens, cost, created) and `summary` (meeting, template name, prompt text, provider, model, created, parts, cost, text, edited), plus a nullable `meeting.summary` for the version picked. Settings `summary_auto` (default on), `summary_template` (default Recap) and `summary_templates` (shipped and user templates, `text`/`base` like `cleanup_styles`). The chunker over the included lines (`meeting::lines` minus hidden, cleaned text when there is one), the fixed wrapper (data tags, Markdown out, `[hh:mm:ss]` timestamps), chunk notes reused by hash, merge, cost summed with `ai::cost_of`. Auto-run after `MeetingSession::write_up` succeeds, in the background with progress ("part 2 of 6", "writing the Recap"); Main "Not set" runs nothing. Tests with a counting fake `Backend`: switching template re-runs only the merge; a changed line re-runs only its chunk; hidden lines never appear in any request; an edit is never overwritten.
 3. **Summary on the meeting page.** The Summary is the document (rendered with markdown-it, links off); the transcript moves to a side panel. `[hh:mm:ss]` opens the panel at that line. Versions menu ("3 versions ▾") with delete, Edit → "Edited" version, cost line under the version, "Summarized in N parts" progress, failure with Try again, "Set a Main model to summarize" empty state. Regenerate pop-up with template, editable prompt, model menu and the estimate above $1. Off-device pill from the routing.
