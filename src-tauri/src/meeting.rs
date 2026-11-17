@@ -1025,7 +1025,11 @@ fn mirrored_from(db: &Connection, id: i64) -> Site {
 
 pub(crate) fn lines(db: &Connection, id: i64) -> Result<Vec<Line>, String> {
     let notes = get(db)?;
-    let keep = if mirrored_from(db, id) == Site::Meet { notes.keep_meet } else { notes.keep_teams };
+    let keep = match mirrored_from(db, id) {
+        Site::Teams => notes.keep_teams,
+        Site::Meet => notes.keep_meet,
+        Site::Other => false,
+    };
     db.prepare("SELECT id, COALESCE(label, speaker), start_ms, text, mute, included, clean FROM segment WHERE meeting = ?1 ORDER BY start_ms, id")
         .and_then(|mut q| {
             q.query_map([id], |r| {
@@ -1588,6 +1592,9 @@ pub(crate) mod tests {
         assert!(!out(&db).contains("secret"), "a Meet meeting goes by the Meet switch");
         set(&db, &Notes { on: true, key: KEY.into(), keep_teams: false, keep_meet: true, offer_calls: true, stop_on_end: true }).unwrap();
         assert!(out(&db).contains("secret"));
+        set(&db, &Notes { on: true, key: KEY.into(), keep_teams: true, keep_meet: true, offer_calls: true, stop_on_end: true }).unwrap();
+        db.execute("INSERT INTO mute_event(meeting, at_ms, state, source) VALUES (1, 1, 'muted', 'other')", []).unwrap();
+        assert!(!out(&db).contains("secret"), "no switch keeps a page this build doesn't know");
     }
 
     #[test]

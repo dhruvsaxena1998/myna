@@ -222,7 +222,8 @@ impl MeetingSession {
                 if self.meetings.running().is_none() {
                     self.start();
                 }
-                if self.meetings.tab_start(&format!("{} (Chrome tab)", site.name())) {
+                let source = if site == Site::Other { "Chrome tab".into() } else { format!("{} (Chrome tab)", site.name()) };
+                if self.meetings.tab_start(&source) {
                     self.show_running();
                 }
             }
@@ -959,6 +960,7 @@ mod tests {
     fn the_mic_words_are_the_same_on_the_menu_the_pill_and_the_card() {
         assert_eq!([Some(true), Some(false), None].map(|m| mic_words(m, Site::Teams)), ["Muted · mirrored from Teams", "Mic live · mirrored from Teams", "Mic live"]);
         assert_eq!([Some(true), Some(false), None].map(|m| mic_words(m, Site::Meet)), ["Muted · mirrored from Meet", "Mic live · mirrored from Meet", "Mic live"]);
+        assert_eq!(mic_words(Some(true), Site::Other), "Muted · mirrored from the browser");
         let (s, saw_, _tmp) = recording();
         for (state, mic, words) in [(MuteState::Muted, "muted", "Muted · mirrored from Teams"), (MuteState::Unmuted, "live", "Mic live · mirrored from Teams")] {
             s.addon(muted_at_now(state));

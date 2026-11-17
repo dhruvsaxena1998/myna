@@ -63,6 +63,10 @@ pub enum Site {
     #[default]
     Teams,
     Meet,
+    /// A call page this build doesn't know (a newer add-on's): its mute state still counts, said as the browser's,
+    /// and never kept by a per-site "Keep my voice when muted" switch.
+    #[serde(other)]
+    Other,
 }
 
 impl Site {
@@ -70,6 +74,7 @@ impl Site {
         match self {
             Site::Teams => "teams",
             Site::Meet => "meet",
+            Site::Other => "other",
         }
     }
 
@@ -78,11 +83,16 @@ impl Site {
         match self {
             Site::Teams => "Teams",
             Site::Meet => "Meet",
+            Site::Other => "the browser",
         }
     }
 
     pub fn parse(s: &str) -> Site {
-        if s == "meet" { Site::Meet } else { Site::Teams }
+        match s {
+            "meet" => Site::Meet,
+            "other" => Site::Other,
+            _ => Site::Teams,
+        }
     }
 }
 
@@ -571,20 +581,28 @@ mod tests {
     }
 
     #[test]
+    fn a_site_this_build_doesnt_know_still_decodes() {
+        assert_eq!(decode(r#"{"v":1,"type":"tab","state":"start","site":"zoom"}"#), Some(Msg::Tab { state: TabState::Start, title: String::new(), site: Some(Site::Other) }));
+        assert_eq!((Site::parse(Site::Other.as_str()), Site::Other.name()), (Site::Other, "the browser"));
+    }
+
+    #[test]
     fn mute_and_caption_messages_reach_myna_as_events() {
         let (a, addr, got, _t) = watched();
         let mut ws = connect(&a, addr);
         ws.send(Message::text(encode(&Msg::Mute { state: MuteState::Muted, at: 7, site: None }))).unwrap();
         ws.send(Message::text(r#"{"v":1,"type":"mute","state":"unmuted","at":8,"site":"meet"}"#)).unwrap();
+        ws.send(Message::text(r#"{"v":1,"type":"mute","state":"muted","at":9,"site":"zoom"}"#)).unwrap(); // a newer add-on's site
         ws.send(Message::text(r#"{"v":1,"type":"caption","name":"Ana","at":7,"text":"hi"}"#)).unwrap();
         ws.send(Message::text(r#"{"v":1,"type":"caption","name":"Bo","at":8}"#)).unwrap();
         ws.send(Message::text(r#"{"v":1,"type":"captions","state":"unavailable"}"#)).unwrap();
         ws.send(Message::text(encode(&Msg::Selectors { version: "2026-11-10".into() }))).unwrap();
-        heard(&got, 7);
+        heard(&got, 8);
         assert_eq!(*got.lock().unwrap(), [
             AddonEvent::Connected,
             AddonEvent::Mute { state: MuteState::Muted, at: 7, site: Site::Teams },
             AddonEvent::Mute { state: MuteState::Unmuted, at: 8, site: Site::Meet },
+            AddonEvent::Mute { state: MuteState::Muted, at: 9, site: Site::Other },
             AddonEvent::Caption { name: "Ana".into(), at: 7, text: Some("hi".into()) },
             AddonEvent::Caption { name: "Bo".into(), at: 8, text: None },
             AddonEvent::CaptionsUnavailable,
