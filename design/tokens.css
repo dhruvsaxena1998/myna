@@ -231,7 +231,9 @@ html { background: var(--bg-desk); color: var(--text); font: var(--fs-body)/var(
 /* appearance: none, or WebKit draws its own rounded rect; the drawn chevrons stand in for the native ones (mid grey reads on both themes). */
 .select { appearance: none; height: var(--h-ctl); padding: 0 28px 0 var(--sp-3); border: 0; border-radius: var(--r-full); color: var(--text); font: inherit;
   background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='12' fill='none' stroke='%238E8E93' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 4.5 4 1.5 7 4.5M1 7.5 4 10.5 7 7.5'/%3E%3C/svg%3E") no-repeat right 12px center, var(--fill-control);
-  box-shadow: inset 0 0 0 .5px var(--line-strong), var(--shadow-control); text-overflow: ellipsis; }
+  box-shadow: inset 0 0 0 .5px var(--line-strong), var(--shadow-control); text-overflow: ellipsis;
+  transition: background-color var(--dur-fast) var(--ease-in); }
+.select:hover:not(:disabled) { background-color: color-mix(in srgb, var(--fill-control) 85%, var(--text)); }
 /* Button: capsule, 30px (DESIGN.md › Button). Disabled buttons keep their fill and dim their text; every other control dims as a whole. */
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-1h); height: var(--h-ctl); box-sizing: border-box; padding: 0 14px; border: 0; border-radius: var(--r-full);
   background: var(--fill-control); color: var(--text); font: inherit; box-shadow: inset 0 0 0 .5px var(--line-strong), var(--shadow-control); white-space: nowrap;

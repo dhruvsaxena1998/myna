@@ -2,6 +2,7 @@
   import "../../design/tokens.css";
   import { listen } from "@tauri-apps/api/event";
   import DebugSize from "$lib/DebugSize.svelte";
+  import SelectMenu from "$lib/SelectMenu.svelte";
   import { applyLook, type Look } from "$lib/look";
   let { children } = $props();
 
@@ -14,6 +15,7 @@
 
 {@render children()}
 <DebugSize />
+<SelectMenu />
 
 <style>
   /* Windows are transparent so native vibrancy shows through. */
