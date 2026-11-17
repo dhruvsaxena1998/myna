@@ -234,6 +234,27 @@ async fn ai_test(d: tauri::State<'_, Data>, id: i64) -> Result<ai::Check, String
 }
 
 #[tauri::command]
+async fn ai_decide_models(d: tauri::State<'_, Data>, id: i64) -> Result<Vec<ai::Model>, String> {
+    let (db, keys) = (d.db.clone(), d.keys.clone());
+    tauri::async_runtime::spawn_blocking(move || ai::provider(&db.lock().unwrap(), &*keys, id)?.decision_models())
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn ai_decide_set(d: tauri::State<Data>, value: String) -> Result<(), String> {
+    ai::decide_set(&d.db.lock().unwrap(), &value)
+}
+
+#[tauri::command]
+async fn ai_decide(d: tauri::State<'_, Data>, question: String, options: Vec<String>, instructions: String) -> Result<ai::Decision, String> {
+    let (db, keys) = (d.db.clone(), d.keys.clone());
+    tauri::async_runtime::spawn_blocking(move || ai::decide(&db, &*keys, &question, &options, &instructions))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn ai_test_draft(kind: String, url: String, key: String) -> Result<ai::Check, String> {
     tauri::async_runtime::spawn_blocking(move || ai::test_draft(&kind, &url, &key)).await.map_err(|e| e.to_string())?
 }
@@ -1065,7 +1086,7 @@ fn open_update(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![pill::pill_hit, dictation_fix, fix_take, debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, ai_test_draft, storage_status, storage_reveal, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, meeting_get, meeting_set, meeting_text, segments_include, addon_get, addon_disconnect, addon_folder, meeting_retry, meeting_open, meetings_list, meeting_page, meeting_running, meeting_toggle, call_start, call_dismiss, call_keep, call_stop, summary_get, summary_pick, summary_delete, summary_edit, summary_run, summary_estimate, summary_model, summary_prefs_get, summary_prefs_set, summary_templates_get, summary_templates_set, transcript_prefs_get, transcript_prefs_set, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
+        .invoke_handler(tauri::generate_handler![pill::pill_hit, dictation_fix, fix_take, debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, ai_test_draft, ai_decide_models, ai_decide_set, ai_decide, storage_status, storage_reveal, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, meeting_get, meeting_set, meeting_text, segments_include, addon_get, addon_disconnect, addon_folder, meeting_retry, meeting_open, meetings_list, meeting_page, meeting_running, meeting_toggle, call_start, call_dismiss, call_keep, call_stop, summary_get, summary_pick, summary_delete, summary_edit, summary_run, summary_estimate, summary_model, summary_prefs_get, summary_prefs_set, summary_templates_get, summary_templates_set, transcript_prefs_get, transcript_prefs_set, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::Updates::default())
         .setup(|app| {

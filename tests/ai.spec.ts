@@ -17,14 +17,14 @@ async function open(page: Page, state: object, extra = "") {
 }
 const calls = (page: Page, cmd: string) => page.evaluate((c) => (window as any).__calls.filter((x: any) => x[0] === c).map((x: any) => x[1]), cmd);
 
-test("fresh install: empty state and both models Not set", async ({ page }) => {
+test("fresh install: empty state and every model Not set", async ({ page }) => {
   await open(page, { providers: [], main: null, fast: null });
   await expect(page.getByText("No AI providers yet", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Add a provider" })).toHaveCount(1);
   await expect(page.getByText("Add one to use summaries, chat and AI cleanup. Myna runs no AI itself.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Add a provider" })).toHaveClass(/primary/);
   await expect(page.getByText("Add a provider first, then pick a model for each.")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Not set" })).toHaveCount(2);
+  await expect(page.getByRole("button", { name: "Not set" })).toHaveCount(3);
   await expect(page.getByRole("button", { name: "Not set" }).first()).toBeDisabled();
 });
 
@@ -188,9 +188,9 @@ test("Test shows the model count or the key's usage; a failure shows the error a
 
 test("Test says Checking… while it runs", async ({ page }) => {
   await open(page, { providers: [OLLAMA], main: null, fast: null }, `ai_test: () => new Promise(() => {})`);
-  await page.getByRole("button", { name: "Test" }).click();
+  await page.getByRole("button", { name: "Test" }).first().click();
   await expect(page.getByText("Checking…")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Test" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Test" }).first()).toBeDisabled();
 });
 
 test("removing a provider confirms, then names the slots and feature models now Not set", async ({ page }) => {
@@ -204,7 +204,7 @@ test("removing a provider confirms, then names the slots and feature models now 
   await page.getByRole("button", { name: "Remove", exact: true }).click();
   await expect.poll(() => calls(page, "ai_remove")).toEqual([{ id: 2 }]);
   await expect(page.getByRole("status").filter({ hasText: "Removed OpenRouter and its key. Main model, Fast model and Summary model are now Not set." })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Not set" })).toHaveCount(2);
+  await expect(page.getByRole("button", { name: "Not set" })).toHaveCount(3); // the Decision model used the Fast model
   await expect(page.getByRole("button", { name: "Dismiss" })).toHaveCount(0);
 });
 
@@ -218,7 +218,7 @@ test("a failed load shows the error, not a blank page", async ({ page }) => {
 test("a chosen model missing from the provider's list shows as no longer offered", async ({ page }) => {
   await open(page, { providers: [OLLAMA, OR], main: { provider: 2, model: "openai/retired", gone: false }, fast: { provider: 1, model: "old:1b", gone: true } });
   await expect(page.getByText("No longer offered")).toHaveCount(1);
-  await expect(page.getByRole("listitem").filter({ hasText: "Fast model" })).toContainText("No longer offered");
+  await expect(page.getByRole("listitem").filter({ hasText: /^Fast model/ })).toContainText("No longer offered");
   // Opening a picker brings OpenRouter's list, which no longer has the Main model.
   await page.getByRole("button", { name: /OpenRouter · openai\/retired/ }).click();
   await expect(page.getByText("No longer offered")).toHaveCount(2);
@@ -227,7 +227,7 @@ test("a chosen model missing from the provider's list shows as no longer offered
 });
 
 const h = async (l: Locator) => (await l.boundingBox())!.height;
-const prow = (page: Page, text: string) => page.getByRole("listitem").filter({ hasText: text });
+const prow = (page: Page, text: string | RegExp) => page.getByRole("listitem").filter({ hasText: text });
 
 test("provider rows are 80px in every state, and the confirm moves nothing", async ({ page }) => {
   await open(page, { providers: [OLLAMA, OR], main: null, fast: null },
@@ -310,13 +310,119 @@ test("a rejected add keeps the form and its height", async ({ page }) => {
 
 test("model rows are 60px, with the host pill of the chosen provider", async ({ page }) => {
   await open(page, { providers: [OLLAMA, OR], main: { provider: 2, model: "m", gone: false }, fast: { provider: 1, model: "old", gone: true } });
-  const main = prow(page, "Main model"), fast = prow(page, "Fast model");
+  const main = prow(page, "Main model"), fast = prow(page, /^Fast model/);
   expect([await h(main), await h(fast)]).toEqual([60, 60]);
   await expect(main).toContainText("Sends text off this Mac");
   await expect(fast).toContainText("No longer offered");
   await expect(page.getByText("Features without a model stay off.")).toBeVisible();
-  await expect(page.getByText("Decision model")).toHaveCount(0);
 });
+
+// --- Decision model and Test decision model
+const JEV = `{ id: "typesafe/jev-1.14", input_per_m: 0.042, output_per_m: 0, context: 131072, images: false }`;
+const decideRow = (page: Page) => page.locator(".row").filter({ hasText: /^Decision model/ });
+const testRow = (page: Page) => page.locator(".row").filter({ hasText: "Test decision model" });
+
+test("with nothing set the Decision model says Not set in neutral text, and Test waits", async ({ page }) => {
+  await open(page, { providers: [OLLAMA, OR], main: null, fast: null, decide: "fast" });
+  const row = decideRow(page);
+  await expect(row.locator(".pk-btn")).toHaveText("Not set");
+  await expect(row).toContainText("Pick a model here, or set a Fast model above.");
+  expect(await row.locator(".pk-btn").evaluate((n) => getComputedStyle(n).color)).toBe(await prow(page, "Main model").locator(".pk-btn").evaluate((n) => getComputedStyle(n).color));
+  await expect(testRow(page)).toContainText("Which folder should “Acme pricing follow-up” go in?");
+  await expect(testRow(page)).toContainText("Not tested yet");
+  await expect(testRow(page).getByRole("button", { name: "Test" })).toBeDisabled();
+  for (const o of ["Inbox", "Platform team", "1:1s", "None of these"]) await expect(page.getByText(o)).toHaveCount(0);
+});
+
+test("with no decision model the same Test runs on the Fast model, without confidence", async ({ page }) => {
+  await open(page, { providers: [OLLAMA, OR], main: null, fast: { provider: 1, model: "qwen2.5:7b", gone: false } },
+    `ai_decide: () => ({ choice: "Acme", confidence: null, cost: { kind: "free" }, ms: 1100 })`);
+  await expect(decideRow(page).locator(".pk-btn")).toHaveText("Fast model");
+  await expect(decideRow(page)).toContainText("Stays on this Mac");
+  await testRow(page).getByRole("button", { name: "Test" }).click();
+  await expect(testRow(page)).toContainText("Picked Acme · 1.1 s · Free");
+  expect(await calls(page, "ai_decide")).toEqual([{ question: "Which folder should “Acme pricing follow-up” go in?", options: ["Inbox", "Acme", "Platform team", "1:1s", "None of these"], instructions: "Pick the folder this meeting belongs in." }]);
+});
+
+test("picking a decision model from the provider's group; Test reports its confidence and cost", async ({ page }) => {
+  const MINE = { ...OR, name: "My router" }; // groups and the trigger name the provider, never a literal
+  await open(page, { providers: [OLLAMA, MINE], main: null, fast: { provider: 1, model: "qwen2.5:7b", gone: false } },
+    `ai_decide_models: () => [${JEV}], ai_decide_set: () => null, ai_decide: () => ({ choice: "Acme", confidence: 0.98, cost: { kind: "usd", usd: 0.000018 }, ms: 600 })`);
+  await decideRow(page).locator(".pk-btn").click();
+  const pop = page.getByRole("dialog", { name: "Choose Decision model" });
+  await expect(pop.getByRole("menuitemradio")).toHaveCount(2);
+  await expect(pop.getByRole("menuitemradio").first()).toContainText("Uses Ollama on this Mac · qwen2.5:7b");
+  await expect(pop.locator(".pk-h")).toHaveText(["My router"]); // only providers with decision models
+  await expect(pop.getByText("Quicker and cheaper · $0.04 per 1M input tokens · no output cost · 131K context")).toBeVisible();
+  expect(await calls(page, "ai_models")).toEqual([]);
+  await pop.getByRole("menuitemradio", { name: /typesafe\/jev-1.14/ }).click();
+  expect(await calls(page, "ai_decide_set")).toEqual([{ value: "2|typesafe/jev-1.14" }]);
+  await expect(decideRow(page).locator(".pk-btn")).toHaveText("My router · typesafe/jev-1.14");
+  await expect(decideRow(page)).toContainText("Sends text off this Mac");
+  await expect(decideRow(page)).toContainText("Which folder a meeting goes in, which pictures matter. Reads text only.");
+  await testRow(page).getByRole("button", { name: "Test" }).click();
+  await expect(testRow(page)).toContainText("Picked Acme · 98% sure · 0.6 s · $0.000018");
+  await decideRow(page).locator(".pk-btn").click();
+  await pop.getByRole("menuitemradio").first().click();
+  expect((await calls(page, "ai_decide_set")).at(-1)).toEqual({ value: "fast" });
+  await expect(decideRow(page).locator(".pk-btn")).toHaveText("Fast model");
+  await expect(testRow(page)).toContainText("Not tested yet"); // a new pick clears the old result
+});
+
+test("a failed decision shows the reason with an alert icon, and Test runs it again", async ({ page }) => {
+  await open(page, { providers: [OLLAMA, OR], main: null, fast: null, decide: "2|typesafe/jev-1.14" },
+    `ai_decide: (() => { let failed = false; return () => { if (!failed) { failed = true; throw "Couldn't reach https://openrouter.ai/api: Insufficient credits" } return { choice: "Acme", confidence: 0.98, cost: { kind: "usd", usd: 0.000018 }, ms: 600 } } })()`);
+  const t = testRow(page);
+  await t.getByRole("button", { name: "Test" }).click();
+  await expect(t.locator(".test")).toHaveText("Couldn’t decide: Couldn't reach https://openrouter.ai/api: Insufficient credits");
+  await expect(t.locator(".test svg.alert")).toHaveCount(1);
+  await expect(t.getByRole("button", { name: "Retry" })).toHaveCount(0);
+  await t.getByRole("button", { name: "Test" }).click();
+  await expect(t).toContainText("Picked Acme · 98% sure");
+});
+
+test("removing the provider of the Decision model makes it Not set, with the neutral notice", async ({ page }) => {
+  await open(page, { providers: [OLLAMA, OR], main: null, fast: { provider: 1, model: "qwen2.5:7b", gone: false }, decide: "2|typesafe/jev-1.14" }, `ai_remove: () => ["Decision model"]`);
+  await page.getByRole("button", { name: "Remove OpenRouter" }).click();
+  await expect(page.getByText("Models that use it become Not set.")).toBeVisible();
+  await page.getByRole("button", { name: "Remove", exact: true }).click();
+  const note = page.getByText("Removed OpenRouter and its key. Decision model is now Not set.");
+  await expect(note).toBeVisible();
+  expect(await note.evaluate((n) => getComputedStyle(n).color)).toBe(await page.locator("main .desc").first().evaluate((n) => getComputedStyle(n).color));
+  await expect(decideRow(page).locator(".pk-btn")).toHaveText("Not set"); // never back on the Fast model
+  await expect(testRow(page).getByRole("button", { name: "Test" })).toBeDisabled();
+});
+
+for (const [width, height] of [[880, 520], [640, 420]]) {
+  test(`at ${width}×${height}: the Decision model row is one height in every state and Test is 80px in every state`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    await open(page, { providers: [OLLAMA, OR], main: null, fast: null },
+      `ai_decide_models: () => [${JEV}], ai_decide_set: () => null, ai_set: () => null,
+       ai_decide: (() => { let n = 0; return () => [() => new Promise((r) => { window.__done = () => r({ choice: "Acme", confidence: 0.98, cost: { kind: "usd", usd: 0.000018 }, ms: 600 }) }), () => { throw "Couldn't reach https://openrouter.ai/api: a very long reason that goes on and on so it would wrap on a narrow window if it could" }][n++ % 2]() })()`);
+    const d = decideRow(page), t = testRow(page);
+    const heights = [await h(d)]; // Not set
+    expect(await h(t)).toBe(80); // not tested
+    await prow(page, /^Fast model/).locator(".pk-btn").click();
+    await page.getByRole("menuitemradio").first().click();
+    await expect(d.locator(".pk-btn")).toHaveText("Fast model");
+    heights.push(await h(d));
+    await d.locator(".pk-btn").click();
+    await page.getByRole("menuitemradio", { name: /typesafe/ }).click();
+    await expect(d.locator(".pk-btn")).toHaveText("OpenRouter · typesafe/jev-1.14");
+    heights.push(await h(d));
+    expect(new Set(heights).size, String(heights)).toBe(1);
+    if (width === 880) expect(heights[0]).toBe(60);
+    await t.getByRole("button", { name: "Test" }).click();
+    await expect(t).toContainText("Checking…");
+    expect(await h(t)).toBe(80);
+    await page.evaluate(() => (window as any).__done());
+    await expect(t).toContainText("Picked Acme");
+    expect(await h(t)).toBe(80);
+    await t.getByRole("button", { name: "Test" }).click();
+    await expect(t).toContainText("Couldn’t decide");
+    expect(await h(t)).toBe(80);
+  });
+}
 
 test("a failed pick shows under Models, not Providers", async ({ page }) => {
   await open(page, { providers: [OLLAMA], main: null, fast: null }, `ai_set: () => { throw "Couldn't save the model: database is locked" }`);
@@ -420,7 +526,7 @@ for (const [width, height] of [[880, 520], [640, 420]]) {
     await expect(prow(page, "192.168.1.20")).toContainText("Couldn't connect");
     const rows = [prow(page, "localhost:11434"), prow(page, "openrouter.ai"), prow(page, "192.168.1.20")];
     expect(await Promise.all(rows.map(h))).toEqual([80, 80, 80]); // passed, running, failed
-    const [main, fast] = [await h(prow(page, "Main model")), await h(prow(page, "Fast model"))];
+    const [main, fast] = [await h(prow(page, "Main model")), await h(prow(page, /^Fast model/))];
     expect(main).toBe(fast);
     if (width === 880) expect(main).toBe(60);
     // Long names truncate before the pill does.

@@ -1,6 +1,7 @@
 //! AI providers: where Myna sends text for an LLM to answer, and which model each slot uses.
 //! Records live in SQLite, keys in the macOS Keychain (never in SQLite, never sent to the frontend).
-//! Every call goes through the `Provider` trait, like `runtime::Transcriber`; one adapter, OpenAI-compatible chat.
+//! Every call goes through the `Backend` trait, like `runtime::Transcriber`; one adapter, OpenAI-compatible chat plus
+//! OpenRouter's decisions route.
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -12,7 +13,10 @@ use std::time::{Duration, Instant};
 const KINDS: [&str; 2] = ["openai", "openrouter"];
 const SLOTS: [&str; 2] = ["main", "fast"];
 /// Features with their own model, as a setting: (key, label, the slot it uses while the key is missing).
-const OWN: [(&str, &str, &str); 2] = [("summary_model", "Summary model", "main"), ("transcript_cleanup_model", "Cleanup model", "fast")];
+const OWN: [(&str, &str, &str); 3] =
+    [("summary_model", "Summary model", "main"), ("transcript_cleanup_model", "Cleanup model", "fast"), (DECIDE, "Decision model", "fast")];
+/// The Decision model: a decision model picked from an OpenRouter Endpoint, else the Fast model with a JSON schema.
+const DECIDE: &str = "decision_model";
 const SERVICE: &str = "com.dhruvsaxena.myna.ai-provider";
 
 #[derive(Debug, Clone, PartialEq)]
@@ -46,6 +50,8 @@ pub struct State {
     providers: Vec<Provider>,
     main: Option<Route>,
     fast: Option<Route>,
+    /// The Decision model, in `feature_get`'s form.
+    decide: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
@@ -63,6 +69,15 @@ pub enum Cost {
     Usd { usd: f64 },
     Free,
     Unknown,
+}
+
+/// One of the options, how sure the model was (decision models only) and how long the call took.
+#[derive(Debug, Serialize, PartialEq)]
+pub struct Decision {
+    pub choice: String,
+    pub confidence: Option<f64>,
+    pub cost: Cost,
+    pub ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -87,6 +102,14 @@ pub trait Backend: Send {
     fn key_usage(&self) -> Result<Option<(f64, Option<f64>)>, String>;
     /// One user message, after an optional system message, answered within `secs` seconds.
     fn chat(&self, model: &str, system: Option<&str>, prompt: &str, secs: u64) -> Result<Reply, String>;
+    /// The service's decision models (OpenRouter); none elsewhere.
+    fn decision_models(&self) -> Result<Vec<Model>, String> {
+        Ok(vec![])
+    }
+    /// Picks one of `options`: through the decisions route when `decisions`, else a chat answer held to a JSON schema.
+    fn decide(&self, _model: &str, _question: &str, _options: &[String], _instructions: &str, _decisions: bool, _secs: u64) -> Result<Decision, String> {
+        Err("This provider can't make decisions".into())
+    }
 }
 
 /// Where API keys live. The real one is the Keychain; tests use memory.
@@ -196,9 +219,9 @@ fn cost_of(reported: Option<f64>, price: Option<(f64, f64)>, tokens: Option<(u64
     if loopback { Cost::Free } else { Cost::Unknown }
 }
 
-impl Backend for OpenAi {
-    fn models(&self) -> Result<Vec<Model>, String> {
-        let json = self.send("/models", None, 15)?;
+impl OpenAi {
+    fn list(&self, path: &str) -> Result<Vec<Model>, String> {
+        let json = self.send(path, None, 15)?;
         let list = json["data"].as_array().ok_or_else(|| format!("Couldn't read the model list from {}", self.url))?;
         Ok(list
             .iter()
@@ -219,6 +242,30 @@ impl Backend for OpenAi {
             .collect())
     }
 
+    fn ask(&self, model: &str, system: Option<&str>, prompt: &str, format: Option<Value>, secs: u64) -> Result<Reply, String> {
+        let messages: Vec<Value> = system.map(|s| json!({"role": "system", "content": s})).into_iter().chain([json!({"role": "user", "content": prompt})]).collect();
+        let mut body = json!({"model": model, "messages": messages});
+        if let Some(f) = format {
+            body["response_format"] = f;
+        }
+        let json = self.send("/chat/completions", Some(body.to_string()), secs)?;
+        let text = json["choices"][0]["message"]["content"].as_str().ok_or_else(|| format!("{} sent no reply", self.url))?.to_string();
+        let tokens = json["usage"]["prompt_tokens"].as_u64().zip(json["usage"]["completion_tokens"].as_u64());
+        let reported = json["usage"]["cost"].as_f64();
+        // Only fetch prices when the reply didn't carry its own cost.
+        let price = match (reported, self.rich) {
+            (None, true) => self.models().ok().and_then(|l| l.into_iter().find(|m| m.id == model)).and_then(|m| m.input_per_m.zip(m.output_per_m)),
+            _ => None,
+        };
+        Ok(Reply { text, tokens, cost: cost_of(reported, price, tokens, !off_device(&self.url)) })
+    }
+}
+
+impl Backend for OpenAi {
+    fn models(&self) -> Result<Vec<Model>, String> {
+        self.list("/models")
+    }
+
     fn key_usage(&self) -> Result<Option<(f64, Option<f64>)>, String> {
         if !self.rich {
             return Ok(None);
@@ -229,18 +276,44 @@ impl Backend for OpenAi {
     }
 
     fn chat(&self, model: &str, system: Option<&str>, prompt: &str, secs: u64) -> Result<Reply, String> {
-        let messages: Vec<Value> = system.map(|s| json!({"role": "system", "content": s})).into_iter().chain([json!({"role": "user", "content": prompt})]).collect();
-        let body = json!({"model": model, "messages": messages}).to_string();
-        let json = self.send("/chat/completions", Some(body), secs)?;
-        let text = json["choices"][0]["message"]["content"].as_str().ok_or_else(|| format!("{} sent no reply", self.url))?.to_string();
-        let tokens = json["usage"]["prompt_tokens"].as_u64().zip(json["usage"]["completion_tokens"].as_u64());
-        let reported = json["usage"]["cost"].as_f64();
-        // Only fetch prices when the reply didn't carry its own cost.
-        let price = match (reported, self.rich) {
-            (None, true) => self.models().ok().and_then(|l| l.into_iter().find(|m| m.id == model)).and_then(|m| m.input_per_m.zip(m.output_per_m)),
-            _ => None,
+        self.ask(model, system, prompt, None, secs)
+    }
+
+    fn decision_models(&self) -> Result<Vec<Model>, String> {
+        if !self.rich {
+            return Ok(vec![]);
+        }
+        self.list("/models?output_modalities=decisions") // decision models are left out of the plain list
+    }
+
+    fn decide(&self, model: &str, question: &str, options: &[String], instructions: &str, decisions: bool, secs: u64) -> Result<Decision, String> {
+        let picked = |c: &str| options.iter().find(|o| *o == c).cloned().ok_or_else(|| format!("{model} picked “{c}”, which isn't one of the options"));
+        if !decisions {
+            let schema = json!({"type": "object", "properties": {"choice": {"type": "string", "enum": options}}, "required": ["choice"], "additionalProperties": false});
+            let prompt = format!("{question}\n\nOptions:\n{}", options.iter().map(|o| format!("- {o}")).collect::<Vec<_>>().join("\n"));
+            let format = json!({"type": "json_schema", "json_schema": {"name": "decision", "strict": true, "schema": schema}});
+            let r = self.ask(model, Some(instructions), &prompt, Some(format), secs)?;
+            let c = serde_json::from_str::<Value>(&r.text).ok().and_then(|v| v["choice"].as_str().map(str::to_string)).ok_or_else(|| format!("{model} didn't answer with one of the options"))?;
+            return Ok(Decision { choice: picked(&c)?, confidence: None, cost: r.cost, ms: 0 });
+        }
+        // OpenRouter's Jev-shape route; a question without `instructions` is refused.
+        let criteria: serde_json::Map<String, Value> = options.iter().map(|o| (o.clone(), json!(o))).collect();
+        let body = json!({"model": model, "state": question, "questions": {"pick": {"type": "choice", "instructions": instructions, "criteria": criteria}}});
+        // It sits beside /v1 (…/api/alpha/decisions), not under it.
+        let root = OpenAi { url: self.url.trim_end_matches("/v1").into(), key: self.key.clone(), rich: true };
+        let json = root.send("/alpha/decisions", Some(body.to_string()), secs)?;
+        let a = &json["answers"]["pick"];
+        if a["type"] == "refusal" {
+            return Err(format!("{model} refused to answer"));
+        }
+        let c = a["choice"].as_str().ok_or_else(|| format!("{model} sent no choice"))?;
+        let u = &json["usage"];
+        let tokens = u["input_tokens"].as_u64().map(|i| (i, u["output_tokens"].as_u64().unwrap_or(0)));
+        let price = match u["cost"].as_f64() {
+            None => self.decision_models().ok().and_then(|l| l.into_iter().find(|m| m.id == model)).and_then(|m| Some((m.input_per_m?, m.output_per_m.unwrap_or(0.0)))),
+            Some(_) => None,
         };
-        Ok(Reply { text, tokens, cost: cost_of(reported, price, tokens, !off_device(&self.url)) })
+        Ok(Decision { choice: picked(c)?, confidence: a["confidence"].as_f64(), cost: cost_of(u["cost"].as_f64(), price, tokens, false), ms: 0 })
     }
 }
 
@@ -275,7 +348,7 @@ pub fn get(db: &Connection, keys: &dyn Keys) -> Result<State, String> {
     let mut q = db.prepare("SELECT id, kind, name, url FROM provider ORDER BY id").map_err(|e| e.to_string())?;
     let rows = q.query_map([], record).map_err(|e| e.to_string())?;
     let providers = rows.map(|r| view(r.map_err(|e| e.to_string())?, keys)).collect::<Result<_, _>>()?;
-    Ok(State { providers, main: get_route(db, "main")?, fast: get_route(db, "fast")? })
+    Ok(State { providers, main: get_route(db, "main")?, fast: get_route(db, "fast")?, decide: feature_get(db, DECIDE)?.0 })
 }
 
 pub fn add(db: &Connection, keys: &dyn Keys, kind: &str, name: &str, url: &str, key: &str) -> Result<Provider, String> {
@@ -387,7 +460,8 @@ pub fn feature(db: &Connection, key: &str) -> Result<(Record, String), String> {
         Own::Pick(p, m) => (p, m),
     };
     let p = find(db, provider).map_err(|_| not_set())?;
-    if gone(db, provider, &model) {
+    // Decision models aren't in the saved list, so it can't tell; a retired one fails with the service's reason.
+    if key != DECIDE && gone(db, provider, &model) {
         return Err(format!("{label}: {model} is no longer offered by {}", p.name));
     }
     Ok((p, model))
@@ -469,6 +543,29 @@ fn check(p: &dyn Backend) -> Result<(Check, Option<Vec<Model>>), String> {
         None => list = Some(p.models()?),
     }
     Ok((Check { ms: start.elapsed().as_millis() as u64, models: list.as_ref().map(Vec::len), used, limit }, list))
+}
+
+/// Picks one of `options` for `question` with the Decision model, else with the Fast model held to a JSON schema.
+/// A failed call returns its reason and never falls back to the Fast model.
+pub fn decide(db: &Mutex<Connection>, keys: &dyn Keys, question: &str, options: &[String], instructions: &str) -> Result<Decision, String> {
+    if options.is_empty() {
+        return Err("Give it at least one option".into());
+    }
+    let (p, model, decisions) = {
+        let db = db.lock().unwrap(); // not held while waiting on the network
+        let decisions = matches!(own(&db, DECIDE)?, Own::Pick(..));
+        let (r, model) = feature(&db, DECIDE)?;
+        (provider(&db, keys, r.id)?, model, decisions)
+    };
+    let start = Instant::now();
+    let mut d = p.decide(&model, question, options, instructions, decisions, 30)?;
+    d.ms = start.elapsed().as_millis() as u64;
+    Ok(d)
+}
+
+/// Saves the Decision model, in `feature_get`'s form ("fast" uses the Fast model).
+pub fn decide_set(db: &Connection, value: &str) -> Result<(), String> {
+    feature_set(db, DECIDE, value)
 }
 
 /// Tests saved provider `id`, caching its model list on the way.
@@ -784,5 +881,75 @@ pub(crate) mod tests {
         let base = stub(vec![("/key", 200, r#"{"data":{"usage":0.5,"limit":null}}"#)]);
         assert_eq!(test_draft("openrouter", &base, "sk-or-x").unwrap().used, Some(0.5));
         assert!(test_draft("openai", "not a url", "").is_err());
+    }
+
+    const OPTS: [&str; 5] = ["Inbox", "Acme", "Platform team", "1:1s", "None of these"];
+    fn ask(db: &Mutex<Connection>, keys: &Memory) -> Result<Decision, String> {
+        decide(db, keys, "Which folder should “Acme pricing follow-up” go in?", &OPTS.map(String::from), "Pick the folder this meeting belongs in.")
+    }
+    const PICKED: &str = r#"{"id":"x","model":"typesafe/jev-1.14-20261014","answers":{"pick":{"type":"choice","choice":"Acme","confidence":0.98,
+        "probabilities":{"Acme":0.98,"Inbox":0.02}}},"usage":{"input_tokens":420,"output_tokens":0,"cost":0.000018}}"#;
+    const FAST: &str = r#"{"choices":[{"message":{"content":"{\"choice\":\"Acme\"}"}}],"usage":{"prompt_tokens":80,"completion_tokens":6}}"#;
+
+    /// An OpenRouter Endpoint (id 1) serving `or`, and a local server on Fast (id 2) that would answer "Acme".
+    fn decide_db(or: Vec<(&'static str, u16, &'static str)>) -> (tempfile::TempDir, Mutex<Connection>, Memory) {
+        let (tmp, c) = db();
+        let keys = Memory::default();
+        add_ok(&c, &keys, "openrouter", "OpenRouter", &format!("{}/api/v1", stub(or)), "sk-or-x");
+        add_ok(&c, &keys, "openai", "Local", &format!("{}/v1", stub(vec![("/v1/chat/completions", 200, FAST)])), "");
+        set(&c, "fast", 2, "small").unwrap();
+        (tmp, Mutex::new(c), keys)
+    }
+
+    #[test]
+    fn the_decision_model_picks_with_confidence_and_cost() {
+        let (_t, db, keys) = decide_db(vec![("/api/alpha/decisions", 200, PICKED)]);
+        decide_set(&db.lock().unwrap(), "1|typesafe/jev-1.14").unwrap();
+        assert_eq!(get(&db.lock().unwrap(), &keys).unwrap().decide, "1|typesafe/jev-1.14");
+        let d = ask(&db, &keys).unwrap();
+        assert_eq!((d.choice.as_str(), d.confidence, d.cost), ("Acme", Some(0.98), Cost::Usd { usd: 0.000018 }));
+    }
+
+    #[test]
+    fn with_none_set_the_fast_model_decides_through_a_json_schema() {
+        let (_t, db, keys) = decide_db(vec![]);
+        assert_eq!(get(&db.lock().unwrap(), &keys).unwrap().decide, "fast");
+        let d = ask(&db, &keys).unwrap();
+        assert_eq!((d.choice.as_str(), d.confidence, d.cost), ("Acme", None, Cost::Free));
+        db.lock().unwrap().execute("DELETE FROM route", []).unwrap();
+        assert_eq!(ask(&db, &keys).unwrap_err(), "Fast model: Not set");
+    }
+
+    #[test]
+    fn a_failed_decision_returns_the_reason_and_never_falls_back() {
+        let (_t, db, keys) = decide_db(vec![("/api/alpha/decisions", 402, r#"{"error":{"code":402,"message":"Insufficient credits"}}"#)]);
+        decide_set(&db.lock().unwrap(), "1|typesafe/jev-1.14").unwrap();
+        let e = ask(&db, &keys).unwrap_err();
+        assert!(e.ends_with("Insufficient credits"), "{e}"); // Fast would have answered
+        let (_t, db, keys) = decide_db(vec![("/api/alpha/decisions", 200, r#"{"answers":{"pick":{"type":"choice","choice":"Mars"}}}"#)]);
+        decide_set(&db.lock().unwrap(), "1|m").unwrap();
+        assert_eq!(ask(&db, &keys).unwrap_err(), "m picked “Mars”, which isn't one of the options");
+        let (_t, db, keys) = decide_db(vec![("/api/alpha/decisions", 200, r#"{"answers":{"pick":{"type":"refusal"}}}"#)]);
+        decide_set(&db.lock().unwrap(), "1|m").unwrap();
+        assert_eq!(ask(&db, &keys).unwrap_err(), "m refused to answer");
+    }
+
+    #[test]
+    fn removing_its_provider_makes_the_decision_model_not_set() {
+        let (_t, db, keys) = decide_db(vec![("/api/alpha/decisions", 200, PICKED)]);
+        decide_set(&db.lock().unwrap(), "1|typesafe/jev-1.14").unwrap();
+        store(&db.lock().unwrap(), 1, &[Model { id: "a/chat".into(), ..Default::default() }]).unwrap();
+        assert_eq!(ask(&db, &keys).unwrap().choice, "Acme", "a decision model isn't gone for missing from the chat list");
+        assert_eq!(remove(&mut db.lock().unwrap(), &keys, 1).unwrap(), ["Decision model"]);
+        assert_eq!(get(&db.lock().unwrap(), &keys).unwrap().decide, "none");
+        assert_eq!(ask(&db, &keys).unwrap_err(), "Decision model: Not set", "never back on the Fast model");
+    }
+
+    #[test]
+    fn openrouter_lists_its_decision_models_and_plain_endpoints_have_none() {
+        let base = stub(vec![("/models?output_modalities=decisions", 200, r#"{"data":[{"id":"typesafe/jev-1.14","context_length":131072,"pricing":{"prompt":"0.000000042","completion":"0"}}]}"#)]);
+        let l = adapter(base.clone(), true).decision_models().unwrap();
+        assert_eq!((l[0].id.as_str(), l[0].output_per_m), ("typesafe/jev-1.14", Some(0.0)));
+        assert!(adapter(base, false).decision_models().unwrap().is_empty());
     }
 }
