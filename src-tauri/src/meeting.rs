@@ -26,6 +26,16 @@ pub struct Notes {
     /// Keep what I say while muted in Teams, instead of leaving it out. Read when a meeting is shown, so it works on old meetings too.
     #[serde(default)]
     pub keep_teams: bool,
+    /// Offer to record when a call app starts using the mic (#214).
+    #[serde(default = "yes")]
+    pub offer_calls: bool,
+    /// Count down to a stop when the recorded call's app leaves (#214).
+    #[serde(default = "yes")]
+    pub stop_on_end: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 pub fn get(conn: &Connection) -> Result<Notes, String> {
@@ -34,6 +44,8 @@ pub fn get(conn: &Connection) -> Result<Notes, String> {
         on: read_switch(conn, "meeting_on", false).map_err(err)?,
         key: read_text(conn, "meeting_key").map_err(err)?.unwrap_or(KEY.into()),
         keep_teams: read_switch(conn, "meeting_keep_teams", false).map_err(err)?,
+        offer_calls: read_switch(conn, "meeting_offer_calls", true).map_err(err)?,
+        stop_on_end: read_switch(conn, "meeting_stop_on_end", true).map_err(err)?,
     })
 }
 
@@ -46,6 +58,8 @@ pub fn set(conn: &Connection, n: &Notes) -> Result<(), String> {
     write_switch(conn, "meeting_on", n.on).map_err(err)?;
     write_text(conn, "meeting_key", &n.key).map_err(err)?;
     write_switch(conn, "meeting_keep_teams", n.keep_teams).map_err(err)?;
+    write_switch(conn, "meeting_offer_calls", n.offer_calls).map_err(err)?;
+    write_switch(conn, "meeting_stop_on_end", n.stop_on_end).map_err(err)?;
     Ok(())
 }
 
@@ -1312,7 +1326,7 @@ pub(crate) mod tests {
         assert!(out(&db).contains("secret") && page(&db, 1).unwrap().segments[1].included);
         db.execute("UPDATE segment SET included = 0", []).unwrap();
         assert!(!out(&db).contains("secret"));
-        set(&db, &Notes { on: true, key: KEY.into(), keep_teams: true }).unwrap();
+        set(&db, &Notes { on: true, key: KEY.into(), keep_teams: true, offer_calls: true, stop_on_end: true }).unwrap();
         assert!(out(&db).contains("secret"), "the setting keeps muted lines, old meetings too");
     }
 
@@ -1360,7 +1374,7 @@ pub(crate) mod tests {
     fn settings_default_off_and_save_only_real_shortcuts() {
         let tmp = tempfile::tempdir().unwrap();
         let conn = crate::storage::open(tmp.path()).unwrap();
-        let n = |on, key: &str| Notes { on, key: key.into(), keep_teams: false };
+        let n = |on, key: &str| Notes { on, key: key.into(), keep_teams: false, offer_calls: true, stop_on_end: true };
         assert_eq!(get(&conn), Ok(n(false, "Ctrl+Alt+KeyM")));
         set(&conn, &n(true, "")).unwrap();
         assert_eq!(get(&conn), Ok(n(true, "")));
@@ -1370,6 +1384,11 @@ pub(crate) mod tests {
         assert_eq!(get(&conn), Ok(n(true, "Alt+Space")));
         set(&conn, &Notes { keep_teams: true, ..n(true, "") }).unwrap();
         assert!(get(&conn).unwrap().keep_teams);
+        set(&conn, &Notes { offer_calls: false, stop_on_end: false, ..n(true, "") }).unwrap();
+        assert!(get(&conn).is_ok_and(|n| !n.offer_calls && !n.stop_on_end));
+        // Settings sent by a build from before the call switches: both on.
+        let old: Notes = serde_json::from_str(r#"{"on":true,"key":"","keep_teams":false}"#).unwrap();
+        assert!(old.offer_calls && old.stop_on_end);
     }
 
     #[test]
@@ -1379,7 +1398,7 @@ pub(crate) mod tests {
         for (k, v) in [("meeting_on", "yes"), ("meeting_keep_teams", "true"), ("meeting_key", "")] {
             conn.execute("INSERT INTO setting(key, value) VALUES (?1, ?2)", [k, v]).unwrap();
         }
-        assert_eq!(get(&conn), Ok(Notes { on: false, key: "".into(), keep_teams: false }), "unknown switches are off; \"\" stays no shortcut");
+        assert_eq!(get(&conn), Ok(Notes { on: false, key: "".into(), keep_teams: false, offer_calls: true, stop_on_end: true }), "unknown switches are off; \"\" stays no shortcut");
         // Today a stored shortcut is returned as saved, even one this build can't parse.
         conn.execute("UPDATE setting SET value = 'Alt+Nope' WHERE key = 'meeting_key'", []).unwrap();
         assert_eq!(get(&conn).unwrap().key, "Alt+Nope");

@@ -1,6 +1,7 @@
 mod addon;
 mod ai;
 mod apple;
+mod calls;
 mod cleanup;
 mod dictation;
 mod download;
@@ -589,6 +590,66 @@ fn meeting_toggle(app: AppHandle) {
     toggle_meeting(&app);
 }
 
+/// Call detection (#214): the watcher, polled every 500 ms while meeting notes are on; the pill shows what it says.
+struct Calls(Mutex<calls::Watcher>);
+
+fn watch_calls(app: AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let notes = meeting::get(&app.state::<Data>().db.lock().unwrap());
+        let (calls, s) = (app.state::<Calls>(), app.state::<Arc<MeetingSession>>());
+        let Ok(notes) = notes.and_then(|n| if n.on { Ok(n) } else { Err(String::new()) }) else {
+            let mut w = calls.0.lock().unwrap();
+            if w.showing() {
+                let _ = app.emit_to("pill", "call", serde_json::json!({ "state": "none" }));
+            }
+            *w = calls::Watcher::default(); // off: nothing to watch
+            continue;
+        };
+        let apps = calls::read();
+        let offer = notes.offer_calls && !app.state::<Arc<Session>>().busy(); // never over a dictation
+        let todo = calls.0.lock().unwrap().poll(now_ms(), apps.as_deref(), s.recording(), offer, notes.stop_on_end);
+        for d in todo {
+            use calls::Do;
+            let shown = match d {
+                Do::Offer(o) => serde_json::json!({ "state": "offer", "title": o.title, "label": o.label }),
+                Do::Countdown(at) => serde_json::json!({ "state": "ending", "at": at }),
+                Do::Withdraw | Do::Cancel => serde_json::json!({ "state": "none" }),
+                Do::Stop => {
+                    s.stop();
+                    serde_json::json!({ "state": "none" })
+                }
+            };
+            let _ = app.emit_to("pill", "call", shown);
+        }
+    });
+}
+
+/// "Start notes" on the Meeting detected offer.
+#[tauri::command]
+fn call_start(app: AppHandle, calls: tauri::State<Calls>) {
+    let name = calls.0.lock().unwrap().offered_name().unwrap_or_default();
+    std::thread::spawn(move || app.state::<Arc<MeetingSession>>().start_from(&name));
+}
+
+/// Dismissing the offer: that app isn't asked about again until it's been off the mic a minute.
+#[tauri::command]
+fn call_dismiss(calls: tauri::State<Calls>) {
+    calls.0.lock().unwrap().dismiss();
+}
+
+/// "Keep recording" on the countdown.
+#[tauri::command]
+fn call_keep(calls: tauri::State<Calls>) {
+    calls.0.lock().unwrap().keep();
+}
+
+/// "Stop now" on the countdown.
+#[tauri::command]
+fn call_stop(app: AppHandle) {
+    std::thread::spawn(move || app.state::<Arc<MeetingSession>>().stop());
+}
+
 /// "Open" on the pill's "Notes saved". The meeting page is the main window's (05.4): it listens for `meeting-open`.
 #[tauri::command]
 fn meeting_open(app: AppHandle, id: i64) {
@@ -869,7 +930,7 @@ fn open_update(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![pill::pill_hit, dictation_fix, fix_take, debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, ai_test_draft, storage_status, storage_reveal, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, meeting_get, meeting_set, meeting_text, segments_include, addon_get, addon_disconnect, addon_folder, meeting_retry, meeting_open, meetings_list, meeting_page, meeting_running, meeting_toggle, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
+        .invoke_handler(tauri::generate_handler![pill::pill_hit, dictation_fix, fix_take, debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, ai_test_draft, storage_status, storage_reveal, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, meeting_get, meeting_set, meeting_text, segments_include, addon_get, addon_disconnect, addon_folder, meeting_retry, meeting_open, meetings_list, meeting_page, meeting_running, meeting_toggle, call_start, call_dismiss, call_keep, call_stop, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::Updates::default())
         .setup(|app| {
@@ -895,6 +956,7 @@ pub fn run() {
                     let meetings = meeting::Meetings::new(db.clone(), dir.clone(), Box::new(meeting::Cpal), Box::new(meeting::Tap));
                     app.manage(MeetingSession::new(Box::new(meeting_session::Mac(app.handle().clone())), db.clone(), meetings, second));
                     let handle = app.handle().clone();
+                    app.manage(Calls(Mutex::new(calls::Watcher::default())));
                     app.manage(addon::Addon::new(db.clone(), addon::ORIGIN, &addon::PORTS, move |e| on_addon(&handle, e)));
                     app.manage(Data {
                         db,
@@ -1007,6 +1069,7 @@ pub fn run() {
             if !failed {
                 sync_recent(app.handle());
                 app.state::<Arc<MeetingSession>>().resume();
+                watch_calls(app.handle().clone());
             }
             if failed {
                 open_window(app.handle(), "settings"); // never fail silently: Settings shows the error

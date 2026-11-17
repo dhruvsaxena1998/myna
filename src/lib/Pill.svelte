@@ -12,6 +12,10 @@
     | { state: "notes"; progress: number }
     | { state: "notes-saved" }
     | { state: "notes-failed"; reason: string }
+    /** A call app holds the mic: "Meeting detected" (or "Huddle detected") and what it is, e.g. "Call in Chrome" (capsule only). */
+    | { state: "detected"; title: string; label: string }
+    /** The recorded call's app left: the stop comes in `left` seconds unless the user keeps recording (capsule only). */
+    | { state: "ending"; left: number }
     /** Added as the rules left it: `reason` says why the cleanup didn't count. */
     | { state: "fallback"; reason: string }
     | { state: "error"; title: string; hint: string };
@@ -76,6 +80,10 @@
     {@render icon("check")}<span>Notes saved</span>{@render actions?.()}
   {:else if pill.state === "notes-failed"}
     {@render icon("warn")}<span>Couldn’t write up your notes</span><span class="sub">{pill.reason}</span>{@render actions?.()}
+  {:else if pill.state === "detected"}
+    <span class="live" aria-hidden="true"></span><span class="t">{pill.title}</span><span class="sub">{pill.label}</span>{@render actions?.()}
+  {:else if pill.state === "ending"}
+    <span class="recdot" aria-hidden="true"></span><span class="t">Call ended</span><span class="sub">Stopping in <time>{pill.left}</time> s</span>{@render actions?.()}
   {:else if note}
     {@render icon("warn")}<span>{note.title}</span><span class="sub">{note.hint}</span>
   {:else if pill.state === "listening"}
@@ -107,6 +115,8 @@
   .lvl i { width: 3px; height: 16px; border-radius: 2px; background: currentColor; transition: transform 80ms linear; }
 
   .recdot { width: 8px; height: 8px; border-radius: 50%; background: var(--rec); flex: none; animation: pulse 1.6s ease-in-out infinite; }
+  .live { width: 8px; height: 8px; border-radius: 50%; background: #30d158; flex: none; } /* the mockup's live-dot */
+  .t { font-weight: var(--fw-medium); }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
   @media (prefers-reduced-motion: reduce) { .recdot { animation: none; } }
   time { font-variant-numeric: tabular-nums; }

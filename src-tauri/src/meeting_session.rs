@@ -66,9 +66,12 @@ impl MeetingSession {
         if !meeting::get(&self.db.lock().unwrap()).is_ok_and(|n| n.on) {
             return;
         }
+        if self.world.mic() == Mic::Ask {
+            self.world.ask_mic(); // macOS's pop-up, answered before this goes on
+        }
         match self.world.mic() {
             Mic::Allowed => {}
-            Mic::Ask => return self.world.ask_mic(), // macOS's pop-up; the next press records
+            Mic::Ask => return,
             Mic::Denied => return self.world.notify("Needs the Microphone", pill::ALLOW),
         }
         let id = match self.meetings.start(now_ms()) {
@@ -81,6 +84,24 @@ impl MeetingSession {
         }
         let this = self.clone();
         std::thread::spawn(move || this.clock(id));
+    }
+
+    /// Start notes on a detected call: starts, and names the meeting after the call's app.
+    pub fn start_from(self: &Arc<Self>, source: &str) {
+        if self.meetings.running().is_none() {
+            self.start();
+        }
+        let Some((id, _)) = self.meetings.running() else {
+            // The offer is gone by now, and a notification may not show, so the pill says it.
+            let hint = if self.world.mic() == Mic::Allowed { "Try the Recording shortcut, or Start in the menu." } else { "Allow the Microphone in Settings › Meeting notes." };
+            return self.world.pill_warning("Couldn’t start meeting notes", hint);
+        };
+        let _ = self.db.lock().unwrap().execute("UPDATE meeting SET source_app = ?1 WHERE id = ?2", (source, id));
+        self.show_running();
+    }
+
+    pub fn recording(&self) -> bool {
+        self.meetings.running().is_some()
     }
 
     /// Until meeting `id` ends: the menu clock, and the warning, said once per meeting over the pill.
@@ -321,7 +342,9 @@ mod tests {
     }
 
     struct Scripted {
-        mic: Mic,
+        mic: Mutex<Mic>,
+        /// What the mic is once macOS's pop-up is answered.
+        on_ask: Mic,
         denied: bool,
         /// While set, the speech model fails.
         fail: Arc<std::sync::atomic::AtomicBool>,
@@ -346,9 +369,10 @@ mod tests {
     }
     impl World for Scripted {
         fn mic(&self) -> Mic {
-            self.mic
+            *self.mic.lock().unwrap()
         }
         fn ask_mic(&self) {
+            *self.mic.lock().unwrap() = self.on_ask;
             self.log(Saw::AskMic)
         }
         fn audio_denied(&self) -> bool {
@@ -400,11 +424,11 @@ mod tests {
     fn rig(notes_on: bool, mic: Mic, denied: bool, them: impl crate::meeting::Them + 'static, tick: Duration) -> Rig {
         let tmp = tempfile::tempdir().unwrap();
         let db = Arc::new(Mutex::new(crate::storage::open(tmp.path()).unwrap()));
-        meeting::set(&db.lock().unwrap(), &meeting::Notes { on: notes_on, key: meeting::KEY.into(), keep_teams: false }).unwrap();
+        meeting::set(&db.lock().unwrap(), &meeting::Notes { on: notes_on, key: meeting::KEY.into(), keep_teams: false, offer_calls: true, stop_on_end: true }).unwrap();
         let meetings = Meetings::new(db.clone(), tmp.path().into(), Box::new(Fake(crate::runtime::RATE as usize)), Box::new(them));
         let saw = Arc::new(Mutex::new(vec![]));
         let fail = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let world = Scripted { mic, denied, fail: fail.clone(), saw: saw.clone() };
+        let world = Scripted { mic: Mutex::new(mic), on_ask: mic, denied, fail: fail.clone(), saw: saw.clone() };
         (MeetingSession::new(Box::new(world), db, meetings, tick), saw, fail, tmp)
     }
 
@@ -778,6 +802,46 @@ mod tests {
         drop(db);
         s.stop();
         until(&saw_, |v| recents(v) >= 1);
+    }
+
+    /// Mic not asked yet; the pop-up is answered `answer`.
+    fn asking(answer: Mic) -> (Arc<MeetingSession>, Arc<Mutex<Vec<Saw>>>, tempfile::TempDir) {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Mutex::new(crate::storage::open(tmp.path()).unwrap()));
+        meeting::set(&db.lock().unwrap(), &meeting::Notes { on: true, key: meeting::KEY.into(), keep_teams: false, offer_calls: true, stop_on_end: true }).unwrap();
+        let meetings = Meetings::new(db.clone(), tmp.path().into(), Box::new(Fake(crate::runtime::RATE as usize)), Box::new(Call(vec![])));
+        let saw = Arc::new(Mutex::new(vec![]));
+        let world = Scripted { mic: Mutex::new(Mic::Ask), on_ask: answer, denied: false, fail: Default::default(), saw: saw.clone() };
+        (MeetingSession::new(Box::new(world), db, meetings, Duration::from_secs(3600)), saw, tmp)
+    }
+
+    #[test]
+    fn a_mic_allowed_at_the_pop_up_records_at_once() {
+        let (s, saw_, _tmp) = asking(Mic::Allowed);
+        s.start_from("Slack");
+        assert!(s.recording(), "{:?}", saw(&saw_));
+        s.stop();
+    }
+
+    #[test]
+    fn a_detected_call_that_cant_start_says_why_on_the_pill() {
+        let (s, saw_, _tmp) = asking(Mic::Denied);
+        s.start_from("Slack");
+        assert!(!s.recording());
+        assert!(saw(&saw_).contains(&Saw::Warning("Couldn’t start meeting notes".into())), "{:?}", saw(&saw_));
+    }
+
+    #[test]
+    fn starting_from_a_detected_call_names_the_meeting_after_its_app() {
+        let (s, _, _tmp) = session(true, Mic::Allowed, false);
+        s.start_from("Slack");
+        assert!(s.recording());
+        assert_eq!(s.running().unwrap()["source"], "Slack");
+        s.stop();
+        assert!(!s.recording());
+        let (s, _, _tmp) = session(false, Mic::Allowed, false);
+        s.start_from("Slack");
+        assert!(!s.recording(), "notes off: nothing starts");
     }
 
     #[test]

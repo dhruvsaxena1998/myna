@@ -22,25 +22,54 @@ private typealias Responsible = @convention(c) (pid_t) -> pid_t
 // The app a helper process works for (Chrome's audio helper is Google Chrome). Private, so only if it's there.
 private let responsible = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "responsibility_get_pid_responsible_for_pid").map { unsafeBitCast($0, to: Responsible.self) }
 
-/// The process objects to tap, with the app names: every process of each app (not Myna) whose mic is running.
-/// Only regular apps count, so system listeners like Siri's are left out.
-private func micApps() -> [AudioObjectID: String] {
+private struct AudioProcess {
+    let id: AudioObjectID
+    let app: NSRunningApplication
+    let input: Bool
+    let output: Bool
+}
+
+/// Every Core Audio process object of a regular app (not Myna), folded into the app it works for, with whether it's
+/// using the mic and playing sound right now. Nil when Core Audio can't be read. System listeners like Siri's aren't
+/// regular apps, so they're left out. The tap and the call watcher share this one read.
+private func audioProcesses() -> [AudioProcess]? {
     var addr = address(kAudioHardwarePropertyProcessObjectList)
     var size: UInt32 = 0
-    guard AudioObjectGetPropertyDataSize(system, &addr, 0, nil, &size) == noErr else { return [:] }
+    guard AudioObjectGetPropertyDataSize(system, &addr, 0, nil, &size) == noErr else { return nil }
     var ids = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
-    guard AudioObjectGetPropertyData(system, &addr, 0, nil, &size, &ids) == noErr else { return [:] }
+    guard AudioObjectGetPropertyData(system, &addr, 0, nil, &size, &ids) == noErr else { return nil }
     let me = getpid()
-    var owner: [AudioObjectID: NSRunningApplication] = [:]
-    var live = Set<pid_t>()
-    for id in ids {
-        guard let pid = read(id, kAudioProcessPropertyPID, pid_t(0)) else { continue }
+    return ids.compactMap { id in
+        guard let pid = read(id, kAudioProcessPropertyPID, pid_t(0)) else { return nil }
         let app = responsible?(pid) ?? pid
-        guard pid != me, app != me, let running = NSRunningApplication(processIdentifier: app), running.activationPolicy == .regular else { continue }
-        owner[id] = running
-        if read(id, kAudioProcessPropertyIsRunningInput, UInt32(0)) == 1 { live.insert(app) }
+        guard pid != me, app != me, let running = NSRunningApplication(processIdentifier: app), running.activationPolicy == .regular else { return nil }
+        return AudioProcess(id: id, app: running, input: read(id, kAudioProcessPropertyIsRunningInput, UInt32(0)) == 1,
+                            output: read(id, kAudioProcessPropertyIsRunningOutput, UInt32(0)) == 1)
     }
-    return owner.filter { live.contains($0.value.processIdentifier) }.mapValues { $0.localizedName ?? $0.bundleIdentifier ?? "An app" }
+}
+
+/// The process objects to tap, with the app names: every process of each app whose mic is running.
+private func micApps() -> [AudioObjectID: String] {
+    let all = audioProcesses() ?? []
+    let live = Set(all.filter(\.input).map(\.app.processIdentifier))
+    var out: [AudioObjectID: String] = [:]
+    for p in all where live.contains(p.app.processIdentifier) { out[p.id] = p.app.localizedName ?? p.app.bundleIdentifier ?? "An app" }
+    return out
+}
+
+/// The apps using the mic or playing sound, one entry per app: `[{"bundle", "name", "input", "output"}]`, as JSON
+/// from strdup that Rust frees. Null when Core Audio can't be read, so Rust can tell a failed read from "none".
+@_cdecl("myna_audio_apps")
+public func audioApps() -> UnsafeMutablePointer<CChar>? {
+    guard let all = audioProcesses() else { return nil }
+    var apps: [pid_t: [String: Any]] = [:]
+    for p in all where p.input || p.output {
+        var a = apps[p.app.processIdentifier] ?? ["bundle": p.app.bundleIdentifier ?? "", "name": p.app.localizedName ?? "", "input": false, "output": false]
+        if p.input { a["input"] = true }
+        if p.output { a["output"] = true }
+        apps[p.app.processIdentifier] = a
+    }
+    return strdup(json(Array(apps.values)))
 }
 
 private func json(_ value: Any) -> String {

@@ -26,9 +26,9 @@ export async function load() {
           (rows) => ({ ok: true as const, rows }),
           (err) => ({ ok: false as const, error: String(err) }),
         ),
-        invoke<Notes>("meeting_get").then((n) => n, () => ({ on: false, key: "", keep_teams: false })),
+        invoke<Notes>("meeting_get").then((n) => n, () => ({ on: false, key: "", keep_teams: false, offer_calls: true, stop_on_end: true })),
         invoke<Running>("meeting_running").then((r) => r, () => null),
       ])
-    : [null, null, [], null, { on: false, key: "", keep_teams: false }, null];
+    : [null, null, [], null, { on: false, key: "", keep_teams: false, offer_calls: true, stop_on_end: true }, null];
   return { storage, traces, all, words, meetings, notes, running };
 }
