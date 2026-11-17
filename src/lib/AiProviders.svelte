@@ -213,6 +213,8 @@
 <svelte:window onpointerdown={outside} />
 
 {#snippet pill(off: boolean)}<HostPill {off} />{/snippet}
+<!-- DESIGN.md › Field: an error line starts with an alert icon. -->
+{#snippet alert()}<svg class="ic alert" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16.5v.01" /></svg>{/snippet}
 
 {#if part === "add"}
   {@const or = draft.kind === "openrouter"}
@@ -225,17 +227,17 @@
           <span class="help" id="add-kind-h">{or ? "One key for models from many companies." : "Any server that speaks the OpenAI API."}</span></li>
         <li class="field"><label for="add-name">Name</label>
           <input id="add-name" class="input" bind:value={draft.name} maxlength="40" placeholder={or ? "" : "Server on this Mac"} autocomplete="off" spellcheck="false" oninput={() => (errs = { ...errs, name: undefined })} aria-invalid={!!errs.name} aria-describedby="add-name-h" />
-          <span class="help" class:bad={errs.name} id="add-name-h" role="status">{errs.name ?? "Shown when you pick a model."}</span></li>
+          <span class="help" class:bad={errs.name} id="add-name-h" role="status">{#if errs.name}{@render alert()}{errs.name}{:else}Shown when you pick a model.{/if}</span></li>
         <li class="field"><label for="add-url">Address</label>
           <input id="add-url" class="input mono" type="url" bind:value={draft.url} placeholder={or ? "" : "http://localhost:11434/v1"} autocomplete="off" spellcheck="false" oninput={() => ((errs = { ...errs, url: undefined }), (dtest = null))} aria-invalid={!!errs.url} aria-describedby="add-url-h" />
-          <span class="help" class:bad={errs.url} id="add-url-h" role="status">{#if errs.url}{errs.url}{:else if hostOf(draft.url)}{@render pill(!loopback(draft.url))}{:else}{or ? "OpenRouter’s address. Leave it as it is." : "Where the server listens, ending in /v1."}{/if}</span></li>
+          <span class="help" class:bad={errs.url} id="add-url-h" role="status">{#if errs.url}{@render alert()}{errs.url}{:else if hostOf(draft.url)}{@render pill(!loopback(draft.url))}{:else}{or ? "OpenRouter’s address. Leave it as it is." : "Where the server listens, ending in /v1."}{/if}</span></li>
         <li class="field"><label for="add-key">{or ? "Key" : "Key (optional)"}</label>
           <input id="add-key" class="input mono" type="password" bind:value={draft.key} autocomplete="off" spellcheck="false" placeholder={or ? "sk-or-…" : ""} oninput={() => ((errs = { ...errs, key: undefined }), (dtest = null))} aria-invalid={!!errs.key} aria-describedby="add-key-h" />
-          <span class="help" class:bad={errs.key} id="add-key-h" role="status">{errs.key ?? `${or ? "Find it at openrouter.ai/keys." : "Only if your server asks for one."} Kept in your Mac’s Keychain.`}</span></li>
+          <span class="help" class:bad={errs.key} id="add-key-h" role="status">{#if errs.key}{@render alert()}{errs.key}{:else}{or ? "Find it at openrouter.ai/keys." : "Only if your server asks for one."} Kept in your Mac’s Keychain.{/if}</span></li>
       </ul>
     </section>
     <div class="actions">
-      <p class="err" class:neutral={!msg} role="status" title={msg || undefined}>{msg || (dtest?.st === "run" ? "Checking…" : dtest?.st === "ok" ? testText(dtest) : "")}</p>
+      <p class="err" class:neutral={!msg} role="status" title={msg || undefined}>{#if msg}{@render alert()}{msg}{:else}{(dtest?.st === "run" ? "Checking…" : dtest?.st === "ok" ? testText(dtest) : "")}{/if}</p>
       <button type="button" class="btn" disabled={dtest?.st === "run"} onclick={testDraft}>Test</button>
       <button type="button" class="btn" onclick={() => back()}>Cancel</button>
       <button class="btn primary" disabled={busy}>Add provider</button>
@@ -263,7 +265,7 @@
               <span class="name titled"><span class="trunc">{p.name}</span>{@render pill(p.off_device)}</span>
               <span class="desc" title={addr}><span class="mono">{p.url}</span>{#if p.has_key}{" · Key in Keychain"}{/if}</span>
               <span class="desc test" class:bad={t?.st === "err"} aria-live="polite" title={t?.st === "err" ? t.msg : undefined}>
-                {#if !t}Not tested yet{:else if t.st === "run"}Checking…{:else if t.st === "err"}{t.msg}{:else}{testText(t)}{/if}
+                {#if !t}Not tested yet{:else if t.st === "run"}Checking…{:else if t.st === "err"}{@render alert()}{t.msg}{:else}{testText(t)}{/if}
               </span>
             </span>
             <span class="end">
@@ -287,7 +289,7 @@
         </li>
       {/if}
     </ul>
-    <p class="err" class:neutral={!error} role="status">{error || note}</p>
+    <p class="err" class:neutral={!error} role="status">{#if error}{@render alert()}{error}{:else}{note}{/if}</p>
   </section>
 
   <section aria-labelledby="models-h">
@@ -339,7 +341,7 @@
         </li>
       {/each}
     </ul>
-    <p class="err" role="status">{pickError}</p>
+    <p class="err" role="status">{#if pickError}{@render alert()}{pickError}{/if}</p>
   </section>
 {/if}
 
@@ -352,9 +354,13 @@
   .addp { color: var(--accent-text); }
   /* Providers are 80px in every state: name, address, a reserved status line. */
   .prov { min-height: 80px; }
+  /* Each line is reserved, so it truncates (full text in `title`) instead of wrapping on a narrow window. */
+  .prov .desc { white-space: nowrap; }
   .desc.test { margin-top: var(--sp-1); color: var(--text-3); font-variant-numeric: tabular-nums; }
   .desc.test.bad { color: var(--danger-text); }
   .err.neutral { color: var(--text-2); }
+  /* 14px, inside the 16px line so an error never makes it taller. */
+  .alert { width: var(--ic-sm); height: var(--ic-sm); margin: 1px var(--sp-1) 0 0; vertical-align: top; }
   .empty { display: grid; justify-items: start; gap: var(--sp-1); padding: var(--sp-4); }
   .empty b { font-weight: var(--fw-semibold); }
   .empty p { margin: 0 0 var(--sp-2); color: var(--text-2); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }

@@ -364,3 +364,74 @@ test("a drill-in's title follows a breadcrumb back to its page", async ({ page }
   await crumbs.getByRole("button", { name: "AI providers" }).click();
   await expect(page.getByRole("heading", { name: "AI providers", level: 1 })).toBeVisible();
 });
+
+// DESIGN.md › Field: every error line starts with an alert icon; neutral lines have none.
+test("every error line starts with an alert icon, and keeps its height", async ({ page }) => {
+  await open(page, { providers: [OLLAMA, OR], main: null, fast: null },
+    `ai_test: () => { throw "Couldn't connect" }, ai_remove: () => { throw "Couldn't remove: locked" }, ai_set: () => { throw "Couldn't save the model: locked" }`);
+  const icon = (l: Locator) => l.locator("svg.alert");
+  const row = prow(page, "localhost:11434");
+  await row.getByRole("button", { name: "Test" }).click();
+  await expect(row.locator(".test")).toContainText("Couldn't connect");
+  await expect(icon(row.locator(".test"))).toHaveCount(1);
+  expect(await h(row)).toBe(80);
+  await expect(icon(page.locator("section").first().locator("> .err"))).toHaveCount(0);
+  await page.getByRole("button", { name: "Remove OpenRouter" }).click();
+  await page.getByRole("button", { name: "Remove", exact: true }).click();
+  const perr = page.locator("section").first().locator("> .err");
+  await expect(perr).toHaveText("Couldn't remove: locked");
+  await expect(icon(perr)).toHaveCount(1);
+  expect(await h(perr)).toBe(16);
+  await page.getByRole("button", { name: "Not set" }).first().click();
+  await page.getByRole("menuitemradio").first().click();
+  const merr = page.locator("section").nth(1).locator("> .err");
+  await expect(merr).toHaveText("Couldn't save the model: locked");
+  await expect(icon(merr)).toHaveCount(1);
+  expect(await h(merr)).toBe(16);
+
+  await page.getByRole("button", { name: "Add a provider" }).click();
+  const before = await page.locator("form").boundingBox();
+  for (const l of ["#add-name-h", "#add-url-h", "#add-key-h"]) await expect(icon(page.locator(l))).toHaveCount(0);
+  await page.getByLabel("Kind").selectOption("openrouter");
+  await page.getByLabel("Name").fill("");
+  await page.getByLabel("Address").fill("nope");
+  await page.getByRole("button", { name: "Add provider" }).click();
+  for (const l of ["#add-name-h", "#add-url-h", "#add-key-h"]) await expect(icon(page.locator(l))).toHaveCount(1);
+  expect(await page.locator("form").boundingBox()).toEqual(before);
+});
+
+test("a rejected add starts with an alert icon", async ({ page }) => {
+  await open(page, { providers: [], main: null, fast: null }, `ai_add: () => { throw "Couldn't save the key to your Keychain: locked" }`);
+  await page.getByRole("button", { name: "Add a provider" }).click();
+  await page.getByLabel("Name").fill("X");
+  await page.getByLabel("Address").fill("http://localhost:1/v1");
+  await page.getByRole("button", { name: "Add provider" }).click();
+  const err = page.locator(".actions .err");
+  await expect(err).toHaveText("Couldn't save the key to your Keychain: locked");
+  await expect(err.locator("svg.alert")).toHaveCount(1);
+});
+
+for (const [width, height] of [[880, 520], [640, 420]]) {
+  test(`at ${width}×${height}: provider rows one height, model rows one height, amber only on the off-device pill`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    await open(page, { providers: [OLLAMA, OR, LAN], main: { provider: 2, model: "m", gone: false }, fast: { provider: 1, model: "old", gone: true } },
+      `ai_test: ({ id }) => { if (id === 3) throw "Couldn't connect"; return id === 1 ? { ms: 400, models: 2, used: null, limit: null } : new Promise(() => {}) }`);
+    for (const t of ["localhost:11434", "openrouter.ai", "192.168.1.20"]) await prow(page, t).getByRole("button", { name: "Test" }).click();
+    await expect(prow(page, "192.168.1.20")).toContainText("Couldn't connect");
+    const rows = [prow(page, "localhost:11434"), prow(page, "openrouter.ai"), prow(page, "192.168.1.20")];
+    expect(await Promise.all(rows.map(h))).toEqual([80, 80, 80]); // passed, running, failed
+    const [main, fast] = [await h(prow(page, "Main model")), await h(prow(page, "Fast model"))];
+    expect(main).toBe(fast);
+    if (width === 880) expect(main).toBe(60);
+    // Long names truncate before the pill does.
+    for (const r of rows) await expect(r.locator(".pill")).toBeInViewport({ ratio: 1 });
+    const amber = await page.evaluate(() => {
+      const probe = document.createElement("i");
+      probe.style.color = "var(--caution-text)";
+      document.body.append(probe);
+      const c = getComputedStyle(probe).color;
+      return [...document.querySelectorAll("main .page *")].filter((n) => getComputedStyle(n).color === c || getComputedStyle(n).backgroundColor === c).map((n) => n.textContent?.trim());
+    });
+    expect(new Set(amber)).toEqual(new Set(["Sends text off this Mac"]));
+  });
+}
