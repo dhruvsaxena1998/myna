@@ -1,7 +1,7 @@
 <!-- The Meeting notes page (docs/settings.html, VIEWS.meetings): the switch and its shortcut, the Summary and transcript cleanup, the muted-voice switch, the browser add-on, models and permissions. -->
 <script lang="ts" module>
   /** `key` is an accelerator, or "" for no shortcut. */
-  export type Notes = { on: boolean; key: string; keep_teams: boolean; offer_calls: boolean; stop_on_end: boolean };
+  export type Notes = { on: boolean; key: string; keep_teams: boolean; keep_meet: boolean; offer_calls: boolean; stop_on_end: boolean };
 </script>
 
 <script lang="ts">
@@ -40,7 +40,8 @@
   }
   const recording = $derived(rec.recording === "notes");
   const keysDesc = $derived(recording ? PRESS : "Works from any app, even when the window is closed.");
-  const teamsDesc = $derived(connected ? "Myna sees your mute button through the browser add-on." : "Needs the browser add-on. Connect it below.");
+  const keepDesc = $derived(connected ? "Myna sees your mute button through the browser add-on." : "Needs the browser add-on. Connect it below.");
+  const KEEP = [["keep_teams", "Microsoft Teams on the web"], ["keep_meet", "Google Meet"]] as const;
 </script>
 
 <svelte:window onkeydown={rec.onkeydown} onblur={() => rec.record(null)} />
@@ -82,11 +83,13 @@
     <h2 id="keep-h">Keep my voice when muted</h2>
     <p class="help">What you say while muted is left out of the notes, unless you turn on the app here.</p>
     <ul class="list">
-      <li class="row">
-        <span><label class="name" for="keep-teams">Microsoft Teams on the web</label><span class="desc" title={teamsDesc}>{teamsDesc}</span></span>
-        <input id="keep-teams" type="checkbox" role="switch" class="switch" aria-label="Keep my voice when muted in Microsoft Teams on the web" disabled={!connected}
-          checked={notes.keep_teams && connected} onchange={(e) => save({ ...notes, keep_teams: e.currentTarget.checked }, true)} />
-      </li>
+      {#each KEEP as [key, app] (key)}
+        <li class="row">
+          <span><label class="name" for={key}>{app}</label><span class="desc" title={keepDesc}>{keepDesc}</span></span>
+          <input id={key} type="checkbox" role="switch" class="switch" aria-label="Keep my voice when muted in {app}" disabled={!connected}
+            checked={notes[key] && connected} onchange={(e) => save({ ...notes, [key]: e.currentTarget.checked }, true)} />
+        </li>
+      {/each}
     </ul>
     <p class="err" role="status">{keepError}</p>
   </section>

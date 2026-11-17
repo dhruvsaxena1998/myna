@@ -78,7 +78,7 @@ pub trait World: Send + Sync + 'static {
     fn catch_esc(&self, keys: &[String], on: bool);
     /// The app in front: its name and bundle id.
     fn front(&self) -> (Option<String>, Option<String>);
-    fn transcriber(&self, id: &str, models_dir: &Path) -> Result<Box<dyn Transcriber>, String>;
+    fn transcriber(&self, m: &models::Model, models_dir: &Path) -> Result<Box<dyn Transcriber>, String>;
 }
 
 type Loaded = Option<(String, Box<dyn Transcriber>)>;
@@ -207,7 +207,8 @@ impl Session {
     fn load(&self, slot: &mut Loaded, id: &str) -> Result<(), String> {
         if slot.as_ref().is_none_or(|(loaded, _)| loaded != id) {
             *slot = None; // free the old model before loading the new one
-            *slot = Some((id.into(), self.world.transcriber(id, &self.models_dir)?));
+            let m = models::get(&self.db.lock().unwrap(), id)?;
+            *slot = Some((id.into(), self.world.transcriber(&m, &self.models_dir)?));
         }
         Ok(())
     }
@@ -392,7 +393,8 @@ impl crate::meeting::Voices for Session {
         let tasks = models::list(&self.db.lock().unwrap(), &self.models_dir, self.macos, &self.world.speech())?;
         let diar = tasks.into_iter().find(|t| t.id == "diar").ok_or("No voice task.")?;
         let installed = |id: &str| diar.models.iter().any(|m| m.id == id && m.installed);
-        let mut d = runtime::pick_diarizer(diar.active.as_deref().unwrap_or("sortformer"), &installed, &|id| runtime::diarizer(id, &self.models_dir))?;
+        let load = |id: &str| runtime::diarizer(diar.models.iter().find(|m| m.id == id).ok_or(format!("Unknown model {id}"))?, &self.models_dir);
+        let mut d = runtime::pick_diarizer(diar.active.as_deref().unwrap_or("sortformer"), &installed, &load)?;
         d.diarize(audio)
     }
 }
@@ -500,8 +502,8 @@ impl World for Mac {
         let Some(app) = objc2_app_kit::NSWorkspace::sharedWorkspace().frontmostApplication() else { return (None, None) };
         (app.localizedName().map(|n| n.to_string()), app.bundleIdentifier().map(|b| b.to_string()))
     }
-    fn transcriber(&self, id: &str, models_dir: &Path) -> Result<Box<dyn Transcriber>, String> {
-        let t = runtime::transcriber(id, models_dir);
+    fn transcriber(&self, m: &models::Model, models_dir: &Path) -> Result<Box<dyn Transcriber>, String> {
+        let (id, t) = (&m.id, runtime::transcriber(m, models_dir));
         // The pill says it too, but only for this dictation; the model's row in Settings keeps it.
         match &t {
             Ok(_) => crate::model_event(&self.0, id, "loaded", serde_json::json!({})),
@@ -622,13 +624,13 @@ mod tests {
         fn front(&self) -> (Option<String>, Option<String>) {
             (Some("Notes".into()), Some("com.apple.Notes".into()))
         }
-        fn transcriber(&self, id: &str, _: &Path) -> Result<Box<dyn Transcriber>, String> {
+        fn transcriber(&self, m: &models::Model, _: &Path) -> Result<Box<dyn Transcriber>, String> {
             let mut l = self.0.lock().unwrap();
             if let Some(e) = l.load_fails {
                 return Err(e.into());
             }
-            l.loaded.push(id.into());
-            Ok(Box::new(FakeModel(id.into(), self.clone())))
+            l.loaded.push(m.id.clone());
+            Ok(Box::new(FakeModel(m.id.clone(), self.clone())))
         }
     }
 

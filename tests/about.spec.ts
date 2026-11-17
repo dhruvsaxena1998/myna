@@ -131,3 +131,25 @@ test("the dev build label sits after the version with a space either side of the
   // The dev server always has a build label (vite.config.js), so the row reads "Version 0.1.0 · dev …".
   await expect(page.getByText(/^Version 0\.1\.0 · dev/)).toBeVisible();
 });
+
+for (const [width, height] of [[880, 520], [640, 420]]) {
+  test(`the Myna row leads with the app icon at 32px beside its name, at ${width}×${height}`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    await open(page);
+    const row = page.getByRole("listitem").filter({ hasText: "Version 0.1.0" });
+    const img = row.locator("img");
+    await expect(img).toHaveAttribute("alt", "");
+    expect(await img.evaluate((e: HTMLImageElement) => e.complete && e.naturalWidth > 0)).toBe(true); // the real icon loaded
+    const [i, t, b, r] = await Promise.all([img, row.locator(".name"), row.getByRole("button"), row].map((l) => l.boundingBox()));
+    expect([i!.width, i!.height]).toEqual([32, 32]);
+    expect(i!.x + 32).toBeLessThan(t!.x);
+    if (width === 880) {
+      expect(t!.x + t!.width).toBeLessThanOrEqual(b!.x); // the button on the same line
+      expect(Math.abs(i!.y + 16 - (r!.y + r!.height / 2))).toBeLessThan(1);
+    } else {
+      expect([b!.x, b!.y]).toEqual([t!.x, expect.any(Number)]); // narrow: the button drops under the text, the icon stays beside it
+      expect(b!.y).toBeGreaterThan(t!.y + t!.height);
+    }
+    expect(await row.evaluate((e) => e.scrollWidth <= e.clientWidth)).toBe(true);
+  });
+}

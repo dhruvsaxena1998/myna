@@ -1,8 +1,9 @@
 import { PORTS, REPLACED, STOP_TAB, WELCOME, WRONG_CODE, caption, captions, hello, mute, parse, ping, selectors as selectorsMsg, tab as tabMsg } from "./messages.js";
-import { fetchRemote, isTeams, pick } from "./selectors.js";
+import { fetchRemote, pick, site } from "./selectors.js";
 
 // The service worker sleeps, so everything here can start over: the status lives in storage, and an alarm
 // reconnects after a nap.
+const SITES = ["teams", "meet"];
 let ws = null;
 let trying = false;
 let delay = 1000;
@@ -56,7 +57,7 @@ function tryPort(i, code) {
   };
 }
 
-// Asks the Teams tabs for the mute button's state again: what they said while Myna wasn't listening was dropped.
+// Asks the call tabs for the mute button's state again: what they said while Myna wasn't listening was dropped.
 async function announce() {
   for (const tab of await chrome.tabs.query({ url: chrome.runtime.getManifest().host_permissions })) {
     chrome.tabs.sendMessage(tab.id, { type: "announce" }).catch(() => {});
@@ -70,7 +71,7 @@ async function current() {
   return pick(selectors, await (await fetch(chrome.runtime.getURL("selectors.json"))).json());
 }
 
-// Tells Myna and every Teams tab which table is in force.
+// Tells Myna and every call tab which table is in force.
 async function publish() {
   const data = await current();
   if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(selectorsMsg(String(data.version))));
@@ -87,7 +88,7 @@ async function refresh(force) {
   if (data) await chrome.storage.local.set({ selectors: data, selectorsAt: Date.now() });
 }
 
-// The Teams tab being captured, if any. The worker owns the one socket (a second would replace it), so the offscreen
+// The call tab being captured, if any. The worker owns the one socket (a second would replace it), so the offscreen
 // document hands its frames here, base64 because extension messages are JSON.
 let tab = null;
 const setTab = (id) => {
@@ -95,14 +96,14 @@ const setTab = (id) => {
   chrome.storage.session.set({ tab: id });
 };
 
-async function startTab(id, title, streamId) {
+async function startTab(id, title, streamId, where) {
   if (ws?.readyState !== WebSocket.OPEN) return;
   if (tab !== null) await stopTab();
   setTab(id);
   if (!(await chrome.runtime.getContexts({ contextTypes: ["OFFSCREEN_DOCUMENT"] })).length) {
-    await chrome.offscreen.createDocument({ url: "offscreen.html", reasons: ["USER_MEDIA"], justification: "Capture the Teams call tab's sound for Myna." });
+    await chrome.offscreen.createDocument({ url: "offscreen.html", reasons: ["USER_MEDIA"], justification: "Capture the call tab's sound for Myna." });
   }
-  ws.send(JSON.stringify(tabMsg("start", title)));
+  ws.send(JSON.stringify(tabMsg("start", title, where)));
   chrome.runtime.sendMessage({ to: "offscreen", type: "start", streamId });
 }
 
@@ -114,12 +115,12 @@ async function stopTab(tell = true) {
 }
 
 chrome.tabs.onRemoved.addListener((id) => id === tab && stopTab());
-chrome.tabs.onUpdated.addListener((id, info) => id === tab && info.url && !isTeams(info.url) && stopTab());
+chrome.tabs.onUpdated.addListener((id, info) => id === tab && info.url && !site(info.url) && stopTab());
 // A worker that starts fresh has lost track of any capture, and so has Myna's socket.
 setTab(null);
 chrome.offscreen.closeDocument().catch(() => {});
 
-// From our own pages: a Teams tab's content script (mute), the popup, the offscreen document.
+// From our own pages: a call tab's content script (mute), the popup, the offscreen document.
 chrome.runtime.onMessage.addListener((m, sender, reply) => {
   if (sender.id !== chrome.runtime.id) return;
   if (m?.type === "selectors-get") {
@@ -127,7 +128,7 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
     return true;
   }
   if (m?.type === "mute") {
-    if (["muted", "unmuted", "unknown"].includes(m.state) && Number.isFinite(m.at) && ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(mute(m.state, m.at)));
+    if (["muted", "unmuted", "unknown"].includes(m.state) && Number.isFinite(m.at) && ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(mute(m.state, m.at, SITES.includes(m.site) ? m.site : undefined)));
   } else if (m?.type === "caption") {
     if (typeof m.name === "string" && m.name.trim() && Number.isFinite(m.at) && ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(caption(m.name.trim().slice(0, 80), m.at, typeof m.text === "string" ? m.text.trim().slice(0, 300) : undefined)));
@@ -135,7 +136,7 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
   } else if (m?.type === "captions") {
     if (m.state === "unavailable" && ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(captions("unavailable")));
   } else if (m?.type === "record-tab") {
-    if (Number.isInteger(m.tabId) && typeof m.streamId === "string") startTab(m.tabId, String(m.title ?? ""), m.streamId);
+    if (Number.isInteger(m.tabId) && typeof m.streamId === "string") startTab(m.tabId, String(m.title ?? ""), m.streamId, SITES.includes(m.site) ? m.site : undefined);
   } else if (m?.type === "stop-tab-click" || m?.type === "tab-ended") {
     stopTab();
   } else if (m?.type === "frame" && tab !== null && ws?.readyState === WebSocket.OPEN && typeof m.data === "string") {

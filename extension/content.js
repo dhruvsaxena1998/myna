@@ -1,7 +1,8 @@
-// Runs on the Teams web pages: tells Myna (through the service worker) whether the mute button says muted.
+// Runs on the Teams and Meet web pages: tells Myna (through the service worker) whether the mute button says muted.
 // Content scripts run as classic scripts, where a top-level await is a syntax error: the whole script sits in an async function.
 (async () => {
-const { readPage, readCaptions, newCaptions, useRules, validate } = await import(chrome.runtime.getURL("selectors.js"));
+const { readPage, readCaptions, newCaptions, site, useRules, validate } = await import(chrome.runtime.getURL("selectors.js"));
+const here = site(location.href);
 
 // The worker hands over the table in force (a fresher one arrives as a message); one that doesn't compile here falls
 // back to the bundled file. shortcut: Myna is still told the worker's version then; the worker has no DOM to check with.
@@ -13,15 +14,19 @@ const compiles = (s) => {
     return false;
   }
 };
-const load = async (data) => useRules(validate(data, compiles) ?? validate(await (await fetch(chrome.runtime.getURL("selectors.json"))).json(), compiles));
-await load(await chrome.runtime.sendMessage({ type: "selectors-get" }).catch(() => null));
+const load = async (data) => {
+  const table = validate(data, compiles) ?? validate(await (await fetch(chrome.runtime.getURL("selectors.json"))).json(), compiles);
+  const rules = useRules(here === "meet" ? table.meet : table);
+  // Observing again replaces the options, so a new table's mute attribute is watched too.
+  watch.observe(document, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["aria-pressed", "aria-label", "title", "data-state", ...(rules.mutedAttr ? [rules.mutedAttr] : [])] });
+};
 
 let last;
 function report(force) {
   const state = readPage(document);
   if (state === last && !force) return;
   last = state;
-  chrome.runtime.sendMessage({ type: "mute", state, at: Date.now() }).catch(() => {}); // the worker may be asleep or Myna away: it asks again on connect
+  chrome.runtime.sendMessage({ type: "mute", state, at: Date.now(), site: here }).catch(() => {}); // the worker may be asleep or Myna away: it asks again on connect
 }
 
 // Live captions: a line per new caption. In a call (the mute button is found) with no caption container for a while,
@@ -44,15 +49,16 @@ function scanCaptions() {
 }
 
 let timer;
-new MutationObserver(() => {
+const watch = new MutationObserver(() => {
   clearTimeout(timer);
   timer = setTimeout(() => (report(), scanCaptions()), 250);
-}).observe(document, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["aria-pressed", "aria-label", "title", "data-state"] });
+});
+await load(await chrome.runtime.sendMessage({ type: "selectors-get" }).catch(() => null));
 
 chrome.runtime.onMessage.addListener((m) => {
   if (m?.type === "announce") (report(true), (told = false), scanCaptions());
   else if (m?.type === "selectors") load(m.data).then(() => (report(true), (told = false), scanCaptions()));
 });
-addEventListener("pagehide", () => (last = "unknown", chrome.runtime.sendMessage({ type: "mute", state: "unknown", at: Date.now() }).catch(() => {})));
+addEventListener("pagehide", () => (last = "unknown", chrome.runtime.sendMessage({ type: "mute", state: "unknown", at: Date.now(), site: here }).catch(() => {})));
 report(true);
 })();

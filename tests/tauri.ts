@@ -42,6 +42,7 @@ export async function fakeTauri(page: Page, handlers: string) {
         if (cmd === "summary_model" && !(cmd in h)) throw "Main model: Not set";
         if (cmd === "transcript_prefs_get" && !(cmd in h)) return { on: false, model: "fast", gone: false, prompt: "Fix punctuation.", shipped: "Fix punctuation.", newer: false };
         if (cmd === "ai_get" && !(cmd in h)) return { providers: [], main: null, fast: null };
+        if (cmd === "meeting_stt_get" && !(cmd in h)) return "local";
         if (cmd === "updates_get" && !(cmd in h)) return { mode: "auto", channel: "beta", every: "launch" };
         if (cmd === "update_state" && !(cmd in h)) return { state: "idle" };
         if (!(cmd in h)) throw `no fake for ${cmd}`;

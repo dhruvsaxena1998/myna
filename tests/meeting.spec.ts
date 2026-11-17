@@ -3,7 +3,7 @@ import { fakeTauri } from "./tauri";
 
 // `meeting_set` fails for Ctrl+Alt+N, like a shortcut another app holds, and for a key a voice typing shortcut has (the backend's message). Asking for System Audio allows it.
 // `extra` adds or replaces handlers; `addon_get` can answer late, to show the page waits for it.
-async function open(page: Page, notes: { on: boolean; key: string; keep_teams?: boolean } = { on: false, key: "Ctrl+Alt+KeyM" }, audio = "allowed", addon = { connected: false, code: "MYNA-4F7Q-K2" }, extra = "", late = 0) {
+async function open(page: Page, notes: { on: boolean; key: string; keep_teams?: boolean; keep_meet?: boolean } = { on: false, key: "Ctrl+Alt+KeyM" }, audio = "allowed", addon = { connected: false, code: "MYNA-4F7Q-K2" }, extra = "", late = 0) {
   await fakeTauri(page, `{
     storage_status: () => "/tmp/Myna", models_list: () => [],
     meeting_get: () => (${JSON.stringify(notes)}),
@@ -43,14 +43,27 @@ test("Keep my voice when muted: the Teams switch is off and disabled until the a
   const keep = page.getByRole("switch", { name: "Keep my voice when muted in Microsoft Teams on the web" });
   await expect(keep).toBeDisabled();
   await expect(keep).not.toBeChecked(); // saved on, but it can't work yet
-  await expect(page.getByText("Needs the browser add-on. Connect it below.")).toBeVisible();
+  await expect(page.getByText("Needs the browser add-on. Connect it below.")).toHaveCount(2);
   await emit(page, "addon-status", true);
   await expect(keep).toBeEnabled();
   await expect(keep).toBeChecked();
-  await expect(page.getByText("Myna sees your mute button through the browser add-on.")).toBeVisible();
+  await expect(page.getByText("Myna sees your mute button through the browser add-on.")).toHaveCount(2);
   await keep.click();
   await expect(keep).not.toBeChecked();
   expect((await calls(page, "meeting_set")).at(-1)).toEqual({ notes: { on: true, key: "Ctrl+Alt+KeyM", keep_teams: false } });
+});
+
+test("Keep my voice when muted: the Meet switch has its own setting, off and disabled until the add-on is connected", async ({ page }) => {
+  await open(page, { on: true, key: "Ctrl+Alt+KeyM", keep_teams: true, keep_meet: false }, "allowed", { connected: true, code: "C" });
+  const meet = page.getByRole("switch", { name: "Keep my voice when muted in Google Meet" });
+  await expect(meet).toBeEnabled();
+  await expect(meet).not.toBeChecked();
+  await meet.click();
+  await expect(meet).toBeChecked();
+  expect((await calls(page, "meeting_set")).at(-1)).toEqual({ notes: { on: true, key: "Ctrl+Alt+KeyM", keep_teams: true, keep_meet: true } });
+  await emit(page, "addon-status", false);
+  await expect(meet).toBeDisabled();
+  await expect(meet).not.toBeChecked();
 });
 
 test("a failed save of the Teams switch shows under its own group", async ({ page }) => {
@@ -250,7 +263,7 @@ test("Browser add-on: not connected shows the steps, connected flips live, Disco
   const group = page.getByRole("region", { name: "Browser add-on" });
   const status = group.getByRole("listitem").first();
   await expect(status).toContainText("Not connected");
-  await expect(status).toContainText("Add it to Chrome to keep your voice when muted in Teams.");
+  await expect(status).toContainText("Add it to Chrome to keep your voice when muted in Teams or Meet.");
   await expect(group).toContainText("MYNA-4F7Q-K2");
   const connect = group.getByRole("button", { name: "Connect" });
   await expect(connect).toHaveAttribute("aria-expanded", "false");
@@ -265,7 +278,7 @@ test("Browser add-on: not connected shows the steps, connected flips live, Disco
   await emit(page, "addon-status", true);
   await expect(status).toContainText("Connected");
   await expect(status).not.toContainText("Not connected");
-  await expect(status).toContainText("Sees when you’re muted in Teams, and who is talking.");
+  await expect(status).toContainText("Sees when you’re muted in Teams or Meet, and who is talking.");
   await expect(group).not.toContainText("Load unpacked");
   // Connect and Disconnect swap words, not the row's height or the button's width.
   expect((await status.boundingBox())!.height).toBe(before!.height);
@@ -344,7 +357,8 @@ test("Models: the speech-to-text model and Speaker diarization, with its model's
   const diar = group.getByRole("listitem").filter({ hasText: "Speaker diarization" });
   await expect(diar).toContainText("Model D");
   await expect(diar).toContainText("Not downloaded · 500 MB");
-  expect(await heights(group.getByRole("listitem"))).toEqual([60, 60]);
+  await expect(group.getByRole("listitem").filter({ hasText: "Transcribe with" })).toContainText("Nothing leaves this Mac.");
+  expect(await heights(group.getByRole("listitem"))).toEqual([60, 60, 60]);
   await diar.getByRole("button", { name: "All models" }).click();
   await expect(page.getByRole("heading", { name: "Speaker diarization", level: 1 })).toBeVisible();
 });

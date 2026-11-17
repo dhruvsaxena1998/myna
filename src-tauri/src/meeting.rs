@@ -1,7 +1,7 @@
 //! Meeting notes: on or off with its shortcut, and a recording kept on disk as a meeting: `mic.wav` (Me) and
 //! `them.wav` (the apps using the mic). The audio reaches it only through `Mic` and `Them`, so tests drive it with fakes.
 
-use crate::addon::MuteState;
+use crate::addon::{MuteState, Site};
 use crate::runtime::{RATE, Segment};
 use crate::speakers;
 use crate::storage::{read_switch, read_text, write_switch, write_text};
@@ -26,6 +26,9 @@ pub struct Notes {
     /// Keep what I say while muted in Teams, instead of leaving it out. Read when a meeting is shown, so it works on old meetings too.
     #[serde(default)]
     pub keep_teams: bool,
+    /// The same for Google Meet.
+    #[serde(default)]
+    pub keep_meet: bool,
     /// Offer to record when a call app starts using the mic (#214).
     #[serde(default = "yes")]
     pub offer_calls: bool,
@@ -44,6 +47,7 @@ pub fn get(conn: &Connection) -> Result<Notes, String> {
         on: read_switch(conn, "meeting_on", false).map_err(err)?,
         key: read_text(conn, "meeting_key").map_err(err)?.unwrap_or(KEY.into()),
         keep_teams: read_switch(conn, "meeting_keep_teams", false).map_err(err)?,
+        keep_meet: read_switch(conn, "meeting_keep_meet", false).map_err(err)?,
         offer_calls: read_switch(conn, "meeting_offer_calls", true).map_err(err)?,
         stop_on_end: read_switch(conn, "meeting_stop_on_end", true).map_err(err)?,
     })
@@ -58,6 +62,7 @@ pub fn set(conn: &Connection, n: &Notes) -> Result<(), String> {
     write_switch(conn, "meeting_on", n.on).map_err(err)?;
     write_text(conn, "meeting_key", &n.key).map_err(err)?;
     write_switch(conn, "meeting_keep_teams", n.keep_teams).map_err(err)?;
+    write_switch(conn, "meeting_keep_meet", n.keep_meet).map_err(err)?;
     write_switch(conn, "meeting_offer_calls", n.offer_calls).map_err(err)?;
     write_switch(conn, "meeting_stop_on_end", n.stop_on_end).map_err(err)?;
     Ok(())
@@ -339,6 +344,8 @@ impl Track {
 struct Active {
     id: i64,
     started: i64,
+    /// When `start` ran, so `stop` knows how long the meeting really lasted.
+    begun: Instant,
     stop: Stop,
     wav: Arc<Mutex<Option<Wav>>>,
     stop_them: Option<Stop>,
@@ -363,6 +370,107 @@ pub trait Voices: Send + Sync {
 const CHUNK: usize = 4 * 60 * RATE as usize;
 /// Quieter than this (about -46 dB) all through a chunk is not speech: not worth the model's time.
 const QUIET: i16 = 160;
+/// A possibly-muted stretch is widened this much (ms) each way before the rest goes to an Endpoint: the add-on sees the
+/// mute button a moment after it's pressed.
+const MUTE_PAD: i64 = 1000;
+/// Past this much (ms) between how long the meeting ran and how long mic.wav is, the mute timeline can't be trusted to
+/// line up with the mic's samples, so none of the mic goes to an Endpoint.
+const MAX_DRIFT: i64 = 500;
+/// Chunks sent to an Endpoint at once.
+const PARALLEL: usize = 3;
+/// Tries after a chunk's first fails, with doubling waits.
+const RETRIES: u32 = 3;
+/// How a failed meeting's failure starts when an Endpoint left chunks undone; the meeting offers Transcribe locally.
+pub const INCOMPLETE: &str = "Transcription incomplete";
+
+/// How a write-up turns speech into text (#45).
+pub enum Via<'a> {
+    /// The Local model, everything on this Mac: the default.
+    Local,
+    /// Meeting speech-to-text's Endpoint, or why there is none ("Not set"), so nothing is sent and the chunks it would
+    /// take are left undone. Possibly-muted mic stretches stay on the Local model either way.
+    Endpoint(Result<&'a crate::ai::SttEndpoint, String>),
+    /// Transcribe locally: what the Endpoint already did is kept, the rest goes to the Local model.
+    Rest,
+}
+
+/// What an Endpoint sent back for a meeting's chunks, kept in its folder so Retry and Transcribe locally never resend one.
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct Kept {
+    provider: String,
+    model: String,
+    off: bool,
+    chunks: Vec<KeptChunk>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct KeptChunk {
+    who: String,
+    from: usize,
+    to: usize,
+    said: Vec<(f32, f32, String)>,
+    cost: crate::ai::Cost,
+}
+
+/// The mic's possibly-muted stretches as sample ranges: everything but unmuted once the add-on reported (before its first
+/// report too), widened by `MUTE_PAD`. None without a timeline. They never go to an Endpoint.
+fn private(events: &[(i64, MuteState)], len: usize) -> Vec<(usize, usize)> {
+    if events.is_empty() {
+        return vec![];
+    }
+    let at = |ms: i64| ((ms.max(0) * RATE as i64 / 1000) as usize).min(len);
+    let starts = [(0, MuteState::Unknown)].into_iter().chain(events.iter().copied());
+    let ends = events.iter().map(|e| e.0).chain([i64::MAX / 32_000]);
+    let mut out: Vec<(usize, usize)> = vec![];
+    for ((from, state), to) in starts.zip(ends) {
+        if state == MuteState::Unmuted || to <= from {
+            continue;
+        }
+        let (a, b) = (at(from - MUTE_PAD), at(to.saturating_add(MUTE_PAD)));
+        match out.last_mut() {
+            Some(l) if a <= l.1 => l.1 = l.1.max(b),
+            _ => out.push((a, b)),
+        }
+    }
+    out.retain(|(a, b)| a < b);
+    out
+}
+
+/// `0..len` as runs, each marked private or not, from the private ranges.
+fn runs(private: &[(usize, usize)], len: usize) -> Vec<(usize, usize, bool)> {
+    let (mut out, mut at) = (vec![], 0);
+    for &(a, b) in private {
+        if a > at {
+            out.push((at, a, false));
+        }
+        out.push((a, b, true));
+        at = b;
+    }
+    if at < len || out.is_empty() {
+        out.push((at, len, false));
+    }
+    out
+}
+
+/// 16 kHz mono 16-bit WAV bytes, as an Endpoint takes them.
+fn wav_bytes(samples: &[i16]) -> Vec<u8> {
+    let spec = hound::WavSpec { channels: 1, sample_rate: RATE, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
+    let mut out = std::io::Cursor::new(Vec::with_capacity(44 + samples.len() * 2));
+    let mut w = hound::WavWriter::new(&mut out, spec).expect("a WAV in memory");
+    samples.iter().for_each(|s| w.write_sample(*s).expect("a WAV in memory"));
+    w.finalize().expect("a WAV in memory");
+    out.into_inner()
+}
+
+/// The chunks' costs together: unknown if any is, else USD if any is, else free.
+fn total(costs: &[&crate::ai::Cost]) -> crate::ai::Cost {
+    use crate::ai::Cost;
+    if costs.iter().any(|c| **c == Cost::Unknown) {
+        return Cost::Unknown;
+    }
+    let usd: Vec<f64> = costs.iter().filter_map(|c| if let Cost::Usd { usd } = c { Some(*usd) } else { None }).collect();
+    if usd.is_empty() { Cost::Free } else { Cost::Usd { usd: usd.iter().sum() } }
+}
 
 /// Where to cut `samples` into pieces of at most `max`: at the quietest tenth of a second in the last quarter
 /// before the limit, so a word isn't split.
@@ -404,8 +512,10 @@ pub struct Meetings {
     /// One meeting is transcribed at a time.
     job: Mutex<()>,
     chunk: usize,
-    /// The mirrored mute state last heard, recording or not, so a meeting starts knowing it. `Unknown` once the add-on drops.
-    mirrored: Mutex<Option<MuteState>>,
+    /// The first wait before an Endpoint chunk is tried again.
+    backoff: Duration,
+    /// The mirrored mute state last heard and whose page said it, recording or not, so a meeting starts knowing it. `Unknown` once the add-on drops.
+    mirrored: Mutex<Option<(MuteState, Site)>>,
     /// The mic's loudness right now, 0 to 1, as `f32` bits; 0 when not recording.
     level: Arc<std::sync::atomic::AtomicU32>,
 }
@@ -417,7 +527,7 @@ fn on_clock(origin: Instant, at: Instant) -> u64 {
 
 impl Meetings {
     pub fn new(db: Arc<Mutex<Connection>>, dir: PathBuf, mic: Box<dyn Mic>, them: Box<dyn Them>) -> Self {
-        Meetings { db, dir, mic, them, active: Default::default(), job: Default::default(), chunk: CHUNK, mirrored: Default::default(), level: Default::default() }
+        Meetings { db, dir, mic, them, active: Default::default(), job: Default::default(), chunk: CHUNK, backoff: Duration::from_secs(2), mirrored: Default::default(), level: Default::default() }
     }
 
     /// Whether Myna can't hear the other people on the call (the mic records regardless).
@@ -427,27 +537,32 @@ impl Meetings {
 
     /// The mic as the add-on mirrors it: `Some(true)` muted, `Some(false)` live, None when Myna isn't seeing it.
     pub fn muted(&self) -> Option<bool> {
-        match (*self.mirrored.lock().unwrap())? {
+        match self.mirrored.lock().unwrap().as_ref()?.0 {
             MuteState::Muted => Some(true),
             MuteState::Unmuted => Some(false),
             MuteState::Unknown => None,
         }
     }
 
-    /// The add-on saw the mute button in `state` at `at` (unix ms); `now` is the clock now. Kept on the timeline only while recording.
-    pub fn mute(&self, state: MuteState, at: i64, now: i64) {
-        *self.mirrored.lock().unwrap() = Some(state);
+    /// Whose call page the mute state was last mirrored from; Teams before any.
+    pub fn site(&self) -> Site {
+        self.mirrored.lock().unwrap().map(|m| m.1).unwrap_or_default()
+    }
+
+    /// The add-on saw `site`'s mute button in `state` at `at` (unix ms); `now` is the clock now. Kept on the timeline only while recording.
+    pub fn mute(&self, state: MuteState, site: Site, at: i64, now: i64) {
+        *self.mirrored.lock().unwrap() = Some((state, site));
         if let Some((id, started)) = self.running() {
             // The add-on's clock is only trusted to within the meeting: never before it began or after now.
-            self.mark(id, (at.min(now) - started).max(0), state);
+            self.mark(id, (at.min(now) - started).max(0), state, site);
         }
     }
 
-    fn mark(&self, id: i64, at_ms: i64, state: MuteState) {
-        let _ = self.db.lock().unwrap().execute("INSERT INTO mute_event(meeting, at_ms, state, source) VALUES (?1, ?2, ?3, 'teams')", (id, at_ms, state.as_str()));
+    fn mark(&self, id: i64, at_ms: i64, state: MuteState, site: Site) {
+        let _ = self.db.lock().unwrap().execute("INSERT INTO mute_event(meeting, at_ms, state, source) VALUES (?1, ?2, ?3, ?4)", (id, at_ms, state.as_str(), site.as_str()));
     }
 
-    /// Teams' captions showed `name` speaking at `at` (unix ms); `now` is the clock now. Kept only while recording, trimmed and capped.
+    /// The call's captions showed `name` speaking at `at` (unix ms); `now` is the clock now. Kept only while recording, trimmed and capped.
     pub fn caption(&self, name: &str, at: i64, text: Option<&str>, now: i64) {
         let Some((id, started)) = self.running() else { return };
         let cap = |s: &str, n| s.trim().chars().take(n).collect::<String>();
@@ -462,7 +577,7 @@ impl Meetings {
         );
     }
 
-    /// The add-on can't find Teams' captions: the page says so instead of guessing at names.
+    /// The add-on can't find the call's captions: the page says so instead of guessing at names.
     pub fn captions_unavailable(&self) {
         if let Some((id, _)) = self.running() {
             let _ = self.db.lock().unwrap().execute("UPDATE meeting SET captions = 'unavailable' WHERE id = ?1", [id]);
@@ -481,6 +596,7 @@ impl Meetings {
     }
 
     pub fn start(&self, now: i64) -> Result<i64, String> {
+        let begun = Instant::now();
         let mut slot = self.active.lock().unwrap();
         if let Some(a) = slot.as_ref() {
             return Ok(a.id);
@@ -532,14 +648,14 @@ impl Meetings {
                 eprintln!("meeting: can't hear the call: {e}");
                 them.lock().unwrap().failed = true;
             });
-            Ok(Active { id, started: now, stop, wav, stop_them: stop_them.ok(), them, origin: clock })
+            Ok(Active { id, started: now, begun, stop, wav, stop_them: stop_them.ok(), them, origin: clock })
         };
         match open() {
             Ok(a) => {
                 *slot = Some(a);
                 drop(slot);
-                if let Some(s) = *self.mirrored.lock().unwrap() {
-                    self.mark(id, 0, s); // what the button said when the meeting began
+                if let Some((s, site)) = *self.mirrored.lock().unwrap() {
+                    self.mark(id, 0, s, site); // what the button said when the meeting began
                 }
                 Ok(id)
             }
@@ -551,7 +667,7 @@ impl Meetings {
         }
     }
 
-    /// The Teams tab's sound starts coming: it's the source from here on. False if nothing is recording.
+    /// The call tab's sound starts coming: it's the source from here on. False if nothing is recording.
     pub fn tab_start(&self, source: &str) -> bool {
         let Some((id, _)) = self.running() else { return false };
         let _ = self.db.lock().unwrap().execute("UPDATE meeting SET source_app = ?1 WHERE id = ?2", (source, id));
@@ -589,11 +705,11 @@ impl Meetings {
 
     /// Writes up meeting `id` from its two tracks: Me from the mic, Them from the call, merged by time. `progress`
     /// gets 0 to 1 as chunks finish, the last step being telling the voices on Them apart. Fails, with the reason kept in the meeting, without touching the audio.
-    pub fn transcribe(&self, id: i64, stt: &dyn Stt, who: &dyn Voices, progress: &mut dyn FnMut(f32)) -> Result<(), String> {
+    pub fn transcribe(&self, id: i64, stt: &dyn Stt, who: &dyn Voices, via: Via, progress: &mut dyn FnMut(f32)) -> Result<(), String> {
         let _one = self.job.lock().unwrap();
         let set = |sql: &str, p: &[&dyn rusqlite::ToSql]| self.db.lock().unwrap().execute(sql, p).map(drop).map_err(|e| format!("Couldn't save the meeting: {e}"));
         set("UPDATE meeting SET state = 'transcribing', failure = NULL WHERE id = ?1", &[&id])?;
-        let done = self.write_up(id, stt, who, progress);
+        let done = self.write_up(id, stt, who, via, progress);
         if let Err(e) = &done {
             let _ = set("UPDATE meeting SET state = 'failed', failure = ?1 WHERE id = ?2", &[e, &id]);
         }
@@ -610,6 +726,12 @@ impl Meetings {
         Ok(rows.into_iter().map(|(at, s)| (at, match s.as_str() { "muted" => MuteState::Muted, "unmuted" => MuteState::Unmuted, _ => MuteState::Unknown })).collect())
     }
 
+    /// Whether mic.wav (`len` samples) is more than `MAX_DRIFT` off how long meeting `id` ran, or that isn't known.
+    fn drifted(&self, id: i64, len: usize) -> Result<bool, String> {
+        let (started, ended): (i64, Option<i64>) = self.db.lock().unwrap().query_row("SELECT started, ended FROM meeting WHERE id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?))).map_err(|e| format!("Couldn't read the meeting: {e}"))?;
+        Ok(ended.is_none_or(|e| (e - started - len as i64 * 1000 / RATE as i64).abs() > MAX_DRIFT))
+    }
+
     /// The meeting's captions: `(ms from its start, name)`, in time order.
     fn captions(&self, id: i64) -> Result<Vec<(i64, String)>, String> {
         let db = self.db.lock().unwrap();
@@ -624,30 +746,93 @@ impl Meetings {
         c.is_some()
     }
 
-    fn write_up(&self, id: i64, stt: &dyn Stt, who: &dyn Voices, progress: &mut dyn FnMut(f32)) -> Result<(), String> {
+    fn write_up(&self, id: i64, stt: &dyn Stt, who: &dyn Voices, via: Via, progress: &mut dyn FnMut(f32)) -> Result<(), String> {
         let folder = self.dir.join("meetings").join(id.to_string());
         let mic = wav_samples(&folder.join("mic.wav"))?;
         // The call's track may never have been made (the meeting ended as it started).
         let them = if folder.join("them.wav").exists() { wav_samples(&folder.join("them.wav"))? } else { vec![] };
         let rate = RATE as f64;
         let events = self.timeline(id)?;
-        let pieces: Vec<_> = [("Me", &mic), ("Them", &them)].into_iter().flat_map(|(who, s)| cuts(s, self.chunk).into_iter().map(move |(a, b)| (who, &s[a..b], a))).collect();
+        let local = matches!(via, Via::Local);
+        // With an Endpoint in play the mic is cut at its possibly-muted stretches too, so they stay on this Mac. The
+        // timeline counts wall-clock ms, the mic samples: if they drifted apart, or a build before `ended` recorded it, all of the mic stays here.
+        let hidden = if local { vec![] } else if !events.is_empty() && self.drifted(id, mic.len())? { vec![(0, mic.len())] } else { private(&events, mic.len()) };
+        let track = |who: &str| if who == "Me" { &mic } else { &them };
+        let mut pieces = vec![];
+        for (who, s) in [("Me", &mic), ("Them", &them)] {
+            for (a, b, private) in if who == "Me" { runs(&hidden, s.len()) } else { runs(&[], s.len()) } {
+                pieces.extend(cuts(&s[a..b], self.chunk).into_iter().map(|(x, y)| (who, a + x, a + y, private)));
+            }
+        }
+        let kept_path = folder.join("endpoint.json");
+        let mut kept: Kept = std::fs::read(&kept_path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        match &via {
+            Via::Endpoint(Ok(e)) if (kept.provider.as_str(), kept.model.as_str()) != (e.provider.as_str(), e.model.as_str()) => kept = Kept { provider: e.provider.clone(), model: e.model.clone(), off: e.off, chunks: vec![] },
+            Via::Local => kept.chunks.clear(),
+            _ => {}
+        }
         // shortcut: both tracks sit in memory as 16-bit samples (115 MB an hour each); stream from disk past a few hours.
         let mut said: Vec<(f64, f64, &str, String)> = vec![];
-        for (i, (who, audio, at)) in pieces.iter().enumerate() {
-            progress(i as f32 / (pieces.len() + 1) as f32);
+        let add = |said: &mut Vec<_>, who, at: usize, segs: Vec<(f32, f32, String)>| {
+            let off = at as f64 / rate;
+            said.extend(segs.into_iter().filter(|s| !s.2.trim().is_empty()).map(|s| (off + s.0 as f64, off + s.1 as f64, who, s.2.trim().to_string())));
+        };
+        let (steps, mut step) = ((pieces.len() + 1) as f32, 0.0);
+        let mut tick = |progress: &mut dyn FnMut(f32)| {
+            progress(step / steps);
+            step += 1.0;
+        };
+        let (mut todo, mut used) = (vec![], vec![]); // chunks for the Endpoint; Endpoint chunks done, by index in `kept`
+        for &(who, a, b, private) in &pieces {
+            let audio = &track(who)[a..b];
+            if !local && !private && !audio.iter().all(|s| s.abs() < QUIET) {
+                if let Some(i) = kept.chunks.iter().position(|c| (c.who.as_str(), c.from, c.to) == (who, a, b)) {
+                    used.push(i);
+                    add(&mut said, who, a, kept.chunks[i].said.clone());
+                    tick(progress);
+                    continue;
+                }
+                if let Via::Endpoint(_) = via {
+                    todo.push((who, a, b));
+                    continue;
+                }
+            }
+            tick(progress);
             if audio.iter().all(|s| s.abs() < QUIET) {
                 continue;
             }
             let audio: Vec<f32> = audio.iter().map(|s| *s as f32 / 32768.0).collect();
-            for s in stt.transcribe(&audio)? {
-                let text = s.text.trim();
-                let off = *at as f64 / rate;
-                if !text.is_empty() {
-                    said.push((off + s.start as f64, off + s.end as f64, who, text.into()));
+            add(&mut said, who, a, stt.transcribe(&audio)?.into_iter().map(|s| (s.start, s.end, s.text)).collect());
+        }
+        if let Via::Endpoint(e) = &via && !todo.is_empty() {
+            let (m, mut why) = (todo.len() + used.len(), String::new());
+            let sent = match e {
+                Ok(e) => self.upload(e, &todo.iter().map(|&(who, a, b)| &track(who)[a..b]).collect::<Vec<_>>(), &mut || tick(progress)),
+                Err(e) => todo.iter().map(|_| Err(e.clone())).collect(),
+            };
+            for (&(who, a, b), r) in todo.iter().zip(sent) {
+                match r {
+                    Ok((segs, cost)) => {
+                        let segs: Vec<_> = segs.into_iter().map(|s| (s.start, s.end, s.text)).collect();
+                        add(&mut said, who, a, segs.clone());
+                        used.push(kept.chunks.len());
+                        kept.chunks.push(KeptChunk { who: who.into(), from: a, to: b, said: segs, cost });
+                    }
+                    Err(e) => why = e,
                 }
             }
+            if let Ok(json) = serde_json::to_vec(&kept) && !kept.chunks.is_empty() {
+                let _ = std::fs::write(&kept_path, json); // without it, Retry sends those chunks again
+            }
+            if !why.is_empty() {
+                return Err(format!("{INCOMPLETE} ({} of {m}): {why}", used.len()));
+            }
         }
+        // Which provider and model transcribed it, and the cost; none when it all ran on this Mac.
+        let stt_record = (!used.is_empty()).then(|| {
+            let cost = total(&used.iter().map(|&i| &kept.chunks[i].cost).collect::<Vec<_>>());
+            serde_json::json!({ "provider": kept.provider, "model": kept.model, "off": kept.off, "cost": cost }).to_string()
+        });
         said.sort_by(|a, b| a.0.total_cmp(&b.0)); // stable: Me before Them when they start together
         let spans: Vec<(i64, i64)> = said.iter().map(|s| ((s.0 * 1000.0).round() as i64, (s.1 * 1000.0).round() as i64)).collect();
         let them_lines: Vec<usize> = (0..said.len()).filter(|&i| said[i].2 == "Them").collect();
@@ -665,7 +850,7 @@ impl Meetings {
                         labels[i] = l;
                     }
                     if names.is_empty() && self.captions_said_unavailable(id) {
-                        note = Some("Teams captions weren't available, so voices are numbered.".to_string());
+                        note = Some(format!("{} captions weren't available, so voices are numbered.", mirrored_from(&self.db.lock().unwrap(), id).name()));
                     }
                 }
                 Err(e) => note = Some(format!("Couldn't tell voices apart: {e}")),
@@ -680,10 +865,43 @@ impl Meetings {
                 tx.execute("INSERT INTO segment(meeting, start_ms, end_ms, speaker, text, mute, label) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", (id, start, end, who, text, mute, label))?;
             }
             // A meeting cut off by a crash never got its length.
-            tx.execute("UPDATE meeting SET state = 'done', failure = NULL, note = ?3, duration_ms = COALESCE(duration_ms, ?2) WHERE id = ?1", (id, mic.len() as i64 * 1000 / RATE as i64, &note))?;
+            tx.execute("UPDATE meeting SET state = 'done', failure = NULL, note = ?3, duration_ms = COALESCE(duration_ms, ?2), stt = ?4 WHERE id = ?1", (id, mic.len() as i64 * 1000 / RATE as i64, &note, &stt_record))?;
             tx.commit()
         };
         save(&mut db).map_err(|e| format!("Couldn't save the notes: {e}"))
+    }
+
+    /// Sends `chunks` to the Endpoint, `PARALLEL` at a time, each tried `RETRIES` more times with doubling waits;
+    /// `done` is called as each finishes. Results in the chunks' order.
+    fn upload(&self, e: &crate::ai::SttEndpoint, chunks: &[&[i16]], done: &mut dyn FnMut()) -> Vec<Result<(Vec<Segment>, crate::ai::Cost), String>> {
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let (tx, rx) = channel();
+        std::thread::scope(|s| {
+            for _ in 0..PARALLEL {
+                let (tx, next) = (tx.clone(), &next);
+                s.spawn(move || loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let Some(chunk) = chunks.get(i) else { break };
+                    let wav = wav_bytes(chunk);
+                    let mut r = e.send(&wav);
+                    for k in 0..RETRIES {
+                        if r.is_ok() {
+                            break;
+                        }
+                        std::thread::sleep(self.backoff * 2u32.pow(k));
+                        r = e.send(&wav);
+                    }
+                    let _ = tx.send((i, r));
+                });
+            }
+            drop(tx);
+            let mut out: Vec<_> = chunks.iter().map(|_| Err(String::new())).collect();
+            for (i, r) in rx {
+                out[i] = r;
+                done();
+            }
+            out
+        })
     }
 
     /// Stops the recording and keeps it: the audio is finished and the meeting is marked recorded.
@@ -706,7 +924,7 @@ impl Meetings {
         self.db
             .lock()
             .unwrap()
-            .execute("UPDATE meeting SET duration_ms = ?1, state = 'recorded' WHERE id = ?2", (ms, a.id))
+            .execute("UPDATE meeting SET duration_ms = ?1, state = 'recorded', ended = ?3 WHERE id = ?2", (ms, a.id, a.started + a.begun.elapsed().as_millis() as i64))
             .map_err(|e| format!("Couldn't save the meeting: {e}"))?;
         Ok(Some(a.id))
     }
@@ -725,6 +943,8 @@ pub struct Row {
     pub failure: Option<String>,
     /// A one-line thing worth knowing about a finished meeting, like why voices weren't told apart.
     pub note: Option<String>,
+    /// Failed with an Endpoint's chunks undone: it offers Transcribe locally beside Try again.
+    pub incomplete: bool,
 }
 
 /// The state of the mute button over a stretch of speech, from the timeline: the state that covers more than half
@@ -775,25 +995,41 @@ pub struct Page {
     pub segments: Vec<Line>,
     /// The last transcript cleanup run, `{provider, model, cost}`; none when it never ran.
     pub cleanup: Option<serde_json::Value>,
+    /// The Endpoint that transcribed it, `{provider, model, off, cost}` (no cost while it runs); none when the Local model did.
+    pub stt: Option<serde_json::Value>,
 }
 
 /// Every meeting, newest first. The one still recording isn't in it: the list shows it as its live card.
 pub fn list(db: &Connection) -> Result<Vec<Row>, String> {
     let sql = "SELECT id, title, started, duration_ms, source_app, state, failure, note FROM meeting WHERE state <> 'recording' ORDER BY started DESC, id DESC";
     let rows = db.prepare(sql).and_then(|mut q| {
-        q.query_map([], |r| Ok(Row { id: r.get(0)?, title: r.get(1)?, started: r.get(2)?, duration_ms: r.get(3)?, source_app: r.get(4)?, state: r.get(5)?, failure: r.get(6)?, note: r.get(7)? })).and_then(|r| r.collect())
+        q.query_map([], |r| Ok(Row { id: r.get(0)?, title: r.get(1)?, started: r.get(2)?, duration_ms: r.get(3)?, source_app: r.get(4)?, state: r.get(5)?, failure: r.get(6)?, note: r.get(7)?, incomplete: false })).and_then(|r| r.collect())
     });
-    rows.map_err(|e| format!("Couldn't read your meetings: {e}"))
+    let mut rows: Vec<Row> = rows.map_err(|e| format!("Couldn't read your meetings: {e}"))?;
+    rows.iter_mut().for_each(|r| r.incomplete = r.state == "failed" && r.failure.as_deref().is_some_and(|f| f.starts_with(INCOMPLETE)));
+    Ok(rows)
 }
 
 pub fn page(db: &Connection, id: i64) -> Result<Page, String> {
     let meeting = list(db)?.into_iter().find(|m| m.id == id).ok_or("That meeting isn't there anymore.")?;
-    let cleanup: Option<String> = db.query_row("SELECT cleanup FROM meeting WHERE id = ?1", [id], |r| r.get(0)).map_err(|e| format!("Couldn't read the meeting: {e}"))?;
-    Ok(Page { meeting, segments: lines(db, id)?, cleanup: cleanup.and_then(|c| serde_json::from_str(&c).ok()) })
+    let (cleanup, stt): (Option<String>, Option<String>) = db.query_row("SELECT cleanup, stt FROM meeting WHERE id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?))).map_err(|e| format!("Couldn't read the meeting: {e}"))?;
+    let json = |c: Option<String>| c.and_then(|c| serde_json::from_str(&c).ok());
+    Ok(Page { meeting, segments: lines(db, id)?, cleanup: json(cleanup), stt: json(stt) })
+}
+
+/// Whose call page meeting `id`'s mute state was mirrored from: the last report's, Teams if none.
+fn mirrored_from(db: &Connection, id: i64) -> Site {
+    let source: Option<String> = db.query_row("SELECT source FROM mute_event WHERE meeting = ?1 ORDER BY id DESC LIMIT 1", [id], |r| r.get(0)).optional().unwrap_or(None);
+    source.map_or(Site::Teams, |s| Site::parse(&s))
 }
 
 pub(crate) fn lines(db: &Connection, id: i64) -> Result<Vec<Line>, String> {
-    let keep = get(db)?.keep_teams;
+    let notes = get(db)?;
+    let keep = match mirrored_from(db, id) {
+        Site::Teams => notes.keep_teams,
+        Site::Meet => notes.keep_meet,
+        Site::Other => false,
+    };
     db.prepare("SELECT id, COALESCE(label, speaker), start_ms, text, mute, included, clean FROM segment WHERE meeting = ?1 ORDER BY start_ms, id")
         .and_then(|mut q| {
             q.query_map([id], |r| {
@@ -1064,6 +1300,8 @@ pub(crate) mod tests {
             .unwrap();
         assert_eq!(row, (id, 1_000, 2_000, None, "Untitled meeting".into(), "recorded".into()));
         assert_eq!(db.query_row("SELECT count(*) FROM meeting", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+        let ended: i64 = db.query_row("SELECT ended FROM meeting", [], |r| r.get(0)).unwrap();
+        assert!((1_000..1_000 + 5_000).contains(&ended), "when it really stopped, on the clock it started on: {ended}");
     }
 
     #[test]
@@ -1174,7 +1412,7 @@ pub(crate) mod tests {
         let (m, id, stt, who) = call(tmp.path());
         caption_at(&m, id, "Ana", &[4000, 4300, 4600]);
         caption_at(&m, id, "Bo", &[8000, 8300, 8600]);
-        m.transcribe(id, &stt, &who, &mut |_| {}).unwrap();
+        m.transcribe(id, &stt, &who, Via::Local, &mut |_| {}).unwrap();
         assert_eq!(lines_of(&m, id), ["Me", "Ana", "Bo"]);
         assert_eq!(said(&m, id).iter().map(|s| s.1.as_str()).collect::<Vec<_>>(), ["Me", "Them", "Them"], "an older build still reads Me and Them");
         assert_eq!(note(&m, id), None);
@@ -1184,11 +1422,11 @@ pub(crate) mod tests {
     fn without_captions_voices_are_numbered_and_unavailable_captions_say_so() {
         let tmp = tempfile::tempdir().unwrap();
         let (m, id, stt, who) = call(tmp.path());
-        m.transcribe(id, &stt, &who, &mut |_| {}).unwrap();
+        m.transcribe(id, &stt, &who, Via::Local, &mut |_| {}).unwrap();
         assert_eq!((lines_of(&m, id), note(&m, id)), (["Me", "Speaker 2", "Speaker 3"].map(String::from).to_vec(), None));
         let (m, id, stt, who) = call(tmp.path());
         m.db.lock().unwrap().execute("UPDATE meeting SET captions = 'unavailable'", []).unwrap();
-        m.transcribe(id, &stt, &who, &mut |_| {}).unwrap();
+        m.transcribe(id, &stt, &who, Via::Local, &mut |_| {}).unwrap();
         assert_eq!(note(&m, id).unwrap(), "Teams captions weren't available, so voices are numbered.");
     }
 
@@ -1196,7 +1434,7 @@ pub(crate) mod tests {
     fn a_diarizer_that_fails_keeps_the_me_them_transcript_and_says_why() {
         let tmp = tempfile::tempdir().unwrap();
         let (m, id, stt, _) = call(tmp.path());
-        m.transcribe(id, &stt, &Voiced(Err("Download Sortformer in Settings › Meeting notes".into())), &mut |_| {}).unwrap();
+        m.transcribe(id, &stt, &Voiced(Err("Download Sortformer in Settings › Meeting notes".into())), Via::Local, &mut |_| {}).unwrap();
         assert_eq!(lines_of(&m, id), ["Me", "Them", "Them"]);
         assert_eq!(state(&m, id), ("done".into(), None));
         assert_eq!(note(&m, id).unwrap(), "Couldn't tell voices apart: Download Sortformer in Settings › Meeting notes");
@@ -1262,7 +1500,7 @@ pub(crate) mod tests {
         let (m, id) = two_tracks(tmp.path());
         let stt = Count::default();
         let mut seen = vec![];
-        m.transcribe(id, &stt, &Voiced(Err("x".into())), &mut |p| seen.push(p)).unwrap();
+        m.transcribe(id, &stt, &Voiced(Err("x".into())), Via::Local, &mut |p| seen.push(p)).unwrap();
         assert_eq!(stt.0.lock().unwrap().len(), 6, "four chunks of Me and two of Them; two silent ones never reached the model");
         let line = |ms: i64, who: &str, n: &str| (ms, who.to_string(), n.to_string());
         assert_eq!(said(&m, id), [line(100, "Me", "1"), line(1650, "Them", "5"), line(1950, "Me", "2"), line(3200, "Them", "6"), line(3500, "Me", "3"), line(5050, "Me", "4")]);
@@ -1281,12 +1519,12 @@ pub(crate) mod tests {
             let mut q = db.prepare("SELECT speaker, mute FROM segment WHERE meeting = ?1 ORDER BY start_ms").unwrap();
             q.query_map([id], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect()
         };
-        m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), &mut |_| {}).unwrap();
+        m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), Via::Local, &mut |_| {}).unwrap();
         assert!(marks(&m).iter().all(|(_, s)| s.is_none()), "no add-on, no marks");
         for (at, s) in [(0, "unmuted"), (1900, "muted"), (3000, "unmuted"), (5000, "unknown")] {
             m.db.lock().unwrap().execute("INSERT INTO mute_event(meeting, at_ms, state, source) VALUES (?1, ?2, ?3, 'teams')", (id, at, s)).unwrap();
         }
-        m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), &mut |_| {}).unwrap(); // Me lines at 100, 1950, 3500 and 5050 ms
+        m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), Via::Local, &mut |_| {}).unwrap(); // Me lines at 100, 1950, 3500 and 5050 ms
         let me: Vec<_> = marks(&m).into_iter().map(|(who, s)| (who, s.unwrap_or_default())).collect();
         let want = |who: &str, s: &str| (who.to_string(), s.to_string());
         assert_eq!(me, [want("Me", "unmuted"), want("Them", ""), want("Me", "muted"), want("Them", ""), want("Me", "unmuted"), want("Me", "unknown")]);
@@ -1312,13 +1550,17 @@ pub(crate) mod tests {
     fn the_mirrored_state_is_timelined_only_while_recording_and_a_drop_is_unknown() {
         let tmp = tempfile::tempdir().unwrap();
         let m = meetings(tmp.path(), Fake(0));
-        m.mute(MuteState::Muted, 500, 500); // not recording: remembered, not kept
+        assert_eq!(m.site(), Site::Teams, "before any report");
+        m.mute(MuteState::Muted, Site::Meet, 500, 500); // not recording: remembered, not kept
         assert_eq!(m.muted(), Some(true));
         let id = m.start(1000).unwrap(); // starts knowing what the button said
-        m.mute(MuteState::Unmuted, 3000, 3100);
-        m.mute(MuteState::Muted, 1_000_000, 4000); // a clock from the future is held to now
-        m.mute(MuteState::Unknown, 5000, 5000); // the add-on dropped
-        assert_eq!(m.muted(), None);
+        m.mute(MuteState::Unmuted, Site::Meet, 3000, 3100);
+        m.mute(MuteState::Muted, Site::Meet, 1_000_000, 4000); // a clock from the future is held to now
+        m.mute(MuteState::Unknown, Site::Meet, 5000, 5000); // the add-on dropped
+        assert_eq!((m.muted(), m.site()), (None, Site::Meet));
+        let db = m.db.lock().unwrap();
+        assert_eq!(mirrored_from(&db, id), Site::Meet, "each mark says whose page");
+        drop(db);
         let rows: Vec<(i64, String)> = {
             let db = m.db.lock().unwrap();
             let mut q = db.prepare("SELECT at_ms, state FROM mute_event WHERE meeting = ?1 ORDER BY id").unwrap();
@@ -1344,22 +1586,29 @@ pub(crate) mod tests {
         assert!(out(&db).contains("secret") && page(&db, 1).unwrap().segments[1].included);
         db.execute("UPDATE segment SET included = 0", []).unwrap();
         assert!(!out(&db).contains("secret"));
-        set(&db, &Notes { on: true, key: KEY.into(), keep_teams: true, offer_calls: true, stop_on_end: true }).unwrap();
+        set(&db, &Notes { on: true, key: KEY.into(), keep_teams: true, keep_meet: false, offer_calls: true, stop_on_end: true }).unwrap();
         assert!(out(&db).contains("secret"), "the setting keeps muted lines, old meetings too");
+        db.execute("INSERT INTO mute_event(meeting, at_ms, state, source) VALUES (1, 0, 'muted', 'meet')", []).unwrap();
+        assert!(!out(&db).contains("secret"), "a Meet meeting goes by the Meet switch");
+        set(&db, &Notes { on: true, key: KEY.into(), keep_teams: false, keep_meet: true, offer_calls: true, stop_on_end: true }).unwrap();
+        assert!(out(&db).contains("secret"));
+        set(&db, &Notes { on: true, key: KEY.into(), keep_teams: true, keep_meet: true, offer_calls: true, stop_on_end: true }).unwrap();
+        db.execute("INSERT INTO mute_event(meeting, at_ms, state, source) VALUES (1, 1, 'muted', 'other')", []).unwrap();
+        assert!(!out(&db).contains("secret"), "no switch keeps a page this build doesn't know");
     }
 
     #[test]
     fn a_failure_keeps_the_audio_and_the_reason_and_try_again_finishes() {
         let tmp = tempfile::tempdir().unwrap();
         let (m, id) = two_tracks(tmp.path());
-        assert_eq!(m.transcribe(id, &Count(Default::default(), Some(2)), &Voiced(Err("x".into())), &mut |_| {}), Err("The model fell over.".into()));
+        assert_eq!(m.transcribe(id, &Count(Default::default(), Some(2)), &Voiced(Err("x".into())), Via::Local, &mut |_| {}), Err("The model fell over.".into()));
         assert_eq!(state(&m, id), ("failed".into(), Some("The model fell over.".into())));
         assert!(said(&m, id).is_empty() && m.failed(id));
         assert!(tmp.path().join(format!("meetings/{id}/mic.wav")).exists() && tmp.path().join(format!("meetings/{id}/them.wav")).exists());
         assert!(m.unfinished().is_empty(), "a failed one waits for Try again, not for the next launch");
-        m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), &mut |_| {}).unwrap();
+        m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), Via::Local, &mut |_| {}).unwrap();
         assert_eq!((state(&m, id), said(&m, id).len(), m.failed(id)), (("done".into(), None), 6, false));
-        m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), &mut |_| {}).unwrap();
+        m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), Via::Local, &mut |_| {}).unwrap();
         assert_eq!(said(&m, id).len(), 6, "writing up again replaces the notes");
     }
 
@@ -1372,7 +1621,7 @@ pub(crate) mod tests {
         let next = meetings(tmp.path(), Fake(0));
         assert_eq!(next.unfinished(), [id]);
         let stt = Count::default();
-        next.transcribe(id, &stt, &Voiced(Err("x".into())), &mut |_| {}).unwrap();
+        next.transcribe(id, &stt, &Voiced(Err("x".into())), Via::Local, &mut |_| {}).unwrap();
         assert_eq!(*stt.0.lock().unwrap(), [RATE as usize * 3], "the flushed mic audio; the call was silent");
         assert_eq!((said(&next, id).len(), state(&next, id)), (1, ("done".into(), None)));
         assert!(next.unfinished().is_empty());
@@ -1392,7 +1641,7 @@ pub(crate) mod tests {
     fn settings_default_off_and_save_only_real_shortcuts() {
         let tmp = tempfile::tempdir().unwrap();
         let conn = crate::storage::open(tmp.path()).unwrap();
-        let n = |on, key: &str| Notes { on, key: key.into(), keep_teams: false, offer_calls: true, stop_on_end: true };
+        let n = |on, key: &str| Notes { on, key: key.into(), keep_teams: false, keep_meet: false, offer_calls: true, stop_on_end: true };
         assert_eq!(get(&conn), Ok(n(false, "Ctrl+Alt+KeyM")));
         set(&conn, &n(true, "")).unwrap();
         assert_eq!(get(&conn), Ok(n(true, "")));
@@ -1402,6 +1651,8 @@ pub(crate) mod tests {
         assert_eq!(get(&conn), Ok(n(true, "Alt+Space")));
         set(&conn, &Notes { keep_teams: true, ..n(true, "") }).unwrap();
         assert!(get(&conn).unwrap().keep_teams);
+        set(&conn, &Notes { keep_meet: true, ..n(true, "") }).unwrap();
+        assert!(get(&conn).is_ok_and(|n| n.keep_meet && !n.keep_teams));
         set(&conn, &Notes { offer_calls: false, stop_on_end: false, ..n(true, "") }).unwrap();
         assert!(get(&conn).is_ok_and(|n| !n.offer_calls && !n.stop_on_end));
         // Settings sent by a build from before the call switches: both on.
@@ -1416,7 +1667,7 @@ pub(crate) mod tests {
         for (k, v) in [("meeting_on", "yes"), ("meeting_keep_teams", "true"), ("meeting_key", "")] {
             conn.execute("INSERT INTO setting(key, value) VALUES (?1, ?2)", [k, v]).unwrap();
         }
-        assert_eq!(get(&conn), Ok(Notes { on: false, key: "".into(), keep_teams: false, offer_calls: true, stop_on_end: true }), "unknown switches are off; \"\" stays no shortcut");
+        assert_eq!(get(&conn), Ok(Notes { on: false, key: "".into(), keep_teams: false, keep_meet: false, offer_calls: true, stop_on_end: true }), "unknown switches are off; \"\" stays no shortcut");
         // Today a stored shortcut is returned as saved, even one this build can't parse.
         conn.execute("UPDATE setting SET value = 'Alt+Nope' WHERE key = 'meeting_key'", []).unwrap();
         assert_eq!(get(&conn).unwrap().key, "Alt+Nope");
@@ -1455,4 +1706,201 @@ pub(crate) mod tests {
         assert!(when(now - 86_400_000, now).starts_with("Yesterday "));
         assert!(!when(now - 5 * 86_400_000, now).contains("day"));
     }
+
+    // ---- meeting speech-to-text on an Endpoint (#45) ----
+
+    const MARK: i16 = 12_345; // a sample no square wave has: if it is in an upload, a muted stretch left the Mac
+
+    fn write_samples(dir: &std::path::Path, id: i64, name: &str, samples: &[i16]) {
+        let folder = dir.join(format!("meetings/{id}"));
+        std::fs::create_dir_all(&folder).unwrap();
+        let mut w = create(folder.join(name)).unwrap();
+        samples.iter().for_each(|s| w.write_sample(*s).unwrap());
+        w.finalize().unwrap();
+    }
+
+    /// The WAV in an upload: its 16 kHz mono samples.
+    fn uploaded(body: &[u8]) -> Vec<i16> {
+        let at = body.windows(4).position(|w| w == b"RIFF").expect("a WAV in the upload");
+        let r = hound::WavReader::new(std::io::Cursor::new(&body[at..])).unwrap();
+        assert_eq!((r.spec().sample_rate, r.spec().channels, r.spec().bits_per_sample), (16_000, 1, 16));
+        r.into_samples::<i16>().map(Result::unwrap).collect()
+    }
+
+    fn has_mark(body: &[u8]) -> bool {
+        body.windows(16).any(|w| w == MARK.to_le_bytes().repeat(8))
+    }
+
+    type Bodies = Arc<Mutex<Vec<Vec<u8>>>>;
+
+    /// A recorded meeting with chunks of 2 s, an OpenRouter-style Endpoint on a local server picked for it, and the
+    /// server's bodies. The server says, 0.1 s into each chunk, how many samples it got, for $0.001; while `broken`, an
+    /// upload carrying `MARK` fails.
+    fn endpoint_meeting(tmp: &std::path::Path, broken: Arc<std::sync::atomic::AtomicBool>) -> (Meetings, i64, crate::ai::SttEndpoint, Bodies) {
+        let (base, bodies) = crate::ai::tests::server(move |path, _, body| {
+            assert_eq!(path, "/audio/transcriptions");
+            if broken.load(std::sync::atomic::Ordering::SeqCst) && has_mark(body) {
+                return (500, "busy".into());
+            }
+            (200, serde_json::json!({ "segments": [{ "start": 0.1, "end": 0.2, "text": uploaded(body).len().to_string() }], "usage": { "cost": 0.001 } }).to_string())
+        });
+        let mut m = meetings(tmp, Fake(0));
+        (m.chunk, m.backoff) = (2 * RATE as usize, Duration::ZERO);
+        let keys = crate::ai::tests::Memory::default();
+        let db = m.db.lock().unwrap();
+        let p = crate::ai::add(&db, &keys, "openai", "Cloud", &base, "").unwrap();
+        crate::ai::feature_set(&db, crate::ai::STT, &format!("{}|whisper", serde_json::to_value(&p).unwrap()["id"])).unwrap();
+        let e = crate::ai::stt_endpoint(&db, &keys).unwrap().unwrap();
+        let id = db.query_row("INSERT INTO meeting(started, state) VALUES (1, 'recorded') RETURNING id", [], |r| r.get(0)).unwrap();
+        drop(db);
+        (m, id, e, bodies)
+    }
+
+    fn stt_of(m: &Meetings, id: i64) -> serde_json::Value {
+        page(&m.db.lock().unwrap(), id).unwrap().stt.unwrap_or_default()
+    }
+
+    #[test]
+    fn an_endpoint_gets_each_track_in_chunks_and_its_times_are_shifted_by_each_chunks_offset() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (m, id, e, bodies) = endpoint_meeting(tmp.path(), Default::default());
+        write_track(tmp.path(), id, "mic.wav", &[(false, 5.0)]);
+        write_track(tmp.path(), id, "them.wav", &[(true, 5.0)]);
+        let local = Count::default();
+        m.transcribe(id, &local, &Voiced(Err("x".into())), Via::Endpoint(Ok(&e)), &mut |_| {}).unwrap();
+        // Loud all through, so each cut falls where a window first ties: 1.55 s, then 3.1 s.
+        let line = |ms: i64, n: usize| (ms, "Them".to_string(), n.to_string());
+        assert_eq!(said(&m, id), [line(100, 24_800), line(1650, 24_800), line(3200, 30_400)]);
+        assert!(local.0.lock().unwrap().is_empty(), "nothing ran on the Local model");
+        let bodies = bodies.lock().unwrap();
+        assert_eq!(bodies.len(), 3, "the silent mic sent nothing");
+        assert!(bodies.iter().all(|b| uploaded(b).len() <= 2 * RATE as usize));
+        let stt = stt_of(&m, id);
+        assert_eq!((&stt["provider"], &stt["model"], stt["off"].as_bool()), (&serde_json::json!("Cloud"), &serde_json::json!("whisper"), Some(false)));
+        assert!((stt["cost"]["usd"].as_f64().unwrap() - 0.003).abs() < 1e-9, "{stt}");
+    }
+
+    #[test]
+    fn possibly_muted_mic_stretches_never_reach_the_endpoint_and_are_transcribed_locally() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (m, id, e, bodies) = endpoint_meeting(tmp.path(), Default::default());
+        let r = RATE as usize;
+        let mic: Vec<i16> = [wave(true, 3.0), vec![MARK; 4 * r], wave(true, 3.0)].concat();
+        write_samples(tmp.path(), id, "mic.wav", &mic);
+        write_track(tmp.path(), id, "them.wav", &[(false, 10.0)]);
+        m.db.lock().unwrap().execute("UPDATE meeting SET ended = started + 10000 WHERE id = ?1", [id]).unwrap();
+        for (at, s) in [(0, "unmuted"), (3000, "muted"), (7000, "unmuted")] {
+            m.db.lock().unwrap().execute("INSERT INTO mute_event(meeting, at_ms, state, source) VALUES (?1, ?2, ?3, 'teams')", (id, at, s)).unwrap();
+        }
+        let local = Count::default();
+        m.transcribe(id, &local, &Voiced(Err("x".into())), Via::Endpoint(Ok(&e)), &mut |_| {}).unwrap();
+        assert_eq!(local.0.lock().unwrap().iter().sum::<usize>(), 6 * r, "3 to 7 s, a second wider each way, on this Mac");
+        let sent = bodies.lock().unwrap().clone();
+        assert_eq!(sent.len(), 2, "0 to 2 s and 8 to 10 s");
+        assert!(sent.iter().all(|b| !has_mark(b)), "a muted sample was uploaded");
+        let p = page(&m.db.lock().unwrap(), id).unwrap();
+        let muted = p.segments.iter().find(|l| l.muted).expect("the muted line, from the Local model");
+        include(&m.db.lock().unwrap(), &[muted.id]).unwrap();
+        assert_eq!(bodies.lock().unwrap().len(), 2, "including it sends nothing");
+        // Try again on the same meeting: the muted stretch stays local.
+        m.transcribe(id, &local, &Voiced(Err("x".into())), Via::Endpoint(Ok(&e)), &mut |_| {}).unwrap();
+        assert!(bodies.lock().unwrap().iter().all(|b| !has_mark(b)));
+    }
+
+    #[test]
+    fn a_mic_track_that_drifted_from_the_mute_timeline_or_an_old_meeting_never_reaches_the_endpoint() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (m, id, e, bodies) = endpoint_meeting(tmp.path(), Default::default());
+        // The meeting ran 10 s but the mic track is 8 s: muted 3 to 5 s on the clock is later in the samples.
+        let r = RATE as usize;
+        write_samples(tmp.path(), id, "mic.wav", &vec![MARK; 8 * r]);
+        write_samples(tmp.path(), id, "them.wav", &wave(true, 8.0));
+        for (at, s) in [(0, "unmuted"), (3000, "muted"), (5000, "unmuted")] {
+            m.db.lock().unwrap().execute("INSERT INTO mute_event(meeting, at_ms, state, source) VALUES (?1, ?2, ?3, 'teams')", (id, at, s)).unwrap();
+        }
+        let local = Count::default();
+        let none = || bodies.lock().unwrap().iter().all(|b| !has_mark(b)) && !bodies.lock().unwrap().is_empty();
+        // No `ended`: recorded by an older build.
+        m.transcribe(id, &local, &Voiced(Err("x".into())), Via::Endpoint(Ok(&e)), &mut |_| {}).unwrap();
+        assert!(none(), "the mic went to the Endpoint, or the call didn't");
+        assert_eq!(local.0.lock().unwrap().iter().sum::<usize>(), 8 * r, "the whole mic, on this Mac");
+        m.db.lock().unwrap().execute("UPDATE meeting SET ended = started + 10000 WHERE id = ?1", [id]).unwrap();
+        m.transcribe(id, &local, &Voiced(Err("x".into())), Via::Endpoint(Ok(&e)), &mut |_| {}).unwrap();
+        m.transcribe(id, &local, &Voiced(Err("x".into())), Via::Rest, &mut |_| {}).unwrap();
+        assert!(none(), "2 s of drift: the mic stays here on retry and Transcribe locally");
+        // Within half a second, the timeline is trusted and the unmuted mic goes.
+        m.db.lock().unwrap().execute("UPDATE meeting SET ended = started + 8400 WHERE id = ?1", [id]).unwrap();
+        m.transcribe(id, &local, &Voiced(Err("x".into())), Via::Endpoint(Ok(&e)), &mut |_| {}).unwrap();
+        assert!(bodies.lock().unwrap().iter().any(|b| has_mark(b)));
+    }
+
+    #[test]
+    fn a_failing_chunk_is_retried_then_the_meeting_is_incomplete_and_retry_sends_only_what_failed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let broken = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let (m, id, e, bodies) = endpoint_meeting(tmp.path(), broken.clone());
+        write_track(tmp.path(), id, "mic.wav", &[(true, 1.0)]);
+        write_samples(tmp.path(), id, "them.wav", &[MARK; RATE as usize]);
+        let err = m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), Via::Endpoint(Ok(&e)), &mut |_| {}).unwrap_err();
+        assert!(err.starts_with("Transcription incomplete (1 of 2): ") && err.ends_with("HTTP 500"), "{err}");
+        assert_eq!(bodies.lock().unwrap().len(), 5, "the mic once, the call once and 3 retries");
+        let row = list(&m.db.lock().unwrap()).unwrap().into_iter().find(|r| r.id == id).unwrap();
+        assert!(row.state == "failed" && row.incomplete && row.failure.as_deref() == Some(err.as_str()));
+        broken.store(false, std::sync::atomic::Ordering::SeqCst);
+        m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), Via::Endpoint(Ok(&e)), &mut |_| {}).unwrap();
+        assert_eq!(bodies.lock().unwrap().len(), 6, "only the chunk that failed went again");
+        assert_eq!((said(&m, id).len(), state(&m, id)), (2, ("done".into(), None)));
+        assert!((stt_of(&m, id)["cost"]["usd"].as_f64().unwrap() - 0.002).abs() < 1e-9);
+    }
+
+    #[test]
+    fn transcribe_locally_keeps_what_the_endpoint_did_and_does_the_rest_on_this_mac() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (m, id, e, bodies) = endpoint_meeting(tmp.path(), Arc::new(std::sync::atomic::AtomicBool::new(true)));
+        write_track(tmp.path(), id, "mic.wav", &[(true, 1.0)]);
+        write_samples(tmp.path(), id, "them.wav", &[MARK; RATE as usize]);
+        assert!(m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), Via::Endpoint(Ok(&e)), &mut |_| {}).is_err());
+        let n = bodies.lock().unwrap().len();
+        let local = Count::default();
+        m.transcribe(id, &local, &Voiced(Err("x".into())), Via::Rest, &mut |_| {}).unwrap();
+        assert_eq!((bodies.lock().unwrap().len(), local.0.lock().unwrap().clone()), (n, vec![RATE as usize]), "the call's chunk only, locally");
+        let line = |ms: i64, who: &str, t: &str| (ms, who.to_string(), t.to_string());
+        assert_eq!(said(&m, id), [line(100, "Me", "16000"), line(100, "Them", "1")]);
+        assert_eq!(state(&m, id), ("done".into(), None));
+        assert_eq!(stt_of(&m, id)["model"], "whisper", "the Endpoint did part of it");
+    }
+
+    #[test]
+    fn a_not_set_endpoint_sends_nothing_and_leaves_the_meeting_incomplete() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (m, id, _, bodies) = endpoint_meeting(tmp.path(), Default::default());
+        write_track(tmp.path(), id, "mic.wav", &[(true, 1.0)]);
+        write_track(tmp.path(), id, "them.wav", &[(true, 1.0)]);
+        let err = m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), Via::Endpoint(Err("Meeting speech-to-text: Not set".into())), &mut |_| {}).unwrap_err();
+        assert_eq!(err, "Transcription incomplete (0 of 2): Meeting speech-to-text: Not set");
+        assert!(bodies.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_local_model_never_touches_the_endpoint_or_records_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (m, id, _, bodies) = endpoint_meeting(tmp.path(), Default::default());
+        write_track(tmp.path(), id, "mic.wav", &[(true, 1.0)]);
+        write_track(tmp.path(), id, "them.wav", &[(true, 1.0)]);
+        m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), Via::Local, &mut |_| {}).unwrap();
+        assert!(bodies.lock().unwrap().is_empty() && page(&m.db.lock().unwrap(), id).unwrap().stt.is_none());
+    }
+
+    #[test]
+    fn possibly_muted_is_anything_but_unmuted_once_the_add_on_reported_widened_a_second() {
+        use MuteState::*;
+        let s = |sec: f64| (sec * RATE as f64) as usize;
+        let len = s(20.0);
+        assert!(private(&[], len).is_empty(), "no add-on, nothing to keep back");
+        assert_eq!(private(&[(0, Unmuted), (5000, Muted), (8000, Unmuted)], len), [(s(4.0), s(9.0))]);
+        assert_eq!(private(&[(3000, Unmuted), (10_000, Unknown)], len), [(0, s(4.0)), (s(9.0), len)], "before the first report, and a drop");
+        assert_eq!(private(&[(0, Muted), (1500, Unmuted), (2500, Muted)], len), [(0, len)], "a gap under the padding stays private");
+        assert_eq!(runs(&[(s(4.0), s(9.0))], len), [(0, s(4.0), false), (s(4.0), s(9.0), true), (s(9.0), len, false)]);
+    }
 }
+

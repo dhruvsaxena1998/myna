@@ -329,3 +329,99 @@ test("Understand says which model is picked, with its state, and opens the list 
   await r.getByText("Speech-to-text model").click();
   await expect(page.getByRole("heading", { name: "Speech-to-text · Voice typing", level: 1 })).toBeVisible();
 });
+
+// Advanced (#44): a model of your own from a path on this Mac or a Hugging Face repo, as a row of its task's list.
+async function openAdvanced(page: import("@playwright/test").Page) {
+  const base = JSON.stringify({ stt: [model("parakeet", { default: true }), model("whisper", { installed: true })], diar: [model("sortformer", { installed: true })] });
+  await fakeTauri(page, `(() => {
+    const base = ${base}, custom = [];
+    const mine = (task) => custom.filter((m) => (m.engine === "sortformer") === (task === "diar"));
+    return {
+      storage_status: () => "/tmp/Myna", meeting_get: () => ({ on: true, key: "Ctrl+Alt+KeyM", keep_teams: false }),
+      models_list: () => [
+        { id: "stt", active: "whisper", models: [...base.stt, ...mine("stt")] },
+        { id: "diar", active: "sortformer", models: [...base.diar, ...mine("diar")] },
+        { id: "meeting_stt", active: "whisper", models: [...base.stt, ...mine("stt")] },
+      ],
+      model_add: ({ engine, source }) => {
+        if (source.endsWith("bad.bin")) throw "Couldn't load bad.bin: invalid model data (bad magic)";
+        const local = source.startsWith("/");
+        const name = source.split("/").pop();
+        const m = { ...base.stt[1], id: "custom-" + name, name, vendor: local ? "On this Mac" : "Hugging Face", desc: engine + " · " + source, size: local ? 0 : 670479942,
+          files: local ? [] : [{}], engine, path: local ? source : "", installed: local };
+        custom.push(m);
+        return m;
+      },
+      model_download: () => null,
+      model_select: () => null,
+      model_delete: ({ id }) => { custom.splice(custom.findIndex((m) => m.id === id), 1); return "whisper"; },
+    };
+  })()`);
+  await page.goto("/settings");
+}
+
+test("Advanced adds a model from a path that loads, says why one won't, and removes it without a trace", async ({ page }) => {
+  await openAdvanced(page);
+  await toModels(page);
+  const adv = page.getByRole("form", { name: "Add a model" });
+  await expect(page.getByRole("heading", { name: "Advanced" })).toBeVisible();
+  await expect(adv.getByRole("combobox", { name: "Runtime" })).toHaveValue("whisper");
+  const path = adv.getByRole("textbox", { name: "Path or repo" });
+  const add = adv.getByRole("button", { name: "Add model" });
+  await expect(add).toBeDisabled();
+
+  await path.fill("/Users/me/bad.bin");
+  await add.click();
+  await expect(adv.getByRole("status")).toHaveText("Couldn't load bad.bin: invalid model data (bad magic)");
+  await expect(stt(page).getByRole("radio")).toHaveCount(2); // not added, so it can't be picked
+
+  await path.fill("/Users/me/ggml-mine.bin");
+  await expect(adv.getByRole("status")).toHaveText("");
+  await add.click();
+  const row = stt(page).getByRole("listitem").filter({ hasText: "ggml-mine.bin" });
+  await expect(row).toContainText("On this Mac");
+  await expect(row).toContainText("Installed");
+  await expect(path).toHaveValue("");
+  expect(await calls(page, "model_add")).toEqual([
+    ["model_add", { engine: "whisper", source: "/Users/me/bad.bin" }],
+    ["model_add", { engine: "whisper", source: "/Users/me/ggml-mine.bin" }],
+  ]);
+  expect(await calls(page, "model_download")).toEqual([]); // used where it is: nothing to download
+  await page.getByRole("radio", { name: "Use ggml-mine.bin" }).check();
+  await expect(page.getByRole("radio", { name: "Use ggml-mine.bin" })).toBeChecked();
+
+  await row.getByRole("button", { name: "Remove ggml-mine.bin" }).click();
+  await expect(row).toHaveCount(0);
+  expect(await calls(page, "model_delete")).toEqual([["model_delete", { id: "custom-ggml-mine.bin", task: "stt" }]]);
+  await expect(page.getByRole("radio", { name: /whisper/ })).toBeChecked();
+});
+
+test("Advanced downloads a Hugging Face repo like a catalog model, and a repo that won't load can't be picked", async ({ page }) => {
+  await openAdvanced(page);
+  await toModels(page);
+  const adv = page.getByRole("form", { name: "Add a model" });
+  await adv.getByRole("combobox", { name: "Runtime" }).selectOption("parakeet-tdt");
+  await adv.getByRole("textbox", { name: "Path or repo" }).fill("istupakov/parakeet-tdt-0.6b-v3-onnx");
+  await adv.getByRole("button", { name: "Add model" }).click();
+  const row = stt(page).getByRole("listitem").filter({ hasText: "parakeet-tdt-0.6b-v3-onnx" });
+  await expect(row).toContainText("Hugging Face · 670 MB");
+  expect(await calls(page, "model_add")).toEqual([["model_add", { engine: "parakeet-tdt", source: "istupakov/parakeet-tdt-0.6b-v3-onnx" }]]);
+  expect(await calls(page, "model_download")).toEqual([["model_download", { id: "custom-parakeet-tdt-0.6b-v3-onnx" }]]);
+  await expect(row.getByRole("progressbar")).toBeVisible();
+  await emit(page, { id: "custom-parakeet-tdt-0.6b-v3-onnx", state: "failed", error: "Couldn't load parakeet-tdt-0.6b-v3-onnx: No encoder model found" });
+  await expect(row).toContainText("Couldn't load parakeet-tdt-0.6b-v3-onnx: No encoder model found");
+  await expect(page.getByRole("radio", { name: "Use parakeet-tdt-0.6b-v3-onnx" })).toBeDisabled();
+  await row.getByRole("button", { name: "Remove parakeet-tdt-0.6b-v3-onnx" }).click();
+  await expect(row).toHaveCount(0);
+});
+
+test("Advanced on speaker diarization adds a Sortformer model with no runtime to choose", async ({ page }) => {
+  await openAdvanced(page);
+  await toVoices(page);
+  const adv = page.getByRole("form", { name: "Add a model" });
+  await expect(adv.getByRole("combobox")).toHaveCount(0);
+  await adv.getByRole("textbox", { name: "Path or repo" }).fill("/Users/me/diar.onnx");
+  await adv.getByRole("button", { name: "Add model" }).click();
+  await expect(page.getByRole("radiogroup", { name: "Speaker diarization model" }).getByRole("radio", { name: "Use diar.onnx" })).toBeEnabled();
+  expect(await calls(page, "model_add")).toEqual([["model_add", { engine: "sortformer", source: "/Users/me/diar.onnx" }]]);
+});

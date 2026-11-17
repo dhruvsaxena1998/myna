@@ -125,12 +125,12 @@ fn step_json(r: &rusqlite::Row, at: usize) -> rusqlite::Result<serde_json::Value
         "settings": json(r.get(at + 3)?), "edits": json(r.get(at + 4)?) }))
 }
 
-/// One trace with its steps, for the opened view. The model shows by name; a model no longer in the catalog keeps its id.
+/// One trace with its steps, for the opened view. The model shows by name; a model no longer in the catalog or added under Advanced keeps its id.
 pub fn get(conn: &Connection, id: i64) -> Result<serde_json::Value, String> {
     let err = |e: rusqlite::Error| format!("Couldn't read the dictation trace: {e}");
     let mut t = conn.query_row(&format!("SELECT {COLS} FROM trace WHERE id = ?1"), [id], trace_json).map_err(err)?;
     if let Some(m) = t["model"].as_str().map(String::from) {
-        t["model"] = crate::models::find(&m).map_or(m, |m| m.name).into();
+        t["model"] = crate::models::get(conn, &m).map_or(m, |m| m.name).into();
     }
     let mut q = conn.prepare("SELECT kind, text, ms, settings, edits FROM step WHERE trace = ?1 ORDER BY rowid").map_err(err)?;
     let steps = q.query_map([id], |r| step_json(r, 0)).map_err(err)?.collect::<Result<Vec<_>, _>>().map_err(err)?;
@@ -148,7 +148,7 @@ pub fn all(conn: &Connection) -> Result<Vec<serde_json::Value>, String> {
         let (trace, s) = s.map_err(err)?;
         steps.entry(trace).or_default().push(s);
     }
-    let names: std::collections::HashMap<String, String> = crate::models::all().into_iter().map(|m| (m.id, m.name)).collect();
+    let names: std::collections::HashMap<String, String> = crate::models::everything(conn)?.into_iter().map(|m| (m.id, m.name)).collect();
     // shortcut: loads every trace at once; page it if history grows past a few thousand.
     let mut q = conn.prepare(&format!("SELECT {COLS} FROM trace ORDER BY started DESC, id DESC")).map_err(err)?;
     let traces = q.query_map([], trace_json).map_err(err)?.collect::<Result<Vec<_>, _>>().map_err(err)?;

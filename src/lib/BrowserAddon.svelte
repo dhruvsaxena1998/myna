@@ -35,7 +35,7 @@
       clearTimeout(timer);
       timer = setTimeout(() => (copied = false), 1500);
     });
-  const desc = $derived(connected ? "Sees when you’re muted in Teams, and who is talking." : "Add it to Chrome to keep your voice when muted in Teams.");
+  const desc = $derived(connected ? "Sees when you’re muted in Teams or Meet, and who is talking." : "Add it to Chrome to keep your voice when muted in Teams or Meet.");
 </script>
 
 <section aria-labelledby="addon-h">

@@ -85,6 +85,7 @@
   .list { list-style: none; margin: 0; padding: 0; border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); }
   .row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-3); align-items: center; min-height: 60px; padding: var(--sp-3) var(--sp-4); }
   .row + .row::before, .row + .stage-row::before, .stage-row + .row::before { content: ""; position: absolute; top: 0; left: var(--sp-4); right: 0; height: 1px; background: var(--line); }
+  .row.app { grid-template-columns: 32px minmax(0, 1fr) auto; }
   .row.go { cursor: default; } .row.go:hover { background: var(--fill-hover); }
   .list > .row:first-child { border-radius: var(--r-xl) var(--r-xl) 0 0; } .list > .row:last-child { border-radius: 0 0 var(--r-xl) var(--r-xl); } .list > .row:only-child { border-radius: var(--r-xl); }
   .txt { min-width: 0; }
@@ -531,7 +532,7 @@ const VIEWS = {
       row("Window tint", L.glass === "tinted" ? "The sidebar takes a hint of your highlight colour." : "The sidebar shows your desktop through it.", seg("glass", L.glass, [["clear", "Clear"], ["tinted", "Tinted"]], "look.glass")));
     const ver = u.state === "available" ? `<button class="btn primary" data-act="update">Restart to update</button>` : `<button class="btn" data-act="check" ${u.state === "checking" ? "disabled" : ""} style="min-width:148px">${u.state === "checking" ? "Checking…" : "Check for updates"}</button>`;
     h += sec("Updates",
-      row("Myna", u.state === "available" ? "Version 0.0.2-beta.10 · 0.0.2-beta.11 is ready" : u.state === "latest" ? "Version 0.0.2-beta.10 · Up to date" : "Version 0.0.2-beta.10", ver) +
+      row("Myna", u.state === "available" ? "Version 0.0.2-beta.10 · 0.0.2-beta.11 is ready" : u.state === "latest" ? "Version 0.0.2-beta.10 · Up to date" : "Version 0.0.2-beta.10", ver).replace('class="row"', 'class="row app"').replace('<span class="txt">', '<img src="../src-tauri/icons/icon.svg" alt="" width="32" height="32"><span class="txt">') +
       row("Update mode", UPD.find((x) => x[0] === u.mode)[2], sel("u-mode", u.mode, UPD, "upd.mode")) +
       (u.mode === "off" ? "" : row("Check frequency", FREQ.find((x) => x[0] === u.freq)[2], sel("u-freq", u.freq, FREQ, "upd.freq"))) +
       row("Update channel", u.channel === "beta" ? "Gets pre-releases as well as stable releases." : "Stable releases only. A newer beta stays until stable passes it.", seg("chan", u.channel, [["stable", "Stable"], ["beta", "Beta"]], "upd.channel")));

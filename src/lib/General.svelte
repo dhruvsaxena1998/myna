@@ -4,6 +4,7 @@
   import { onMount } from "svelte";
   import { saveLook, type Look } from "./look";
   import { upd, watchUpdates, type Prefs, type UpdateState } from "./updates.svelte";
+  import icon from "../../src-tauri/icons/icon.svg?url";
 
   // `look` is shared with the Experimental page, so neither saves a stale copy of the other's choice.
   let { look = $bindable(), version, path, prefs: initial, status }: { look: Look; version: string; path: string; prefs: Prefs; status: UpdateState } = $props();
@@ -107,8 +108,9 @@
 <section aria-labelledby="updates-h">
   <h2 id="updates-h">Updates</h2>
   <ul class="list">
-    <li class="row">
-      <span><span class="name">Myna <span style="font-weight: 400; color: var(--text-3)">· said <i>mai-na</i>, like <span lang="hi">मैना</span>, the bird</span></span><span class="desc">Version {version}{#if import.meta.env.VITE_BUILD}{" · "}{import.meta.env.VITE_BUILD}{/if}{note}</span></span>
+    <li class="row app">
+      <img src={icon} alt="" width="32" height="32" />
+      <span><span class="name">Myna <span class="say">· said <i>mai-na</i>, like <span lang="hi">मैना</span>, the bird</span></span><span class="desc">Version {version}{#if import.meta.env.VITE_BUILD}{" · "}{import.meta.env.VITE_BUILD}{/if}{note}</span></span>
       <!-- One button of one width in every state, so nothing moves the row. -->
       <div class="end">
         {#if upd.s.state === "checking"}<button class="btn" style="min-width: 148px" disabled>Checking…</button>
@@ -166,3 +168,12 @@
 
 <!-- Desert Ant's license asks for this credit; their SDK ships in every build, so it always shows. -->
 <p class="foot">Free and open source, MIT license. Voz speech-to-text and Who speaker diarization <a href="https://desertant.com" onclick={(e) => { e.preventDefault(); invoke("open_link", { url: "https://desertant.com" }); }}>powered by Desert Ant Labs</a>.</p>
+
+<style>
+  /* The app icon beside its name and version: the page's one picture. */
+  .row.app { grid-template-columns: 32px minmax(0, 1fr) auto; }
+  .row.app > :nth-child(2) { min-width: 0; }
+  /* Narrow page: the icon and text keep their line, the button drops under the text. */
+  @container (max-width: 480px) { .row.app > .end { grid-column: 2; justify-content: flex-start; } }
+  .say { font-weight: var(--fw-regular); color: var(--text-3); }
+</style>

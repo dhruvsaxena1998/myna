@@ -3,9 +3,9 @@
   import ErrorState from "./ErrorState.svelte";
   import { clock, dayHead, meta, writing, type Meeting, type Progress, type Running } from "./meetings";
 
-  let { meetings, running, progress, on, error, onstart, onstop, onenable, onopen, onretry }: {
+  let { meetings, running, progress, on, error, onstart, onstop, onenable, onopen, onretry, onlocal }: {
     meetings: Meeting[]; running: Running; progress: Record<number, Progress>; on: boolean; error: string;
-    onstart: () => void; onstop: () => void; onenable: () => void; onopen: (id: number) => void; onretry: (id: number) => void;
+    onstart: () => void; onstop: () => void; onenable: () => void; onopen: (id: number) => void; onretry: (id: number) => void; onlocal: (id: number) => void;
   } = $props();
 
   // One tick a second drives the recording's timer.
@@ -82,6 +82,7 @@
                     <span class="meta">{meta(m)}</span>
                   {/if}
                 </div>
+                {#if m.incomplete}<button class="btn" onclick={() => onlocal(m.id)}>Transcribe locally</button>{/if}
                 {#if m.state === "failed"}<button class="btn" onclick={() => onretry(m.id)}>Try again</button>{/if}
               </li>
             {/each}

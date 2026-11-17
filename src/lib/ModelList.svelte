@@ -3,7 +3,8 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
-  import { fmtSize, type Task } from "$lib/models";
+  import { invalidateAll } from "$app/navigation";
+  import { ENGINES, fmtSize, type Model, type Task } from "$lib/models";
   import { cancelDownload, dl, startDownload, watchDownloads } from "$lib/downloads.svelte";
   import { fuzzy } from "$lib/fuzzy";
 
@@ -30,6 +31,7 @@
     try {
       active = await invoke<string | null>("model_delete", { id, task: task.id }); // the default takes over from a deleted pick
       onchange?.();
+      if (task.models.find((m) => m.id === id)?.engine) await invalidateAll(); // an added model leaves the list
       dl.installed[id] = false;
       delete dl.errors[id];
       delete dl.retry[id]; // a load failure set it; a removed model offers Download, not Retry
@@ -37,6 +39,28 @@
       error = String(e);
     }
   }
+  // Advanced: a model of the user's own, from a path on this Mac or a Hugging Face repo.
+  const engines = $derived(ENGINES[task.id === "diar" ? "diar" : "stt"]);
+  let engine = $derived(engines[0][0]); // assignable: the Runtime menu
+  let source = $state("");
+  let addError = $state("");
+  let adding = $state(false);
+  async function add(e: SubmitEvent) {
+    e.preventDefault();
+    adding = true;
+    addError = "";
+    try {
+      const m = await invoke<Model>("model_add", { engine, source });
+      source = "";
+      await invalidateAll(); // its row shows in this list, and in the other speech-to-text one
+      if (!m.installed) error = await startDownload(m.id); // a repo, or ONNX Runtime for a model on this Mac
+    } catch (err) {
+      addError = String(err);
+    } finally {
+      adding = false;
+    }
+  }
+
   async function pick(id: string) {
     const was = active;
     active = id;
@@ -63,16 +87,19 @@
       {#each visible as m (m.id)}
         {@const blocked = !!m.needs}
         {@const failed = dl.errors[m.id]}
+        {@const custom = !!m.engine}
         <li class="row mrow" class:blocked>
           <input type="radio" name="model-{task.id}" id="m-{task.id}-{m.id}" value={m.id} aria-label="Use {m.name}" checked={active === m.id}
             disabled={blocked || !installed(m)} onchange={() => pick(m.id)} />
           <span>
             <span class="name"><span class="title">{m.name}</span>{" "}<span class="meta">{m.vendor}{m.default ? " · Recommended" : ""}{m.size ? ` · ${fmtSize(m.size)}` : ""}</span></span>
-            <span class="desc" class:bad={failed} title={failed || m.desc}>{failed || m.desc}</span>
+            <span class="desc" class:bad={failed || (custom && blocked)} title={failed || m.desc}>{failed || m.desc}</span>
           </span>
           <!-- Fixed width, so a state change (Download, progress, Installed) never moves the row. Apple's download can't stop, and SDK models can't cancel either. -->
           <span class="end mstate">
-            {#if blocked}
+            {#if blocked && custom}
+              <button class="btn quiet sm" aria-label="Remove {m.name}" onclick={() => remove(m.id)}>Remove</button>
+            {:else if blocked}
               <span class="pill">{m.needs}</span>
             {:else if m.id in dl.pct}
               <span class="bar" role="progressbar" aria-label="Downloading {m.name}" aria-valuenow={dl.pct[m.id]} aria-valuemin="0" aria-valuemax="100"><i style:transform="scaleX({dl.pct[m.id] / 100})"></i></span>
@@ -83,10 +110,11 @@
             {:else if installed(m)}
               <span class="ok"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>{m.system ? "Built in" : "Installed"}</span>
               {#if !m.system}<button class="btn quiet sm" aria-label="Remove {m.name}" onclick={() => remove(m.id)}>Remove</button>{/if}
-            {:else if m.files.length === 0 && !m.system && !m.sdk}
+            {:else if m.files.length === 0 && !m.system && !m.sdk && !custom}
               <span class="pill">Coming later</span>
             {:else}
               <button class="btn sm" aria-label="{dl.retry[m.id] ? 'Retry' : 'Download'} {m.name}" onclick={() => start(m.id)}>{dl.retry[m.id] ? "Retry" : "Download"}</button>
+              {#if custom}<button class="btn quiet icon sm" aria-label="Remove {m.name}" title="Remove" onclick={() => remove(m.id)}><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" /></svg></button>{/if}
             {/if}
           </span>
         </li>
@@ -97,6 +125,26 @@
   <p class="err" role="status">{error}</p>
 </section>
 <p class="help">Sizes are download sizes. A model downloads only when you ask.</p>
+<section aria-labelledby="adv-{task.id}" class="adv">
+  <h2 id="adv-{task.id}">Advanced</h2>
+  <p class="help">Add your own model for one of these runtimes. A file or folder on this Mac is used where it is, and Remove never deletes it. A Hugging Face repo downloads into Myna’s models folder.</p>
+  <form onsubmit={add} novalidate aria-label="Add a model">
+    <ul class="list">
+      {#if engines.length > 1}
+        <li class="field one"><label for="eng-{task.id}">Runtime</label>
+          <select id="eng-{task.id}" class="select" bind:value={engine}>{#each engines as [v, l]}<option value={v}>{l}</option>{/each}</select></li>
+      {/if}
+      <li class="field"><label for="src-{task.id}">Path or repo</label>
+        <input id="src-{task.id}" class="input mono" bind:value={source} placeholder={task.id === "diar" ? "~/models/sortformer.onnx" : "ggerganov/whisper.cpp"} autocomplete="off" spellcheck="false"
+          aria-invalid={!!addError} aria-describedby="src-{task.id}-h" oninput={() => (addError = "")} />
+        <span class="help" id="src-{task.id}-h">A path starting with / or ~, or a Hugging Face repo. To pick one file in a repo, paste its link.</span></li>
+    </ul>
+    <div class="actions">
+      <p class="err" class:neutral={!addError} role="status" title={addError || undefined}>{#if addError}<svg class="ic alert" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16.5v.01" /></svg>{addError}{:else if adding}Checking…{/if}</p>
+      <button class="btn" disabled={adding || !source.trim()}>Add model</button>
+    </div>
+  </form>
+</section>
 
 <style>
   /* The shared row (60px, separator, one-line description), with the radio column and the status column on top. */
@@ -113,6 +161,13 @@
   .bar { width: 72px; height: 4px; border-radius: 2px; background: var(--fill-track); overflow: hidden; }
   .bar i { display: block; height: 100%; background: var(--accent); transform-origin: left; }
   .pct { min-width: 32px; text-align: right; font-size: var(--fs-footnote); color: var(--text-2); font-variant-numeric: tabular-nums; }
+  .adv { margin-top: var(--sp-5); }
+  .adv form { display: flex; flex-direction: column; gap: var(--sp-3); }
+  .field .input { width: 100%; }
+  .actions { align-items: center; justify-content: flex-end; }
+  .actions .err { flex: 1; margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .err.neutral { color: var(--text-2); }
+  .alert { width: var(--ic-sm); height: var(--ic-sm); margin: 1px var(--sp-1) 0 0; vertical-align: top; }
   /* Reserved, so a search with no match never moves the page. */
   .none { margin-top: var(--sp-2); min-height: var(--lh-footnote); }
 </style>

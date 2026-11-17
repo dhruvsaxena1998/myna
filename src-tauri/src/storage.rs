@@ -53,6 +53,10 @@ const MIGRATIONS: &[&str] = &[
     // cleanup run's provider, model and cost as JSON.
     "ALTER TABLE segment ADD COLUMN clean TEXT;
      ALTER TABLE meeting ADD COLUMN cleanup TEXT;",
+    // `meeting.stt`: the Endpoint that transcribed it (#45), `{provider, model, off, cost}` as JSON; NULL is the Local model.
+    "ALTER TABLE meeting ADD COLUMN stt TEXT;",
+    // `meeting.ended`: when the recording stopped (unix ms, `started` plus the time it ran); NULL from a build before it.
+    "ALTER TABLE meeting ADD COLUMN ended INTEGER;",
 ];
 const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
 
