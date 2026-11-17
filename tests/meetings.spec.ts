@@ -169,7 +169,7 @@ const version = (id: number, template: string, text: string, more = {}) => ({ id
 const AI = JSON.stringify({ providers: [{ id: 1, kind: "openrouter", name: "OpenRouter", url: "https://openrouter.ai/api/v1", has_key: true, off_device: true }], main: { provider: 1, model: "big", gone: false }, fast: null });
 async function summary(page: Page, versions: unknown[], extra = "") {
   const sum = JSON.stringify({ versions, showing: (versions[0] as { id: number } | undefined)?.id ?? null });
-  await open(page, `ai_get: () => (${AI}), summary_get: () => (window.__sum ??= ${sum}), settings_open: () => {}, ai_set: () => {},
+  await open(page, `ai_get: () => (${AI}), summary_model: () => ({ provider: 1, model: "big" }), summary_get: () => (window.__sum ??= ${sum}), settings_open: () => {}, ai_set: () => {},
     summary_templates_get: () => [{ id: "recap", name: "Recap", text: "Write a Recap." }, { id: "actions", name: "Action items", text: "List them." }],
     ai_models: () => [{ id: "big", input_per_m: 3, output_per_m: 15, context: null, images: null }, { id: "small", input_per_m: null, output_per_m: null, context: null, images: null }],
     summary_estimate: ({ model }) => (model === "big" ? 1.4 : null), summary_run: () => {},
@@ -254,7 +254,7 @@ test("Regenerate: template, prompt and model for this run only, the estimate abo
 });
 
 test("no Summary yet: the transcript shows, Main Not set offers AI providers, and with Main set Summarize opens the pop-up", async ({ page }) => {
-  await summary(page, [], `ai_get: () => (window.__ai ?? { providers: [], main: null, fast: null }),`);
+  await summary(page, [], `ai_get: () => (window.__ai ?? { providers: [], main: null, fast: null }), summary_model: () => { if (!window.__ai) throw "Main model: Not set"; return { provider: 1, model: "big" }; },`);
   await expect(page.locator(".seg")).toHaveCount(2);
   await expect(page.getByText("Set a Main model to summarize")).toBeVisible();
   await page.getByRole("button", { name: "Set up" }).click();
@@ -267,4 +267,18 @@ test("no Summary yet: the transcript shows, Main Not set offers AI providers, an
   const pop = page.getByRole("dialog", { name: "Summarize this meeting" });
   await pop.getByRole("button", { name: "Summarize" }).click();
   expect(await calls(page, "summary_run")).toEqual([{ id: 5, template: "Recap", prompt: "Write a Recap.", provider: 1, model: "big" }]);
+});
+
+test("the Summary model, not Main, is Regenerate's default; Not set says to set it and Set up opens Meeting notes", async ({ page }) => {
+  await summary(page, [version(9, "Recap", "# Recap")], `summary_model: () => { if (window.__none) throw "Summary model: Not set"; return { provider: 1, model: "small" }; },`);
+  await page.getByRole("button", { name: "Regenerate" }).click();
+  const pop = page.getByRole("dialog", { name: "Regenerate the summary" });
+  await expect(pop.getByRole("combobox", { name: "Model" })).toHaveValue("1|small");
+  await expect(pop.getByText("Picking a model here doesn’t change your Summary model.")).toBeVisible();
+  await page.evaluate(() => { (window as any).__none = true; (window as any).__sum = { versions: [], showing: null }; });
+  await page.getByRole("button", { name: "Back to meetings" }).click();
+  await page.getByRole("button", { name: "Untitled meeting" }).first().click();
+  await expect(page.getByText("Set a Summary model to summarize")).toBeVisible();
+  await page.getByRole("button", { name: "Set up" }).click();
+  expect(await calls(page, "settings_open")).toEqual([{ page: "meetings" }]);
 });

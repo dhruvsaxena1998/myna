@@ -121,11 +121,11 @@
     error = ""; note = "";
     try {
       const gone = await invoke<string[]>("ai_remove", { id: p.id });
-      const names = gone.map((s) => (s === "main" ? "Main model" : "Fast model"));
+      const names = gone.map((s) => (s === "main" ? "Main model" : s === "fast" ? "Fast model" : s)); // a feature's own model comes named
       ai = { providers: ai.providers.filter((x) => x.id !== p.id), main: gone.includes("main") ? null : ai.main, fast: gone.includes("fast") ? null : ai.fast };
       delete tests[p.id];
       confirm = null;
-      note = `Removed ${p.name} and its key.` + (names.length ? ` ${names.join(" and ")} ${names.length > 1 ? "are" : "is"} now Not set.` : "");
+      note = `Removed ${p.name} and its key.` + (names.length ? ` ${names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0]} ${names.length > 1 ? "are" : "is"} now Not set.` : "");
     } catch (err) {
       error = String(err);
     }

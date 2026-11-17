@@ -45,12 +45,13 @@
   const rows = $derived(groups(page.segments));
   const shown = $derived(sum?.versions.find((v) => v.id === sum!.showing));
   const busy = $derived(summary?.state === "reading" || summary?.state === "merging");
-  const main = $derived(ai?.main && !ai.main.gone ? ai.main : null);
+  let sumModel = $state<{ provider: number; model: string } | null>(null); // the Summary model (summary::model), Main's unless the user picked one
+  let sumErr = $state(""); // why there's none: "Summary model: Not set", or Main's
   const done = $derived(summary?.state === "done" ? summary : null);
   const split = (pick: string) => [+pick.slice(0, pick.indexOf("|")), pick.slice(pick.indexOf("|") + 1)] as const;
   const chosen = $derived(ai?.providers.find((p) => p.id === split(form.pick)[0]));
-  // The cached list, plus Main's model in case its list was never fetched.
-  const ids = (p: Ai["providers"][number]) => [...new Set([...(models[p.id] ?? []).map((m) => m.id), ...(main?.provider === p.id ? [main.model] : [])])];
+  // The cached list, plus the Summary model in case its list was never fetched.
+  const ids = (p: Ai["providers"][number]) => [...new Set([...(models[p.id] ?? []).map((m) => m.id), ...(sumModel?.provider === p.id ? [sumModel.model] : [])])];
   const usd = (n: number) => "$" + (n >= 1 ? n.toFixed(2) : n.toPrecision(2));
   const cost = (v: Version) => (v.edited ? "Edited" : v.cost.kind === "usd" ? usd(v.cost.usd) : v.cost.kind === "free" ? "Free" : "Cost unknown");
   const when = (ms: number) => `${dayHead(ms)[0]} ${hm(ms)}`;
@@ -64,13 +65,18 @@
       error = String(err);
     }
   }
-  const loadAi = () => invoke<Ai>("ai_get").then((a) => (ai = a), () => {});
+  const loadAi = () =>
+    Promise.all([
+      invoke<{ provider: number; model: string }>("summary_model").then((m) => ((sumModel = m), (sumErr = "")), (err) => ((sumModel = null), (sumErr = String(err)))),
+      invoke<Ai>("ai_get").then((a) => (ai = a), () => {}),
+    ]);
+  const own = $derived(sumErr.startsWith("Summary model")); // the user's own pick is Not set, not Main
   // On open, and when a run finishes: the newest version shows.
   $effect(() => {
     void done;
     load();
   });
-  // Main set in Settings shows here on coming back.
+  // A model set in Settings shows here on coming back.
   $effect(() => {
     loadAi();
     const off = getCurrentWindow().onFocusChanged(({ payload }) => payload && loadAi());
@@ -122,7 +128,7 @@
     await loadAi();
     templates = await invoke<Template[]>("summary_templates_get").catch((err) => ((error = String(err)), []));
     const t = templates.find((t) => t.name === shown?.template) ?? templates[0];
-    form = { tpl: t?.id ?? "", prompt: t?.text ?? "", pick: main ? `${main.provider}|${main.model}` : "" };
+    form = { tpl: t?.id ?? "", prompt: t?.text ?? "", pick: sumModel ? `${sumModel.provider}|${sumModel.model}` : "" };
     await Promise.all((ai?.providers ?? []).map((p) => invoke<Model[]>("ai_models", { id: p.id, fresh: false }).then((l) => { models[p.id] = l; }, () => {})));
     const p = ai?.providers.find((p) => ids(p).length);
     if (!form.pick && p) form.pick = `${p.id}|${ids(p)[0]}`;
@@ -152,7 +158,7 @@
     if (a) start(a);
     else openRegen();
   }
-  const setup = () => invoke("settings_open", { page: "ai" });
+  const setup = () => invoke("settings_open", { page: own ? "meetings" : "ai" });
 
   async function save(e: SubmitEvent) {
     e.preventDefault();
@@ -189,7 +195,7 @@
         <select class="select" bind:value={form.pick} aria-describedby="rg-mh">
           {#each ai.providers as p (p.id)}<optgroup label={p.name}>{#each ids(p) as m (m)}<option value="{p.id}|{m}">{m}</option>{/each}</optgroup>{/each}
         </select>
-        <span class="help" id="rg-mh">Picking a model here doesn’t change your Main model.</span></label>
+        <span class="help" id="rg-mh">Picking a model here doesn’t change your Summary model.</span></label>
       {#if est !== null && est > 1}<p class="est" role="status">About {usd(est)} for this meeting.</p>{/if}
       <div class="end">{#if chosen}<HostPill off={chosen.off_device} />{/if}<span class="grow"></span>
         <button class="btn primary" disabled={!form.pick || !form.prompt.trim()}>{shown ? "Regenerate" : "Summarize"}</button></div>
@@ -262,14 +268,14 @@
             <p class="sum-cost">{[cost(shown), shown.template, shown.model, `Summarized in ${shown.parts} part${shown.parts === 1 ? "" : "s"}`].join(" · ")}</p>
           {:else if sum && ai && !busy}
             <div class="sum-empty">
-              {#if main}
+              {#if sumModel}
                 <h2>No summary yet</h2>
                 <div class="pop-wrap" data-pop>
                   <button class="btn primary" aria-haspopup="dialog" aria-expanded={pop === "regen"} onclick={openRegen}>Summarize</button>
                   {#if pop === "regen"}{@render regen(true)}{/if}
                 </div>
               {:else}
-                <h2>Set a Main model to summarize</h2>
+                <h2>Set a {own ? "Summary" : "Main"} model to summarize</h2>
                 <p class="help">Summaries are written by an AI model you choose. Myna runs none itself.</p>
                 <button class="btn" onclick={setup}>Set up</button>
               {/if}
