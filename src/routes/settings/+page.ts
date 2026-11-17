@@ -9,6 +9,8 @@ import type { Notes } from "$lib/MeetingNotes.svelte";
 import type { Voice } from "$lib/VoiceShortcut.svelte";
 import type { Cleanup } from "$lib/CleanupStyles.svelte";
 import type { Ai } from "$lib/AiProviders.svelte";
+import type { Prefs as SummaryPrefs, Template } from "$lib/SummarySettings.svelte";
+import type { Cleanup as TranscriptCleanup } from "$lib/TranscriptCleanup.svelte";
 import type { Prefs, UpdateState } from "$lib/updates.svelte";
 
 // Load before the first paint so nothing pops in after the window shows.
@@ -73,6 +75,18 @@ export async function load() {
         (err) => ({ ok: false as const, error: String(err) }),
       )
     : null;
+  const summary = storage.ok
+    ? await Promise.all([invoke<SummaryPrefs>("summary_prefs_get"), invoke<Template[]>("summary_templates_get")]).then(
+        ([prefs, templates]) => ({ ok: true as const, summary: { prefs, templates } }),
+        (err) => ({ ok: false as const, error: String(err) }),
+      )
+    : null;
+  const transcript = storage.ok
+    ? await invoke<TranscriptCleanup>("transcript_prefs_get").then(
+        (prefs) => ({ ok: true as const, prefs }),
+        (err) => ({ ok: false as const, error: String(err) }),
+      )
+    : null;
   const spell = storage.ok ? await invoke<string>("cleanup_spell").catch(() => "") : "";
   const updates = storage.ok
     ? await Promise.all([invoke<Prefs>("updates_get"), invoke<UpdateState>("update_state")]).then(
@@ -80,5 +94,5 @@ export async function load() {
         (err) => ({ ok: false as const, error: String(err) }),
       )
     : null;
-  return { storage, version, models, perms, globe, look, voice, notes, addon, rules, fixes, ai, cleanup, spell, updates };
+  return { storage, version, models, perms, globe, look, voice, notes, addon, rules, fixes, ai, cleanup, summary, transcript, spell, updates };
 }

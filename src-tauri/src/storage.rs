@@ -49,6 +49,10 @@ const MIGRATIONS: &[&str] = &[
         provider TEXT NOT NULL, model TEXT NOT NULL, created INTEGER NOT NULL, parts INTEGER NOT NULL, cost TEXT NOT NULL, text TEXT NOT NULL,
         edited INTEGER NOT NULL DEFAULT 0);
      ALTER TABLE meeting ADD COLUMN summary INTEGER;",
+    // `segment.clean`: the line as transcript cleanup wrote it; NULL is the line as heard. `meeting.cleanup`: the last
+    // cleanup run's provider, model and cost as JSON.
+    "ALTER TABLE segment ADD COLUMN clean TEXT;
+     ALTER TABLE meeting ADD COLUMN cleanup TEXT;",
 ];
 const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
 

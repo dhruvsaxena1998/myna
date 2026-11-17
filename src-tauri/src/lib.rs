@@ -22,6 +22,7 @@ mod speakers;
 mod storage;
 mod summary;
 mod trace;
+mod transcript;
 mod update;
 mod voice;
 mod voz;
@@ -429,10 +430,13 @@ fn text_copy(text: String) {
     dictation::copy(&text);
 }
 
-/// The main window's Settings entry and its ⌘,.
+/// The main window's Settings entry and its ⌘,; `page` opens one, like "ai" from a meeting's "Set up".
 #[tauri::command]
-fn settings_open(app: AppHandle) {
+fn settings_open(app: AppHandle, page: Option<String>) {
     open_window(&app, "settings");
+    if let Some(page) = page {
+        let _ = app.emit_to("settings", "settings-page", page);
+    }
 }
 
 #[tauri::command]
@@ -651,6 +655,30 @@ fn call_stop(app: AppHandle) {
     std::thread::spawn(move || app.state::<Arc<MeetingSession>>().stop());
 }
 
+/// Cleans meeting `id`'s transcript when it should (transcript::auto), on the caller's thread, saying how it goes
+/// with `meeting-cleanup`: "reading" part `n` of `of`, then "done" with the cost or "failed" with why. Nothing is
+/// said when it's off or its model is Not set.
+fn clean(app: &AppHandle, id: i64) {
+    let d = app.state::<Data>();
+    let say = |v: serde_json::Value| drop(app.emit("meeting-cleanup", v));
+    let open = |provider: i64| ai::provider(&d.db.lock().unwrap(), &*d.keys, provider);
+    match transcript::auto(&d.db, &open, id, &mut |n, of| say(serde_json::json!({ "id": id, "state": "reading", "n": n, "of": of }))) {
+        Ok(Some(cost)) => say(serde_json::json!({ "id": id, "state": "done", "cost": cost })),
+        Ok(None) => {}
+        Err(e) => say(serde_json::json!({ "id": id, "state": "failed", "error": e })),
+    }
+}
+
+#[tauri::command]
+fn transcript_prefs_get(d: tauri::State<Data>) -> Result<transcript::Prefs, String> {
+    transcript::prefs(&d.db.lock().unwrap())
+}
+
+#[tauri::command]
+fn transcript_prefs_set(d: tauri::State<Data>, prefs: transcript::Prefs) -> Result<(), String> {
+    transcript::set_prefs(&d.db.lock().unwrap(), &prefs)
+}
+
 /// Runs meeting `id`'s Summary on its own thread when it should (summary::auto), saying how it goes with
 /// `meeting-summary`: "reading" part `n` of `of`, "merging", then "done" with the version, "failed" with why,
 /// or "skipped" (Summarize when a meeting finishes is off, or Main is Not set).
@@ -695,25 +723,56 @@ fn summary_edit(d: tauri::State<Data>, id: i64, text: String) -> Result<summary:
     summary::edit(&d.db.lock().unwrap(), id, &text)
 }
 
-/// Regenerate: the template's name and instruction text for this run, on `provider`'s `model`. Progress comes as
-/// `meeting-summary`, like the automatic run; the answer is the new version.
+/// Regenerate: the template's name and instruction text for this run, on `provider`'s `model`. Progress, then
+/// "done" or "failed", comes as `meeting-summary`, like the automatic run; the answer is the new version.
 #[tauri::command]
 async fn summary_run(app: AppHandle, id: i64, template: String, prompt: String, provider: i64, model: String) -> Result<summary::Version, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let d = app.state::<Data>();
-        let (backend, ask) = {
-            let db = d.db.lock().unwrap();
-            let name: String = db.query_row("SELECT name FROM provider WHERE id = ?1", [provider], |r| r.get(0)).map_err(|_| "That provider isn't there anymore.".to_string())?;
-            (ai::provider(&db, &*d.keys, provider)?, summary::Ask { template, prompt, provider: name, context: ai::context(&db, provider, &model), model })
-        };
         let say = |v: serde_json::Value| drop(app.emit("meeting-summary", v));
-        summary::run(&d.db, &*backend, id, &ask, &mut |p| match p {
-            summary::Progress::Part(n, of) => say(serde_json::json!({ "id": id, "state": "reading", "n": n, "of": of })),
-            summary::Progress::Merging => say(serde_json::json!({ "id": id, "state": "merging" })),
-        })
+        let run = || {
+            let (backend, ask) = {
+                let db = d.db.lock().unwrap();
+                let name: String = db.query_row("SELECT name FROM provider WHERE id = ?1", [provider], |r| r.get(0)).map_err(|_| "That provider isn't there anymore.".to_string())?;
+                (ai::provider(&db, &*d.keys, provider)?, summary::Ask { template, prompt, provider: name, context: ai::context(&db, provider, &model), model })
+            };
+            summary::run(&d.db, &*backend, id, &ask, &mut |p| match p {
+                summary::Progress::Part(n, of) => say(serde_json::json!({ "id": id, "state": "reading", "n": n, "of": of })),
+                summary::Progress::Merging => say(serde_json::json!({ "id": id, "state": "merging" })),
+            })
+        };
+        let r = run();
+        say(match &r {
+            Ok(v) => serde_json::json!({ "id": id, "state": "done", "version": v }),
+            Err(e) => serde_json::json!({ "id": id, "state": "failed", "error": e }),
+        });
+        r
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Regenerate's estimate in USD for `provider`'s `model`; None when its price isn't known.
+#[tauri::command]
+fn summary_estimate(d: tauri::State<Data>, id: i64, provider: i64, model: String) -> Result<Option<f64>, String> {
+    summary::estimate(&d.db.lock().unwrap(), id, provider, &model)
+}
+
+/// The model a Summary runs on (summary::model), for the meeting page: `{provider, model}`, or why there's none.
+#[tauri::command]
+fn summary_model(d: tauri::State<Data>) -> Result<serde_json::Value, String> {
+    let (p, model) = summary::model(&d.db.lock().unwrap())?;
+    Ok(serde_json::json!({ "provider": p.id, "model": model }))
+}
+
+#[tauri::command]
+fn summary_prefs_get(d: tauri::State<Data>) -> Result<summary::Prefs, String> {
+    summary::prefs(&d.db.lock().unwrap())
+}
+
+#[tauri::command]
+fn summary_prefs_set(d: tauri::State<Data>, prefs: summary::Prefs) -> Result<(), String> {
+    summary::set_prefs(&d.db.lock().unwrap(), &prefs)
 }
 
 #[tauri::command]
@@ -896,10 +955,10 @@ fn toggle_meeting(app: &AppHandle) {
     std::thread::spawn(move || app.state::<Arc<MeetingSession>>().toggle());
 }
 
-/// The transcript as Copy and the AI features may see it: muted lines left out. See `meeting::outgoing`.
+/// The transcript as Copy sees it: muted lines left out, cleaned text unless `original`. See `meeting::outgoing`.
 #[tauri::command]
-fn meeting_text(d: tauri::State<Data>, id: i64) -> Result<String, String> {
-    meeting::outgoing(&d.db.lock().unwrap(), id)
+fn meeting_text(d: tauri::State<Data>, id: i64, original: bool) -> Result<String, String> {
+    meeting::outgoing(&d.db.lock().unwrap(), id, original)
 }
 
 /// "Include" on a collapsed run of muted lines: keeps them, marked.
@@ -1006,7 +1065,7 @@ fn open_update(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![pill::pill_hit, dictation_fix, fix_take, debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, ai_test_draft, storage_status, storage_reveal, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, meeting_get, meeting_set, meeting_text, segments_include, addon_get, addon_disconnect, addon_folder, meeting_retry, meeting_open, meetings_list, meeting_page, meeting_running, meeting_toggle, call_start, call_dismiss, call_keep, call_stop, summary_get, summary_pick, summary_delete, summary_edit, summary_run, summary_templates_get, summary_templates_set, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
+        .invoke_handler(tauri::generate_handler![pill::pill_hit, dictation_fix, fix_take, debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, ai_test_draft, storage_status, storage_reveal, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, meeting_get, meeting_set, meeting_text, segments_include, addon_get, addon_disconnect, addon_folder, meeting_retry, meeting_open, meetings_list, meeting_page, meeting_running, meeting_toggle, call_start, call_dismiss, call_keep, call_stop, summary_get, summary_pick, summary_delete, summary_edit, summary_run, summary_estimate, summary_model, summary_prefs_get, summary_prefs_set, summary_templates_get, summary_templates_set, transcript_prefs_get, transcript_prefs_set, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::Updates::default())
         .setup(|app| {

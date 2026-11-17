@@ -18,7 +18,7 @@ async function open(page: Page, extra = "", meetings = MEETINGS, on = true) {
   await fakeTauri(page, `{
     storage_status: () => "/tmp/Myna", meetings_list: () => ${meetings}, meeting_get: () => ({ on: ${on}, key: "Ctrl+Alt+KeyM" }),
     meeting_page: ({ id }) => ({ ...${MEETINGS}.find((m) => m.id === id), segments: id === 5 ? ${SEGMENTS} : [] }),
-    text_copy: () => {}, meeting_text: () => "Me 00:12\\nOkay, let's start.\\n\\nThem 01:15\\nLaunch is still the 18th.", meeting_toggle: () => {}, meeting_retry: () => {}, meeting_set: () => {}, ${extra}
+    text_copy: () => {}, meeting_text: () => "Me 00:12\\nOkay, let's start.\\n\\nThem 01:15\\nLaunch is still the 18th.", meeting_toggle: () => {}, meeting_retry: () => {}, meeting_set: () => {}, summary_get: () => ({ versions: [], showing: null }), ${extra}
   }`);
   await page.goto("/main");
   await expect(page.getByRole("heading", { name: "All meetings" })).toBeVisible();
@@ -131,7 +131,32 @@ test("lines said while muted collapse into one row, Include keeps them with a ma
   await expect(page.getByText("Said muted, kept.")).toHaveCount(2);
   await expect(page.getByText("Said while muted · left out")).toBeHidden();
   await page.getByRole("button", { name: "Copy" }).click();
-  expect(await calls(page, "meeting_text")).toEqual([{ id: 5 }]);
+  expect(await calls(page, "meeting_text")).toEqual([{ id: 5, original: false }]);
+});
+
+test("cleanup shows its progress, then the cleaned lines with changed words marked; Show original shows what was heard, and Copy follows", async ({ page }) => {
+  const clean = JSON.stringify([line(1, "Me", 12000, "so um we ship on friday", { clean: "So we ship on Friday." }), line(2, "Them", 75000, "Launch is still the 18th.")]);
+  await open(page, `meeting_page: () => ({ ...${MEETINGS}[0], ...(window.__clean ? { segments: ${clean}, cleanup: { provider: "OpenRouter", model: "small", cost: { kind: "free" } } } : { segments: ${SEGMENTS}, cleanup: null }) })`);
+  await page.getByRole("button", { name: "Untitled meeting" }).first().click();
+  await expect(page.locator(".seg")).toHaveCount(2);
+  await expect(page.getByRole("button", { name: "Show original" })).toHaveCount(0);
+  await emit(page, "meeting-cleanup", { id: 5, state: "reading", n: 1, of: 2 });
+  await expect(page.getByText("Cleaning up the transcript: part 1 of 2…")).toBeVisible();
+  await page.evaluate(() => ((window as any).__clean = true));
+  await emit(page, "meeting-cleanup", { id: 5, state: "done", cost: { kind: "free" } });
+  await expect(page.getByText("Cleaned up by small · Free. Point at an underlined word to see what Myna heard.")).toBeVisible();
+  await expect(page.locator(".seg").first()).toContainText("So we ship on Friday.");
+  const marks = page.locator("mark.chg");
+  await expect(marks).toHaveText(["So", "Friday."]);
+  await expect(marks.first()).toHaveAttribute("title", "Heard “so um”");
+  await page.getByRole("button", { name: "Copy" }).click();
+  await page.getByRole("button", { name: "Show original" }).click();
+  await expect(page.getByRole("button", { name: "Show cleaned" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByText("What Myna heard, before cleanup.")).toBeVisible();
+  await expect(page.locator(".seg").first()).toContainText("so um we ship on friday");
+  await expect(marks).toHaveCount(0);
+  await page.getByRole("button", { name: /^Cop/ }).click();
+  expect(await calls(page, "meeting_text")).toEqual([{ id: 5, original: false }, { id: 5, original: true }]);
 });
 
 test("the live card says how the mic is while the add-on mirrors it", async ({ page }) => {
@@ -162,4 +187,123 @@ test("the other side's lines show their speaker names, and a note says why voice
   await page.getByRole("button", { name: "Back to meetings" }).click();
   await page.getByRole("button", { name: "Untitled meeting" }).first().click();
   await expect(page.locator(".note")).toHaveText("Couldn't tell voices apart: Download Sortformer in Settings › Speech models");
+});
+
+// Story 16: the Summary is the document; the transcript opens beside it.
+const version = (id: number, template: string, text: string, more = {}) => ({ id, template, prompt: "p", provider: "OpenRouter", model: "big", created: Date.now(), parts: 2, cost: { kind: "usd", usd: 0.012 }, text, edited: false, ...more });
+const AI = JSON.stringify({ providers: [{ id: 1, kind: "openrouter", name: "OpenRouter", url: "https://openrouter.ai/api/v1", has_key: true, off_device: true }], main: { provider: 1, model: "big", gone: false }, fast: null });
+async function summary(page: Page, versions: unknown[], extra = "") {
+  const sum = JSON.stringify({ versions, showing: (versions[0] as { id: number } | undefined)?.id ?? null });
+  await open(page, `ai_get: () => (${AI}), summary_model: () => ({ provider: 1, model: "big" }), summary_get: () => (window.__sum ??= ${sum}), settings_open: () => {}, ai_set: () => {},
+    summary_templates_get: () => [{ id: "recap", name: "Recap", text: "Write a Recap." }, { id: "actions", name: "Action items", text: "List them." }],
+    ai_models: () => [{ id: "big", input_per_m: 3, output_per_m: 15, context: null, images: null }, { id: "small", input_per_m: null, output_per_m: null, context: null, images: null }],
+    summary_estimate: ({ model }) => (model === "big" ? 1.4 : null), summary_run: () => {},
+    summary_pick: ({ version }) => { window.__sum.showing = version; },
+    summary_delete: ({ version }) => { window.__sum = { versions: window.__sum.versions.filter((v) => v.id !== version), showing: null }; window.__sum.showing = window.__sum.versions[0].id; },
+    summary_edit: ({ text }) => { const v = { ...window.__sum.versions[0], id: 99, text, edited: true, cost: { kind: "free" } }; window.__sum = { versions: [v, ...window.__sum.versions], showing: 99 }; },
+    ${extra}`);
+  await page.getByRole("button", { name: "Untitled meeting" }).first().click();
+}
+
+test("a Summary is the document: Markdown with links as text, a cost line, its timestamps open the transcript at that line, and Copy copies it", async ({ page }) => {
+  const text = "## Decisions\n- Launch stays on the 18th [00:01:10]\n- See [the plan](https://x.com) <b>now</b>";
+  await summary(page, [version(9, "Recap", text)]);
+  await expect(page.getByRole("heading", { name: "Decisions", level: 2 })).toBeVisible();
+  await expect(page.getByText("See [the plan](https://x.com) <b>now</b>")).toBeVisible();
+  await expect(page.locator(".sum a, .sum b")).toHaveCount(0);
+  await expect(page.locator(".sum-cost")).toHaveText("$0.012 · Recap · big · Summarized in 2 parts");
+  await expect(page.locator(".seg")).toHaveCount(0);
+  await page.getByRole("button", { name: "Show 00:01:10 in the transcript" }).click();
+  await expect(page.locator(".seg.hit")).toContainText("Launch is still the 18th.");
+  await page.getByRole("button", { name: "Copy" }).first().click();
+  expect(await calls(page, "text_copy")).toEqual([{ text }]);
+  await page.getByRole("button", { name: "Close transcript" }).click();
+  await expect(page.locator(".seg")).toHaveCount(0);
+});
+
+test("versions: pick one, delete never the last, and Edit › Save adds an Edited version", async ({ page }) => {
+  await summary(page, [version(9, "Action items", "# Actions"), version(8, "Recap", "# Recap")]);
+  await page.getByRole("button", { name: "2 versions" }).click();
+  await page.getByRole("menuitemradio", { name: /Recap · big/ }).click();
+  expect(await calls(page, "summary_pick")).toEqual([{ id: 5, version: 8 }]);
+  await expect(page.getByRole("heading", { name: "Recap", level: 1 })).toBeVisible();
+  await page.getByRole("button", { name: "2 versions" }).click();
+  await page.getByRole("button", { name: /Delete the Action items version/ }).click();
+  expect(await calls(page, "summary_delete")).toEqual([{ id: 5, version: 9 }]);
+  await expect(page.getByRole("button", { name: "2 versions" })).toBeHidden();
+  await page.getByRole("button", { name: "Edit" }).click();
+  const box = page.getByRole("textbox", { name: "Summary text, in Markdown" });
+  await expect(box).toHaveValue("# Recap");
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(box).toBeHidden();
+  await page.getByRole("button", { name: "Edit" }).click();
+  await box.fill("# My recap");
+  await page.getByRole("button", { name: "Save" }).click();
+  expect(await calls(page, "summary_edit")).toEqual([{ id: 5, text: "# My recap" }]);
+  await expect(page.getByRole("heading", { name: "My recap", level: 1 })).toBeVisible();
+  await expect(page.locator(".sum-cost")).toHaveText("Edited · Recap · big · Summarized in 2 parts");
+  await page.getByRole("button", { name: "2 versions" }).click();
+  await expect(page.getByRole("menuitemradio", { name: /Edited/ })).toHaveCount(1);
+});
+
+test("Regenerate: template, prompt and model for this run only, the estimate above $1, then progress, failure and Try again with the same ask", async ({ page }) => {
+  await summary(page, [version(9, "Recap", "# Recap")]);
+  await page.getByRole("button", { name: "Regenerate" }).click();
+  const pop = page.getByRole("dialog", { name: "Regenerate the summary" });
+  await expect(pop.getByRole("combobox", { name: "Template" })).toHaveValue("recap");
+  await expect(pop.getByRole("textbox", { name: "Instructions" })).toHaveValue("Write a Recap.");
+  await expect(pop.getByRole("combobox", { name: "Model" })).toHaveValue("1|big");
+  await expect(pop.getByText("About $1.40 for this meeting.")).toBeVisible();
+  await expect(pop.getByText("Sends text off this Mac")).toBeVisible();
+  await pop.getByRole("combobox", { name: "Template" }).selectOption("actions");
+  await expect(pop.getByRole("textbox", { name: "Instructions" })).toHaveValue("List them.");
+  await pop.getByRole("textbox", { name: "Instructions" }).fill("Only Priya's items.");
+  await pop.getByRole("combobox", { name: "Model" }).selectOption("1|small");
+  await expect(pop.getByText(/About \$/)).toBeHidden();
+  await pop.getByRole("button", { name: "Regenerate" }).click();
+  const ask = { id: 5, template: "Action items", prompt: "Only Priya's items.", provider: 1, model: "small" };
+  expect(await calls(page, "summary_run")).toEqual([ask]);
+  expect(await calls(page, "ai_set")).toEqual([]);
+  await emit(page, "meeting-summary", { id: 5, state: "reading", n: 2, of: 6 });
+  await expect(page.getByText("Reading part 2 of 6…")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Regenerate" })).toBeDisabled();
+  await emit(page, "meeting-summary", { id: 5, state: "merging" });
+  await expect(page.getByText("Writing the Action items…")).toBeVisible();
+  await emit(page, "meeting-summary", { id: 5, state: "failed", error: "The model is down." });
+  await expect(page.getByText("Couldn’t summarize: The model is down.")).toBeVisible();
+  await page.getByRole("button", { name: "Try again" }).click();
+  expect(await calls(page, "summary_run")).toEqual([ask, ask]);
+  const before = (await calls(page, "summary_get")).length;
+  await emit(page, "meeting-summary", { id: 5, state: "done", version: version(10, "Action items", "# Actions") });
+  await expect.poll(async () => (await calls(page, "summary_get")).length).toBe(before + 1);
+});
+
+test("no Summary yet: the transcript shows, Main Not set offers AI providers, and with Main set Summarize opens the pop-up", async ({ page }) => {
+  await summary(page, [], `ai_get: () => (window.__ai ?? { providers: [], main: null, fast: null }), summary_model: () => { if (!window.__ai) throw "Main model: Not set"; return { provider: 1, model: "big" }; },`);
+  await expect(page.locator(".seg")).toHaveCount(2);
+  await expect(page.getByText("Set a Main model to summarize")).toBeVisible();
+  await page.getByRole("button", { name: "Set up" }).click();
+  expect(await calls(page, "settings_open")).toEqual([{ page: "ai" }]);
+  await page.evaluate((ai) => ((window as any).__ai = JSON.parse(ai)), AI);
+  await page.getByRole("button", { name: "Back to meetings" }).click();
+  await page.getByRole("button", { name: "Untitled meeting" }).first().click();
+  await expect(page.getByText("No summary yet")).toBeVisible();
+  await page.getByRole("button", { name: "Summarize" }).click();
+  const pop = page.getByRole("dialog", { name: "Summarize this meeting" });
+  await pop.getByRole("button", { name: "Summarize" }).click();
+  expect(await calls(page, "summary_run")).toEqual([{ id: 5, template: "Recap", prompt: "Write a Recap.", provider: 1, model: "big" }]);
+});
+
+test("the Summary model, not Main, is Regenerate's default; Not set says to set it and Set up opens Meeting notes", async ({ page }) => {
+  await summary(page, [version(9, "Recap", "# Recap")], `summary_model: () => { if (window.__none) throw "Summary model: Not set"; return { provider: 1, model: "small" }; },`);
+  await page.getByRole("button", { name: "Regenerate" }).click();
+  const pop = page.getByRole("dialog", { name: "Regenerate the summary" });
+  await expect(pop.getByRole("combobox", { name: "Model" })).toHaveValue("1|small");
+  await expect(pop.getByText("Picking a model here doesn’t change your Summary model.")).toBeVisible();
+  await page.evaluate(() => { (window as any).__none = true; (window as any).__sum = { versions: [], showing: null }; });
+  await page.getByRole("button", { name: "Back to meetings" }).click();
+  await page.getByRole("button", { name: "Untitled meeting" }).first().click();
+  await expect(page.getByText("Set a Summary model to summarize")).toBeVisible();
+  await page.getByRole("button", { name: "Set up" }).click();
+  expect(await calls(page, "settings_open")).toEqual([{ page: "meetings" }]);
 });

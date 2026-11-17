@@ -749,6 +749,8 @@ pub struct Line {
     pub start_ms: i64,
     /// Empty when `hidden`: what's left out never leaves the backend.
     pub text: String,
+    /// The line as transcript cleanup wrote it, when it did; none when `hidden`.
+    pub clean: Option<String>,
     /// Said while the add-on showed the mic muted.
     pub muted: bool,
     pub included: bool,
@@ -762,6 +764,8 @@ pub struct Page {
     #[serde(flatten)]
     pub meeting: Row,
     pub segments: Vec<Line>,
+    /// The last transcript cleanup run, `{provider, model, cost}`; none when it never ran.
+    pub cleanup: Option<serde_json::Value>,
 }
 
 /// Every meeting, newest first. The one still recording isn't in it: the list shows it as its live card.
@@ -775,18 +779,19 @@ pub fn list(db: &Connection) -> Result<Vec<Row>, String> {
 
 pub fn page(db: &Connection, id: i64) -> Result<Page, String> {
     let meeting = list(db)?.into_iter().find(|m| m.id == id).ok_or("That meeting isn't there anymore.")?;
-    Ok(Page { meeting, segments: lines(db, id)? })
+    let cleanup: Option<String> = db.query_row("SELECT cleanup FROM meeting WHERE id = ?1", [id], |r| r.get(0)).map_err(|e| format!("Couldn't read the meeting: {e}"))?;
+    Ok(Page { meeting, segments: lines(db, id)?, cleanup: cleanup.and_then(|c| serde_json::from_str(&c).ok()) })
 }
 
 pub(crate) fn lines(db: &Connection, id: i64) -> Result<Vec<Line>, String> {
     let keep = get(db)?.keep_teams;
-    db.prepare("SELECT id, COALESCE(label, speaker), start_ms, text, mute, included FROM segment WHERE meeting = ?1 ORDER BY start_ms, id")
+    db.prepare("SELECT id, COALESCE(label, speaker), start_ms, text, mute, included, clean FROM segment WHERE meeting = ?1 ORDER BY start_ms, id")
         .and_then(|mut q| {
             q.query_map([id], |r| {
                 let (mute, included): (Option<String>, bool) = (r.get(4)?, r.get(5)?);
                 let muted = mute.as_deref() == Some("muted");
                 let hidden = muted && !included && !keep;
-                Ok(Line { id: r.get(0)?, speaker: r.get(1)?, start_ms: r.get(2)?, text: if hidden { String::new() } else { r.get(3)? }, muted, included, hidden })
+                Ok(Line { id: r.get(0)?, speaker: r.get(1)?, start_ms: r.get(2)?, text: if hidden { String::new() } else { r.get(3)? }, clean: if hidden { None } else { r.get(6)? }, muted, included, hidden })
             })
             .and_then(|r| r.collect())
         })
@@ -794,9 +799,11 @@ pub(crate) fn lines(db: &Connection, id: i64) -> Result<Vec<Line>, String> {
 }
 
 /// The one way a meeting's words leave it, for Copy and for anything sent to an AI provider: "Me 00:12\nwhat was said",
-/// a blank line between. Lines said while muted are left out unless included or kept.
-pub fn outgoing(db: &Connection, id: i64) -> Result<String, String> {
-    Ok(lines(db, id)?.iter().filter(|l| !l.hidden).map(|l| format!("{} {}\n{}", l.speaker, clock(l.start_ms), l.text)).collect::<Vec<_>>().join("\n\n"))
+/// a blank line between. Lines said while muted are left out unless included or kept. A cleaned line goes as cleaned,
+/// unless `original`.
+pub fn outgoing(db: &Connection, id: i64, original: bool) -> Result<String, String> {
+    let text = |l: &Line| if original { l.text.clone() } else { l.clean.clone().unwrap_or_else(|| l.text.clone()) };
+    Ok(lines(db, id)?.iter().filter(|l| !l.hidden).map(|l| format!("{} {}\n{}", l.speaker, clock(l.start_ms), text(l))).collect::<Vec<_>>().join("\n\n"))
 }
 
 /// Keeps these lines in the notes, with their "said while muted" marker.
@@ -1214,7 +1221,7 @@ pub(crate) mod tests {
         let db = m.db.lock().unwrap();
         db.execute("INSERT INTO meeting(started, state) VALUES (1, 'done')", []).unwrap();
         db.execute("INSERT INTO segment(meeting, start_ms, end_ms, speaker, text, label) VALUES (1, 3000, 0, 'Them', 'right', 'Ana'), (1, 4000, 0, 'Them', 'old row', NULL)", []).unwrap();
-        assert_eq!(outgoing(&db, 1).unwrap(), "Ana 00:03\nright\n\nThem 00:04\nold row");
+        assert_eq!(outgoing(&db, 1, false).unwrap(), "Ana 00:03\nright\n\nThem 00:04\nold row");
     }
 
     fn said(m: &Meetings, id: i64) -> Vec<(i64, String, String)> {
@@ -1318,7 +1325,7 @@ pub(crate) mod tests {
         for (start, who, text, mute) in [(1000, "Me", "hello", None), (2000, "Me", "secret", Some("muted")), (3000, "Them", "right", None), (4000, "Me", "maybe", Some("unknown"))] {
             db.execute("INSERT INTO segment(meeting, start_ms, end_ms, speaker, text, mute) VALUES (1, ?1, 0, ?2, ?3, ?4)", (start, who, text, mute)).unwrap();
         }
-        let out = |db: &Connection| outgoing(db, 1).unwrap();
+        let out = |db: &Connection| outgoing(db, 1, false).unwrap();
         assert_eq!(out(&db), "Me 00:01\nhello\n\nThem 00:03\nright\n\nMe 00:04\nmaybe");
         let p = page(&db, 1).unwrap();
         assert!(p.segments[1].hidden && p.segments[1].text.is_empty(), "the words don't even reach the page");

@@ -3,7 +3,7 @@
   export type Provider = { id: number; kind: "openai" | "openrouter"; name: string; url: string; has_key: boolean; off_device: boolean };
   export type Route = { provider: number; model: string; gone: boolean } | null;
   export type Ai = { providers: Provider[]; main: Route; fast: Route };
-  type Model = { id: string; input_per_m: number | null; output_per_m: number | null; context: number | null; images: boolean | null };
+  export type Model = { id: string; input_per_m: number | null; output_per_m: number | null; context: number | null; images: boolean | null };
   type Test = { st: "run" } | { st: "err"; msg: string } | { st: "ok"; ms: number; models: number | null; used: number | null; limit: number | null };
   type Slot = "main" | "fast";
 
@@ -121,11 +121,11 @@
     error = ""; note = "";
     try {
       const gone = await invoke<string[]>("ai_remove", { id: p.id });
-      const names = gone.map((s) => (s === "main" ? "Main model" : "Fast model"));
+      const names = gone.map((s) => (s === "main" ? "Main model" : s === "fast" ? "Fast model" : s)); // a feature's own model comes named
       ai = { providers: ai.providers.filter((x) => x.id !== p.id), main: gone.includes("main") ? null : ai.main, fast: gone.includes("fast") ? null : ai.fast };
       delete tests[p.id];
       confirm = null;
-      note = `Removed ${p.name} and its key.` + (names.length ? ` ${names.join(" and ")} ${names.length > 1 ? "are" : "is"} now Not set.` : "");
+      note = `Removed ${p.name} and its key.` + (names.length ? ` ${names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0]} ${names.length > 1 ? "are" : "is"} now Not set.` : "");
     } catch (err) {
       error = String(err);
     }

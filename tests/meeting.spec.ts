@@ -310,6 +310,7 @@ test("Browser add-on: Copy puts the code on the clipboard, and Copied doesn't mo
   await expect(row).toContainText("Paste this into the add-on.");
   const box = (l: Locator) => l.evaluate((e) => JSON.stringify(e.getBoundingClientRect()));
   const copy = group.getByRole("button", { name: "Copy" });
+  await row.scrollIntoViewIfNeeded(); // so the click doesn't scroll it
   const [rowBefore, btnBefore, codeBefore] = [await box(row), await box(copy), await box(group.locator(".mono"))];
   await copy.click();
   const copied = group.getByRole("button", { name: "Copied" });
@@ -346,4 +347,114 @@ test("Models: the speech-to-text model and Speaker diarization, with its model's
   expect(await heights(group.getByRole("listitem"))).toEqual([60, 60]);
   await diar.getByRole("button", { name: "All models" }).click();
   await expect(page.getByRole("heading", { name: "Speaker diarization", level: 1 })).toBeVisible();
+});
+
+// Story 16: the Summary group and its templates drill-in.
+const OR = { id: 1, kind: "openrouter", name: "OpenRouter", url: "https://openrouter.ai/api/v1", has_key: true, off_device: true };
+const SHIPPED = [{ id: "recap", name: "Recap", text: "Write a Recap.", shipped: "Write a Recap.", newer: false }, { id: "actions", name: "Action items", text: "My list.", shipped: "List them.", newer: true }];
+async function summary(page: Page, prefs: object = {}) {
+  await open(page, { on: true, key: "Ctrl+Alt+KeyM" }, "allowed", undefined, `
+    ai_get: () => ({ providers: [${JSON.stringify(OR)}], main: { provider: 1, model: "big", gone: false }, fast: null }),
+    ai_models: () => [{ id: "big" }, { id: "small" }],
+    summary_prefs_get: () => (${JSON.stringify({ auto: true, model: "main", gone: false, template: "recap", ...prefs })}),
+    summary_prefs_set: () => {},
+    summary_templates_get: () => (${JSON.stringify(SHIPPED)}),
+    summary_templates_set: ({ templates }) => templates.map((t) => ({ ...t, shipped: t.id === "recap" ? "Write a Recap." : t.id === "actions" ? "List them." : null, newer: false })),`);
+}
+
+test("Summary: auto-run is on, the model uses Main with where text goes, and each change saves the whole group", async ({ page }) => {
+  await summary(page);
+  const group = page.getByRole("region", { name: "Summary" });
+  const auto = group.getByRole("switch", { name: "Summarize when a meeting finishes" });
+  await expect(auto).toBeChecked();
+  await expect(group.getByText("Uses the Main model: big · OpenRouter")).toBeVisible();
+  await expect(group.getByText("Sends text off this Mac")).toBeVisible();
+  await auto.click();
+  await group.getByRole("combobox", { name: "Summary model" }).selectOption("1|small");
+  await expect(group.getByText("Uses the Main model")).toHaveCount(0);
+  await group.getByRole("combobox", { name: "Template for new summaries" }).selectOption("actions");
+  expect(await calls(page, "summary_prefs_set")).toEqual([
+    { prefs: { auto: false, model: "main", gone: false, template: "recap" } },
+    { prefs: { auto: false, model: "1|small", gone: false, template: "recap" } },
+    { prefs: { auto: false, model: "1|small", gone: false, template: "actions" } },
+  ]);
+  await expect(group.getByText("Recap, Action items")).toBeVisible();
+  await expect(group.getByText("Newer default")).toBeVisible();
+});
+
+test("Summary model: Not set after its provider went, never Main, and a gone model says so", async ({ page }) => {
+  await summary(page, { model: "none" });
+  const group = page.getByRole("region", { name: "Summary" });
+  await expect(group.getByText("Not set: its provider was removed.")).toBeVisible();
+  await expect(group.getByRole("combobox", { name: "Summary model" })).toHaveValue("none");
+  await summary(page, { model: "1|old", gone: true });
+  await expect(page.getByRole("region", { name: "Summary" }).getByText("No longer offered")).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Summary model" })).toHaveValue("1|old");
+});
+
+test("Summary templates: a shipped one resets and offers its newer default; your own can be added, renamed and deleted", async ({ page }) => {
+  await summary(page);
+  await page.getByRole("button", { name: "Summary templates" }).click();
+  await expect(page.getByRole("heading", { name: "Summary templates", level: 1 })).toBeVisible();
+  await page.getByRole("button", { name: "Edit Action items" }).click();
+  await expect(page.getByText("A newer default is available")).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Name" })).toBeDisabled();
+  await page.getByRole("button", { name: "Reset to default" }).click();
+  await expect(page.getByRole("textbox", { name: "Instructions" })).toHaveValue("List them.");
+  await expect(page.getByRole("button", { name: "Reset to default" })).toBeDisabled();
+  await page.getByRole("button", { name: "Summary templates" }).click(); // the breadcrumb
+  await page.getByRole("button", { name: "Add template" }).click();
+  await expect(page.getByRole("heading", { name: "New template", level: 1 })).toBeVisible();
+  await page.getByRole("textbox", { name: "Name" }).fill("Hiring");
+  await page.getByRole("textbox", { name: "Name" }).blur();
+  await expect(page.getByRole("heading", { name: "Hiring", level: 1 })).toBeVisible();
+  await page.getByRole("button", { name: "Delete template" }).click();
+  await expect(page.getByRole("heading", { name: "Summary templates", level: 1 })).toBeVisible();
+  const saved = await calls(page, "summary_templates_set");
+  expect(saved.at(-1).templates.map((t: { id: string }) => t.id)).toEqual(["recap", "actions"]);
+  expect(saved[1].templates[2]).toMatchObject({ name: "New template", text: "Write a Recap." });
+});
+
+// Story 16: the Transcript cleanup group and its Cleanup instructions drill-in. The fake keeps what was saved, as the backend does.
+async function cleanup(page: Page, prefs: object = {}) {
+  await open(page, { on: true, key: "Ctrl+Alt+KeyM" }, "allowed", undefined, `
+    ai_get: () => ({ providers: [${JSON.stringify(OR)}], main: { provider: 1, model: "big", gone: false }, fast: { provider: 1, model: "small", gone: false } }),
+    ai_models: () => [{ id: "big" }, { id: "small" }],
+    transcript_prefs_get: () => ({ ...(window.__tcl ??= ${JSON.stringify({ on: false, model: "fast", gone: false, prompt: "Fix it.", shipped: "Fix it.", newer: false, ...prefs })}) }),
+    transcript_prefs_set: ({ prefs }) => { const p = prefs.prompt.trim() || prefs.shipped; window.__tcl = { ...prefs, prompt: p, newer: prefs.newer && p !== prefs.shipped }; },`);
+}
+
+test("Transcript cleanup: off by default; on shows the model, Uses Fast with where text goes, and the instructions row", async ({ page }) => {
+  await cleanup(page);
+  const group = page.getByRole("region", { name: "Transcript cleanup" });
+  await expect(group.getByText("Transcripts stay exactly as Myna heard them.")).toBeVisible();
+  await expect(group.getByRole("combobox", { name: "Cleanup model" })).toHaveCount(0);
+  await group.getByRole("switch", { name: "Clean up transcripts with AI" }).click();
+  await expect(group.getByText("The transcript has Show original.")).toBeVisible();
+  await expect(group.getByText("Uses the Fast model: small · OpenRouter")).toBeVisible();
+  await expect(group.getByText("Sends text off this Mac")).toBeVisible();
+  await expect(group.getByText("The default.")).toBeVisible();
+  await group.getByRole("combobox", { name: "Cleanup model" }).selectOption("1|big");
+  await expect(group.getByText("Uses the Fast model")).toHaveCount(0);
+  expect((await calls(page, "transcript_prefs_set")).map((c: any) => [c.prefs.on, c.prefs.model])).toEqual([[true, "fast"], [true, "1|big"]]);
+});
+
+test("Cleanup instructions: an edit is kept, a newer default is offered, and Reset goes back to the default", async ({ page }) => {
+  await cleanup(page, { on: true, prompt: "Mine.", newer: true });
+  const group = page.getByRole("region", { name: "Transcript cleanup" });
+  await expect(group.getByText("Edited.")).toBeVisible();
+  await expect(group.getByText("Newer default")).toBeVisible();
+  await group.getByRole("button", { name: "Cleanup instructions" }).click();
+  await expect(page.getByRole("heading", { name: "Cleanup instructions", level: 1 })).toBeVisible();
+  await expect(page.getByText("A newer default is available")).toBeVisible();
+  const text = page.getByRole("textbox", { name: "Instructions" });
+  await expect(text).toHaveValue("Mine.");
+  await page.getByRole("button", { name: "Reset to default" }).click();
+  await expect(text).toHaveValue("Fix it.");
+  await expect(page.getByRole("button", { name: "Reset to default" })).toBeDisabled();
+  await expect(page.getByText("A newer default is available")).toHaveCount(0);
+  await text.fill("Only punctuation.");
+  await text.blur();
+  await expect(page.getByRole("button", { name: "Reset to default" })).toBeEnabled();
+  expect((await calls(page, "transcript_prefs_set")).at(-1).prefs.prompt).toBe("Only punctuation.");
 });

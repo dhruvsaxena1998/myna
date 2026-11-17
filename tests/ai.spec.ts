@@ -193,8 +193,8 @@ test("Test says Checking… while it runs", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Test" })).toBeDisabled();
 });
 
-test("removing a provider confirms, then names the slots now Not set", async ({ page }) => {
-  await open(page, { providers: [OLLAMA, OR], main: { provider: 2, model: "m" }, fast: { provider: 2, model: "n" } }, `ai_remove: () => ["main", "fast"]`);
+test("removing a provider confirms, then names the slots and feature models now Not set", async ({ page }) => {
+  await open(page, { providers: [OLLAMA, OR], main: { provider: 2, model: "m" }, fast: { provider: 2, model: "n" } }, `ai_remove: () => ["main", "fast", "Summary model"]`);
   await page.getByRole("button", { name: "Remove OpenRouter" }).click();
   await expect(page.getByText("Remove OpenRouter and its key?")).toBeVisible();
   await expect(page.getByText("Models that use it become Not set.")).toBeVisible();
@@ -203,7 +203,7 @@ test("removing a provider confirms, then names the slots now Not set", async ({ 
   await page.getByRole("button", { name: "Remove OpenRouter" }).click();
   await page.getByRole("button", { name: "Remove", exact: true }).click();
   await expect.poll(() => calls(page, "ai_remove")).toEqual([{ id: 2 }]);
-  await expect(page.getByRole("status").filter({ hasText: "Removed OpenRouter and its key. Main model and Fast model are now Not set." })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "Removed OpenRouter and its key. Main model, Fast model and Summary model are now Not set." })).toBeVisible();
   await expect(page.getByRole("button", { name: "Not set" })).toHaveCount(2);
   await expect(page.getByRole("button", { name: "Dismiss" })).toHaveCount(0);
 });

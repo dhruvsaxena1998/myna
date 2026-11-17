@@ -1,4 +1,4 @@
-<!-- The Meeting notes page (docs/settings.html, VIEWS.meetings): the switch and its shortcut, the muted-voice switch, the browser add-on, models and permissions. -->
+<!-- The Meeting notes page (docs/settings.html, VIEWS.meetings): the switch and its shortcut, the Summary and transcript cleanup, the muted-voice switch, the browser add-on, models and permissions. -->
 <script lang="ts" module>
   /** `key` is an accelerator, or "" for no shortcut. */
   export type Notes = { on: boolean; key: string; keep_teams: boolean; offer_calls: boolean; stop_on_end: boolean };
@@ -13,9 +13,9 @@
   import { PRESS, Recorder } from "$lib/recorder.svelte";
 
   // `connected` and `code` are the add-on's, kept by the page so they stay current while away.
-  // `models`: the Models group, which needs the page's model state.
-  let { notes = $bindable(), perms, connected = $bindable(), code = $bindable(), loadError, models }:
-    { notes: Notes; perms: Perms; connected: boolean; code: string; loadError: string; models: Snippet } = $props();
+  // `models`: the Models group, which needs the page's model state. `summaryRows`: the Summary and Transcript cleanup groups, held by the page for their drill-ins.
+  let { notes = $bindable(), perms, connected = $bindable(), code = $bindable(), loadError, models, summaryRows }:
+    { notes: Notes; perms: Perms; connected: boolean; code: string; loadError: string; models: Snippet; summaryRows: Snippet } = $props();
   let keepError = $state("");
 
   const rec = new Recorder<"notes">({
@@ -77,6 +77,7 @@
 </section>
 
 {#if notes.on}
+  {@render summaryRows()}
   <section aria-labelledby="keep-h">
     <h2 id="keep-h">Keep my voice when muted</h2>
     <p class="help">What you say while muted is left out of the notes, unless you turn on the app here.</p>

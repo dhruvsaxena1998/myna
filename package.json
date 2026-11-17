@@ -12,7 +12,8 @@
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "tauri": "tauri",
     "test:ui": "playwright test",
-    "test:extension": "node --test tests/extension/*.node-test.mjs"
+    "test:extension": "node --test tests/extension/*.node-test.mjs",
+    "test:unit": "node --test tests/*.node-test.mjs"
   },
   "license": "MIT",
   "dependencies": {
