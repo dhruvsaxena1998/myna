@@ -3,7 +3,7 @@
   export type Provider = { id: number; kind: "openai" | "openrouter"; name: string; url: string; has_key: boolean; off_device: boolean };
   export type Route = { provider: number; model: string; gone: boolean } | null;
   export type Ai = { providers: Provider[]; main: Route; fast: Route };
-  type Model = { id: string; input_per_m: number | null; output_per_m: number | null; context: number | null; images: boolean | null };
+  export type Model = { id: string; input_per_m: number | null; output_per_m: number | null; context: number | null; images: boolean | null };
   type Test = { st: "run" } | { st: "err"; msg: string } | { st: "ok"; ms: number; models: number | null; used: number | null; limit: number | null };
   type Slot = "main" | "fast";
 

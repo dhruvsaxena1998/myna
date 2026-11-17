@@ -61,3 +61,9 @@ export function length(ms: number) {
 
 /** "11:00 · 42 min · Google Meet", leaving out what isn't known. */
 export const meta = (m: Meeting) => [hm(m.started), m.duration_ms === null ? "" : length(m.duration_ms), m.source_app ?? ""].filter(Boolean).join(" · ");
+
+/** A kept Summary version (`summary_get`). */
+export type Version = { id: number; template: string; prompt: string; provider: string; model: string; created: number; parts: number;
+  cost: { kind: "usd"; usd: number } | { kind: "free" } | { kind: "unknown" }; text: string; edited: boolean };
+/** `meeting-summary`: how a Summary run is going. */
+export type SummaryRun = { id: number } & ({ state: "reading"; n: number; of: number } | { state: "merging" | "skipped" } | { state: "done"; version: Version } | { state: "failed"; error: string });

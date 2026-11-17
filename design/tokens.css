@@ -313,11 +313,11 @@ textarea.input { height: auto; padding: var(--sp-2) var(--sp-3); border-radius: 
 /* A page-wide error line after the last section: 4px under it, not a whole gap. */
 .prefs > .err { margin-top: calc(var(--sp-1) - var(--sp-5)); }
 /* Pill (DESIGN.md › Pill): neutral by default, .status, .caution. */
-:is(.prefs, .stage-path) .pill { display: inline-flex; align-items: center; gap: var(--sp-1); height: 20px; padding: 0 var(--sp-2); border-radius: var(--r-full); font-size: var(--fs-caption); line-height: var(--lh-caption);
+:is(.prefs, .stage-path, .regen) .pill { display: inline-flex; align-items: center; gap: var(--sp-1); height: 20px; padding: 0 var(--sp-2); border-radius: var(--r-full); font-size: var(--fs-caption); line-height: var(--lh-caption);
   font-weight: var(--fw-semibold); white-space: nowrap; flex: none; background: var(--fill-hover); color: var(--text-2); }
-:is(.prefs, .stage-path) .pill.status { background: var(--accent-soft); color: var(--accent-text); }
-:is(.prefs, .stage-path) .pill.caution { background: var(--caution-soft); color: var(--caution-text); }
-:is(.prefs, .stage-path) .pill .ic { width: 12px; height: 12px; }
+:is(.prefs, .stage-path, .regen) .pill.status { background: var(--accent-soft); color: var(--accent-text); }
+:is(.prefs, .stage-path, .regen) .pill.caution { background: var(--caution-soft); color: var(--caution-text); }
+:is(.prefs, .stage-path, .regen) .pill .ic { width: 12px; height: 12px; }
 /* Allowed / installed: a check plus a word. */
 :is(.prefs, .stage-path) .ok { display: inline-flex; align-items: center; gap: var(--sp-1); color: var(--text-2); white-space: nowrap; }
 :is(.prefs, .stage-path) .ok .ic { width: var(--ic-sm); height: var(--ic-sm); color: var(--ok-text); stroke-width: 2; }

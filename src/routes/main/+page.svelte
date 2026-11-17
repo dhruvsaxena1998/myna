@@ -9,7 +9,7 @@
   import Meeting from "$lib/Meeting.svelte";
   import Meetings from "$lib/Meetings.svelte";
   import type { Notes } from "$lib/MeetingNotes.svelte";
-  import { writing, type Meeting as Row_, type Page, type Progress, type Running } from "$lib/meetings";
+  import { writing, type Meeting as Row_, type Page, type Progress, type Running, type SummaryRun } from "$lib/meetings";
   import Traces from "$lib/Traces.svelte";
   import Yours from "$lib/Yours.svelte";
   import { glassOn, syncGlass, type Look } from "$lib/look";
@@ -31,6 +31,7 @@
   // svelte-ignore state_referenced_locally
   let running = $state<Running>(data.running);
   let progress = $state<Record<number, Progress>>({});
+  let summaries = $state<Record<number, SummaryRun>>({}); // kept here, so a run's progress survives leaving its page
   let page = $state<Page | null>(null); // the open meeting, loaded before the view swaps so it never pops in
   let meetingError = $state("");
   let current = $state<"meetings" | "history" | "yours" | "nerds">("meetings");
@@ -92,6 +93,7 @@
         if (was === payload.state && payload.state === "transcribing") return;
         refresh().then(() => void (page?.id === payload.id && openMeeting(payload.id)));
       }),
+      listen<SummaryRun>("meeting-summary", ({ payload }) => { summaries[payload.id] = payload; }),
     ];
     return () => un.forEach((u) => void u.then((f) => f()));
   });
@@ -176,7 +178,7 @@
       <header data-tauri-drag-region><h1>All meetings</h1></header>
       <div class="content"><ErrorState title="Myna couldn't read your meetings" message={data.meetings.error} /></div>
     {:else if view === "meetings" && page}
-      <Meeting {page} progress={progress[page.id]} onback={() => (page = null)} onretry={retry} oninclude={include} />
+      {#key page.id}<Meeting {page} progress={progress[page.id]} summary={summaries[page.id]} onback={() => (page = null)} onretry={retry} oninclude={include} />{/key}
     {:else if view === "meetings"}
       <Meetings {meetings} {running} {progress} on={notes.on} error={meetingError} onenable={enable} onopen={openMeeting} onretry={retry}
         onstart={() => invoke("meeting_toggle")} onstop={() => invoke("meeting_toggle")} />

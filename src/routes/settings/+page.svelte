@@ -90,6 +90,11 @@
     const off = listen<boolean>("addon-status", (e) => (addonOn = e.payload));
     return () => void off.then((f) => f());
   });
+  // A meeting's "Set up" opens AI providers.
+  onMount(() => {
+    const off = listen<PageId>("settings-page", (e) => go(e.payload));
+    return () => void off.then((f) => f());
+  });
   onMount(watchDownloads);
   const installed = (m: Model) => dl.installed[m.id] ?? m.installed;
   const modelState = (m: Model) => `${m.name} · ${installed(m) ? (m.system ? "Built in" : `Installed · ${fmtSize(m.size)}`) : m.id in dl.pct ? `Downloading ${dl.pct[m.id]}%` : `Not downloaded${m.system ? "" : ` · ${fmtSize(m.size)}`}`}`;
