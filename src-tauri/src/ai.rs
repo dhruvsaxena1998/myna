@@ -55,8 +55,7 @@ pub struct Model {
     pub images: Option<bool>,
 }
 
-#[cfg_attr(not(test), allow(dead_code))] // first caller is a feature (stories 16, 17)
-#[derive(Debug, Serialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Cost {
     Usd { usd: f64 },
@@ -64,7 +63,6 @@ pub enum Cost {
     Unknown,
 }
 
-#[cfg_attr(not(test), allow(dead_code))] // tokens are first read by Summary and Chat (stories 16, 17)
 #[derive(Debug, Clone, PartialEq)]
 pub struct Reply {
     pub text: String,
@@ -346,6 +344,11 @@ pub fn route(db: &Connection, slot: &str) -> Result<(Record, String), String> {
 pub fn provider(db: &Connection, keys: &dyn Keys, id: i64) -> Result<Box<dyn Backend>, String> {
     let r = find(db, id)?;
     Ok(Box::new(OpenAi { key: keys.get(id)?, rich: r.kind == "openrouter", url: r.url }))
+}
+
+/// Model `model`'s context window from provider `id`'s last fetched list, when it says.
+pub fn context(db: &Connection, id: i64, model: &str) -> Option<u64> {
+    cached(db, id)?.into_iter().find(|m| m.id == model)?.context
 }
 
 fn cached(db: &Connection, id: i64) -> Option<Vec<Model>> {

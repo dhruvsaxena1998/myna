@@ -741,7 +741,7 @@ fn mute_of(events: &[(i64, MuteState)], start: i64, end: i64) -> Option<MuteStat
     })
 }
 
-#[derive(serde::Serialize, Debug, PartialEq)]
+#[derive(serde::Serialize, Debug, PartialEq, Clone)]
 pub struct Line {
     pub id: i64,
     /// "Me", or for the other side "Speaker 2", a name from the captions, or "Them" when voices weren't told apart.
@@ -778,7 +778,7 @@ pub fn page(db: &Connection, id: i64) -> Result<Page, String> {
     Ok(Page { meeting, segments: lines(db, id)? })
 }
 
-fn lines(db: &Connection, id: i64) -> Result<Vec<Line>, String> {
+pub(crate) fn lines(db: &Connection, id: i64) -> Result<Vec<Line>, String> {
     let keep = get(db)?.keep_teams;
     db.prepare("SELECT id, COALESCE(label, speaker), start_ms, text, mute, included FROM segment WHERE meeting = ?1 ORDER BY start_ms, id")
         .and_then(|mut q| {

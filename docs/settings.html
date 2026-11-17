@@ -277,7 +277,8 @@ const PAGES = [
 // The Experimental page exists only while the master switch in General is on.
 const nav = () => PAGES.filter((p) => p.id && (!p.exp || S.exp.on));
 const SUB = { models: ["understand", "Speech-to-text · Voice typing"], mmodels: ["meetings", "Speech-to-text · Meeting notes"], remember: ["understand", "Custom vocabulary"], keep: ["understand", "Filler exceptions"],
-  styles: ["write", "Cleanup styles"], style: ["styles", ""], diar: ["meetings", "Speaker diarization"], add: ["ai", "Add a provider"] };
+  styles: ["write", "Cleanup styles"], style: ["styles", ""], diar: ["meetings", "Speaker diarization"], add: ["ai", "Add a provider"],
+  templates: ["meetings", "Summary templates"], tpl: ["templates", ""], tclprompt: ["meetings", "Cleanup instructions"] };
 const ACCENTS = ["blue", "purple", "pink", "red", "orange", "yellow", "green", "graphite"];
 const STT = [
   { id: "parakeet", name: "Parakeet TDT v3", vendor: "NVIDIA", desc: "Fast. English and 24 European languages.", acc: 5, spd: 5, mb: 670, def: true },
@@ -304,6 +305,10 @@ const FREQ = [["launch", "At launch and daily", "Checks each time Myna opens, an
 const OLLAMA = { id: 1, kind: "openai", name: "Ollama on this Mac", url: "http://localhost:11434/v1", key: false, off: false };
 const ROUTER = { id: 2, kind: "openrouter", name: "OpenRouter", url: "https://openrouter.ai/api/v1", key: true, off: true };
 const DEFAULT_STYLE = "Fix punctuation and grammar slips. Apply self-corrections. Keep the speaker’s words and tone.";
+// Story 16: shipped Summary templates and the transcript cleanup prompt. Only this text is editable; the wrapper is fixed.
+const TPLS = [["Recap", "Start with a short summary of the meeting in plain language. Then list the decisions, and the action items with their owners and any dates."],
+  ["Action items", "List every action item with its owner and any date mentioned. Keep each item to one line."], ["Decisions", "List the decisions made in this meeting, and what was left open."]];
+const TCL_DEF = "Fix punctuation, capitals and words that were clearly misheard. Take out filler words. Write dates, times, phone numbers, versions and decades in digits. Keep every line’s meaning, words and order: don’t rephrase, merge, split or drop lines.";
 
 function scenario(name) {
   const fresh = name === "fresh", bad = name === "problems";
@@ -314,7 +319,8 @@ function scenario(name) {
     stt: "parakeet", sttMeet: name === "typical" ? "w-small" : "parakeet", installed: fresh ? ["apple"] : ["parakeet", "apple", "w-small"], dl: bad ? { "w-turbo": 42 } : {}, failed: bad ? { "w-medium": "Couldn’t download Whisper medium: the connection was lost" } : {},
     diar: "who", diarInstalled: fresh ? [] : ["who"], unload: 300,
     perms: { mic: fresh ? "ask" : "allowed", ax: !bad && !fresh, audio: fresh ? "ask" : "allowed" },
-    notes: { on: !fresh, key: ["⌃", "⌥", "M"], teams: !fresh && !bad }, addon: { on: !fresh && !bad, code: "K7Q-4M2-XD9", steps: false, copied: false },
+    notes: { on: !fresh, key: ["⌃", "⌥", "M"], teams: !fresh && !bad, sumAuto: true, sumModel: "main", sumTpl: "0", tclean: false, tclModel: "fast", tclText: TCL_DEF, tclNewer: bad },
+    templates: TPLS.map(([name, text]) => ({ name, text, shipped: text, newer: bad && name === "Decisions" })), addon: { on: !fresh && !bad, code: "K7Q-4M2-XD9", steps: false, copied: false },
     providers: fresh || bad ? [] : [{ ...OLLAMA }, { ...ROUTER }], main: fresh || bad ? null : "2|anthropic/claude-sonnet-4.5", fast: fresh || bad ? null : "1|qwen2.5:7b-instruct", decide: "fast",
     test: {}, confirm: null, removed: "", decideTest: "",
     styles: [{ name: "Default", apps: [], text: DEFAULT_STYLE, newer: bad }, ...(fresh ? [] : [{ name: "Email", apps: ["Mail", "Outlook"], text: "Write full sentences with a greeting and sign-off. Keep it short." }, { name: "Chat", apps: ["Slack", "Messages"], text: "Casual. No sign-off. Lowercase is fine." }])],
@@ -457,6 +463,25 @@ const VIEWS = {
       (n.on ? row("Recording shortcut", S.rec === "notes" ? "Press the key or keys you want to use. Esc cancels." : "Works from any app, even when the window is closed.",
         `${recorder("notes")}${n.key ? `<button class="btn plain icon" data-act="unset:notes" aria-label="Remove shortcut">${ic("x")}</button>` : ""}`) : ""), { err: S.errs.keys });
     if (!n.on) return h;
+    // A feature's model: "main" / "fast" inherits, "id|model" is the user's pick, "" is Not set (its provider was removed; never rebound)
+    const feature = (v, base, label) => {
+      const r = v === base ? route(S[base]) : route(v), ps = S.providers;
+      const opts = [...(v ? [] : [["", "Not set"]]), [base, `Use the ${label} model`], ...ps.map((p) => ({ group: p.name, opts: MODELS[p.kind].map((m) => [`${p.id}|${m}`, m]) }))];
+      const desc = !ps.length ? `Add a provider on AI providers first.` : !v ? `Not set: its provider was removed.`
+        : !r ? `Uses the ${label} model, which is Not set.` : v === base ? `Uses the ${label} model: <span class="mono">${esc(r.model)}</span> · ${esc(r.p.name)}` : `<span class="mono">${esc(r.model)}</span> · ${esc(r.p.name)}`;
+      return [desc, opts, r, !ps.length];
+    };
+    const [sDesc, sOpts, sR, sDis] = feature(n.sumModel, "main", "Main"), tpl = S.templates;
+    h += sec("Summary",
+      row("Summarize when a meeting finishes", "Writes a summary as soon as the notes are ready.", sw("s-auto", n.sumAuto, "notes.sumAuto")) +
+      row("Summary model", sDesc, sel("m-sum", n.sumModel, sOpts, "notes.sumModel", sDis), { meta: sR ? hostPill(sR.p) : "" }) +
+      row("Template for new summaries", "You can pick another one when you regenerate.", sel("s-tpl", n.sumTpl, tpl.map((t, i) => [String(i), t.name]), "notes.sumTpl")) +
+      row("Summary templates", esc(tpl.map((t) => t.name).join(", ")), `${tpl.some((t) => t.newer) ? `<span class="pill status">Newer default</span>` : ""}<span class="count">${tpl.length}</span><span class="chev">${ic("chev")}</span>`, { go: "templates" }));
+    const [tDesc, tOpts, tR, tDis] = feature(n.tclModel, "fast", "Fast");
+    h += sec("Transcript cleanup",
+      row("Clean up transcripts with AI", n.tclean ? "Fixes punctuation and misheard words, line by line. The transcript has Show original." : "Transcripts stay exactly as Myna heard them.", sw("t-on", n.tclean, "notes.tclean")) +
+      (n.tclean ? row("Cleanup model", tDesc, sel("m-tcl", n.tclModel, tOpts, "notes.tclModel", tDis), { meta: tR ? hostPill(tR.p) : "" }) +
+        row("Cleanup instructions", n.tclText === TCL_DEF ? "The default." : "Edited.", `${n.tclNewer ? `<span class="pill status">Newer default</span>` : ""}<span class="chev">${ic("chev")}</span>`, { go: "tclprompt" }) : ""));
     h += sec("Keep my voice when muted",
       row("Microsoft Teams on the web", a.on ? "Myna sees your mute button through the browser add-on." : "Needs the browser add-on. Connect it below.", sw("teams", n.teams && a.on, "notes.teams", !a.on)),
       { help: "What you say while muted is left out of the notes, unless you turn on the app here." });
@@ -545,6 +570,25 @@ const VIEWS = {
       <li class="field"><label for="st-text">Instructions</label><textarea class="input" id="st-text" data-act="style.text">${esc(s.text)}</textarea><span class="fh">What the Fast model is told before it sees your words.</span></li></ul></section>
       <div class="actions">${s.name === "Default" ? `<button class="btn" data-act="resetstyle">Reset to default</button>` : `<button class="btn" data-act="delstyle">Delete style</button>`}</div>`;
   },
+  templates() {
+    return sec("", S.templates.map((t, i) => row(esc(t.name), esc(t.text), `${t.newer ? `<span class="pill status">Newer default</span>` : ""}<span class="chev">${ic("chev")}</span>`, { go: `tpl:${i}` })).join(""),
+      { help: "What a summary should say. Myna always asks for Markdown, with timestamps that open the transcript, from the lines you kept." }) +
+      `<div class="actions" style="justify-content:flex-start"><button class="btn" data-act="newtpl">Add template</button></div>`;
+  },
+  tpl() {
+    const t = S.templates[subArg];
+    return (t.newer ? sec("", row("A newer default is available", "Your edit is kept until you choose.", `<button class="btn" data-act="usenewtpl">Use the new default</button>`)) : "") +
+      `<section><ul class="list"><li class="field one"><label for="tp-name">Name</label><input class="input" id="tp-name" data-act="tpl.name" value="${esc(t.name)}" maxlength="30" ${t.shipped ? "disabled" : ""}></li>
+      <li class="field"><label for="tp-text">Instructions</label><textarea class="textarea input" id="tp-text" data-act="tpl.text">${esc(t.text)}</textarea><span class="fh">What the Summary model is told after it has read the meeting’s notes.</span></li></ul></section>
+      <div class="actions">${t.shipped ? `<button class="btn" data-act="resettpl">Reset to default</button>` : `<button class="btn" data-act="deltpl">Delete template</button>`}</div>`;
+  },
+  tclprompt() {
+    const n = S.notes;
+    return (n.tclNewer ? sec("", row("A newer default is available", "Your edit is kept until you choose.", `<button class="btn" data-act="resettcl">Use the new default</button>`)) : "") +
+      `<section><ul class="list"><li class="field"><label for="tc-text">Instructions</label><textarea class="textarea input" id="tc-text" data-act="tcl.text">${esc(n.tclText)}</textarea>
+      <span class="fh">Myna always adds “Spell these exactly as written:” with your custom vocabulary. Lines go in as text to clean up, never as instructions; a line that comes back changed too much keeps what Myna heard.</span></li></ul></section>
+      <div class="actions"><button class="btn" data-act="resettcl">Reset to default</button></div>`;
+  },
   add() {
     const d = S.draft ?? (S.draft = { kind: "openai", name: "", url: "http://localhost:11434/v1", key: "", errs: {} });
     const or = d.kind === "openrouter", e = d.errs;
@@ -580,7 +624,7 @@ function chips(key, help, ph) {
 }
 
 /* ---------- Render ---------- */
-function title() { return sub ? (sub === "style" ? S.styles[subArg]?.name || "Style" : SUB[sub][1]) : PAGES.find((p) => p.id === page).title; }
+function title() { return sub ? (sub === "style" ? S.styles[subArg]?.name || "Style" : sub === "tpl" ? S.templates[subArg]?.name || "Template" : SUB[sub][1]) : PAGES.find((p) => p.id === page).title; }
 function render() {
   const focus = document.activeElement?.id, pos = document.activeElement?.selectionStart;
   document.getElementById("nav").innerHTML = PAGES.filter((p) => !p.exp || S.exp.on).map((p) => p.cap ? `<li class="cap" role="presentation">${p.cap}</li>` : p.gap ? `<li class="gap" role="presentation"></li>`
@@ -603,6 +647,7 @@ const H = { list: [], i: -1 };
 function show(v, push = true) {
   if (v.page === "experimental" && !S.exp.on) v = { page: "general", sub: null, arg: null };
   if (v.sub === "style" && !S.styles[v.arg]) v = { ...v, sub: "styles", arg: null };
+  if (v.sub === "tpl" && !S.templates[v.arg]) v = { ...v, sub: "templates", arg: null };
   if (push) { H.list = H.list.slice(0, H.i + 1); H.list.push(v); H.i = H.list.length - 1; }
   page = v.page; sub = v.sub; subArg = v.arg; S.q = ""; S.rec = null; S.draft = null; render();
 }
@@ -641,8 +686,9 @@ document.addEventListener("click", (e) => {
       const p = prov(+b), gone = [];
       S.providers = S.providers.filter((x) => x.id !== +b);
       for (const k of ["main", "fast"]) if (route(S[k]) === null && S[k]) { S[k] = null; gone.push(k === "main" ? "Main model" : "Fast model"); }
+      for (const [k, base, l] of [["sumModel", "main", "Summary model"], ["tclModel", "fast", "Cleanup model"]]) if (S.notes[k] && S.notes[k] !== base && !route(S.notes[k])) { S.notes[k] = ""; gone.push(l); }
       if (S.decide !== "fast" && !route(S.decide)) S.decide = "fast";
-      S.confirm = null; S.removed = `Removed ${p.name} and its key.${gone.length ? ` ${gone.join(" and ")} ${gone.length > 1 ? "are" : "is"} now Not set.` : ""}`;
+      S.confirm = null; S.removed = `Removed ${p.name} and its key.${gone.length ? ` ${gone.length > 1 ? gone.slice(0, -1).join(", ") + " and " + gone.at(-1) : gone[0]} ${gone.length > 1 ? "are" : "is"} now Not set.` : ""}`;
     },
     dtest() { S.decideTest = "Testing…"; setTimeout(() => { S.decideTest = S.decide === "fast" ? "Picked Acme · 1.1 s · Free" : "Picked Acme · 98% sure · 0.6 s · $0.000018"; render(); }, 700); },
     accent() { S.look.accent = b; },
@@ -653,6 +699,10 @@ document.addEventListener("click", (e) => {
     resetstyle() { S.styles[subArg].text = DEFAULT_STYLE; }, usenew() { S.styles[subArg].text = DEFAULT_STYLE; S.styles[subArg].newer = false; },
     addapp() { const all = ["Notes", "Pages", "Safari", "Xcode", "Linear"], s = S.styles[subArg]; const n = all.find((x) => !S.styles.some((y) => y.apps.includes(x))); if (n) s.apps.push(n); },
     unapp() { S.styles[subArg].apps.splice(+b, 1); },
+    newtpl() { S.templates.push({ name: "New template", text: TPLS[0][1] }); open(`tpl:${S.templates.length - 1}`); return true; },
+    deltpl() { S.templates.splice(subArg, 1); if (+S.notes.sumTpl >= S.templates.length) S.notes.sumTpl = "0"; hist(-1); H.list.length = H.i + 1; },
+    resettpl() { S.templates[subArg].text = S.templates[subArg].shipped; }, usenewtpl() { const t = S.templates[subArg]; t.text = t.shipped; t.newer = false; },
+    resettcl() { S.notes.tclText = TCL_DEF; S.notes.tclNewer = false; },
     unword() { S.words[b].splice(+c, 1); },
     addprov() {
       const d = S.draft, or = d.kind === "openrouter"; d.errs = {};
@@ -684,7 +734,7 @@ document.addEventListener("change", (e) => {
   else if (a === "unload") S.unload = +val;
   else if (a.startsWith("ai.")) S[a.slice(3)] = val || null, S.decideTest = "";
   else if (a === "draft.kind") { S.draft.kind = val; S.draft.errs = {}; S.draft.url = val === "openrouter" ? "https://openrouter.ai/api/v1" : "http://localhost:11434/v1"; if (val === "openrouter" && !S.draft.name) S.draft.name = "OpenRouter"; }
-  else if (a.startsWith("draft.") || a.startsWith("style.") || a === "q" || a === "exp.frost") return;
+  else if (a.startsWith("draft.") || a.startsWith("style.") || a.startsWith("tpl.") || a.startsWith("tcl.") || a === "q" || a === "exp.frost") return;
   else if (a === "voice.rate" && S.errs.feedback) { S.errs.feedback = "Couldn’t save the setting: the disk is full"; t.checked = !t.checked; return; }
   else if (a === "exp.on" || a === "exp.liquid" || a === "exp.stats") S.exp[a.slice(4)] = val;
   else setPath(a, val);
@@ -697,6 +747,9 @@ document.addEventListener("input", (e) => {
   if (a.startsWith("draft.")) S.draft[a.slice(6)] = t.value;
   else if (a === "style.name") { S.styles[subArg].name = t.value; document.querySelector(".toolbar h1").textContent = t.value || "Style"; }
   else if (a === "style.text") S.styles[subArg].text = t.value;
+  else if (a === "tpl.name") { S.templates[subArg].name = t.value; document.querySelector(".toolbar h1").textContent = t.value || "Template"; }
+  else if (a === "tpl.text") S.templates[subArg].text = t.value;
+  else if (a === "tcl.text") S.notes.tclText = t.value;
   else if (a === "q") { S.q = t.value; render(); }
   else if (a === "exp.frost") { S.exp.frost = +t.value; t.style.setProperty("--v", `${t.value}%`); document.documentElement.style.setProperty("--frost", t.value / 100); }
   else if (a.startsWith("word:") && t.value.includes(",")) { addWords(a.slice(5), t.value); t.value = ""; }

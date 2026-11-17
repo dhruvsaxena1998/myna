@@ -12,10 +12,12 @@ Speakers separated automatically; rename once and the whole meeting follows; rem
 - As a user, I want remembered voices suggested in later meetings until I confirm.
 - As a user, I want to play any segment and export Markdown or text.
 
+## Decisions
+- Speaker names are sent to the AI as the transcript shows them, so a Summary can say who owns what (decided 2026-11-17, story 16). A rename changes the input of every chunk that speaker is in, so the next Summary run re-does those chunk notes.
+
 ## Done when
 - [ ] Diarization runs with the chosen model
 - [ ] Rename, merge, remember, suggest
-- [ ] Speaker names never sent to AI (tested)
 - [ ] Checked on a real multi-person call
 
 ## Open questions for you
