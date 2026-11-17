@@ -470,15 +470,21 @@ impl World for Mac {
         pill::place(&self.0, place)
     }
     fn sound(&self, s: Sound) {
-        let name = match s {
-            Sound::Start => "Pop",
-            Sound::Stop => "Purr",
-        };
+        use objc2::{rc::Retained, AllocAnyThread};
+        use objc2_app_kit::NSSound;
+        thread_local! {
+            // Kept alive here so a sound isn't freed mid-play; only ever touched on the main thread.
+            static SOUNDS: [Option<Retained<NSSound>>; 2] = [include_bytes!("../sounds/start.wav").as_slice(), include_bytes!("../sounds/stop.wav")]
+                .map(|wav| NSSound::initWithData(NSSound::alloc(), &objc2_foundation::NSData::with_bytes(wav)));
+        }
         // NSSound isn't Send, so it's made and played on the main thread.
         let _ = self.0.run_on_main_thread(move || {
-            if let Some(sound) = objc2_app_kit::NSSound::soundNamed(&objc2_foundation::NSString::from_str(name)) {
-                sound.play();
-            }
+            SOUNDS.with(|all| {
+                if let Some(sound) = &all[s as usize] {
+                    sound.stop(); // a quick start→stop→start still plays every time
+                    sound.play();
+                }
+            })
         });
     }
     fn catch_esc(&self, keys: &[String], on: bool) {
