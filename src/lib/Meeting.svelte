@@ -133,8 +133,6 @@
     const t = templates.find((t) => t.name === shown?.template) ?? templates[0];
     form = { tpl: t?.id ?? "", prompt: t?.text ?? "", pick: sumModel ? `${sumModel.provider}|${sumModel.model}` : "" };
     await Promise.all((ai?.providers ?? []).map((p) => invoke<Model[]>("ai_models", { id: p.id, fresh: false }).then((l) => { models[p.id] = l; }, () => {})));
-    const p = ai?.providers.find((p) => ids(p).length);
-    if (!form.pick && p) form.pick = `${p.id}|${ids(p)[0]}`;
   }
   // The estimate shows only above $1; a price that isn't known shows nothing.
   $effect(() => {
@@ -196,6 +194,7 @@
         <span class="help" id="rg-ph">Changes here are for this version only.</span></label>
       <label class="field"><span class="label">Model</span>
         <select class="select" bind:value={form.pick} aria-describedby="rg-mh">
+          {#if !form.pick}<option value="" disabled>Choose a model</option>{/if}
           {#each ai.providers as p (p.id)}<optgroup label={p.name}>{#each ids(p) as m (m)}<option value="{p.id}|{m}">{m}</option>{/each}</optgroup>{/each}
         </select>
         <span class="help" id="rg-mh">Picking a model here doesn’t change your Summary model.</span></label>

@@ -59,14 +59,15 @@
       meetingError = String(err);
     }
   }
-  async function openMeeting(id: number) {
+  // `show`: switch to Meetings; a reload in the background leaves the user where they are.
+  async function openMeeting(id: number, show = true) {
     try {
       page = await invoke<Page>("meeting_page", { id });
       meetingError = "";
     } catch (err) {
       (page = null), (meetingError = String(err));
     }
-    current = "meetings";
+    if (show) current = "meetings";
   }
   async function enable() {
     try {
@@ -92,12 +93,12 @@
         const was = progress[payload.id]?.state;
         progress[payload.id] = payload;
         if (was === payload.state && payload.state === "transcribing") return;
-        refresh().then(() => void (page?.id === payload.id && openMeeting(payload.id)));
+        refresh().then(() => void (page?.id === payload.id && openMeeting(payload.id, false)));
       }),
       listen<SummaryRun>("meeting-summary", ({ payload }) => { summaries[payload.id] = payload; }),
       listen<CleanupRun>("meeting-cleanup", ({ payload }) => {
         cleanups[payload.id] = payload;
-        if (payload.state !== "reading" && page?.id === payload.id) openMeeting(payload.id); // the cleaned lines come from the backend
+        if (payload.state !== "reading" && page?.id === payload.id) openMeeting(payload.id, false); // the cleaned lines come from the backend
       }),
     ];
     return () => un.forEach((u) => void u.then((f) => f()));
