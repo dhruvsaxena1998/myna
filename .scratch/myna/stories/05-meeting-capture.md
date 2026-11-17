@@ -29,7 +29,9 @@ Start and stop a meeting from the menubar; mic and system audio recorded as sepa
 - Progress: the recording pill and the list's live card say "Writing up your notes…" with progress. A failure says why and offers Try again; the audio is kept.
 - Recording pill: the design's HUD capsule (red dot, "Recording", timer, "Mic live"). Clicking it does nothing until live notes exist.
 - Meeting page: "Untitled meeting", date · time · duration · source app. Until summaries (story 16) the transcript is the document body, with Copy; when 16 lands it moves to the Transcript side panel.
-- Not in this story: Mute mic (06), live notes, Meeting detected toast, folders and tags (11), search and chat (16, 17), titles, the summary, cloud speech-to-text (03.6).
+- Not in this story: Mute mic (06), live notes, folders and tags (11), search and chat (16, 17), titles, the summary, cloud speech-to-text (03.6).
+
+- Amended 2026-11-17 by #214: Myna offers to record when a call app holds the mic (Meeting detected / Huddle detected on the pill, never starting on its own), and counts down to a stop when the recorded call's app leaves. Both from Core Audio, no extension; two switches under Meeting notes, on by default.
 
 ## Tickets
 1. Meeting notes on/off and mic-only recording: Settings page, shortcut, menubar Start/Stop with timer, recording pill, `mic.wav` on disk, meeting saved in SQLite

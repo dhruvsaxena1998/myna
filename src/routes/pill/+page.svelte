@@ -27,15 +27,22 @@
   let notes = $state<{ id: number; state: "transcribing" | "done" | "failed"; progress: number; error: string | null } | null>(null);
   let notesEl = $state<HTMLElement>();
   let notesHide: ReturnType<typeof setTimeout> | undefined;
-  const meeting = $derived((meetStarted !== null || notes !== null) && !on);
+  // A detected call (calls.rs): the offer to record it, or the countdown to a stop after it ended.
+  let call = $state<{ state: "offer"; title: string; label: string } | { state: "ending"; at: number } | null>(null);
+  let now = $state(Date.now());
+  const meeting = $derived((meetStarted !== null || notes !== null || call !== null) && !on);
   const shown = $derived<Shown | null>(
-    meetStarted !== null ? { state: "recording", words: meetWords }
+    meetStarted !== null && call?.state === "ending" ? { state: "ending", left: Math.max(0, Math.ceil((call.at - now) / 1000)) }
+    : meetStarted !== null ? { state: "recording", words: meetWords }
+    : call?.state === "offer" ? { state: "detected", title: call.title, label: call.label }
     : !notes ? null
     : notes.state === "transcribing" ? { state: "notes", progress: notes.progress }
     : notes.state === "done" ? { state: "notes-saved" }
     : { state: "notes-failed", reason: notes.error ?? "Something went wrong." },
   );
   const dismiss = () => (clearTimeout(notesHide), (notes = null));
+  // The call's buttons: what the backend does, then the pill drops it at once.
+  const callDo = (cmd: "call_start" | "call_dismiss" | "call_keep" | "call_stop") => ((call = null), invoke(cmd).catch(() => {}));
   function openNotes() {
     if (notes) invoke("meeting_open", { id: notes.id }); // the main window shows it (05.4)
     dismiss();
@@ -53,6 +60,7 @@
   // The window takes the mouse only over these buttons (pill.rs `pill_hit`); the rest stays click-through.
   $effect(() => {
     const el = ask ? askEl : notesEl;
+    void shown?.state; // the buttons move when the pill's words change
     if (!el) return void invoke("pill_hit", { rect: null });
     const r = el.getBoundingClientRect();
     invoke("pill_hit", { rect: [r.x, r.y, r.width, r.height] });
@@ -75,6 +83,7 @@
     invoke<Look>("pill_look_get").then((l) => (look = l), () => {}); // the default look until it answers
     const tick = setInterval(() => {
       if (pill.state === "listening") secs = Math.floor((Date.now() - started) / 1000);
+      if (call?.state === "ending") now = Date.now();
       if (meetStarted !== null) meetSecs = Math.max(0, Math.floor((Date.now() - meetStarted) / 1000));
     }, 250);
     const un = [
@@ -96,6 +105,7 @@
         notes = payload;
         if (payload.state === "done") notesHide = setTimeout(() => (notes = null), 8000); // a failure stays until it's dealt with
       }),
+      listen<NonNullable<typeof call> | { state: "none" }>("call", ({ payload }) => (call = payload.state === "none" ? null : payload)),
       listen<number>("dictation-ask", ({ payload }) => ((ask = { trace: payload, rated: null }), (on = true), close(4000))),
       // Over the buttons (pill.rs tells us; the page can't see the pointer leave): up to 8 s, then 1.5 s after leaving. Never for good.
       listen<boolean>("pill-hover", ({ payload }) => ask && ask.rated !== "up" && close(payload ? 8000 : 1500)),
@@ -124,13 +134,13 @@
     invoke("glass_set", { glass });
   }
   $effect(() => {
-    void [appearance && glassOn(appearance), appearance?.glass, appearance?.accent, look.style, look.place, on, meeting, meetStarted, notes?.state, ask?.rated, askEl]; // any of these moves or restyles the glass (the backend picks the tint)
+    void [appearance && glassOn(appearance), appearance?.glass, appearance?.accent, look.style, look.place, on, meeting, meetStarted, notes?.state, call?.state, ask?.rated, askEl]; // any of these moves or restyles the glass (the backend picks the tint)
     syncGlass();
   });
   $effect(() => {
     const ro = new ResizeObserver(() => syncGlass()); // the pill's words change its width
     ro.observe(spot.querySelector(".hud")!);
-    void [meetStarted, notes?.state]; // the pill is drawn only while recording or showing notes
+    void [meetStarted, notes?.state, call?.state]; // the pill is drawn only while recording, offering or showing notes
     const mh = meetSpot.querySelector(".hud");
     if (mh) ro.observe(mh);
     return () => ro.disconnect();
@@ -155,15 +165,19 @@
   {/if}
   </span>
 </div>
-<!-- The recording isn't clickable yet (live notes will open from it); the written-up notes have buttons. -->
+<!-- The recording isn't clickable yet (live notes will open from it); a detected call, its countdown and the written-up notes have buttons. -->
 <div class="spot {look.place}" class:on={meeting} role="status" bind:this={meetSpot}>
   {#if shown}
     <Pill style="capsule" pill={shown} {wave} secs={meetSecs}>
       {#snippet actions()}
-        <span class="acts" bind:this={notesEl}>
-          {#if notes?.state === "failed"}<button class="act" onclick={retry}>Try again</button>
+        <span class="acts" class:call={shown.state === "detected" || shown.state === "ending"} bind:this={notesEl}>
+          {#if shown.state === "detected"}<button class="act primary" onclick={() => callDo("call_start")}>Start notes</button>
+          {:else if shown.state === "ending"}<button class="act primary" onclick={() => callDo("call_keep")}>Keep recording</button><button class="act quiet" onclick={() => callDo("call_stop")}>Stop now</button>
+          {:else if notes?.state === "failed"}<button class="act" onclick={retry}>Try again</button>
           {:else}<button class="act" onclick={openNotes}>Open</button>{/if}
-          <button class="act x" aria-label="Dismiss" onclick={dismiss}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button>
+          {#if shown.state !== "ending"}
+            <button class="act x" aria-label="Dismiss" onclick={() => (shown.state === "detected" ? callDo("call_dismiss") : dismiss())}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button>
+          {/if}
         </span>
       {/snippet}
     </Pill>
@@ -175,6 +189,12 @@
   .act { height: 24px; padding: 0 10px; border: 0; border-radius: 12px; background: var(--hud-fill); color: var(--hud-fg); font: inherit; cursor: default; }
   .act:hover { background: color-mix(in srgb, var(--hud-fg) 22%, transparent); }
   .act:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+  /* A call's choice: set off by a hairline, one filled button that is the answer most of the time, the other quiet. */
+  .acts.call { gap: 6px; margin-left: 4px; padding-left: 12px; box-shadow: inset 0.5px 0 0 var(--hud-edge); }
+  .act.primary { height: 28px; padding: 0 14px; border-radius: 14px; background: var(--hud-fg); color: #1c1c1e; font-weight: var(--fw-medium); }
+  .act.primary:hover { background: color-mix(in srgb, var(--hud-fg) 88%, transparent); }
+  .act.quiet { height: 28px; background: none; color: var(--hud-2); }
+  .act.quiet:hover { background: var(--hud-fill); color: var(--hud-fg); }
   .act.x { width: 24px; padding: 0; display: grid; place-items: center; background: none; color: var(--hud-2); }
   .act.x svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: var(--ic-stroke); stroke-linecap: round; }
   /* A grid, not flex: WebKit sizes a flex wrapper without the card's 280px minimum, so the card overflowed it

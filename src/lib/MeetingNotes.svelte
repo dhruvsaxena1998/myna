@@ -1,7 +1,7 @@
 <!-- The Meeting notes page (docs/settings.html, VIEWS.meetings): the switch and its shortcut, the muted-voice switch, the browser add-on, models and permissions. -->
 <script lang="ts" module>
   /** `key` is an accelerator, or "" for no shortcut. */
-  export type Notes = { on: boolean; key: string; keep_teams: boolean };
+  export type Notes = { on: boolean; key: string; keep_teams: boolean; offer_calls: boolean; stop_on_end: boolean };
 </script>
 
 <script lang="ts">
@@ -62,6 +62,14 @@
             <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" /></svg>
           </button>
         </span>
+      </li>
+      <li class="row">
+        <span><label class="name" for="offer-calls">Offer to record calls</label><span class="desc">When Slack, Teams, Gather or a browser holds your mic for a call, Myna offers to start notes. It never starts on its own. Slack clips and Teams voice messages may be offered too.</span></span>
+        <input id="offer-calls" type="checkbox" role="switch" class="switch" checked={notes.offer_calls} onchange={(e) => save({ ...notes, offer_calls: e.currentTarget.checked })} />
+      </li>
+      <li class="row">
+        <span><label class="name" for="stop-on-end">Stop when the call ends</label><span class="desc">When the call's app lets go of your mic and goes quiet, Myna stops after 30 seconds unless you keep recording. An app that keeps the mic open between calls, such as Arc, Zoom or a Gather space, hides the end.</span></span>
+        <input id="stop-on-end" type="checkbox" role="switch" class="switch" checked={notes.stop_on_end} onchange={(e) => save({ ...notes, stop_on_end: e.currentTarget.checked })} />
       </li>
     {/if}
   </ul>
