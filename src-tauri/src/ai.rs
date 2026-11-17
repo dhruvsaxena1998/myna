@@ -55,7 +55,6 @@ pub struct Model {
     pub images: Option<bool>,
 }
 
-#[cfg_attr(not(test), allow(dead_code))] // first caller is a feature (stories 16, 17)
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Cost {
@@ -64,7 +63,6 @@ pub enum Cost {
     Unknown,
 }
 
-#[cfg_attr(not(test), allow(dead_code))] // tokens are first read by Summary and Chat (stories 16, 17)
 #[derive(Debug, Clone, PartialEq)]
 pub struct Reply {
     pub text: String,

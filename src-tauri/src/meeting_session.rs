@@ -38,6 +38,8 @@ pub trait World: Stt + Voices + 'static {
     fn recent(&self);
     /// The speech model is idle now: it may be freed after the idle time.
     fn idle(&self);
+    /// Meeting `id` is written up: its Summary may run now (story 16), in the background.
+    fn summarize(&self, id: i64);
 }
 
 pub struct MeetingSession {
@@ -221,7 +223,10 @@ impl MeetingSession {
             let done = this.meetings.transcribe(id, w, w, &mut |p| w.notes(id, "transcribing", p, None));
             w.idle(); // the model idles out like after a dictation
             match done {
-                Ok(()) => w.notes(id, "done", 1.0, None),
+                Ok(()) => {
+                    w.notes(id, "done", 1.0, None);
+                    w.summarize(id);
+                }
                 Err(e) => w.notes(id, "failed", 0.0, Some(&e)),
             }
             w.recent();
@@ -316,6 +321,9 @@ impl World for Mac {
     fn idle(&self) {
         self.0.state::<Arc<crate::session::Session>>().schedule_unload()
     }
+    fn summarize(&self, id: i64) {
+        crate::summarize(&self.0, id);
+    }
 }
 
 #[cfg(test)]
@@ -339,6 +347,7 @@ mod tests {
         StopTab,
         Recent,
         Idle,
+        Summarize(i64),
     }
 
     struct Scripted {
@@ -411,6 +420,9 @@ mod tests {
         fn idle(&self) {
             self.log(Saw::Idle)
         }
+        fn summarize(&self, id: i64) {
+            self.log(Saw::Summarize(id))
+        }
     }
 
     fn session(notes_on: bool, mic: Mic, denied: bool) -> (Arc<MeetingSession>, Arc<Mutex<Vec<Saw>>>, tempfile::TempDir) {
@@ -449,7 +461,7 @@ mod tests {
 
     /// What the write-up thread said and the menu clock, left out: they land whenever.
     fn without_write_up(v: Vec<Saw>) -> Vec<Saw> {
-        v.into_iter().filter(|s| !matches!(s, Saw::Notes(..) | Saw::Recent | Saw::Idle | Saw::MenuRunning(_))).collect()
+        v.into_iter().filter(|s| !matches!(s, Saw::Notes(..) | Saw::Recent | Saw::Idle | Saw::MenuRunning(_) | Saw::Summarize(_))).collect()
     }
 
     #[test]
@@ -542,7 +554,7 @@ mod tests {
 
     /// What the write-up said, in order.
     fn write_up_of(v: &[Saw]) -> Vec<Saw> {
-        v.iter().filter(|s| matches!(s, Saw::Notes(..) | Saw::Idle | Saw::Recent)).cloned().collect()
+        v.iter().filter(|s| matches!(s, Saw::Notes(..) | Saw::Idle | Saw::Recent | Saw::Summarize(_))).cloned().collect()
     }
 
     /// A call whose listening fails when the test says so.
@@ -627,15 +639,15 @@ mod tests {
     }
 
     #[test]
-    fn stop_writes_the_meeting_up_transcribing_then_idle_then_done_then_recent() {
+    fn stop_writes_the_meeting_up_transcribing_then_idle_then_done_then_summary_then_recent() {
         let (s, saw_, _, _tmp) = rig(true, Mic::Allowed, false, Call(vec![]), Duration::from_secs(3600));
         s.start();
         let id = id_of(&s);
         s.stop();
         let up = write_up_of(&until(&saw_, |v| recents(v) >= 1));
         assert_eq!(up[0], Saw::Notes(id, "transcribing".into(), 0.0, None));
-        assert!(up[1..up.len() - 3].iter().all(|s| matches!(s, Saw::Notes(i, st, p, None) if *i == id && st == "transcribing" && (0.0..1.0).contains(p))), "{up:?}");
-        assert_eq!(up[up.len() - 3..], [Saw::Idle, Saw::Notes(id, "done".into(), 1.0, None), Saw::Recent]);
+        assert!(up[1..up.len() - 4].iter().all(|s| matches!(s, Saw::Notes(i, st, p, None) if *i == id && st == "transcribing" && (0.0..1.0).contains(p))), "{up:?}");
+        assert_eq!(up[up.len() - 4..], [Saw::Idle, Saw::Notes(id, "done".into(), 1.0, None), Saw::Summarize(id), Saw::Recent]);
     }
 
     #[test]
@@ -646,11 +658,11 @@ mod tests {
         let id = id_of(&s);
         s.stop();
         let up = write_up_of(&until(&saw_, |v| recents(v) >= 1));
-        assert_eq!(up[up.len() - 3..], [Saw::Idle, Saw::Notes(id, "failed".into(), 0.0, Some("The model fell over.".into())), Saw::Recent]);
+        assert_eq!(up[up.len() - 3..], [Saw::Idle, Saw::Notes(id, "failed".into(), 0.0, Some("The model fell over.".into())), Saw::Recent], "no Summary of a failed write-up");
         fail.store(false, std::sync::atomic::Ordering::SeqCst);
         s.retry(id).unwrap();
         let up = write_up_of(&until(&saw_, |v| recents(v) >= 2));
-        assert_eq!(up[up.len() - 3..], [Saw::Idle, Saw::Notes(id, "done".into(), 1.0, None), Saw::Recent]);
+        assert_eq!(up[up.len() - 4..], [Saw::Idle, Saw::Notes(id, "done".into(), 1.0, None), Saw::Summarize(id), Saw::Recent]);
         let again = up.iter().rposition(|s| *s == Saw::Notes(id, "transcribing".into(), 0.0, None)).unwrap();
         assert!(again > 3, "the retry starts from transcribing at 0: {up:?}");
     }

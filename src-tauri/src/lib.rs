@@ -651,6 +651,81 @@ fn call_stop(app: AppHandle) {
     std::thread::spawn(move || app.state::<Arc<MeetingSession>>().stop());
 }
 
+/// Runs meeting `id`'s Summary on its own thread when it should (summary::auto), saying how it goes with
+/// `meeting-summary`: "reading" part `n` of `of`, "merging", then "done" with the version, "failed" with why,
+/// or "skipped" (Summarize when a meeting finishes is off, or Main is Not set).
+fn summarize(app: &AppHandle, id: i64) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let d = app.state::<Data>();
+        let say = |v: serde_json::Value| drop(app.emit("meeting-summary", v));
+        let open = |provider: i64| ai::provider(&d.db.lock().unwrap(), &*d.keys, provider);
+        let mut progress = |p: summary::Progress| match p {
+            summary::Progress::Part(n, of) => say(serde_json::json!({ "id": id, "state": "reading", "n": n, "of": of })),
+            summary::Progress::Merging => say(serde_json::json!({ "id": id, "state": "merging" })),
+        };
+        say(match summary::auto(&d.db, &open, id, &mut progress) {
+            Ok(Some(v)) => serde_json::json!({ "id": id, "state": "done", "version": v }),
+            Ok(None) => serde_json::json!({ "id": id, "state": "skipped" }),
+            Err(e) => serde_json::json!({ "id": id, "state": "failed", "error": e }),
+        });
+    });
+}
+
+/// The meeting page's Summary: every version, newest first, and the one showing.
+#[tauri::command]
+fn summary_get(d: tauri::State<Data>, id: i64) -> Result<serde_json::Value, String> {
+    let (versions, showing) = summary::versions(&d.db.lock().unwrap(), id)?;
+    Ok(serde_json::json!({ "versions": versions, "showing": showing }))
+}
+
+#[tauri::command]
+fn summary_pick(d: tauri::State<Data>, id: i64, version: i64) -> Result<(), String> {
+    summary::pick(&d.db.lock().unwrap(), id, version)
+}
+
+#[tauri::command]
+fn summary_delete(d: tauri::State<Data>, id: i64, version: i64) -> Result<(), String> {
+    summary::delete(&d.db.lock().unwrap(), id, version)
+}
+
+/// Edit › Save: kept as a new "Edited" version.
+#[tauri::command]
+fn summary_edit(d: tauri::State<Data>, id: i64, text: String) -> Result<summary::Version, String> {
+    summary::edit(&d.db.lock().unwrap(), id, &text)
+}
+
+/// Regenerate: the template's name and instruction text for this run, on `provider`'s `model`. Progress comes as
+/// `meeting-summary`, like the automatic run; the answer is the new version.
+#[tauri::command]
+async fn summary_run(app: AppHandle, id: i64, template: String, prompt: String, provider: i64, model: String) -> Result<summary::Version, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let d = app.state::<Data>();
+        let (backend, ask) = {
+            let db = d.db.lock().unwrap();
+            let name: String = db.query_row("SELECT name FROM provider WHERE id = ?1", [provider], |r| r.get(0)).map_err(|_| "That provider isn't there anymore.".to_string())?;
+            (ai::provider(&db, &*d.keys, provider)?, summary::Ask { template, prompt, provider: name, context: ai::context(&db, provider, &model), model })
+        };
+        let say = |v: serde_json::Value| drop(app.emit("meeting-summary", v));
+        summary::run(&d.db, &*backend, id, &ask, &mut |p| match p {
+            summary::Progress::Part(n, of) => say(serde_json::json!({ "id": id, "state": "reading", "n": n, "of": of })),
+            summary::Progress::Merging => say(serde_json::json!({ "id": id, "state": "merging" })),
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn summary_templates_get(d: tauri::State<Data>) -> Result<Vec<summary::Template>, String> {
+    summary::templates(&d.db.lock().unwrap())
+}
+
+#[tauri::command]
+fn summary_templates_set(d: tauri::State<Data>, templates: Vec<summary::TemplateEdit>) -> Result<Vec<summary::Template>, String> {
+    summary::save_templates(&d.db.lock().unwrap(), templates)
+}
+
 /// "Open" on the pill's "Notes saved". The meeting page is the main window's (05.4): it listens for `meeting-open`.
 #[tauri::command]
 fn meeting_open(app: AppHandle, id: i64) {
@@ -931,7 +1006,7 @@ fn open_update(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![pill::pill_hit, dictation_fix, fix_take, debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, ai_test_draft, storage_status, storage_reveal, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, meeting_get, meeting_set, meeting_text, segments_include, addon_get, addon_disconnect, addon_folder, meeting_retry, meeting_open, meetings_list, meeting_page, meeting_running, meeting_toggle, call_start, call_dismiss, call_keep, call_stop, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
+        .invoke_handler(tauri::generate_handler![pill::pill_hit, dictation_fix, fix_take, debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, ai_test_draft, storage_status, storage_reveal, models_list, model_select, model_download, model_cancel, model_delete, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, meeting_get, meeting_set, meeting_text, segments_include, addon_get, addon_disconnect, addon_folder, meeting_retry, meeting_open, meetings_list, meeting_page, meeting_running, meeting_toggle, call_start, call_dismiss, call_keep, call_stop, summary_get, summary_pick, summary_delete, summary_edit, summary_run, summary_templates_get, summary_templates_set, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::Updates::default())
         .setup(|app| {
