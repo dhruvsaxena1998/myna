@@ -955,10 +955,10 @@ fn toggle_meeting(app: &AppHandle) {
     std::thread::spawn(move || app.state::<Arc<MeetingSession>>().toggle());
 }
 
-/// The transcript as Copy and the AI features may see it: muted lines left out. See `meeting::outgoing`.
+/// The transcript as Copy sees it: muted lines left out, cleaned text unless `original`. See `meeting::outgoing`.
 #[tauri::command]
-fn meeting_text(d: tauri::State<Data>, id: i64) -> Result<String, String> {
-    meeting::outgoing(&d.db.lock().unwrap(), id)
+fn meeting_text(d: tauri::State<Data>, id: i64, original: bool) -> Result<String, String> {
+    meeting::outgoing(&d.db.lock().unwrap(), id, original)
 }
 
 /// "Include" on a collapsed run of muted lines: keeps them, marked.

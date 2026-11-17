@@ -221,6 +221,9 @@ mod tests {
         assert_eq!((page.segments[0].text.as_str(), page.segments[0].clean.as_deref()), ("so um we ship on friday", Some("So we ship on Friday.")));
         let kept: String = db.lock().unwrap().query_row("SELECT cleanup FROM meeting WHERE id = 1", [], |r| r.get(0)).unwrap();
         assert_eq!(serde_json::from_str::<serde_json::Value>(&kept).unwrap(), serde_json::json!({ "provider": "OpenRouter", "model": "m", "cost": { "kind": "usd", "usd": 0.01 } }));
+        assert_eq!(page.cleanup.unwrap()["model"], "m", "the page says which model cleaned it");
+        let copy = |original| crate::meeting::outgoing(&db.lock().unwrap(), 1, original).unwrap();
+        assert!(copy(false).starts_with("Me 00:00\nSo we ship on Friday.") && copy(true).starts_with("Me 00:00\nso um we ship on friday"));
         // A reply that isn't JSON keeps every line as heard.
         assert!(go(&db, &Fake::answering("Sure! Here you go.")).is_ok());
         assert_eq!(clean(&db), [None, None, None, None]);
