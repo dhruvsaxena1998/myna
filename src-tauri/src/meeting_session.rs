@@ -83,14 +83,20 @@ impl MeetingSession {
             Mic::Ask => return,
             Mic::Denied => return self.world.notify("Needs the Microphone", pill::ALLOW),
         }
-        let id = match self.meetings.start(now_ms()) {
-            Ok(id) => id,
-            Err(e) => return self.world.notify("Couldn’t start meeting notes", &e),
-        };
-        self.show_running();
+        // The pill first: opening the mic and the call's audio can take seconds.
         if let Ok(look) = pill::look(&self.db.lock().unwrap()) {
             self.world.place(look.place);
         }
+        let now = now_ms();
+        self.world.pill(Some(now), mic_word(self.meetings.muted()), Some(&self.mic_words()));
+        let id = match self.meetings.start(now) {
+            Ok(id) => id,
+            Err(e) => {
+                self.world.pill(None, None, None);
+                return self.world.notify("Couldn’t start meeting notes", &e);
+            }
+        };
+        self.show_running();
         let (this, that) = (self.clone(), self.clone());
         std::thread::spawn(move || this.clock(id));
         std::thread::spawn(move || that.wave(id));
@@ -587,15 +593,16 @@ mod tests {
     }
 
     #[test]
-    fn start_shows_menu_card_pill_then_places_it() {
+    fn start_places_and_shows_the_pill_before_the_mic_opens_then_the_menu_card_and_pill() {
         let (s, saw_, _tmp) = session(true, Mic::Allowed, false);
         s.start();
         let card = s.running().unwrap();
         let (id, started) = (card["id"].as_i64().unwrap(), card["started"].as_i64().unwrap());
         assert_eq!((card["source"].clone(), card["mic"].clone()), (serde_json::Value::Null, serde_json::Value::Null));
         let seen = saw(&saw_);
-        assert!(matches!(&seen[0], Saw::MenuRunning(m) if m.ends_with("| Mic live")));
-        assert_eq!(seen[1..4], [Saw::Running(Some(serde_json::json!({ "id": id, "started": started, "source": null, "mic": null, "words": "Mic live" }))), Saw::Pill(Some(started), None, Some("Mic live".into())), Saw::Place("bottom".into())]);
+        assert_eq!(seen[..2], [Saw::Place("bottom".into()), Saw::Pill(Some(started), None, Some("Mic live".into()))]);
+        assert!(matches!(&seen[2], Saw::MenuRunning(m) if m.ends_with("| Mic live")));
+        assert_eq!(seen[3..5], [Saw::Running(Some(serde_json::json!({ "id": id, "started": started, "source": null, "mic": null, "words": "Mic live" }))), Saw::Pill(Some(started), None, Some("Mic live".into()))]);
         s.stop();
         settled(&saw_);
     }
@@ -608,8 +615,8 @@ mod tests {
         s.toggle();
         assert_eq!(s.running(), None);
         let seen = without_write_up(settled(&saw_));
-        assert_eq!(seen.len(), 7, "{seen:?}");
-        assert_eq!(seen[3..], [Saw::StopTab, Saw::MenuIdle, Saw::Running(None), Saw::Pill(None, None, None)]);
+        assert_eq!(seen.len(), 8, "{seen:?}");
+        assert_eq!(seen[4..], [Saw::StopTab, Saw::MenuIdle, Saw::Running(None), Saw::Pill(None, None, None)]);
         let seen = settled(&saw_);
         assert!(matches!(seen.iter().find(|s| matches!(s, Saw::Notes(..))), Some(Saw::Notes(_, state, ..)) if state == "transcribing"));
     }

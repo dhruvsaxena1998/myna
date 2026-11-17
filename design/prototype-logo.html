@@ -1,0 +1,286 @@
+<!doctype html>
+<!-- PROTOTYPE, throwaway: logo + menubar icon directions for story 15. Open in a browser; ?v=b focuses one direction. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Myna logo prototypes</title>
+<style>
+  :root { --cream:#F4F1EA; --orange:#E8572A; --navy:#1F2A44; --yellow:#F2B705; --bg:#ECEAE4; --text:#1d1d1f; --text2:#6e6e73; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif; color: var(--text); background: var(--bg); padding: 28px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .lede { color: var(--text2); margin: 0 0 24px; max-width: 760px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 16px; }
+  .card { background: #fff; border-radius: 14px; padding: 18px; box-shadow: 0 0 0 .5px rgba(0,0,0,.12); transition: opacity .2s; }
+  .card.dim { opacity: .3; }
+  .card.now { box-shadow: 0 0 0 .5px rgba(0,0,0,.12); background: #faf9f6; }
+  .card h2 { font-size: 15px; margin: 0; }
+  .card .tag { font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: .04em; }
+  .card p { margin: 4px 0 14px; color: var(--text2); font-size: 13px; }
+  .icons { display: flex; align-items: flex-end; gap: 14px; margin-bottom: 14px; }
+  .icons svg { display: block; filter: drop-shadow(0 2px 4px rgba(0,0,0,.18)); }
+  .bars { display: grid; gap: 6px; }
+  .bar { height: 24px; border-radius: 6px; display: flex; align-items: center; justify-content: flex-end; gap: 14px; padding: 0 12px; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .bar.light { background: #e8e6e1; color: rgba(0,0,0,.85); }
+  .bar.dark { background: #2b2b2e; color: rgba(255,255,255,.9); }
+  .bar .other { opacity: .55; font-size: 12px; }
+  .bar svg { width: 18px; height: 18px; display: block; }
+  .rec { display: inline-flex; align-items: center; gap: 4px; }
+  .rec i { width: 6px; height: 6px; border-radius: 50%; background: #ff3b30; display: inline-block; }
+  .say { margin-top: 28px; background: #fff; border-radius: 14px; padding: 20px; max-width: 760px; box-shadow: 0 0 0 .5px rgba(0,0,0,.12); }
+  .say h2 { font-size: 15px; margin: 0 0 12px; }
+  .about { display: flex; gap: 16px; align-items: center; padding: 16px; background: var(--bg); border-radius: 12px; margin-bottom: 12px; }
+  .about b { font-size: 20px; }
+  .about .pr { color: var(--text2); }
+  .opts { margin: 0; padding-left: 18px; color: var(--text2); }
+  .opts li { margin: 4px 0; } .opts code { color: var(--text); }
+  .tiles { display: flex; gap: 20px; flex-wrap: wrap; }
+  .tiles figure { margin: 0; text-align: center; font-size: 12px; color: var(--text2); }
+  .tiles svg { display: block; margin-bottom: 6px; filter: drop-shadow(0 2px 4px rgba(0,0,0,.18)); }
+  nav { display: inline-flex; flex-wrap: wrap; margin: 0 0 16px; gap: 4px; padding: 6px; background: rgba(30,30,32,.92); border-radius: 999px; }
+  nav a { color: #fff; text-decoration: none; padding: 6px 12px; border-radius: 999px; font-size: 13px; }
+  nav a.on { background: rgba(255,255,255,.18); }
+</style>
+</head>
+<body>
+<h1>Myna logo: not a bird</h1>
+<p class="lede">Round 5. Abstract marks about what Myna does: your voice becomes text. Same strict geometry and the same three colours (navy, cream, orange). Each shows the app icon, the menu bar glyph, and how the glyph could show recording itself instead of a separate red dot.</p>
+<div class="grid" id="grid5"></div>
+<details style="margin-top:28px"><summary style="cursor:pointer;font-weight:600">Round 4 (geometric bird)</summary>
+<h1>Myna logo: geometric bird on a line</h1>
+<p class="lede">Round 4. Built only from circles and straight lines on a grid: no legs, no wing, no cursor. Navy and cream, with yellow kept for the beak and eye (the myna’s tell). Faint circles on the large icons show the construction.</p>
+<div class="grid" id="grid4"></div>
+<h2 style="font-size:15px;margin:24px 0 10px">Menu bar glyphs, same geometry, at 18 pt and 16 pt</h2>
+<div class="bars" id="glyphs4" style="max-width:760px"></div>
+</details>
+<details style="margin-top:28px"><summary style="cursor:pointer;font-weight:600">Round 3 (illustrated bird on a line)</summary>
+
+
+<p class="lede">F refined: a real myna silhouette (chunky body, round head, the yellow eye patch, yellow beak and legs, the white wing flash), sitting on the first line of text. Shown big first, so the drawing can be judged, then at Dock and menu bar sizes.</p>
+<div class="grid" id="grid3"></div>
+<h2 style="font-size:15px;margin:24px 0 10px">Menu bar glyphs for this family, at 18 pt and 16 pt</h2>
+<div class="bars" id="glyphs3" style="max-width:760px"></div>
+</details>
+<details style="margin-top:28px"><summary style="cursor:pointer;font-weight:600">Earlier rounds (1 and 2)</summary>
+<h1>Myna: logo and menubar icon directions</h1>
+<p class="lede">The current icon's wavy top line reads like a spell-check or error squiggle, especially at 18&nbsp;pt in the menu bar. Five alternatives, each shown as the app icon (128, 64, 32), the menu bar glyph at real size on a light and dark bar, and the recording state. The palette is the current one (cream, orange, navy), with a myna-beak yellow where it fits.</p>
+<nav id="nav"></nav>
+<div class="grid" id="grid"></div>
+<h1 style="margin-top:32px">Round 2: the bird, pushed further</h1>
+<p class="lede">New ideas that keep the myna but tie it to what Myna does (typing, listening), then B in four colourways. Menu bar glyphs are filled where a stroke would turn to mush at 18 pt.</p>
+<div class="grid" id="grid2"></div>
+<h2 style="font-size:15px;margin:24px 0 10px">B colourways</h2>
+<div class="tiles" id="tiles"></div>
+</details>
+
+<section class="say">
+  <h2>Saying the name: “Myna”, said <i>mai-na</i></h2>
+  <div class="about">
+    <svg width="64" height="64" viewBox="0 0 1024 1024" id="about-icon"></svg>
+    <div><b>Myna</b> <span class="pr">· said <i>mai-na</i>, like मैना, the bird</span><br><span class="pr">Version 0.0.2-beta.14</span></div>
+  </div>
+  <ul class="opts">
+    <li><b>About in Settings</b> (above): one line under the name, <code>said mai-na, like मैना, the bird</code>.</li>
+    <li><b>README</b> first line: <code>Myna (said “mai-na”, like the मैना bird) turns your voice into text…</code></li>
+    <li><b>Onboarding welcome</b>, optional: same line in small text under the logo.</li>
+  </ul>
+</section>
+
+<script>
+// shortcut: every glyph is hand-drawn SVG for comparison only; the chosen one gets redrawn on the 18pt grid and exported.
+const TILE = '<path d="M285 100h454a185 185 0 0 1 185 185v454a185 185 0 0 1-185 185H285a185 185 0 0 1-185-185V285a185 185 0 0 1 185-185z" fill="#F4F1EA"/>';
+const T = (inner, bg) => TILE.replace('#F4F1EA', bg || '#F4F1EA') + inner;
+const V = [
+  { id: 'now', name: 'Current', tag: 'for comparison',
+    note: 'The wave on top is meant as a voice, but at small sizes it reads as a red squiggle.',
+    icon: T('<path d="M300 380q53-80 106 0t106 0 106 0 106 0" fill="none" stroke="#E8572A" stroke-width="56" stroke-linecap="round" stroke-linejoin="round"/><path d="M300 530h424M300 680h220" stroke="#1F2A44" stroke-width="56" stroke-linecap="round"/><path d="M620 620v120" stroke="#E8572A" stroke-width="56" stroke-linecap="round"/>'),
+    glyph: '<path d="M3 5q1.5-2.2 3 0t3 0 3 0 3 0M3 9.5h12M3 14h5.5M11.5 12.25v3.5"/>' },
+  { id: 'a', name: 'Bubble and cursor', tag: 'A · speech becomes text',
+    note: 'A speech bubble with a line of text and a writing cursor. Nothing wavy; says “talk, and it types”.',
+    icon: T('<path d="M380 270h264a130 130 0 0 1 130 130v170a130 130 0 0 1-130 130H460l-130 100v-110a130 130 0 0 1-80-120V400a130 130 0 0 1 130-130z" fill="#1F2A44"/><path d="M370 485h210" stroke="#F4F1EA" stroke-width="56" stroke-linecap="round"/><path d="M660 415v140" stroke="#E8572A" stroke-width="56" stroke-linecap="round"/>'),
+    glyph: '<path d="M5.5 3h7A2.5 2.5 0 0 1 15 5.5v5a2.5 2.5 0 0 1-2.5 2.5H8l-3 2.5V13A2.5 2.5 0 0 1 3 10.5v-5A2.5 2.5 0 0 1 5.5 3z"/><path d="M6 8h3.5M12 6.5v3"/>' },
+  { id: 'b', name: 'Myna head', tag: 'B · the bird',
+    note: 'A minimal myna in profile: dark head, the bird’s yellow eye patch and beak. Owns the name; the menu bar glyph is a round head with a beak.',
+    icon: T('<circle cx="470" cy="540" r="250" fill="#1F2A44"/><path d="M690 455l175 75-175 75z" fill="#F2B705" stroke="#F2B705" stroke-width="30" stroke-linejoin="round"/><circle cx="575" cy="470" r="62" fill="#F2B705"/><circle cx="585" cy="470" r="28" fill="#1F2A44"/>'),
+    glyph: '<circle cx="7.5" cy="9.5" r="5.25"/><path d="M12.4 7.4l4.4 2.1-4.4 2.1"/><circle cx="9.6" cy="7.8" r=".95" fill="currentColor" stroke="none"/>' },
+  { id: 'c', name: 'Notes and cursor', tag: 'C · the current icon, calmer',
+    note: 'Keeps today’s idea (a page being written) and replaces the wave with a straight line. Smallest change; less personality.',
+    icon: T('<path d="M300 380h424M300 530h424M300 680h220" stroke="#1F2A44" stroke-width="56" stroke-linecap="round"/><path d="M620 620v120" stroke="#E8572A" stroke-width="56" stroke-linecap="round"/>'),
+    glyph: '<path d="M3 4.5h12M3 9h12M3 13.5h5.5M11.5 11.75v3.5"/>' },
+  { id: 'd', name: 'Voice bars', tag: 'D · sound, steady',
+    note: 'Five rounded level bars in an arch, the middle one orange. Reads as “listening” without a wave; common in audio apps, so less distinctive.',
+    icon: T(['340,170', '427,300', '514,430', '601,300', '688,170'].map((s, i) => { const [x, h] = s.split(',').map(Number); return `<path d="M${x} ${512 - h / 2}v${h}" stroke="${i === 2 ? '#E8572A' : '#1F2A44'}" stroke-width="60" stroke-linecap="round"/>`; }).join('')),
+    glyph: '<path d="M3 7.5v3M6 5.5v7M9 3.5v11M12 5.5v7M15 7.5v3"/>' },
+  { id: 'e', name: 'Talking bird', tag: 'E · bird + speech bubble',
+    note: 'A speech bubble that is also a bird: an eye at the top, a yellow beak where a bubble’s tail would be, and a line of text inside. Bird and voice in one shape.',
+    icon: T('<rect x="240" y="290" width="480" height="440" rx="150" fill="#1F2A44"/><path d="M705 470l165 62-165 62z" fill="#F2B705" stroke="#F2B705" stroke-width="24" stroke-linejoin="round"/><circle cx="600" cy="420" r="42" fill="#F2B705"/><path d="M340 570h200" stroke="#F4F1EA" stroke-width="52" stroke-linecap="round"/>'),
+    glyph: '<rect x="2" y="3.5" width="11.5" height="11" rx="3.5"/><path d="M13.5 7.3l3.2 1.9-3.2 1.9"/><circle cx="10" cy="6.9" r=".95" fill="currentColor" stroke="none"/><path d="M5 11h3.5"/>' },
+];
+const icon = (v, s) => `<svg width="${s}" height="${s}" viewBox="0 0 1024 1024" role="img" aria-label="${v.name} icon at ${s}px">${v.icon}</svg>`;
+const glyph = (v) => `<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${v.glyph}</svg>`;
+const bar = (v, cls, rec) => `<div class="bar ${cls}"><span class="other">Wi‑Fi</span>${rec ? `<span class="rec">${glyph(v)}<i></i>12:04</span>` : glyph(v)}<span class="other">Tue 4:12 PM</span></div>`;
+document.getElementById('grid').innerHTML = V.map(v => `<article class="card ${v.id === 'now' ? 'now' : ''}" id="v-${v.id}">
+  <div class="tag">${v.tag}</div><h2>${v.name}</h2><p>${v.note}</p>
+  <div class="icons">${icon(v, 128)}${icon(v, 64)}${icon(v, 32)}</div>
+  <div class="bars">${bar(v, 'light')}${bar(v, 'dark')}${bar(v, 'light', true)}${bar(v, 'dark', true)}</div></article>`).join('');
+
+const BIRD = (dx = 0, dy = 0, k = 1) => `<g transform="translate(${dx} ${dy}) scale(${k})"><path d="M370 560l-120-40 40 100z" fill="#1F2A44"/><ellipse cx="500" cy="560" rx="150" ry="110" fill="#1F2A44"/><circle cx="610" cy="450" r="85" fill="#1F2A44"/><path d="M680 425l95 32-95 32z" fill="#F2B705" stroke="#F2B705" stroke-width="16" stroke-linejoin="round"/><circle cx="632" cy="436" r="22" fill="#F2B705"/></g>`;
+const V2 = [
+  { id: 'f', name: 'Bird on a line', tag: 'F · notes + bird',
+    note: 'A myna perched on a line of text, with a shorter line below: the page being written, and who is writing it. Calm and specific.',
+    icon: T(BIRD(0, -10) + '<path d="M220 690h584M220 800h340" stroke="#1F2A44" stroke-width="52" stroke-linecap="round"/><path d="M470 650v30M530 650v30" stroke="#1F2A44" stroke-width="20" stroke-linecap="round"/>'),
+    glyph: '<g fill="currentColor" stroke="none"><ellipse cx="8" cy="8.6" rx="3.4" ry="2.5"/><circle cx="10.6" cy="6.2" r="2"/><path d="M12.2 5.4l2.3.9-2.3.9z"/><path d="M5 8.6l-2.6-.9.9 2.3z"/></g><path d="M2 12.5h14M2 15.5h7.5"/>' },
+  { id: 'g', name: 'Perched on the cursor', tag: 'G · typing + bird',
+    note: 'The myna sits on a text cursor: voice in, text out. Most playful; the cursor alone still reads at 18 pt.',
+    icon: T(BIRD(128, -38, 0.75) + '<path d="M512 470v330M452 470h120M452 800h120" stroke="#E8572A" stroke-width="56" stroke-linecap="round"/>'),
+    glyph: '<g fill="currentColor" stroke="none"><ellipse cx="8" cy="5.4" rx="3" ry="2.2"/><circle cx="10.4" cy="3.4" r="1.7"/><path d="M11.8 2.8l2 .8-2 .8z"/></g><path d="M9 8.5v7.5M7 8.5h4M7 16h4"/>' },
+  { id: 'h', name: 'The eye', tag: 'H · abstract myna',
+    note: 'Only what makes a myna a myna: the yellow eye patch and beak, on a dark tile. Bold and simple; less obviously a bird to people who don’t know one.',
+    icon: T('<circle cx="450" cy="512" r="170" fill="#F2B705"/><circle cx="480" cy="500" r="64" fill="#1F2A44"/><path d="M660 430l190 82-190 82z" fill="#E8572A" stroke="#E8572A" stroke-width="30" stroke-linejoin="round"/>', '#1F2A44'),
+    glyph: '<circle cx="7" cy="9" r="4.6"/><circle cx="7.6" cy="8.7" r="1.6" fill="currentColor" stroke="none"/><path d="M12.6 6.8l3.8 2.2-3.8 2.2z" fill="currentColor"/>' },
+  { id: 'i', name: 'Myna head, drawn', tag: 'I · B as line art',
+    note: 'B redrawn as an outline so the app icon and the menu bar glyph are the same drawing. Lighter than B; closer to Apple’s own utility icons.',
+    icon: T('<circle cx="470" cy="540" r="230" fill="none" stroke="#1F2A44" stroke-width="56"/><path d="M700 465l160 70-160 70" fill="#F2B705" stroke="#1F2A44" stroke-width="40" stroke-linejoin="round"/><circle cx="575" cy="470" r="40" fill="#1F2A44"/>'),
+    glyph: '<circle cx="7.5" cy="9.5" r="5.25"/><path d="M12.4 7.4l4.4 2.1-4.4 2.1"/><circle cx="9.6" cy="7.8" r=".95" fill="currentColor" stroke="none"/>' },
+];
+document.getElementById('grid2').innerHTML = V2.map(v => `<article class="card" id="v-${v.id}">
+  <div class="tag">${v.tag}</div><h2>${v.name}</h2><p>${v.note}</p>
+  <div class="icons">${icon(v, 128)}${icon(v, 64)}${icon(v, 32)}</div>
+  <div class="bars">${bar(v, 'light')}${bar(v, 'dark')}${bar(v, 'light', true)}${bar(v, 'dark', true)}</div></article>`).join('');
+const HEAD = (head, beak, eye, pupil) => `<circle cx="470" cy="540" r="250" fill="${head}"/><path d="M690 455l175 75-175 75z" fill="${beak}" stroke="${beak}" stroke-width="30" stroke-linejoin="round"/><circle cx="575" cy="470" r="62" fill="${eye}"/><circle cx="585" cy="470" r="28" fill="${pupil}"/>`;
+document.getElementById('tiles').innerHTML = [
+  ['Cream tile', '#F4F1EA', HEAD('#1F2A44', '#F2B705', '#F2B705', '#1F2A44')],
+  ['Yellow tile', '#F2B705', HEAD('#1F2A44', '#E8572A', '#F4F1EA', '#1F2A44')],
+  ['Orange tile', '#E8572A', HEAD('#1F2A44', '#F2B705', '#F2B705', '#1F2A44')],
+  ['Navy tile', '#1F2A44', HEAD('#F4F1EA', '#F2B705', '#F2B705', '#1F2A44')],
+].map(([n, bg, inner]) => `<figure><svg width="112" height="112" viewBox="0 0 1024 1024">${T(inner, bg)}</svg>${n}</figure>`).join('');
+V.push(...V2);
+
+// Round 3: one myna, drawn once and reused. Parts share a fill so they read as one silhouette.
+const MYNA = (c, t = '') => `<g ${t}>
+  <path d="M392 632L292 702q-14 12 4 12l118-40z" fill="${c.body}"/>
+  <ellipse cx="482" cy="596" rx="152" ry="128" transform="rotate(-28 482 596)" fill="${c.body}"/>
+  <circle cx="598" cy="446" r="108" fill="${c.body}"/>
+  <ellipse cx="420" cy="642" rx="40" ry="17" transform="rotate(-30 420 642)" fill="${c.wing}"/>
+  <ellipse cx="626" cy="438" rx="44" ry="33" transform="rotate(12 626 438)" fill="${c.eye}"/>
+  <circle cx="638" cy="432" r="16" fill="${c.body}"/>
+  <path d="M686 418q84 10 106 54-44 12-100 2z" fill="${c.beak}"/>
+  <path d="M470 700v30M532 694v36" stroke="${c.legs}" stroke-width="18" stroke-linecap="round"/></g>`;
+const NAVY = { body: '#1F2A44', wing: '#F4F1EA', eye: '#F2B705', beak: '#F2B705', legs: '#F2B705' };
+const LINES = (col = '#1F2A44', cur = '#E8572A') => `<path d="M212 736h600" stroke="${col}" stroke-width="48" stroke-linecap="round"/><path d="M212 842h260" stroke="${col}" stroke-width="48" stroke-linecap="round"/><path d="M534 806v72" stroke="${cur}" stroke-width="44" stroke-linecap="round"/>`;
+const V3 = [
+  { id: 'p1', name: 'Polished', tag: 'P1 · cream tile',
+    note: 'The myna on the first line; the second line is still being written, with the orange cursor. The line is the perch, so the two ideas are one picture.',
+    icon: T(MYNA(NAVY, 'transform="translate(0 -14)"') + LINES()) },
+  { id: 'p2', name: 'Bigger bird', tag: 'P2 · one line',
+    note: 'One line only and a larger bird: more presence in the Dock, simpler at 32 px. Loses the cursor.',
+    icon: T(MYNA(NAVY, 'transform="translate(-60 -60) scale(1.12)"') + '<path d="M196 760h632" stroke="#1F2A44" stroke-width="52" stroke-linecap="round"/>') },
+  { id: 'p3', name: 'Yellow tile', tag: 'P3 · warm',
+    note: 'The same drawing on myna yellow, with an orange beak and a cream eye patch so they still stand out. Most cheerful; very visible in the Dock.',
+    icon: T(MYNA({ body: '#1F2A44', wing: '#F4F1EA', eye: '#F4F1EA', beak: '#E8572A', legs: '#E8572A' }, 'transform="translate(0 -14)"') + LINES('#1F2A44', '#E8572A'), '#F2B705') },
+  { id: 'p4', name: 'Night', tag: 'P4 · navy tile',
+    note: 'Navy tile, cream lines, the bird in near-black with the yellow details glowing. Feels premium; the bird’s outline is the least clear of the four.',
+    icon: T(MYNA({ body: '#0B1020', wing: '#F4F1EA', eye: '#F2B705', beak: '#F2B705', legs: '#F2B705' }, 'transform="translate(0 -14)"') + LINES('#F4F1EA', '#E8572A'), '#2A3A5E') },
+];
+const big = (v) => `<svg width="220" height="220" viewBox="0 0 1024 1024" role="img" aria-label="${v.name} icon, large">${v.icon}</svg>`;
+document.getElementById('grid3').innerHTML = V3.map(v => `<article class="card" id="v-${v.id}">
+  <div class="tag">${v.tag}</div><h2>${v.name}</h2><p>${v.note}</p>
+  <div class="icons">${big(v)}</div><div class="icons">${icon(v, 64)}${icon(v, 32)}${icon(v, 16)}</div></article>`).join('');
+// Glyphs: filled silhouette with the eye knocked out (template images are one colour).
+const G3 = [
+  ['On the line', '<mask id="m1"><rect width="18" height="18" fill="#fff"/><circle cx="11.9" cy="5.2" r=".85" fill="#000"/></mask><g mask="url(#m1)" fill="currentColor"><path d="M6.2 10.2L3.2 12.6l2.2-.2 2.2-1.3z"/><ellipse cx="8.5" cy="8.9" rx="3.6" ry="3" transform="rotate(-28 8.5 8.9)"/><circle cx="11.1" cy="5.6" r="2.6"/><path d="M13.3 4.8l2.8.9-2.6.9z"/></g><path d="M2 14.4h14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>'],
+  ['Bird only', '<mask id="m2"><rect width="18" height="18" fill="#fff"/><circle cx="12.3" cy="6.4" r=".9" fill="#000"/></mask><g mask="url(#m2)" fill="currentColor"><path d="M6 11.2L1.8 14.4l1.9.2 4-2.2z"/><ellipse cx="8.8" cy="10.2" rx="4.3" ry="3.1" transform="rotate(-18 8.8 10.2)"/><circle cx="11.6" cy="6.8" r="2.5"/><path d="M13.9 6.1l2.8.9-2.8.8z"/></g>'],
+  ['Line + cursor, no bird', '<path d="M2 6h14M2 10.5h8.5M12.8 8.8v3.6M2 15h5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>'],
+];
+document.getElementById('glyphs3').innerHTML = G3.map(([n, g]) => [18, 16].map(sz => ['light', 'dark'].map(c =>
+  `<div class="bar ${c}"><span class="other">${n} · ${sz} pt</span><span class="rec"><svg viewBox="0 0 18 18" style="width:${sz}px;height:${sz}px">${g}</svg></span><span class="rec"><svg viewBox="0 0 18 18" style="width:${sz}px;height:${sz}px">${g}</svg><i></i>12:04</span><span class="other">Tue 4:12 PM</span></div>`).join('')).join('')).join('');
+V.push(...V3.map(v => ({ ...v, glyph: '' })));
+
+// Round 4: geometric. Every shape is a circle, a circle segment or a straight line.
+const GEO = {
+  semi: { body: '<path d="M250 714A230 230 0 0 1 710 714z"/>', head: [636, 452, 108], beak: [742, 422, 842, 458, 742, 494], eye: [662, 440, 22],
+    guides: '<circle cx="480" cy="714" r="230"/><circle cx="636" cy="452" r="108"/>' },
+  stack: { body: '<circle cx="470" cy="566" r="150"/>', head: [612, 420, 96], beak: [700, 392, 796, 426, 700, 460], eye: [636, 410, 20],
+    guides: '<circle cx="470" cy="566" r="150"/><circle cx="612" cy="420" r="96"/>' },
+  lens: { body: '<path d="M232 714A330 330 0 0 1 716 520 330 330 0 0 1 232 714z"/>', head: [640, 440, 104], beak: [740, 410, 840, 446, 740, 482], eye: [666, 430, 21],
+    guides: '<circle cx="560" cy="864" r="350" /><circle cx="390" cy="380" r="350"/><circle cx="640" cy="440" r="104"/>' },
+};
+const geo = (g, c = {}) => {
+  const k = { bird: '#1F2A44', beak: '#F2B705', eye: '#F2B705', line: '#1F2A44', ...c };
+  const [hx, hy, hr] = g.head, [ex, ey, er] = g.eye;
+  return `<g fill="${k.bird}">${g.body}<circle cx="${hx}" cy="${hy}" r="${hr}"/></g><path d="M${g.beak[0]} ${g.beak[1]}L${g.beak[2]} ${g.beak[3]}L${g.beak[4]} ${g.beak[5]}z" fill="${k.beak}" stroke="${k.beak}" stroke-width="20" stroke-linejoin="round"/><circle cx="${ex}" cy="${ey}" r="${er}" fill="${k.eye}"/><path d="M220 738h584" stroke="${k.line}" stroke-width="44" stroke-linecap="round"/>`;
+};
+const guide = (g) => `<g fill="none" stroke="#E8572A" stroke-width="3" opacity=".45">${g.guides}<path d="M100 738h824"/></g>`;
+const V4 = [
+  { id: 'q1', name: 'Half-circle', tag: 'Q1 · one arc', g: GEO.semi, note: 'The body is half a circle resting flat on the line; the head is a smaller circle. The flat base makes it feel settled and solid.' },
+  { id: 'q2', name: 'Two circles', tag: 'Q2 · simplest', g: GEO.stack, note: 'Head and body are two circles, beak a triangle. The plainest possible bird; very clean, a little generic.' },
+  { id: 'q3', name: 'Lens', tag: 'Q3 · two arcs', g: GEO.lens, note: 'The body is the lens where two big circles overlap, so the tail comes to a point. More elegant and bird-like than Q1, still pure geometry.' },
+  { id: 'q4', name: 'Half-circle, orange line', tag: 'Q4 · Q1 + accent', g: GEO.semi, c: { line: '#E8572A' }, note: 'Q1 with the line in Myna orange: the line is the text being written, so it gets the brand colour. Two accents, still minimal.' },
+  { id: 'q5', name: 'Lens, navy tile', tag: 'Q5 · Q3 inverted', g: GEO.lens, c: { bird: '#F4F1EA', line: '#F4F1EA', eye: '#1F2A44' }, bg: '#1F2A44', note: 'Q3 in cream on navy. Reads as a logo rather than a drawing; strongest in a row of Dock icons.' },
+].map(v => ({ ...v, icon: T(geo(v.g, v.c), v.bg) }));
+document.getElementById('grid4').innerHTML = V4.map(v => `<article class="card" id="v-${v.id}">
+  <div class="tag">${v.tag}</div><h2>${v.name}</h2><p>${v.note}</p>
+  <div class="icons"><svg width="220" height="220" viewBox="0 0 1024 1024" role="img" aria-label="${v.name} icon with construction circles">${v.icon}${guide(v.g)}</svg></div>
+  <div class="icons">${icon(v, 128)}${icon(v, 64)}${icon(v, 32)}${icon(v, 16)}</div></article>`).join('');
+const G4 = [
+  ['Half-circle', '<mask id="n1"><rect width="18" height="18" fill="#fff"/><circle cx="11.9" cy="6.9" r=".8" fill="#000"/></mask><g mask="url(#n1)" fill="currentColor"><path d="M3 12.6A5 5 0 0 1 13 12.6z"/><circle cx="11.3" cy="7.6" r="2.5"/><path d="M13.4 6.8l2.8.9-2.8.9z"/></g><path d="M2 14.8h14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>'],
+  ['Lens', '<mask id="n2"><rect width="18" height="18" fill="#fff"/><circle cx="12.2" cy="6.6" r=".8" fill="#000"/></mask><g mask="url(#n2)" fill="currentColor"><path d="M2.6 12.8A6.4 6.4 0 0 1 12.2 9.4 6.4 6.4 0 0 1 2.6 12.8z"/><circle cx="11.5" cy="7.3" r="2.5"/><path d="M13.6 6.5l2.8.9-2.8.9z"/></g><path d="M2 14.8h14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>'],
+  ['Lens, no line', '<mask id="n3"><rect width="18" height="18" fill="#fff"/><circle cx="12.4" cy="6" r=".9" fill="#000"/></mask><g mask="url(#n3)" fill="currentColor"><path d="M1.6 14A7.4 7.4 0 0 1 12.6 9.6 7.4 7.4 0 0 1 1.6 14z"/><circle cx="11.6" cy="6.8" r="2.9"/><path d="M14 5.9l3 1-3 1z"/></g>'],
+];
+document.getElementById('glyphs4').innerHTML = G4.map(([n, g]) => [18, 16].map(sz => ['light', 'dark'].map(c =>
+  `<div class="bar ${c}"><span class="other">${n} · ${sz} pt</span><span class="rec"><svg viewBox="0 0 18 18" style="width:${sz}px;height:${sz}px">${g}</svg></span><span class="rec"><svg viewBox="0 0 18 18" style="width:${sz}px;height:${sz}px">${g}</svg><i></i>12:04</span><span class="other">Tue 4:12 PM</span></div>`).join('')).join('')).join('');
+V.push(...V4.map(v => ({ ...v, glyph: '' })));
+
+// Round 5: no bird. `rec` is the glyph when recording (the part that means "voice" turns red).
+const N = '#1F2A44', O = '#E8572A', C = '#F4F1EA';
+const V5 = [
+  { id: 'r1', name: 'Dot and cursor', tag: 'R1 · voice → text',
+    note: 'A dot (your voice) beside a text cursor (where it lands). Two shapes, nothing else. When recording, the dot simply turns red.',
+    icon: T(`<circle cx="372" cy="512" r="118" fill="${O}"/><path d="M660 316v392" stroke="${N}" stroke-width="76" stroke-linecap="round"/>`),
+    glyph: '<circle cx="6" cy="9" r="3.4" fill="currentColor" stroke="none"/><path d="M13 3.5v11"/>',
+    rec: '<circle cx="6" cy="9" r="3.4" fill="#ff3b30" stroke="none"/><path d="M13 3.5v11"/>' },
+  { id: 'r2', name: 'Quote', tag: 'R2 · what was said',
+    note: 'A geometric opening quote: each mark is a circle with an arc. Means “someone said this”; works for dictation and meeting notes alike.',
+    icon: T(`<g fill="none" stroke-linecap="round" stroke-width="64"><path d="M282 590A190 190 0 0 1 452 380" stroke="${N}"/><path d="M552 590A190 190 0 0 1 722 380" stroke="${O}"/></g><circle cx="372" cy="590" r="100" fill="${N}"/><circle cx="642" cy="590" r="100" fill="${O}"/>`),
+    glyph: '<path d="M2.6 11.2A4.6 4.6 0 0 1 6.6 6M9.8 11.2A4.6 4.6 0 0 1 13.8 6"/><circle cx="4.9" cy="11.4" r="2.4" fill="currentColor" stroke="none"/><circle cx="12.1" cy="11.4" r="2.4" fill="currentColor" stroke="none"/>',
+    rec: '<path d="M2.6 11.2A4.6 4.6 0 0 1 6.6 6"/><path d="M9.8 11.2A4.6 4.6 0 0 1 13.8 6" stroke="#ff3b30"/><circle cx="4.9" cy="11.4" r="2.4" fill="currentColor" stroke="none"/><circle cx="12.1" cy="11.4" r="2.4" fill="#ff3b30" stroke="none"/>' },
+  { id: 'r3', name: 'The m', tag: 'R3 · monogram',
+    note: 'A lowercase m drawn with one stroke; its last leg is orange, a cursor finishing the letter. A real monogram, with the product idea hidden in it.',
+    icon: T(`<path d="M300 712V492A106 106 0 0 1 512 492V712M512 492A106 106 0 0 1 724 492" fill="none" stroke="${N}" stroke-width="76" stroke-linecap="round" stroke-linejoin="round"/><path d="M724 540v172" stroke="${O}" stroke-width="76" stroke-linecap="round"/>`),
+    glyph: '<path d="M3 14.5V8.6a3 3 0 0 1 6 0v5.9M9 8.6a3 3 0 0 1 6 0v5.9"/>',
+    rec: '<path d="M3 14.5V8.6a3 3 0 0 1 6 0v5.9M9 8.6a3 3 0 0 1 6 0"/><path d="M15 9.8v4.7" stroke="#ff3b30"/>' },
+  { id: 'r4', name: 'Pill and lines', tag: 'R4 · the recording pill',
+    note: 'The capsule is Myna’s own recording pill (the HUD you already see while talking), with the text it writes beside it. Ties the icon to the product’s UI.',
+    icon: T(`<rect x="262" y="318" width="150" height="388" rx="75" fill="${O}"/><path d="M512 418h250M512 512h250M512 606h160" stroke="${N}" stroke-width="56" stroke-linecap="round"/>`),
+    glyph: '<rect x="2.5" y="3.5" width="4.4" height="11" rx="2.2" fill="currentColor" stroke="none"/><path d="M10 6h6M10 9h6M10 12h4"/>',
+    rec: '<rect x="2.5" y="3.5" width="4.4" height="11" rx="2.2" fill="#ff3b30" stroke="none"/><path d="M10 6h6M10 9h6M10 12h4"/>' },
+  { id: 'r5', name: 'Bubble corner', tag: 'R5 · speech, reduced',
+    note: 'A rounded square with one sharp corner: the least you need to say “speech bubble”. The orange dot inside is the voice. Very app-icon, very calm.',
+    icon: T(`<path d="M262 762V392a130 130 0 0 1 130-130h240a130 130 0 0 1 130 130v240a130 130 0 0 1-130 130z" fill="${N}"/><circle cx="512" cy="512" r="78" fill="${O}"/>`),
+    glyph: '<path d="M3 15V6.5A3.5 3.5 0 0 1 6.5 3h5A3.5 3.5 0 0 1 15 6.5v5a3.5 3.5 0 0 1-3.5 3.5z"/><circle cx="9" cy="9" r="1.9" fill="currentColor" stroke="none"/>',
+    rec: '<path d="M3 15V6.5A3.5 3.5 0 0 1 6.5 3h5A3.5 3.5 0 0 1 15 6.5v5a3.5 3.5 0 0 1-3.5 3.5z"/><circle cx="9" cy="9" r="1.9" fill="#ff3b30" stroke="none"/>' },
+  { id: 'r6', name: 'Dot on a line', tag: 'R6 · the idea you liked, abstracted',
+    note: 'What “bird on a line” was really saying, with the bird removed: a voice (the dot) resting on a line of text. The most minimal mark here.',
+    icon: T(`<circle cx="512" cy="452" r="128" fill="${O}"/><path d="M252 672h520" stroke="${N}" stroke-width="64" stroke-linecap="round"/>`),
+    glyph: '<circle cx="9" cy="7.2" r="3.6" fill="currentColor" stroke="none"/><path d="M2.5 13.6h13"/>',
+    rec: '<circle cx="9" cy="7.2" r="3.6" fill="#ff3b30" stroke="none"/><path d="M2.5 13.6h13"/>' },
+];
+const g5 = (g, sz) => `<svg viewBox="0 0 18 18" style="width:${sz}px;height:${sz}px" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${g}</svg>`;
+document.getElementById('grid5').innerHTML = V5.map(v => `<article class="card" id="v-${v.id}">
+  <div class="tag">${v.tag}</div><h2>${v.name}</h2><p>${v.note}</p>
+  <div class="icons">${icon(v, 128)}${icon(v, 64)}${icon(v, 32)}${icon(v, 16)}</div>
+  <div class="bars">${['light', 'dark'].map(c => `<div class="bar ${c}"><span class="other">Wi‑Fi</span>${g5(v.glyph, 18)}<span class="rec">${g5(v.rec, 18)}12:04</span><span class="other">Tue 4:12 PM</span></div>`).join('')}</div></article>`).join('');
+V.push(...V5.map(v => ({ ...v, glyph: '' })));
+const pick = new URLSearchParams(location.search).get('v');
+const show = (id) => {
+  document.querySelectorAll('.card').forEach(c => c.classList.toggle('dim', !!id && c.id !== `v-${id}` && c.id !== 'v-now'));
+  document.querySelectorAll('nav a').forEach(a => a.classList.toggle('on', a.dataset.v === (id || '')));
+  document.getElementById('about-icon').innerHTML = (V.find(v => v.id === id && v.id.startsWith('r')) || V.find(v => v.id === 'r1')).icon;
+  history.replaceState(null, '', id ? `?v=${id}` : location.pathname);
+};
+document.getElementById('nav').innerHTML = `<a href="#" data-v="">All</a>` + V.filter(v => v.id !== 'now').map(v => `<a href="#" data-v="${v.id}">${v.id.toUpperCase()} · ${v.name}</a>`).join('');
+document.getElementById('nav').onclick = (e) => { const a = e.target.closest('a'); if (a) { e.preventDefault(); show(a.dataset.v); } };
+show(pick);
+</script>
+</body>
+</html>

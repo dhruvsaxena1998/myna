@@ -182,7 +182,7 @@ test("the recording pill says Muted or Mic live, mirrored from Teams, only while
   await emit(page, "meeting", { started: Date.now(), mic: "muted", words: "Muted · mirrored from Teams" });
   await expect(pill).toContainText("Muted · mirrored from Teams");
   await emit(page, "meeting", { started: Date.now(), mic: null, words: "Mic live" });
-  await expect(pill).toHaveText(/Recording\d+:\d+Mic live$/);
+  await expect(pill).toHaveText(/Recording\d+:\d+Mic live\s*$/);
 });
 
 test("the recording pill shows Recording, the timer and Mic live, and goes when it stops", async ({ page }) => {
@@ -198,6 +198,25 @@ test("the recording pill shows Recording, the timer and Mic live, and goes when 
   await expect(pill).toHaveText("Recording1:06Mic live");
   await emit(page, "meeting", { started: null });
   await expect(pill).toBeHidden();
+});
+
+test("the recording pill hides down to its dot, a click on the dot brings it back, and a drag moves the window", async ({ page }) => {
+  await fakeTauri(page, `{}`);
+  await page.goto("/pill");
+  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(10);
+  const pill = page.getByRole("status");
+  await emit(page, "meeting", { started: Date.now(), mic: null, words: "Mic live" });
+  await pill.getByRole("button", { name: "Hide recording pill" }).click();
+  await expect(pill).toHaveText("Recording"); // only the dot shows; the word is for screen readers
+  await expect(pill.getByRole("button")).toHaveCount(0);
+  await pill.locator(".hud").click();
+  await expect(pill).toContainText("Mic live");
+  const box = (await pill.locator(".hud").boundingBox())!;
+  await page.mouse.move(box.x + 20, box.y + 10);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 60, box.y + 10);
+  await page.mouse.up();
+  expect(await calls(page, "plugin:window|start_dragging")).toHaveLength(1);
 });
 
 test("after Stop the pill shows the notes being written with progress, then Notes saved, which goes away", async ({ page }) => {

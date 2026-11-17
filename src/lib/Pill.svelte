@@ -6,8 +6,8 @@
   export type Shown =
     | { state: "listening"; hold: boolean; key: string; limit?: number }
     | { state: "writing" | "cleaning" | "added" }
-    /** A meeting is recording (capsule only); `secs` is how long. */
-    | { state: "recording"; words?: string }
+    /** A meeting is recording (capsule only); `secs` is how long. `mini`: hidden down to its red dot. */
+    | { state: "recording"; words?: string; mini?: boolean }
     /** A finished meeting: being written up (`progress` 0 to 1), saved, or failed with `reason` (capsule only). */
     | { state: "notes"; progress: number }
     | { state: "notes-saved" }
@@ -73,7 +73,7 @@
       {:else if note}<span class="t">{note.title}</span><span class="sub">{note.hint}</span>{/if}
     </span>
   {:else if pill.state === "recording"}
-    <span class="recdot" aria-hidden="true"></span><span>Recording</span><time>{clock}</time><span class="sub">{pill.words}</span>
+    <span class="recdot" aria-hidden="true"></span>{#if pill.mini}<span class="sr-only">Recording</span>{:else}<span>Recording</span><time>{clock}</time><span class="sub">{pill.words}</span>{@render actions?.()}{/if}
   {:else if pill.state === "notes"}
     <span>Writing up your notes…</span><span class="bar" aria-hidden="true"><i style:width="{Math.round(pill.progress * 100)}%"></i></span><time>{Math.round(pill.progress * 100)}%</time>
   {:else if pill.state === "notes-saved"}

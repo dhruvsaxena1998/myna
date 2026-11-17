@@ -1,0 +1,95 @@
+<!doctype html>
+<!-- PROTOTYPE, throwaway: a bolder menu bar glyph, and recording-state options to replace the 🔴 emoji title. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Myna menu bar: bolder glyph and recording state</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 24px; font: 14px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif; color: #1d1d1f; background: #f2f2f4; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 28px 0 4px; }
+  .lede { color: #6e6e73; margin: 0 0 14px; max-width: 760px; }
+  .row { display: grid; grid-template-columns: 230px 1fr; gap: 14px; align-items: center; margin: 8px 0; max-width: 980px; }
+  .row .what b { display: block; font-size: 13px; }
+  .row .what span { display: block; font-size: 12px; color: #6e6e73; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  /* A real-size macOS menu bar strip: 24pt tall, 13pt system text. */
+  .mb { height: 26px; border-radius: 6px; display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 0 12px; font-size: 13px; }
+  .mb.light { background: #d9dee8; color: rgba(0,0,0,.85); }
+  .mb.dark { background: #2c4f7c; color: #fff; }
+  .mb .dim { opacity: .55; font-size: 12px; }
+  .mic { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 20px; border-radius: 6px; background: #ff9f0a; }
+  .mic svg { width: 12px; height: 12px; }
+  .item { display: inline-flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
+  .item svg { width: 18px; height: 18px; display: block; overflow: visible; }
+  .t { font-variant-numeric: tabular-nums; }
+  .cap { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 8px 0 6px; border-radius: 6px; background: #ff3b30; color: #fff; }
+  .cap svg { width: 16px; height: 16px; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+  .pulse { animation: pulse 2s ease-in-out infinite; }
+  .note { margin-top: 24px; max-width: 760px; color: #6e6e73; font-size: 13px; }
+  .note li { margin: 4px 0; }
+</style>
+</head>
+<body>
+<h1>Menu bar: bolder glyph, and a better recording state</h1>
+<p class="lede">Real size: a 24 pt menu bar with 13 pt text, light and dark wallpaper. The orange capsule is macOS’s own microphone indicator, which shows whenever Myna records, so the options are judged next to it.</p>
+
+<h2>1 · The glyph, bolder</h2>
+<p class="lede">Same drawing as today; only the stroke weight changes. macOS’s own menu bar symbols sit around the 1.8–2.0 mark at this size.</p>
+<div id="weights"></div>
+
+<h2>2 · While recording</h2>
+<p class="lede">All use the 1.9 glyph. The timer ticks so you can judge jitter; digits are tabular so it never shifts the icons beside it.</p>
+<div id="rec"></div>
+
+<ul class="note">
+  <li><b>Today:</b> the tray title is the text <code>🔴 00:03</code>; the emoji is a glossy 3-D ball, which is what reads as childish.</li>
+  <li><b>How the options are built:</b> a tray icon can be swapped at any time, and an icon that isn’t a template image keeps its own colours. So A, B, C and E are one extra 44 px PNG each, swapped in when recording starts and back when it stops. D needs a few frames swapped on a timer. F draws the timer into the image every second.</li>
+  <li><b>Timer text</b> stays the tray title (system font), as now, minus the emoji.</li>
+</ul>
+
+<script>
+// The current glyph (src-tauri/icons/tray.svg), parametrised by weight.
+const WAVE = 'M3 5q1.5-2.2 3 0t3 0 3 0 3 0', LINES = 'M3 9.5h12M3 14h5.5', CUR = 'M11.5 12.25v3.5';
+const glyph = (w, extra = '', parts = { wave: 'currentColor', lines: 'currentColor', cur: 'currentColor' }) =>
+  `<svg viewBox="0 0 18 18" fill="none" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round">
+    <path d="${WAVE}" stroke="${parts.wave}"/><path d="${LINES}" stroke="${parts.lines}"/>${parts.cur ? `<path d="${CUR}" stroke="${parts.cur}"/>` : ''}${extra}</svg>`;
+const MIC = '<span class="mic"><svg viewBox="0 0 12 12" fill="#fff"><rect x="4" y="1" width="4" height="7" rx="2"/><path d="M2.5 6a3.5 3.5 0 0 0 7 0" stroke="#fff" stroke-width="1.2" fill="none" stroke-linecap="round"/><path d="M6 9.5v1.5" stroke="#fff" stroke-width="1.2" stroke-linecap="round"/></svg></span>';
+const bar = (cls, inner, mic = true) => `<div class="mb ${cls}"><span class="dim">Wi‑Fi</span>${mic ? MIC : ''}${inner}<span class="dim">Tue 7:10 PM</span></div>`;
+const row = (title, sub, inner, mic) => `<div class="row"><div class="what"><b>${title}</b><span>${sub}</span></div><div class="pair">${bar('light', inner(), mic)}${bar('dark', inner(), mic)}</div></div>`;
+
+document.getElementById('weights').innerHTML = [
+  ['1.6 · today', 'What ships now.', 1.6], ['1.9', 'Recommended: stands out, still airy.', 1.9], ['2.2', 'Heaviest; the wave starts to clog.', 2.2],
+].map(([t, s, w]) => row(t, s, () => `<span class="item">${glyph(w)}</span>`, false)).join('');
+
+const W = 1.9, RED = '#ff3b30';
+const R = [
+  ['Today', 'The red emoji ball and the clock.', () => `<span class="item">${glyph(1.6)}<span>🔴 <span class="t">00:03</span></span></span>`],
+  ['A · Badge', 'A small flat red dot on the glyph’s corner, like an app badge. Quiet; the clock beside it.',
+    () => `<span class="item">${glyph(W, `<circle cx="15.2" cy="14.6" r="3.6" fill="var(--bar)"/><circle cx="15.2" cy="14.6" r="2.6" fill="${RED}"/>`, { wave: 'currentColor', lines: 'currentColor', cur: '' })}<span class="t">00:03</span></span>`],
+  ['B · Cursor turns red', 'The glyph’s cursor becomes a red dot that breathes slowly. The icon itself says “recording”.',
+    () => `<span class="item">${glyph(W, `<circle class="pulse" cx="11.5" cy="14" r="2.3" fill="${RED}"/>`, { wave: 'currentColor', lines: 'currentColor', cur: '' })}<span class="t">00:03</span></span>`],
+  ['C · Wave turns red', 'The top wave is drawn in red while recording: the voice line is “live”. Gives the wave a job instead of looking like an error.',
+    () => `<span class="item">${glyph(W, '', { wave: RED, lines: 'currentColor', cur: 'currentColor' })}<span class="t">00:03</span></span>`],
+  ['D · Live wave', 'The wave moves with your voice (a few frames swapped as you talk); still otherwise the normal glyph.',
+    () => `<span class="item"><svg viewBox="0 0 18 18" fill="none" stroke-width="${W}" stroke-linecap="round" stroke-linejoin="round"><path class="live" d="${WAVE}" stroke="${RED}"/><path d="${LINES}" stroke="currentColor"/><path d="${CUR}" stroke="currentColor"/></svg><span class="t">00:03</span></span>`],
+  ['E · Red glyph', 'The whole glyph turns red. Loudest and clearest; most like macOS’s own recording cues.',
+    () => `<span class="item"><span style="color:${RED}">${glyph(W)}</span><span class="t">00:03</span></span>`],
+  ['F · Red capsule', 'Glyph and clock in white on a red capsule, the twin of the orange mic indicator. Most visible; the timer has to be drawn into the image every second.',
+    () => `<span class="cap">${glyph(W)}<span class="t">00:03</span></span>`],
+];
+document.getElementById('rec').innerHTML = R.map(([t, s, f]) => row(t, s, f)).join('');
+// The badge ring matches each bar's background.
+document.querySelectorAll('.mb.light').forEach(e => e.style.setProperty('--bar', '#d9dee8'));
+document.querySelectorAll('.mb.dark').forEach(e => e.style.setProperty('--bar', '#2c4f7c'));
+
+// Tick the clocks and wobble D's wave like a voice level.
+let s = 3;
+const frames = ['M3 5q1.5-2.2 3 0t3 0 3 0 3 0', 'M3 5q1.5-3.4 3 0t3 0 3 0 3 0', 'M3 5q1.5-1 3 0t3 0 3 0 3 0', 'M3 5q1.5-2.8 3 0t3 0 3 0 3 0', 'M3 5q1.5 0 3 0t3 0 3 0 3 0'];
+setInterval(() => { s++; const t = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; document.querySelectorAll('.t').forEach(e => (e.textContent = t)); }, 1000);
+setInterval(() => document.querySelectorAll('.live').forEach(e => e.setAttribute('d', frames[Math.floor(Math.random() * frames.length)])), 160);
+</script>
+</body>
+</html>

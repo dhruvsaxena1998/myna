@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import { fade } from "svelte/transition";
   import Pill, { WAVE, type Look, type Shown } from "$lib/Pill.svelte";
   import { glassOn, type Look as Appearance } from "$lib/look";
@@ -23,6 +24,7 @@
   let meetStarted = $state<number | null>(null);
   let meetSecs = $state(0);
   let meetWords = $state(""); // how the mic is, in words, while a meeting records
+  let mini = $state(false); // the recording pill hidden down to its red dot; a click brings it back
   // A finished meeting's notes: being written up, saved, or failed. Shown in the same spot once the recording is over.
   let notes = $state<{ id: number; state: "transcribing" | "done" | "failed"; progress: number; error: string | null } | null>(null);
   let notesEl = $state<HTMLElement>();
@@ -33,13 +35,27 @@
   const meeting = $derived((meetStarted !== null || notes !== null || call !== null) && !on);
   const shown = $derived<Shown | null>(
     meetStarted !== null && call?.state === "ending" ? { state: "ending", left: Math.max(0, Math.ceil((call.at - now) / 1000)) }
-    : meetStarted !== null ? { state: "recording", words: meetWords }
+    : meetStarted !== null ? { state: "recording", words: meetWords, mini }
     : call?.state === "offer" ? { state: "detected", title: call.title, label: call.label }
     : !notes ? null
     : notes.state === "transcribing" ? { state: "notes", progress: notes.progress }
     : notes.state === "done" ? { state: "notes-saved" }
     : { state: "notes-failed", reason: notes.error ?? "Something went wrong." },
   );
+  // Dragging the recording pill moves the whole pill window, until the next dictation or recording puts it back in its place.
+  let press: { x: number; y: number } | null = null;
+  function down(e: PointerEvent) {
+    if (shown?.state === "recording" && !(e.target as Element).closest("button")) press = { x: e.screenX, y: e.screenY };
+  }
+  function drag(e: PointerEvent) {
+    if (!press || e.buttons !== 1 || Math.hypot(e.screenX - press.x, e.screenY - press.y) < 4) return;
+    press = null;
+    getCurrentWindow().startDragging().catch(() => {});
+  }
+  function up() {
+    if (press && mini) mini = false; // a click, not a drag: the dot opens back up
+    press = null;
+  }
   const dismiss = () => (clearTimeout(notesHide), (notes = null));
   // The call's buttons: what the backend does, then the pill drops it at once.
   const callDo = (cmd: "call_start" | "call_dismiss" | "call_keep" | "call_stop") => ((call = null), invoke(cmd).catch(() => {}));
@@ -57,10 +73,10 @@
   let ask = $state<{ trace: number; rated: "up" | "down" | null } | null>(null);
   let askEl = $state<HTMLElement>();
   const close = (after: number) => (clearTimeout(hide), (hide = setTimeout(() => ((on = false), (ask = null)), after)));
-  // The window takes the mouse only over these buttons (pill.rs `pill_hit`); the rest stays click-through.
+  // The window takes the mouse only over these buttons, or the whole recording pill (to drag it); the rest stays click-through (pill.rs `pill_hit`).
   $effect(() => {
-    const el = ask ? askEl : notesEl;
-    void shown?.state; // the buttons move when the pill's words change
+    const el = ask ? askEl : meeting && shown?.state === "recording" ? meetSpot.querySelector<HTMLElement>(".hud") : notesEl;
+    void [shown?.state, mini, meetWords]; // the buttons move when the pill's words change
     if (!el) return void invoke("pill_hit", { rect: null });
     const r = el.getBoundingClientRect();
     invoke("pill_hit", { rect: [r.x, r.y, r.width, r.height] });
@@ -99,7 +115,7 @@
         if (payload.state === "fallback") hide = setTimeout(() => (on = false), 2600);
         if (payload.state === "error") hide = setTimeout(() => (on = false), 4000);
       }),
-      listen<{ started: number | null; words: string | null }>("meeting", ({ payload }) => ((meetStarted = payload.started), (meetWords = payload.words ?? ""), (meetSecs = payload.started === null ? 0 : Math.max(0, Math.floor((Date.now() - payload.started) / 1000))))),
+      listen<{ started: number | null; words: string | null }>("meeting", ({ payload }) => ((mini &&= payload.started !== null), (meetStarted = payload.started), (meetWords = payload.words ?? ""), (meetSecs = payload.started === null ? 0 : Math.max(0, Math.floor((Date.now() - payload.started) / 1000))))),
       listen<NonNullable<typeof notes>>("meeting-notes", ({ payload }) => {
         clearTimeout(notesHide);
         notes = payload;
@@ -166,12 +182,14 @@
   </span>
 </div>
 <!-- The recording isn't clickable yet (live notes will open from it); a detected call, its countdown and the written-up notes have buttons. -->
-<div class="spot {look.place}" class:on={meeting} role="status" bind:this={meetSpot}>
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions (dragging is pointer-only; the window never takes keyboard focus) -->
+<div class="spot {look.place}" class:on={meeting} class:drag={shown?.state === "recording"} role="status" bind:this={meetSpot} onpointerdown={down} onpointermove={drag} onpointerup={up}>
   {#if shown}
     <Pill style="capsule" pill={shown} {wave} secs={meetSecs}>
       {#snippet actions()}
         <span class="acts" class:call={shown.state === "detected" || shown.state === "ending"} bind:this={notesEl}>
-          {#if shown.state === "detected"}<button class="act primary" onclick={() => callDo("call_start")}>Start notes</button>
+          {#if shown.state === "recording"}<button class="act x" aria-label="Hide recording pill" title="Hide (click the dot to bring it back)" onclick={() => (mini = true)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12" /></svg></button>
+          {:else if shown.state === "detected"}<button class="act primary" onclick={() => callDo("call_start")}>Start notes</button>
           {:else if shown.state === "ending"}<button class="act primary" onclick={() => callDo("call_keep")}>Keep recording</button><button class="act quiet" onclick={() => callDo("call_stop")}>Stop now</button>
           {:else if notes?.state === "failed"}<button class="act" onclick={retry}>Try again</button>
           {:else}<button class="act" onclick={openNotes}>Open</button>{/if}
@@ -185,6 +203,7 @@
 </div>
 
 <style>
+  .drag :global(.hud) { cursor: grab; }
   .acts { display: flex; gap: 2px; margin-right: -8px; }
   .act { height: 24px; padding: 0 10px; border: 0; border-radius: 12px; background: var(--hud-fill); color: var(--hud-fg); font: inherit; cursor: default; }
   .act:hover { background: color-mix(in srgb, var(--hud-fg) 22%, transparent); }
