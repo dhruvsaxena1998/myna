@@ -227,12 +227,15 @@ impl MeetingSession {
             match done {
                 Ok(()) => {
                     w.notes(id, "done", 1.0, None);
+                    w.recent(); // before cleanup, which can take minutes on a local model
                     w.clean(id); // a failed cleanup keeps the text as heard, and the Summary runs on that
                     w.summarize(id);
                 }
-                Err(e) => w.notes(id, "failed", 0.0, Some(&e)),
+                Err(e) => {
+                    w.notes(id, "failed", 0.0, Some(&e));
+                    w.recent();
+                }
             }
-            w.recent();
         });
     }
 }
@@ -649,15 +652,15 @@ mod tests {
     }
 
     #[test]
-    fn stop_writes_the_meeting_up_transcribing_then_idle_then_done_then_cleanup_then_summary_then_recent() {
+    fn stop_writes_the_meeting_up_transcribing_then_idle_then_done_then_recent_then_cleanup_then_summary() {
         let (s, saw_, _, _tmp) = rig(true, Mic::Allowed, false, Call(vec![]), Duration::from_secs(3600));
         s.start();
         let id = id_of(&s);
         s.stop();
-        let up = write_up_of(&until(&saw_, |v| recents(v) >= 1));
+        let up = write_up_of(&until(&saw_, |v| v.contains(&Saw::Summarize(id))));
         assert_eq!(up[0], Saw::Notes(id, "transcribing".into(), 0.0, None));
         assert!(up[1..up.len() - 5].iter().all(|s| matches!(s, Saw::Notes(i, st, p, None) if *i == id && st == "transcribing" && (0.0..1.0).contains(p))), "{up:?}");
-        assert_eq!(up[up.len() - 5..], [Saw::Idle, Saw::Notes(id, "done".into(), 1.0, None), Saw::Clean(id), Saw::Summarize(id), Saw::Recent]);
+        assert_eq!(up[up.len() - 5..], [Saw::Idle, Saw::Notes(id, "done".into(), 1.0, None), Saw::Recent, Saw::Clean(id), Saw::Summarize(id)]);
     }
 
     #[test]
@@ -671,8 +674,8 @@ mod tests {
         assert_eq!(up[up.len() - 3..], [Saw::Idle, Saw::Notes(id, "failed".into(), 0.0, Some("The model fell over.".into())), Saw::Recent], "no Summary of a failed write-up");
         fail.store(false, std::sync::atomic::Ordering::SeqCst);
         s.retry(id).unwrap();
-        let up = write_up_of(&until(&saw_, |v| recents(v) >= 2));
-        assert_eq!(up[up.len() - 5..], [Saw::Idle, Saw::Notes(id, "done".into(), 1.0, None), Saw::Clean(id), Saw::Summarize(id), Saw::Recent]);
+        let up = write_up_of(&until(&saw_, |v| v.contains(&Saw::Summarize(id))));
+        assert_eq!(up[up.len() - 5..], [Saw::Idle, Saw::Notes(id, "done".into(), 1.0, None), Saw::Recent, Saw::Clean(id), Saw::Summarize(id)]);
         let again = up.iter().rposition(|s| *s == Saw::Notes(id, "transcribing".into(), 0.0, None)).unwrap();
         assert!(again > 3, "the retry starts from transcribing at 0: {up:?}");
     }
@@ -685,7 +688,7 @@ mod tests {
         s.start();
         let id = id_of(&s);
         s.stop();
-        let n = until(&saw_, |v| recents(v) >= 1).len();
+        let n = until(&saw_, |v| v.contains(&Saw::Summarize(id))).len();
         assert_eq!(s.retry(id), no);
         std::thread::sleep(TICK * 3);
         assert_eq!(saw(&saw_).len(), n);
