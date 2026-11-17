@@ -182,7 +182,8 @@ pub fn auto(db: &Mutex<Connection>, open: &dyn Fn(i64) -> Result<Box<dyn Backend
     let (ask, id) = {
         let db = db.lock().unwrap();
         let read = |e: rusqlite::Error| format!("Couldn't read the Summary settings: {e}");
-        if !crate::storage::read_switch(&db, "summary_auto", true).map_err(read)? {
+        // shortcut: off by default until Settings (16.4) shows the switch; story 16 wants it on then.
+        if !crate::storage::read_switch(&db, "summary_auto", false).map_err(read)? {
             return Ok(None);
         }
         let Ok((provider, model)) = crate::ai::route(&db, "main") else { return Ok(None) };
@@ -609,7 +610,7 @@ mod tests {
     }
 
     #[test]
-    fn auto_runs_the_chosen_template_on_main_and_nothing_when_off_or_main_is_not_set() {
+    fn auto_runs_the_chosen_template_on_main_only_when_turned_on_and_main_is_set() {
         let (db, _tmp) = meeting(&[(0, "Me", "hello")]);
         let fake = Fake::default();
         let f = fake.clone();
@@ -621,6 +622,9 @@ mod tests {
             db.execute("INSERT INTO provider(kind, name, url) VALUES ('openrouter', 'OpenRouter', 'https://openrouter.ai/api/v1')", []).unwrap();
             db.execute("INSERT INTO route(slot, provider_id, model) VALUES ('main', 1, 'big')", []).unwrap();
         }
+        assert_eq!(auto(&db, &open, 1, &mut |_| {}), Ok(None), "off until the user turns it on");
+        assert!(fake.seen().is_empty());
+        crate::storage::write_text(&db.lock().unwrap(), "summary_auto", "1").unwrap();
         let v = auto(&db, &open, 1, &mut |_| {}).unwrap().unwrap();
         let recap = &templates(&db.lock().unwrap()).unwrap()[0];
         assert_eq!((v.template.as_str(), v.prompt.as_str(), v.provider.as_str(), v.model.as_str()), ("Recap", recap.text.as_str(), "OpenRouter", "big"));
