@@ -1,6 +1,6 @@
 //! The channel to Myna's browser add-on (07.1): a WebSocket on 127.0.0.1 while Meeting notes is on.
 //! Only the add-on's own origin gets in, and its first message must carry the connection code.
-//! The messages are in `Msg` (`stop-tab` is the one hyphenated name); `tests/extension/protocol.json` pins them for both sides. The Teams tab's sound (07.3) comes as
+//! The messages are in `Msg` (`stop-tab` is the one hyphenated name); `tests/extension/protocol.json` pins them for both sides. The call tab's sound (07.3) comes as
 //! binary frames: 4 bytes sequence (u32), 8 bytes capture time (i64, unix ms), then 16 kHz mono Int16 samples, all
 //! little-endian; the same fixture pins that layout.
 
@@ -56,6 +56,36 @@ impl MuteState {
     }
 }
 
+/// Whose call page the add-on is reading. An add-on from before Meet sends none, which is Teams.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum Site {
+    #[default]
+    Teams,
+    Meet,
+}
+
+impl Site {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Site::Teams => "teams",
+            Site::Meet => "meet",
+        }
+    }
+
+    /// As the pill, the menu and the meeting say it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Site::Teams => "Teams",
+            Site::Meet => "Meet",
+        }
+    }
+
+    pub fn parse(s: &str) -> Site {
+        if s == "meet" { Site::Meet } else { Site::Teams }
+    }
+}
+
 /// A message on the wire is `{"v":1,"type":...}` plus these fields. A type not listed fails to parse and is ignored.
 #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
@@ -63,15 +93,15 @@ enum Msg {
     Hello { code: String },
     Welcome,
     Ping,
-    /// Which selector table the add-on reads Teams with (a date or number as text), sent on connect and when it changes.
+    /// Which selector table the add-on reads call pages with (a date or number as text), sent on connect and when it changes.
     Selectors { version: String },
-    Mute { state: MuteState, at: i64 },
-    /// Teams' live captions showed `name` speaking at `at` (unix ms, the add-on's clock); `text` is optional.
+    Mute { state: MuteState, at: i64, #[serde(default, skip_serializing_if = "Option::is_none")] site: Option<Site> },
+    /// The call's live captions showed `name` speaking at `at` (unix ms, the add-on's clock); `text` is optional.
     Caption { name: String, at: i64, #[serde(default, skip_serializing_if = "Option::is_none")] text: Option<String> },
     /// The add-on expects captions but can't find them on the page.
     Captions { state: CaptionsState },
-    /// The Teams tab's sound starts or stops coming as binary frames. `title` is the tab's, for the add-on's own use.
-    Tab { state: TabState, #[serde(default)] title: String },
+    /// The call tab's sound starts or stops coming as binary frames. `title` is the tab's, for the add-on's own use.
+    Tab { state: TabState, #[serde(default)] title: String, #[serde(default, skip_serializing_if = "Option::is_none")] site: Option<Site> },
     /// Myna to the add-on: the meeting is over, stop capturing. Hyphenated on the wire, as the add-on listens for it.
     #[serde(rename = "stop-tab")]
     StopTab,
@@ -99,10 +129,10 @@ pub enum AddonEvent {
     SelectorsChanged,
     /// The current connection ended. A connection a newer one replaced doesn't send it.
     Disconnected,
-    Mute { state: MuteState, at: i64 },
+    Mute { state: MuteState, at: i64, site: Site },
     Caption { name: String, at: i64, text: Option<String> },
     CaptionsUnavailable,
-    TabStart,
+    TabStart { site: Site },
     /// A frame: when it arrived, when it was captured (unix ms, the add-on's clock), and its samples.
     TabAudio { at: Instant, ts: i64, samples: Vec<f32> },
     TabStop,
@@ -274,7 +304,7 @@ impl Shared {
                 Ok(Message::Text(t)) if t.len() > MAX => break close(&mut ws, 1009),
                 // `ping` and unknown types need nothing.
                 Ok(Message::Text(t)) => match decode(&t) {
-                    Some(Msg::Mute { state, at }) => (self.emit)(AddonEvent::Mute { state, at }),
+                    Some(Msg::Mute { state, at, site }) => (self.emit)(AddonEvent::Mute { state, at, site: site.unwrap_or_default() }),
                     Some(Msg::Selectors { version }) => {
                         let v: String = version.chars().filter(|c| !c.is_control()).take(32).collect();
                         self.st.lock().unwrap().selectors = (!v.is_empty()).then_some(v);
@@ -282,9 +312,9 @@ impl Shared {
                     }
                     Some(Msg::Caption { name, at, text }) => (self.emit)(AddonEvent::Caption { name, at, text }),
                     Some(Msg::Captions { state: CaptionsState::Unavailable }) => (self.emit)(AddonEvent::CaptionsUnavailable),
-                    Some(Msg::Tab { state: TabState::Start, .. }) => {
+                    Some(Msg::Tab { state: TabState::Start, site, .. }) => {
                         stream = Some(Stream { started: Instant::now(), last: None, samples: 0 });
-                        (self.emit)(AddonEvent::TabStart);
+                        (self.emit)(AddonEvent::TabStart { site: site.unwrap_or_default() });
                     }
                     Some(Msg::Tab { state: TabState::Stop, .. }) if stream.take().is_some() => (self.emit)(AddonEvent::TabStop),
                     _ => {}
@@ -498,10 +528,10 @@ mod tests {
             Msg::Welcome,
             Msg::Ping,
             Msg::Selectors { version: "1".into() },
-            Msg::Mute { state: MuteState::Muted, at: 1 },
+            Msg::Mute { state: MuteState::Muted, at: 1, site: None },
             Msg::Caption { name: "A".into(), at: 1, text: None },
             Msg::Captions { state: CaptionsState::Unavailable },
-            Msg::Tab { state: TabState::Start, title: String::new() },
+            Msg::Tab { state: TabState::Start, title: String::new(), site: None },
         ]
         .map(|m| serde_json::from_str::<serde_json::Value>(&encode(&m)).unwrap()["type"].as_str().unwrap().to_owned());
         assert_eq!(names, ["hello", "welcome", "ping", "selectors", "mute", "caption", "captions", "tab"]);
@@ -544,15 +574,17 @@ mod tests {
     fn mute_and_caption_messages_reach_myna_as_events() {
         let (a, addr, got, _t) = watched();
         let mut ws = connect(&a, addr);
-        ws.send(Message::text(encode(&Msg::Mute { state: MuteState::Muted, at: 7 }))).unwrap();
+        ws.send(Message::text(encode(&Msg::Mute { state: MuteState::Muted, at: 7, site: None }))).unwrap();
+        ws.send(Message::text(r#"{"v":1,"type":"mute","state":"unmuted","at":8,"site":"meet"}"#)).unwrap();
         ws.send(Message::text(r#"{"v":1,"type":"caption","name":"Ana","at":7,"text":"hi"}"#)).unwrap();
         ws.send(Message::text(r#"{"v":1,"type":"caption","name":"Bo","at":8}"#)).unwrap();
         ws.send(Message::text(r#"{"v":1,"type":"captions","state":"unavailable"}"#)).unwrap();
         ws.send(Message::text(encode(&Msg::Selectors { version: "2026-11-10".into() }))).unwrap();
-        heard(&got, 6);
+        heard(&got, 7);
         assert_eq!(*got.lock().unwrap(), [
             AddonEvent::Connected,
-            AddonEvent::Mute { state: MuteState::Muted, at: 7 },
+            AddonEvent::Mute { state: MuteState::Muted, at: 7, site: Site::Teams },
+            AddonEvent::Mute { state: MuteState::Unmuted, at: 8, site: Site::Meet },
             AddonEvent::Caption { name: "Ana".into(), at: 7, text: Some("hi".into()) },
             AddonEvent::Caption { name: "Bo".into(), at: 8, text: None },
             AddonEvent::CaptionsUnavailable,
@@ -564,9 +596,9 @@ mod tests {
     fn a_stranger_gets_no_events() {
         let (_a, addr, got, _t) = watched();
         for m in [
-            encode(&Msg::Mute { state: MuteState::Muted, at: 1 }),
+            encode(&Msg::Mute { state: MuteState::Muted, at: 1, site: None }),
             r#"{"v":1,"type":"caption","name":"Eve","at":1}"#.into(),
-            encode(&Msg::Tab { state: TabState::Start, title: String::new() }),
+            encode(&Msg::Tab { state: TabState::Start, title: String::new(), site: None }),
         ] {
             let mut stranger = dial(addr, Some(ORIGIN)).unwrap();
             stranger.send(Message::text(m)).unwrap();
@@ -666,7 +698,7 @@ mod tests {
     }
 
     fn tab(state: TabState) -> Message {
-        Message::text(encode(&Msg::Tab { state, title: "Standup".into() }))
+        Message::text(encode(&Msg::Tab { state, title: "Standup".into(), site: Some(Site::Meet) }))
     }
 
     /// An add-on with a connection, and the events Myna heard from it (the first is `Connected`).
@@ -685,7 +717,7 @@ mod tests {
         }
         ws.send(tab(TabState::Stop)).unwrap();
         heard(&got, 6);
-        assert_eq!(*got.lock().unwrap(), [AddonEvent::Connected, AddonEvent::TabStart, audio(1000, 1600), audio(1100, 1600), audio(1300, 1600), AddonEvent::TabStop]);
+        assert_eq!(*got.lock().unwrap(), [AddonEvent::Connected, AddonEvent::TabStart { site: Site::Meet }, audio(1000, 1600), audio(1100, 1600), audio(1300, 1600), AddonEvent::TabStop]);
         assert!(a.connected());
     }
 
@@ -742,7 +774,7 @@ mod tests {
         assert!(told);
         drop(ws);
         wait("stop", || got.lock().unwrap().last() == Some(&AddonEvent::Disconnected));
-        assert_eq!(*got.lock().unwrap(), [AddonEvent::Connected, AddonEvent::TabStart, AddonEvent::TabStop, AddonEvent::Disconnected]);
+        assert_eq!(*got.lock().unwrap(), [AddonEvent::Connected, AddonEvent::TabStart { site: Site::Meet }, AddonEvent::TabStop, AddonEvent::Disconnected]);
     }
 
     #[test]
@@ -792,7 +824,7 @@ mod tests {
     #[test]
     fn messages_are_versioned_and_unknown_ones_ignored() {
         assert_eq!(decode(r#"{"v":1,"type":"hello","code":"X"}"#), Some(Msg::Hello { code: "X".into() }));
-        assert_eq!(decode(r#"{"v":1,"type":"mute","state":"muted","at":5}"#), Some(Msg::Mute { state: MuteState::Muted, at: 5 }));
+        assert_eq!(decode(r#"{"v":1,"type":"mute","state":"muted","at":5}"#), Some(Msg::Mute { state: MuteState::Muted, at: 5, site: None }), "an add-on from before Meet");
         assert_eq!(decode(r#"{"v":1,"type":"selectors","version":"2026-11-10"}"#), Some(Msg::Selectors { version: "2026-11-10".into() }));
         assert_eq!(decode(r#"{"v":2,"type":"hello","code":"X"}"#), None);
         assert_eq!(decode(r#"{"v":1,"type":"dance"}"#), None);

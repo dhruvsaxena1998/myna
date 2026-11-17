@@ -1,7 +1,7 @@
 //! Meeting notes: on or off with its shortcut, and a recording kept on disk as a meeting: `mic.wav` (Me) and
 //! `them.wav` (the apps using the mic). The audio reaches it only through `Mic` and `Them`, so tests drive it with fakes.
 
-use crate::addon::MuteState;
+use crate::addon::{MuteState, Site};
 use crate::runtime::{RATE, Segment};
 use crate::speakers;
 use crate::storage::{read_switch, read_text, write_switch, write_text};
@@ -26,6 +26,9 @@ pub struct Notes {
     /// Keep what I say while muted in Teams, instead of leaving it out. Read when a meeting is shown, so it works on old meetings too.
     #[serde(default)]
     pub keep_teams: bool,
+    /// The same for Google Meet.
+    #[serde(default)]
+    pub keep_meet: bool,
     /// Offer to record when a call app starts using the mic (#214).
     #[serde(default = "yes")]
     pub offer_calls: bool,
@@ -44,6 +47,7 @@ pub fn get(conn: &Connection) -> Result<Notes, String> {
         on: read_switch(conn, "meeting_on", false).map_err(err)?,
         key: read_text(conn, "meeting_key").map_err(err)?.unwrap_or(KEY.into()),
         keep_teams: read_switch(conn, "meeting_keep_teams", false).map_err(err)?,
+        keep_meet: read_switch(conn, "meeting_keep_meet", false).map_err(err)?,
         offer_calls: read_switch(conn, "meeting_offer_calls", true).map_err(err)?,
         stop_on_end: read_switch(conn, "meeting_stop_on_end", true).map_err(err)?,
     })
@@ -58,6 +62,7 @@ pub fn set(conn: &Connection, n: &Notes) -> Result<(), String> {
     write_switch(conn, "meeting_on", n.on).map_err(err)?;
     write_text(conn, "meeting_key", &n.key).map_err(err)?;
     write_switch(conn, "meeting_keep_teams", n.keep_teams).map_err(err)?;
+    write_switch(conn, "meeting_keep_meet", n.keep_meet).map_err(err)?;
     write_switch(conn, "meeting_offer_calls", n.offer_calls).map_err(err)?;
     write_switch(conn, "meeting_stop_on_end", n.stop_on_end).map_err(err)?;
     Ok(())
@@ -504,8 +509,8 @@ pub struct Meetings {
     chunk: usize,
     /// The first wait before an Endpoint chunk is tried again.
     backoff: Duration,
-    /// The mirrored mute state last heard, recording or not, so a meeting starts knowing it. `Unknown` once the add-on drops.
-    mirrored: Mutex<Option<MuteState>>,
+    /// The mirrored mute state last heard and whose page said it, recording or not, so a meeting starts knowing it. `Unknown` once the add-on drops.
+    mirrored: Mutex<Option<(MuteState, Site)>>,
     /// The mic's loudness right now, 0 to 1, as `f32` bits; 0 when not recording.
     level: Arc<std::sync::atomic::AtomicU32>,
 }
@@ -527,27 +532,32 @@ impl Meetings {
 
     /// The mic as the add-on mirrors it: `Some(true)` muted, `Some(false)` live, None when Myna isn't seeing it.
     pub fn muted(&self) -> Option<bool> {
-        match (*self.mirrored.lock().unwrap())? {
+        match self.mirrored.lock().unwrap().as_ref()?.0 {
             MuteState::Muted => Some(true),
             MuteState::Unmuted => Some(false),
             MuteState::Unknown => None,
         }
     }
 
-    /// The add-on saw the mute button in `state` at `at` (unix ms); `now` is the clock now. Kept on the timeline only while recording.
-    pub fn mute(&self, state: MuteState, at: i64, now: i64) {
-        *self.mirrored.lock().unwrap() = Some(state);
+    /// Whose call page the mute state was last mirrored from; Teams before any.
+    pub fn site(&self) -> Site {
+        self.mirrored.lock().unwrap().map(|m| m.1).unwrap_or_default()
+    }
+
+    /// The add-on saw `site`'s mute button in `state` at `at` (unix ms); `now` is the clock now. Kept on the timeline only while recording.
+    pub fn mute(&self, state: MuteState, site: Site, at: i64, now: i64) {
+        *self.mirrored.lock().unwrap() = Some((state, site));
         if let Some((id, started)) = self.running() {
             // The add-on's clock is only trusted to within the meeting: never before it began or after now.
-            self.mark(id, (at.min(now) - started).max(0), state);
+            self.mark(id, (at.min(now) - started).max(0), state, site);
         }
     }
 
-    fn mark(&self, id: i64, at_ms: i64, state: MuteState) {
-        let _ = self.db.lock().unwrap().execute("INSERT INTO mute_event(meeting, at_ms, state, source) VALUES (?1, ?2, ?3, 'teams')", (id, at_ms, state.as_str()));
+    fn mark(&self, id: i64, at_ms: i64, state: MuteState, site: Site) {
+        let _ = self.db.lock().unwrap().execute("INSERT INTO mute_event(meeting, at_ms, state, source) VALUES (?1, ?2, ?3, ?4)", (id, at_ms, state.as_str(), site.as_str()));
     }
 
-    /// Teams' captions showed `name` speaking at `at` (unix ms); `now` is the clock now. Kept only while recording, trimmed and capped.
+    /// The call's captions showed `name` speaking at `at` (unix ms); `now` is the clock now. Kept only while recording, trimmed and capped.
     pub fn caption(&self, name: &str, at: i64, text: Option<&str>, now: i64) {
         let Some((id, started)) = self.running() else { return };
         let cap = |s: &str, n| s.trim().chars().take(n).collect::<String>();
@@ -562,7 +572,7 @@ impl Meetings {
         );
     }
 
-    /// The add-on can't find Teams' captions: the page says so instead of guessing at names.
+    /// The add-on can't find the call's captions: the page says so instead of guessing at names.
     pub fn captions_unavailable(&self) {
         if let Some((id, _)) = self.running() {
             let _ = self.db.lock().unwrap().execute("UPDATE meeting SET captions = 'unavailable' WHERE id = ?1", [id]);
@@ -638,8 +648,8 @@ impl Meetings {
             Ok(a) => {
                 *slot = Some(a);
                 drop(slot);
-                if let Some(s) = *self.mirrored.lock().unwrap() {
-                    self.mark(id, 0, s); // what the button said when the meeting began
+                if let Some((s, site)) = *self.mirrored.lock().unwrap() {
+                    self.mark(id, 0, s, site); // what the button said when the meeting began
                 }
                 Ok(id)
             }
@@ -651,7 +661,7 @@ impl Meetings {
         }
     }
 
-    /// The Teams tab's sound starts coming: it's the source from here on. False if nothing is recording.
+    /// The call tab's sound starts coming: it's the source from here on. False if nothing is recording.
     pub fn tab_start(&self, source: &str) -> bool {
         let Some((id, _)) = self.running() else { return false };
         let _ = self.db.lock().unwrap().execute("UPDATE meeting SET source_app = ?1 WHERE id = ?2", (source, id));
@@ -827,7 +837,7 @@ impl Meetings {
                         labels[i] = l;
                     }
                     if names.is_empty() && self.captions_said_unavailable(id) {
-                        note = Some("Teams captions weren't available, so voices are numbered.".to_string());
+                        note = Some(format!("{} captions weren't available, so voices are numbered.", mirrored_from(&self.db.lock().unwrap(), id).name()));
                     }
                 }
                 Err(e) => note = Some(format!("Couldn't tell voices apart: {e}")),
@@ -994,8 +1004,15 @@ pub fn page(db: &Connection, id: i64) -> Result<Page, String> {
     Ok(Page { meeting, segments: lines(db, id)?, cleanup: json(cleanup), stt: json(stt) })
 }
 
+/// Whose call page meeting `id`'s mute state was mirrored from: the last report's, Teams if none.
+fn mirrored_from(db: &Connection, id: i64) -> Site {
+    let source: Option<String> = db.query_row("SELECT source FROM mute_event WHERE meeting = ?1 ORDER BY id DESC LIMIT 1", [id], |r| r.get(0)).optional().unwrap_or(None);
+    source.map_or(Site::Teams, |s| Site::parse(&s))
+}
+
 pub(crate) fn lines(db: &Connection, id: i64) -> Result<Vec<Line>, String> {
-    let keep = get(db)?.keep_teams;
+    let notes = get(db)?;
+    let keep = if mirrored_from(db, id) == Site::Meet { notes.keep_meet } else { notes.keep_teams };
     db.prepare("SELECT id, COALESCE(label, speaker), start_ms, text, mute, included, clean FROM segment WHERE meeting = ?1 ORDER BY start_ms, id")
         .and_then(|mut q| {
             q.query_map([id], |r| {
@@ -1514,13 +1531,17 @@ pub(crate) mod tests {
     fn the_mirrored_state_is_timelined_only_while_recording_and_a_drop_is_unknown() {
         let tmp = tempfile::tempdir().unwrap();
         let m = meetings(tmp.path(), Fake(0));
-        m.mute(MuteState::Muted, 500, 500); // not recording: remembered, not kept
+        assert_eq!(m.site(), Site::Teams, "before any report");
+        m.mute(MuteState::Muted, Site::Meet, 500, 500); // not recording: remembered, not kept
         assert_eq!(m.muted(), Some(true));
         let id = m.start(1000).unwrap(); // starts knowing what the button said
-        m.mute(MuteState::Unmuted, 3000, 3100);
-        m.mute(MuteState::Muted, 1_000_000, 4000); // a clock from the future is held to now
-        m.mute(MuteState::Unknown, 5000, 5000); // the add-on dropped
-        assert_eq!(m.muted(), None);
+        m.mute(MuteState::Unmuted, Site::Meet, 3000, 3100);
+        m.mute(MuteState::Muted, Site::Meet, 1_000_000, 4000); // a clock from the future is held to now
+        m.mute(MuteState::Unknown, Site::Meet, 5000, 5000); // the add-on dropped
+        assert_eq!((m.muted(), m.site()), (None, Site::Meet));
+        let db = m.db.lock().unwrap();
+        assert_eq!(mirrored_from(&db, id), Site::Meet, "each mark says whose page");
+        drop(db);
         let rows: Vec<(i64, String)> = {
             let db = m.db.lock().unwrap();
             let mut q = db.prepare("SELECT at_ms, state FROM mute_event WHERE meeting = ?1 ORDER BY id").unwrap();
@@ -1546,8 +1567,12 @@ pub(crate) mod tests {
         assert!(out(&db).contains("secret") && page(&db, 1).unwrap().segments[1].included);
         db.execute("UPDATE segment SET included = 0", []).unwrap();
         assert!(!out(&db).contains("secret"));
-        set(&db, &Notes { on: true, key: KEY.into(), keep_teams: true, offer_calls: true, stop_on_end: true }).unwrap();
+        set(&db, &Notes { on: true, key: KEY.into(), keep_teams: true, keep_meet: false, offer_calls: true, stop_on_end: true }).unwrap();
         assert!(out(&db).contains("secret"), "the setting keeps muted lines, old meetings too");
+        db.execute("INSERT INTO mute_event(meeting, at_ms, state, source) VALUES (1, 0, 'muted', 'meet')", []).unwrap();
+        assert!(!out(&db).contains("secret"), "a Meet meeting goes by the Meet switch");
+        set(&db, &Notes { on: true, key: KEY.into(), keep_teams: false, keep_meet: true, offer_calls: true, stop_on_end: true }).unwrap();
+        assert!(out(&db).contains("secret"));
     }
 
     #[test]
@@ -1594,7 +1619,7 @@ pub(crate) mod tests {
     fn settings_default_off_and_save_only_real_shortcuts() {
         let tmp = tempfile::tempdir().unwrap();
         let conn = crate::storage::open(tmp.path()).unwrap();
-        let n = |on, key: &str| Notes { on, key: key.into(), keep_teams: false, offer_calls: true, stop_on_end: true };
+        let n = |on, key: &str| Notes { on, key: key.into(), keep_teams: false, keep_meet: false, offer_calls: true, stop_on_end: true };
         assert_eq!(get(&conn), Ok(n(false, "Ctrl+Alt+KeyM")));
         set(&conn, &n(true, "")).unwrap();
         assert_eq!(get(&conn), Ok(n(true, "")));
@@ -1604,6 +1629,8 @@ pub(crate) mod tests {
         assert_eq!(get(&conn), Ok(n(true, "Alt+Space")));
         set(&conn, &Notes { keep_teams: true, ..n(true, "") }).unwrap();
         assert!(get(&conn).unwrap().keep_teams);
+        set(&conn, &Notes { keep_meet: true, ..n(true, "") }).unwrap();
+        assert!(get(&conn).is_ok_and(|n| n.keep_meet && !n.keep_teams));
         set(&conn, &Notes { offer_calls: false, stop_on_end: false, ..n(true, "") }).unwrap();
         assert!(get(&conn).is_ok_and(|n| !n.offer_calls && !n.stop_on_end));
         // Settings sent by a build from before the call switches: both on.
@@ -1618,7 +1645,7 @@ pub(crate) mod tests {
         for (k, v) in [("meeting_on", "yes"), ("meeting_keep_teams", "true"), ("meeting_key", "")] {
             conn.execute("INSERT INTO setting(key, value) VALUES (?1, ?2)", [k, v]).unwrap();
         }
-        assert_eq!(get(&conn), Ok(Notes { on: false, key: "".into(), keep_teams: false, offer_calls: true, stop_on_end: true }), "unknown switches are off; \"\" stays no shortcut");
+        assert_eq!(get(&conn), Ok(Notes { on: false, key: "".into(), keep_teams: false, keep_meet: false, offer_calls: true, stop_on_end: true }), "unknown switches are off; \"\" stays no shortcut");
         // Today a stored shortcut is returned as saved, even one this build can't parse.
         conn.execute("UPDATE setting SET value = 'Alt+Nope' WHERE key = 'meeting_key'", []).unwrap();
         assert_eq!(get(&conn).unwrap().key, "Alt+Nope");

@@ -54,9 +54,17 @@ test("real Teams markup: the mic button muted and unmuted", () => {
   assert.equal(readPage(mic("Mute mic", "mic-volume-renderer")), "unmuted");
 });
 
-test("only Teams' own https pages are Teams", async () => {
-  const { isTeams } = await import("../../extension/selectors.js");
-  assert.ok(isTeams("https://teams.microsoft.com/v2/?meetingjoin=true"));
-  assert.ok(isTeams("https://teams.live.com/"));
-  for (const u of ["http://teams.microsoft.com/", "https://teams.microsoft.com.evil.com/", "https://example.com/teams.microsoft.com", "nonsense"]) assert.ok(!isTeams(u), u);
+test("a muted attribute the table names says it, after the words and before aria-pressed", () => {
+  const meet = { mutedAttr: "data-is-muted" };
+  assert.equal(readMute({ label: "Turn on microphone", muted: "true", pressed: "false" }, meet), "muted");
+  assert.equal(readMute({ label: "Turn off microphone", muted: "false" }, meet), "unmuted");
+  assert.equal(readMute({ label: "Turn off microphone", pressed: "true" }, meet), "unknown", "no polarity for aria-pressed: no guess");
+});
+
+test("only Teams' and Meet's own https pages are call pages", async () => {
+  const { site } = await import("../../extension/selectors.js");
+  assert.equal(site("https://teams.microsoft.com/v2/?meetingjoin=true"), "teams");
+  assert.equal(site("https://teams.live.com/"), "teams");
+  assert.equal(site("https://meet.google.com/abc-defg-hij"), "meet");
+  for (const u of ["http://teams.microsoft.com/", "https://teams.microsoft.com.evil.com/", "https://example.com/teams.microsoft.com", "http://meet.google.com/x", "https://meet.google.com.evil.com/", "https://constructor/", "nonsense"]) assert.equal(site(u), null, u);
 });

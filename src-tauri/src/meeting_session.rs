@@ -1,7 +1,7 @@
 //! The Meeting session: one meeting recording from shortcut to write-up, and what the add-on reports during it.
 //! It owns the app's `Meetings` and reaches the Mac only through `World`, so tests drive it with a fake.
 
-use crate::addon::{AddonEvent, MuteState};
+use crate::addon::{AddonEvent, MuteState, Site};
 use crate::meeting::{self, Meetings, Stt, Via, Voices};
 use crate::permissions::Mic;
 use crate::{notify, now_ms, permissions, pill};
@@ -188,37 +188,41 @@ impl MeetingSession {
     pub fn running(&self) -> Option<serde_json::Value> {
         let (id, started) = self.meetings.running()?;
         let source: Option<String> = self.db.lock().unwrap().query_row("SELECT source_app FROM meeting WHERE id = ?1", [id], |r| r.get(0)).ok().flatten();
-        Some(serde_json::json!({ "id": id, "started": started, "source": source, "mic": mic_word(self.meetings.muted()), "words": mic_words(self.meetings.muted()) }))
+        Some(serde_json::json!({ "id": id, "started": started, "source": source, "mic": mic_word(self.meetings.muted()), "words": self.mic_words() }))
     }
 
-    /// The Teams mute button changed: the timeline, then the menu, pill and live card.
-    pub fn mute(&self, state: MuteState, at: i64) {
-        self.meetings.mute(state, at, now_ms());
+    /// The call page's mute button changed: the timeline, then the menu, pill and live card.
+    pub fn mute(&self, state: MuteState, site: Site, at: i64) {
+        self.meetings.mute(state, site, at, now_ms());
         self.show_running();
     }
 
     /// The add-on dropped: Myna can't see the button anymore.
     pub fn dropped(&self) {
-        self.mute(MuteState::Unknown, now_ms());
+        self.mute(MuteState::Unknown, self.meetings.site(), now_ms());
+    }
+
+    fn mic_words(&self) -> String {
+        mic_words(self.meetings.muted(), self.meetings.site())
     }
 
     /// What the add-on reports. Mute and a drop go to the timeline, then the menu, pill and live card; captions are kept
-    /// on the meeting for naming its voices; the Teams tab's sound starts a meeting if none is recording.
+    /// on the meeting for naming its voices; the call tab's sound starts a meeting if none is recording.
     pub fn addon(self: &Arc<Self>, e: AddonEvent) {
         use AddonEvent as E;
         match e {
             E::Connected | E::SelectorsChanged => {}
             E::Disconnected => self.dropped(),
-            E::Mute { state, at } => self.mute(state, at),
+            E::Mute { state, at, site } => self.mute(state, site, at),
             E::Caption { name, at, text } => self.meetings.caption(&name, at, text.as_deref(), now_ms()),
             E::CaptionsUnavailable => self.meetings.captions_unavailable(),
             E::TabAudio { at, ts, samples } => self.meetings.tab_audio(at, ts, &samples),
             E::TabStop => self.meetings.tab_stop(),
-            E::TabStart => {
+            E::TabStart { site } => {
                 if self.meetings.running().is_none() {
                     self.start();
                 }
-                if self.meetings.tab_start("Teams (Chrome tab)") {
+                if self.meetings.tab_start(&format!("{} (Chrome tab)", site.name())) {
                     self.show_running();
                 }
             }
@@ -230,12 +234,12 @@ impl MeetingSession {
         let Some((_, started)) = self.meetings.running() else { return };
         self.show_menu(started);
         self.world.running(self.running());
-        self.world.pill(Some(started), mic_word(self.meetings.muted()), Some(mic_words(self.meetings.muted())));
+        self.world.pill(Some(started), mic_word(self.meetings.muted()), Some(&self.mic_words()));
     }
 
     fn show_menu(&self, started: i64) {
         // The note says how the mic is while recording; the idle menu puts the usual words back.
-        self.world.menu_running(&meeting::clock(now_ms() - started), mic_words(self.meetings.muted()));
+        self.world.menu_running(&meeting::clock(now_ms() - started), &self.mic_words());
     }
 
     /// Writes up meeting `id` on its own thread, saying how it goes with `meeting-notes`: "transcribing" with progress
@@ -282,11 +286,11 @@ fn mic_word(muted: Option<bool>) -> Option<&'static str> {
 }
 
 /// The words for the mic while recording, on the menu, the pill and the live card.
-fn mic_words(muted: Option<bool>) -> &'static str {
+fn mic_words(muted: Option<bool>, site: Site) -> String {
     match muted {
-        Some(true) => "Muted · mirrored from Teams",
-        Some(false) => "Mic live · mirrored from Teams",
-        None => "Mic live",
+        Some(true) => format!("Muted · mirrored from {}", site.name()),
+        Some(false) => format!("Mic live · mirrored from {}", site.name()),
+        None => "Mic live".into(),
     }
 }
 
@@ -531,7 +535,7 @@ mod tests {
     fn rig(notes_on: bool, mic: Mic, denied: bool, them: impl crate::meeting::Them + 'static, tick: Duration) -> Rig {
         let tmp = tempfile::tempdir().unwrap();
         let db = Arc::new(Mutex::new(crate::storage::open(tmp.path()).unwrap()));
-        meeting::set(&db.lock().unwrap(), &meeting::Notes { on: notes_on, key: meeting::KEY.into(), keep_teams: false, offer_calls: true, stop_on_end: true }).unwrap();
+        meeting::set(&db.lock().unwrap(), &meeting::Notes { on: notes_on, key: meeting::KEY.into(), keep_teams: false, keep_meet: false, offer_calls: true, stop_on_end: true }).unwrap();
         let meetings = Meetings::new(db.clone(), tmp.path().into(), Box::new(Fake(crate::runtime::RATE as usize)), Box::new(them));
         let saw = Arc::new(Mutex::new(vec![]));
         let fail = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -796,7 +800,7 @@ mod tests {
     use crate::addon::AddonEvent as E;
 
     fn muted_at_now(state: MuteState) -> E {
-        E::Mute { state, at: now_ms() }
+        E::Mute { state, at: now_ms(), site: Site::Teams }
     }
 
     /// The session, already recording, with what start showed cleared from the record.
@@ -866,7 +870,7 @@ mod tests {
     #[test]
     fn tab_start_with_nothing_recording_starts_a_meeting_sourced_from_the_tab() {
         let (s, saw_, _, _tmp) = rig(true, Mic::Allowed, false, Call(vec![]), Duration::from_secs(3600));
-        s.addon(E::TabStart);
+        s.addon(E::TabStart { site: Site::Teams });
         assert!(s.running().is_some());
         assert_eq!(s.running().unwrap()["source"], "Teams (Chrome tab)");
         let card = saw(&saw_).into_iter().rev().find_map(|s| if let Saw::Running(Some(c)) = s { Some(c) } else { None }).unwrap();
@@ -878,7 +882,7 @@ mod tests {
     #[test]
     fn tab_start_with_notes_off_starts_nothing_and_shows_nothing() {
         let (s, saw_, _, _tmp) = rig(false, Mic::Allowed, false, Call(vec![]), Duration::from_secs(3600));
-        s.addon(E::TabStart);
+        s.addon(E::TabStart { site: Site::Teams });
         assert_eq!((saw(&saw_), s.running()), (vec![], None));
     }
 
@@ -886,9 +890,9 @@ mod tests {
     fn tab_start_during_a_recording_keeps_the_meeting_and_sets_its_source() {
         let (s, saw_, _tmp) = recording();
         let id = id_of(&s);
-        s.addon(E::TabStart);
+        s.addon(E::TabStart { site: Site::Meet });
         let card = s.running().unwrap();
-        assert_eq!((card["id"].as_i64(), card["source"].clone()), (Some(id), "Teams (Chrome tab)".into()));
+        assert_eq!((card["id"].as_i64(), card["source"].clone()), (Some(id), "Meet (Chrome tab)".into()));
         assert_eq!(count(&saw(&saw_), |s| matches!(s, Saw::Place(_))), 0, "no second start");
         s.stop();
         until(&saw_, |v| recents(v) >= 1);
@@ -915,7 +919,7 @@ mod tests {
     fn asking(answer: Mic) -> (Arc<MeetingSession>, Arc<Mutex<Vec<Saw>>>, tempfile::TempDir) {
         let tmp = tempfile::tempdir().unwrap();
         let db = Arc::new(Mutex::new(crate::storage::open(tmp.path()).unwrap()));
-        meeting::set(&db.lock().unwrap(), &meeting::Notes { on: true, key: meeting::KEY.into(), keep_teams: false, offer_calls: true, stop_on_end: true }).unwrap();
+        meeting::set(&db.lock().unwrap(), &meeting::Notes { on: true, key: meeting::KEY.into(), keep_teams: false, keep_meet: false, offer_calls: true, stop_on_end: true }).unwrap();
         let meetings = Meetings::new(db.clone(), tmp.path().into(), Box::new(Fake(crate::runtime::RATE as usize)), Box::new(Call(vec![])));
         let saw = Arc::new(Mutex::new(vec![]));
         let world = Scripted { mic: Mutex::new(Mic::Ask), on_ask: answer, denied: false, fail: Default::default(), saw: saw.clone(), keys: Default::default() };
@@ -953,7 +957,8 @@ mod tests {
 
     #[test]
     fn the_mic_words_are_the_same_on_the_menu_the_pill_and_the_card() {
-        assert_eq!([Some(true), Some(false), None].map(mic_words), ["Muted · mirrored from Teams", "Mic live · mirrored from Teams", "Mic live"]);
+        assert_eq!([Some(true), Some(false), None].map(|m| mic_words(m, Site::Teams)), ["Muted · mirrored from Teams", "Mic live · mirrored from Teams", "Mic live"]);
+        assert_eq!([Some(true), Some(false), None].map(|m| mic_words(m, Site::Meet)), ["Muted · mirrored from Meet", "Mic live · mirrored from Meet", "Mic live"]);
         let (s, saw_, _tmp) = recording();
         for (state, mic, words) in [(MuteState::Muted, "muted", "Muted · mirrored from Teams"), (MuteState::Unmuted, "live", "Mic live · mirrored from Teams")] {
             s.addon(muted_at_now(state));
@@ -961,6 +966,8 @@ mod tests {
             assert!(matches!(seen.last(), Some(Saw::Pill(Some(_), Some(m), Some(w))) if m == mic && w == words));
             assert!(matches!(seen.last_chunk::<3>().unwrap(), [Saw::MenuRunning(m), Saw::Running(Some(c)), Saw::Pill(..)] if m.ends_with(&format!("| {words}")) && c["mic"] == mic && c["words"] == words));
         }
+        s.addon(E::Mute { state: MuteState::Muted, at: now_ms(), site: Site::Meet });
+        assert!(matches!(saw(&saw_).last(), Some(Saw::Pill(Some(_), Some(m), Some(w))) if m == "muted" && w == "Muted · mirrored from Meet"));
         s.addon(E::Disconnected);
         assert!(matches!(saw(&saw_).last(), Some(Saw::Pill(Some(_), None, Some(w))) if w == "Mic live"));
         assert_eq!(s.running().unwrap()["words"], "Mic live");

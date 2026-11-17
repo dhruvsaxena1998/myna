@@ -11,13 +11,14 @@ export const WELCOME = "welcome";
 export const STOP_TAB = "stop-tab";
 
 export const hello = (code) => ({ v: V, type: "hello", code });
-// `mute`, `caption` and `captions` come from the Teams content script (through the worker).
-export const mute = (state, at) => ({ v: V, type: "mute", state, at }); // state: "unmuted" | "muted" | "unknown"
+// `mute`, `caption` and `captions` come from a call tab's content script (through the worker). `site` ("teams" | "meet")
+// says whose page; an add-on before Meet sent none, which Myna reads as Teams.
+export const mute = (state, at, site) => ({ v: V, type: "mute", state, at, ...(site ? { site } : {}) }); // state: "unmuted" | "muted" | "unknown"
 export const caption = (name, at, text) => ({ v: V, type: "caption", name, at, ...(text ? { text } : {}) });
 export const captions = (state) => ({ v: V, type: "captions", state }); // state: "unavailable"
 // `tab` brackets the binary audio frames (see audio.js); Myna answers a meeting's end with `stop-tab`.
-export const tab = (state, title) => ({ v: V, type: "tab", state, title }); // state: "start" | "stop"
-export const selectors = (version) => ({ v: V, type: "selectors", version }); // which selector table the add-on reads Teams with
+export const tab = (state, title, site) => ({ v: V, type: "tab", state, title, ...(site ? { site } : {}) }); // state: "start" | "stop"
+export const selectors = (version) => ({ v: V, type: "selectors", version }); // which selector table the add-on reads call pages with
 export const ping = () => ({ v: V, type: "ping" });
 
 /** A message from Myna, or null if it isn't one this version understands. */

@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": "2026-11-10",
+  "version": "2026-11-17",
   "buttons": ["#microphone-button", "button[data-tid='toggle-mute']"],
   "label": "\\b(un)?mute\\b",
   "labelFlags": "i",
@@ -8,5 +8,15 @@
   "captions": "[data-tid='closed-captions-renderer']",
   "line": "[data-tid='closed-caption-message'], .ui-chat__item",
   "author": "[data-tid='author'], .ui-chat__message__author",
-  "words": "[data-tid='closed-caption-text'], .ui-chat__message__content"
+  "words": "[data-tid='closed-caption-text'], .ui-chat__message__content",
+  "meet": {
+    "buttons": ["button[data-is-muted][aria-label*='microphone' i]", "[role='button'][data-is-muted][aria-label*='microphone' i]"],
+    "label": "\\bmicrophone\\b",
+    "labelFlags": "i",
+    "mutedAttr": "data-is-muted",
+    "captions": "[role='region'][aria-label='Captions'], div[jsname='dsyhDe'] [role='region']",
+    "line": ".nMcdL",
+    "author": ".NWpY1d, .xoMHSc",
+    "words": ".ygicle"
+  }
 }

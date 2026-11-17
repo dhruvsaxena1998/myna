@@ -12,6 +12,8 @@ test("the bundled file is valid", () => {
   const r = validate(bundled);
   assert.equal(r.version, bundled.version);
   assert.ok(r.label.test("Unmute"));
+  assert.ok(r.meet.label.test("Turn off microphone"));
+  assert.equal(r.meet.mutedAttr, "data-is-muted");
   assert.ok(parseRemote(JSON.stringify(bundled), looksLikeCss));
 });
 
@@ -35,6 +37,9 @@ test("anything off is refused", () => {
     with_({ pressed: "maybe" }),
     with_({ version: "../x" }),
     with_({ words: "a".repeat(70_000) }),
+    with_({ meet: undefined }),
+    with_({ meet: { ...bundled.meet, line: "a[" } }),
+    with_({ meet: { ...bundled.meet, mutedAttr: "x y" } }),
     "[1]",
     "not json",
   ];

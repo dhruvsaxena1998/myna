@@ -1,0 +1,38 @@
+<!doctype html>
+<!-- A Google Meet call, trimmed to what extension/selectors.json reads. Not saved from a live call (none to hand yet), but
+     modelled on public sources, 2025-04 to 2026-11:
+     - captions: sanand0/tools meetcaptions/__fixtures__/captions-anonymized.html (2026-07) and meetcaptions.js (2026-11-09),
+       https://github.com/sanand0/tools/tree/main/meetcaptions; region role="region" tabindex="0" also in
+       vivek-nexus/transcriptonic google-meet/config.js (2026-10-31); the .xoMHSc name badge from recallai/google-meet-meeting-bot (2025-06).
+     - mic button: data-is-muted on a button whose label names the microphone, from bbazsy/hyper-meet-mute (2025-04) and
+       motemen/chrome-meet-mute-toggler (2025-07); the "Turn off microphone" label from recallai/google-meet-meeting-bot.
+     The camera button comes first and also has data-is-muted, so a rule that ignores the label picks the wrong one.
+     Replace with markup saved from a real call when there is one. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Weekly Product Sync - Google Meet</title></head>
+<body>
+  <div jsname="dsyhDe" class="iOzk7">
+    <div tabindex="0" role="region" aria-label="Captions" class="vNKgIf UDinHf">
+      <div class="nMcdL bj4p3b">
+        <div class="adE6rb"><img data-iml="1" alt=""><div class="KcIKyf jxFHg"><span class="NWpY1d">Avery Chen</span></div></div>
+        <div class="ygicle VbkSUe">Kickoff is at 10 AM.</div>
+      </div>
+      <div class="nMcdL bj4p3b">
+        <div class="adE6rb"><img data-iml="1" alt=""><div class="KcIKyf jxFHg"><span class="NWpY1d">You</span></div></div>
+        <div class="ygicle VbkSUe">I'll post notes in the doc.</div>
+      </div>
+      <div class="nMcdL bj4p3b">
+        <div class="adE6rb"><img data-iml="1" alt=""><div class="KcIKyf jxFHg"><span class="NWpY1d">Riley Park</span></div></div>
+        <div class="ygicle VbkSUe">Sounds good, see you then.</div>
+      </div>
+      <button type="button">Jump to the most recent captions</button>
+    </div>
+  </div>
+  <div role="region" aria-label="Call controls">
+    <button aria-label="Turn off camera (⌘ + e)" data-is-muted="false"></button>
+    <button aria-label="Turn off microphone (⌘ + d)" data-is-muted="false"></button>
+    <button aria-label="Turn on captions (c)"></button>
+    <button aria-label="Leave call"></button>
+  </div>
+</body>
+</html>

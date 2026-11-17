@@ -49,6 +49,17 @@
       "from": "addon",
       "wire": {
         "v": 1,
+        "type": "mute",
+        "state": "muted",
+        "at": 1700000000005,
+        "site": "meet"
+      },
+      "args": ["muted", 1700000000005, "meet"]
+    },
+    {
+      "from": "addon",
+      "wire": {
+        "v": 1,
         "type": "caption",
         "name": "Ada",
         "at": 1700000000003,
@@ -84,6 +95,17 @@
         "title": "Standup | Microsoft Teams"
       },
       "args": ["start", "Standup | Microsoft Teams"]
+    },
+    {
+      "from": "addon",
+      "wire": {
+        "v": 1,
+        "type": "tab",
+        "state": "start",
+        "title": "Meet - abc-defg-hij",
+        "site": "meet"
+      },
+      "args": ["start", "Meet - abc-defg-hij", "meet"]
     },
     {
       "from": "addon",
