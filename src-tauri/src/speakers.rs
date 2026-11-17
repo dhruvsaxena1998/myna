@@ -39,9 +39,9 @@ pub fn label(them: &[(i64, i64)], me: &[(i64, i64)], turns: &[Turn], caps: &[(i6
     let mut tally: BTreeMap<usize, BTreeMap<String, (i64, usize)>> = BTreeMap::new();
     for (at, name) in caps {
         let w = (at - BEFORE, at + AFTER);
-        // The user's own words show up as captions too: they happen while the mic speaks.
+        // The user's own words show up as captions too: they happen while the mic speaks, and Meet names them "You".
         let sum = |ls: &[(i64, i64)]| ls.iter().map(|&l| overlap(w, l)).sum::<i64>();
-        if name.eq_ignore_ascii_case("me") || sum(me) > sum(them) {
+        if name.eq_ignore_ascii_case("me") || name.eq_ignore_ascii_case("you") || sum(me) > sum(them) {
             continue;
         }
         for &v in rank.keys() {
@@ -139,5 +139,6 @@ mod tests {
         assert_eq!(label(&them, &[], &turns, &own), [Some("Dhruv".to_string())], "without Me lines it would be taken");
         assert_eq!(label(&them, &[(12 * S, 20 * S)], &turns, &own), [Some("Speaker 2".to_string())]);
         assert_eq!(label(&them, &[], &turns, &caps("Me", &[4, 6, 8])), [Some("Speaker 2".to_string())], "nobody is named Me");
+        assert_eq!(label(&them, &[], &turns, &caps("You", &[4, 6, 8])), [Some("Speaker 2".to_string())], "Meet names the user's own captions You");
     }
 }
