@@ -228,6 +228,15 @@ test("echo lines collapse into their own row, apart from muted ones, and Include
   await expect(page.getByText("Said while muted", { exact: true })).toHaveCount(0);
 });
 
+test("meeting-echo, from checking a meeting recorded before echo handling, reloads the open page", async ({ page }) => {
+  await open(page, `meeting_page: () => ({ ...${MEETINGS}[0], note: window.__note ?? null, segments: ${SEGMENTS} })`);
+  await page.getByRole("button", { name: "Untitled meeting" }).first().click();
+  await expect(page.locator(".note")).toHaveCount(0);
+  await page.evaluate(() => ((window as any).__note = "Your speakers played the call into the mic: 3 lines that repeated it are left out."));
+  await emit(page, "meeting-echo", 5);
+  await expect(page.locator(".note")).toHaveText("Your speakers played the call into the mic: 3 lines that repeated it are left out.");
+});
+
 test("cleanup shows its progress, then the cleaned lines with changed words marked; Show original shows what was heard, and Copy follows", async ({ page }) => {
   const clean = JSON.stringify([line(1, "Me", 12000, "so um we ship on friday", { clean: "So we ship on Friday." }), line(2, "Them", 75000, "Launch is still the 18th.")]);
   await open(page, `meeting_page: () => ({ ...${MEETINGS}[0], ...(window.__clean ? { segments: ${clean}, cleanup: { provider: "OpenRouter", model: "small", cost: { kind: "free" } } } : { segments: ${SEGMENTS}, cleanup: null }) })`);

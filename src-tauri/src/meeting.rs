@@ -825,6 +825,50 @@ impl Meetings {
         done
     }
 
+    /// Finished meetings the echo check never saw, or saw with an older detector: newest first.
+    pub fn unchecked(&self) -> Vec<i64> {
+        let db = self.db.lock().unwrap();
+        let rows = db.prepare("SELECT id, echo FROM meeting WHERE state = 'done' ORDER BY started DESC, id DESC").and_then(|mut q| {
+            q.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<String>>(1)?))).and_then(|r| r.collect::<Result<Vec<_>, _>>())
+        });
+        let old = |e: &Option<String>| e.as_deref().and_then(|e| serde_json::from_str::<echo::Summary>(e).ok()).is_none_or(|s| s.version < echo::VERSION);
+        rows.unwrap_or_default().into_iter().filter(|r| old(&r.1)).map(|r| r.0).collect()
+    }
+
+    /// Checks finished meeting `id` for echo from its stored lines and audio, without transcribing again. Waits
+    /// while a write-up runs. True when it changed which lines are left out.
+    pub fn check_echo(&self, id: i64) -> Result<bool, String> {
+        let _one = self.job.lock().unwrap();
+        let err = |e: rusqlite::Error| format!("Couldn't check the meeting for echo: {e}");
+        let state: Option<String> = self.db.lock().unwrap().query_row("SELECT state FROM meeting WHERE id = ?1", [id], |r| r.get(0)).optional().map_err(err)?;
+        if state.as_deref() != Some("done") {
+            return Ok(false);
+        }
+        let folder = self.dir.join("meetings").join(id.to_string());
+        // A track that can't be read counts as gone: the meeting is marked and never tried again.
+        let (mic, them) = (wav_samples(&folder.join("mic.wav")).unwrap_or_default(), wav_samples(&folder.join("them.wav")).unwrap_or_default());
+        let rows: Vec<(i64, i64, i64, String, String, bool)> = self.db.lock().unwrap()
+            .prepare("SELECT id, start_ms, end_ms, speaker, text, echo FROM segment WHERE meeting = ?1 ORDER BY start_ms, id")
+            .and_then(|mut q| q.query_map([id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))).and_then(|r| r.collect()))
+            .map_err(err)?;
+        let (echoed, checked) = if mic.is_empty() {
+            (vec![false; rows.len()], echo::Summary { version: echo::VERSION, skipped: Some("no audio".into()), ..Default::default() })
+        } else {
+            let said: Vec<echo::Said> = rows.iter().map(|r| echo::Said { start_ms: r.1, end_ms: r.2, me: r.3 == "Me", text: &r.4 }).collect();
+            echo::judge(&mic, &them, &said)
+        };
+        let changed = rows.iter().zip(&echoed).any(|(r, e)| r.5 != *e);
+        let mut db = self.db.lock().unwrap();
+        let tx = db.transaction().map_err(err)?;
+        for (r, e) in rows.iter().zip(&echoed).filter(|(r, e)| r.5 != **e) {
+            tx.execute("UPDATE segment SET echo = ?2 WHERE id = ?1", (r.0, e)).map_err(err)?;
+        }
+        let note: Option<String> = tx.query_row("SELECT note FROM meeting WHERE id = ?1", [id], |r| r.get(0)).map_err(err)?;
+        tx.execute("UPDATE meeting SET echo = ?2, note = ?3 WHERE id = ?1", (id, serde_json::to_string(&checked).ok(), echo_note(note, &checked))).map_err(err)?;
+        tx.commit().map_err(err)?;
+        Ok(changed)
+    }
+
     /// The meeting's mute changes, in time order, ms from its start.
     fn timeline(&self, id: i64) -> Result<Vec<(i64, MuteState)>, String> {
         let db = self.db.lock().unwrap();
@@ -1601,6 +1645,31 @@ pub(crate) mod tests {
         include(&db, &[me[0].id]).unwrap();
         let back = lines(&db, id).unwrap().into_iter().find(|l| l.id == me[0].id).unwrap();
         assert!(back.echo && !back.hidden && back.text == "point number 0 on the plan");
+    }
+
+    #[test]
+    fn a_meeting_written_up_before_echo_is_checked_once_from_its_stored_lines() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (m, id, stt) = on_speakers(tmp.path());
+        m.transcribe(id, &stt, &Voiced(Ok(vec![])), Via::Local, &mut |_| {}).unwrap();
+        let count = |m: &Meetings| m.db.lock().unwrap().query_row("SELECT SUM(echo) FROM segment WHERE meeting = ?1", [id], |r| r.get::<_, i64>(0)).unwrap();
+        let n = count(&m);
+        // As an older build left it: no echo marks, never checked.
+        m.db.lock().unwrap().execute_batch("UPDATE segment SET echo = 0; UPDATE meeting SET echo = NULL, note = NULL;").unwrap();
+        let gone = m.db.lock().unwrap().query_row("INSERT INTO meeting(started, state) VALUES (0, 'done') RETURNING id", [], |r| r.get::<_, i64>(0)).unwrap();
+        m.db.lock().unwrap().execute("INSERT INTO meeting(started, state) VALUES (2, 'transcribing')", []).unwrap();
+        assert_eq!(m.unchecked(), [id, gone], "finished meetings only, newest first");
+        assert_eq!(m.check_echo(id), Ok(true));
+        assert_eq!(count(&m), n, "the same lines as a fresh write-up");
+        assert!(note(&m, id).unwrap().ends_with(&format!("{n} lines that repeated it are left out.")));
+        assert_eq!(m.check_echo(gone), Ok(false));
+        let skipped: String = m.db.lock().unwrap().query_row("SELECT echo FROM meeting WHERE id = ?1", [gone], |r| r.get(0)).unwrap();
+        assert_eq!(serde_json::from_str::<echo::Summary>(&skipped).unwrap().skipped.as_deref(), Some("no audio"));
+        assert_eq!(m.unchecked(), Vec::<i64>::new(), "a checked meeting isn't checked again");
+        assert_eq!(m.check_echo(id), Ok(false), "checking again changes nothing");
+        assert_eq!(note(&m, id).unwrap().matches("Your speakers").count(), 1);
+        m.db.lock().unwrap().execute("UPDATE meeting SET echo = '{\"version\": 0}' WHERE id = ?1", [id]).unwrap();
+        assert_eq!(m.unchecked(), [id], "an older detector's verdict is checked again");
     }
 
     #[test]

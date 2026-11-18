@@ -45,6 +45,8 @@ pub trait World: Stt + Voices + 'static {
     fn clean(&self, id: i64);
     /// Meeting `id` is written up: its Summary may run now (story 16), in the background.
     fn summarize(&self, id: i64);
+    /// `meeting-echo`: checking meeting `id`, recorded before echo handling, left lines out.
+    fn echo_checked(&self, id: i64);
     /// Where AI providers' keys are, for meeting speech-to-text on an Endpoint.
     fn keys(&self) -> &dyn crate::ai::Keys;
 }
@@ -202,10 +204,23 @@ impl MeetingSession {
         Ok(())
     }
 
-    /// At launch: finishes and writes up the meetings the app died or quit in the middle of.
+    /// At launch: finishes and writes up the meetings the app died or quit in the middle of, then checks the ones
+    /// written up before echo handling, newest first, one at a time (a write-up goes first).
     pub fn resume(self: &Arc<Self>) {
         for id in self.meetings.unfinished() {
             self.write_up(id, false);
+        }
+        let this = self.clone();
+        std::thread::spawn(move || this.check_echo());
+    }
+
+    fn check_echo(&self) {
+        for id in self.meetings.unchecked() {
+            match self.meetings.check_echo(id) {
+                Ok(true) => self.world.echo_checked(id),
+                Ok(false) => {}
+                Err(e) => eprintln!("meeting {id}: {e}"),
+            }
         }
     }
 
@@ -466,6 +481,9 @@ impl World for Mac {
     fn summarize(&self, id: i64) {
         crate::summarize(&self.0, id);
     }
+    fn echo_checked(&self, id: i64) {
+        let _ = self.0.emit("meeting-echo", id);
+    }
     fn keys(&self) -> &dyn crate::ai::Keys {
         &*self.0.state::<crate::Data>().inner().keys
     }
@@ -494,6 +512,7 @@ mod tests {
         Idle,
         Clean(i64),
         Summarize(i64),
+        Echo(i64),
     }
 
     struct Scripted {
@@ -573,6 +592,9 @@ mod tests {
         }
         fn summarize(&self, id: i64) {
             self.log(Saw::Summarize(id))
+        }
+        fn echo_checked(&self, id: i64) {
+            self.log(Saw::Echo(id))
         }
         fn keys(&self) -> &dyn crate::ai::Keys {
             &self.keys
@@ -868,6 +890,20 @@ mod tests {
         for id in ids {
             assert!(v.contains(&Saw::Notes(id, "done".into(), 1.0, None)), "{v:?}");
         }
+    }
+
+    #[test]
+    fn resume_checks_meetings_written_up_before_echo_handling_and_says_so_only_when_lines_changed() {
+        let (s, saw_, _, _tmp) = rig(true, Mic::Allowed, false, Call(vec![]), Duration::from_secs(3600));
+        let id: i64 = s.db.lock().unwrap().query_row("INSERT INTO meeting(started, state) VALUES (1, 'done') RETURNING id", [], |r| r.get(0)).unwrap();
+        s.resume();
+        let checked = || s.db.lock().unwrap().query_row("SELECT echo FROM meeting WHERE id = ?1", [id], |r| r.get::<_, Option<String>>(0)).unwrap();
+        let t = std::time::Instant::now();
+        while checked().is_none() && t.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(checked().unwrap().contains("no audio"));
+        assert_eq!(count(&saw(&saw_), |s| matches!(s, Saw::Echo(_))), 0, "nothing changed, so the page isn't told");
     }
 
     use crate::addon::AddonEvent as E;
