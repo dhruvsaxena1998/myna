@@ -1,7 +1,7 @@
 // Run with `pnpm test:unit`. Node strips the types from meetings.ts itself.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { changes, groups } from "../src/lib/meetings.ts";
+import { changes, clips, groups } from "../src/lib/meetings.ts";
 
 const marked = (heard, clean) => changes(heard, clean).filter((c) => c.heard !== undefined).map((c) => [c.text, c.heard]);
 const shown = (heard, clean) => changes(heard, clean).map((c) => c.text).join(" ");
@@ -39,4 +39,16 @@ test("one speaker's lines with short pauses read as one paragraph; a long pause,
 test("left-out lines collapse into their own row, and an included line never joins ordinary ones", () => {
   const rows = groups([l(1, "Me", 0, 1000), l(2, "Me", 1100, 2000, { hidden: true }), l(3, "Me", 2100, 3000, { hidden: true }), l(4, "Me", 3100, 4000), l(5, "Me", 4100, 5000, { included: true })]);
   assert.deepEqual(ids(rows), [[1], ["left", 2, 3], [4], [5]]);
+});
+
+test("a speaker's clips are their three longest paragraphs, longest first, never a line left out", () => {
+  const l = (id, speaker, start_ms, end_ms, hidden = false) => ({ id, speaker, start_ms, end_ms, text: "x", clean: null, muted: hidden, included: false, hidden });
+  const lines = [
+    l(1, "Ana", 0, 2000), l(2, "Ana", 2500, 6000), // one paragraph, 6 s
+    l(3, "Bo", 7000, 30000),
+    l(4, "Ana", 31000, 34000), l(5, "Ana", 40000, 41000), l(6, "Ana", 50000, 53000), l(7, "Ana", 60000, 90000, true),
+  ];
+  assert.deepEqual(clips(lines, "Ana"), [{ start_ms: 0, end_ms: 6000 }, { start_ms: 31000, end_ms: 34000 }, { start_ms: 50000, end_ms: 53000 }]);
+  assert.deepEqual(clips(lines, "Bo"), [{ start_ms: 7000, end_ms: 30000 }]);
+  assert.deepEqual(clips(lines, "Cy"), []);
 });

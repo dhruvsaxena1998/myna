@@ -22,7 +22,7 @@
   import { tick, untrack } from "svelte";
   import type { Ai, Model } from "./AiProviders.svelte";
   import HostPill from "./HostPill.svelte";
-  import { changes, clock, dayHead, groups, hm, meta, writing, type CleanupRun, type Cost, type Page, type Progress, type SummaryRun, type Version } from "./meetings";
+  import { changes, clips, clock, dayHead, groups, hm, meta, writing, type CleanupRun, type Cost, type Page, type Progress, type SummaryRun, type Version } from "./meetings";
 
   // `onreload`: the page's lines changed in the backend (a speaker renamed), so it reads them again.
   let { page, progress, summary, cleanup, onback, onretry, onlocal, oninclude, onreload }: {
@@ -51,9 +51,10 @@
   // svelte-ignore state_referenced_locally
   let length = $state(page.duration_ms ?? 0); // the page is remade for each meeting
   let audioErr = $state("");
-  async function play(from?: number) {
+  let until: number | null = null; // a speaker's clip stops here, ms
+  async function play(from?: number, to?: number) {
     if (!audio) return;
-    audioErr = "";
+    (audioErr = ""), (until = to ?? null);
     if (!src) {
       try {
         src = convertFileSrc(await invoke<string>("meeting_audio", { id: page.id }));
@@ -243,6 +244,14 @@
     <label class="field"><span class="label">Name</span>
       <input class="input" maxlength="100" bind:value={s.name} use:focus aria-describedby="spk-h" /></label>
     <span class="help" id="spk-h">Renames every line of {s.from} in this meeting.</span>
+    {#if !writing(page)}
+      <div class="clips" role="group" aria-label="Hear {s.from}">
+        {#each clips(page.segments, s.from) as c (c.start_ms)}
+          <button type="button" class="btn small" aria-label="Play {s.from} at {clock(c.start_ms)}" onclick={() => play(c.start_ms, c.end_ms)}>
+            {@render icon('<path d="M8 5.5v13l10.5-6.5z"/>')}{clock(c.start_ms)} · {Math.max(1, Math.round((c.end_ms - c.start_ms) / 1000))} s</button>
+        {/each}
+      </div>
+    {/if}
     {#if s.err}<p class="err" role="status">{s.err}</p>{/if}
     <div class="end"><span class="grow"></span><button class="btn primary" disabled={!s.name.trim()}>Rename</button></div>
   </form></div>
@@ -295,7 +304,7 @@
         <div class="player" role="group" aria-label="Meeting audio">
           <!-- svelte-ignore a11y_media_has_caption -->
           <audio bind:this={audio} {src} preload="metadata" onplay={() => (paused = false)} onpause={() => (paused = true)} onended={() => (paused = true)}
-            ontimeupdate={() => (at = audio!.currentTime * 1000)} onloadedmetadata={() => isFinite(audio!.duration) && (length = audio!.duration * 1000)}></audio>
+            ontimeupdate={() => { at = audio!.currentTime * 1000; if (until !== null && at >= until) (until = null), audio!.pause(); }} onloadedmetadata={() => isFinite(audio!.duration) && (length = audio!.duration * 1000)}></audio>
           <button class="btn icon" aria-label={paused ? "Play" : "Pause"} onclick={() => (paused ? play() : audio?.pause())}>
             {@render icon(paused ? '<path d="M8 5.5v13l10.5-6.5z"/>' : '<path d="M8 5v14M16 5v14"/>')}
           </button>
@@ -449,6 +458,8 @@
   .spk { width: 260px; padding: var(--sp-3); font-weight: normal; }
   .spk form { display: grid; gap: var(--sp-2); }
   .spk .input { width: 100%; box-sizing: border-box; }
+  .clips { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
+  .clips .btn { padding-left: 8px; font-variant-numeric: tabular-nums; }
   .who time { color: var(--text-3); font-size: var(--fs-footnote); font-variant-numeric: tabular-nums; }
   .at { padding: 0 var(--sp-1); margin: 0 calc(-1 * var(--sp-1)); border: 0; border-radius: var(--r-sm); background: none; font: inherit; }
   .at:hover { background: var(--fill-hover); }

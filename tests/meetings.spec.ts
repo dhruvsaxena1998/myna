@@ -309,6 +309,27 @@ test("a speaker renamed once is renamed on every line; Me isn't a button, and a 
   expect(await calls(page, "speaker_rename")).toHaveLength(2);
 });
 
+test("a speaker's popover plays their three longest paragraphs, each stopping at its end", async ({ page }) => {
+  await page.addInitScript(() => {
+    HTMLMediaElement.prototype.play = function () { this.dispatchEvent(new Event("play")); return Promise.resolve(); };
+    HTMLMediaElement.prototype.pause = function () { this.dispatchEvent(new Event("pause")); };
+    Object.defineProperty(HTMLMediaElement.prototype, "currentTime", { get() { return this._t ?? 0; }, set(v) { this._t = v; this.dispatchEvent(new Event("timeupdate")); } });
+  });
+  await speakers(page, `meeting_audio: () => "/data/meetings/5/mix.wav",`);
+  await page.locator(".seg").nth(1).getByRole("button", { name: "Speaker 2" }).click();
+  const hear = page.getByRole("group", { name: "Hear Speaker 2" });
+  await expect(hear.getByRole("button")).toHaveText(["00:40 · 6 s", "00:10 · 2 s"]);
+  await hear.getByRole("button", { name: "Play Speaker 2 at 00:40" }).click();
+  expect(await calls(page, "meeting_audio")).toEqual([{ id: 5 }]);
+  const player = page.getByRole("group", { name: "Meeting audio" });
+  await expect(player).toContainText("00:40");
+  await expect(player.getByRole("button", { name: "Pause" })).toBeVisible();
+  await page.evaluate(() => { document.querySelector("audio")!.currentTime = 45; });
+  await expect(player.getByRole("button", { name: "Pause" })).toBeVisible(); // still inside the clip
+  await page.evaluate(() => { document.querySelector("audio")!.currentTime = 46.2; });
+  await expect(player.getByRole("button", { name: "Play" })).toBeVisible();
+});
+
 // Story 16: the Summary is the document; the transcript opens beside it.
 const version = (id: number, template: string, text: string, more = {}) => ({ id, template, prompt: "p", provider: "OpenRouter", model: "big", created: Date.now(), parts: 2, cost: { kind: "usd", usd: 0.012 }, text, edited: false, ...more });
 const AI = JSON.stringify({ providers: [{ id: 1, kind: "openrouter", name: "OpenRouter", url: "https://openrouter.ai/api/v1", has_key: true, off_device: true }], main: { provider: 1, model: "big", gone: false }, fast: null });
