@@ -71,6 +71,9 @@ pub struct Model {
     /// A model added under Advanced has loaded here: until it has, it can't be picked and offers Download, which checks it.
     #[serde(default)]
     pub checked: bool,
+    /// Whisper only: the language it's told it hears ("en" for a Hinglish fine-tune that writes Latin letters); empty, it detects.
+    #[serde(default)]
+    pub language: String,
 }
 
 /// What macOS says about Apple Speech on this Mac.
