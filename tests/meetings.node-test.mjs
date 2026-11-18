@@ -52,3 +52,9 @@ test("a speaker's clips are their three longest paragraphs, longest first, never
   assert.deepEqual(clips(lines, "Bo"), [{ start_ms: 7000, end_ms: 30000 }]);
   assert.deepEqual(clips(lines, "Cy"), []);
 });
+
+test("a left-out run splits where the reason changes: muted, then echo", () => {
+  const l = (id, extra) => ({ id, speaker: "Me", start_ms: id * 1000, end_ms: id * 1000 + 500, text: "", clean: null, muted: false, included: false, hidden: true, ...extra });
+  const rows = groups([l(1, { muted: true }), l(2, { muted: true }), l(3, { echo: true }), l(4, { echo: true }), l(5, { muted: true })]);
+  assert.deepEqual(rows.map((r) => r.left.map((x) => x.id)), [[1, 2], [3, 4], [5]]);
+});

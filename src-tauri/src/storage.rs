@@ -57,6 +57,10 @@ const MIGRATIONS: &[&str] = &[
     "ALTER TABLE meeting ADD COLUMN stt TEXT;",
     // `meeting.ended`: when the recording stopped (unix ms, `started` plus the time it ran); NULL from a build before it.
     "ALTER TABLE meeting ADD COLUMN ended INTEGER;",
+    // `segment.echo`: 1 when the line is the call coming back through the speakers into the mic (`echo.rs`).
+    // `meeting.echo`: that check's `echo::Summary` as JSON; NULL is never checked.
+    "ALTER TABLE segment ADD COLUMN echo INTEGER NOT NULL DEFAULT 0;
+     ALTER TABLE meeting ADD COLUMN echo TEXT;",
 ];
 const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
 

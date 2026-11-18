@@ -3,7 +3,7 @@
 
 use crate::addon::{MuteState, Site};
 use crate::runtime::{RATE, Segment};
-use crate::speakers;
+use crate::{echo, speakers};
 use crate::storage::{read_switch, read_text, write_switch, write_text};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rusqlite::{Connection, OptionalExtension};
@@ -825,6 +825,50 @@ impl Meetings {
         done
     }
 
+    /// Finished meetings the echo check never saw, or saw with an older detector: newest first.
+    pub fn unchecked(&self) -> Vec<i64> {
+        let db = self.db.lock().unwrap();
+        let rows = db.prepare("SELECT id, echo FROM meeting WHERE state = 'done' ORDER BY started DESC, id DESC").and_then(|mut q| {
+            q.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<String>>(1)?))).and_then(|r| r.collect::<Result<Vec<_>, _>>())
+        });
+        let old = |e: &Option<String>| e.as_deref().and_then(|e| serde_json::from_str::<echo::Summary>(e).ok()).is_none_or(|s| s.version < echo::VERSION);
+        rows.unwrap_or_default().into_iter().filter(|r| old(&r.1)).map(|r| r.0).collect()
+    }
+
+    /// Checks finished meeting `id` for echo from its stored lines and audio, without transcribing again. Waits
+    /// while a write-up runs. True when it changed which lines are left out.
+    pub fn check_echo(&self, id: i64) -> Result<bool, String> {
+        let _one = self.job.lock().unwrap();
+        let err = |e: rusqlite::Error| format!("Couldn't check the meeting for echo: {e}");
+        let state: Option<String> = self.db.lock().unwrap().query_row("SELECT state FROM meeting WHERE id = ?1", [id], |r| r.get(0)).optional().map_err(err)?;
+        if state.as_deref() != Some("done") {
+            return Ok(false);
+        }
+        let folder = self.dir.join("meetings").join(id.to_string());
+        // A track that can't be read counts as gone: the meeting is marked and never tried again.
+        let (mic, them) = (wav_samples(&folder.join("mic.wav")).unwrap_or_default(), wav_samples(&folder.join("them.wav")).unwrap_or_default());
+        let rows: Vec<(i64, i64, i64, String, String, bool)> = self.db.lock().unwrap()
+            .prepare("SELECT id, start_ms, end_ms, speaker, text, echo FROM segment WHERE meeting = ?1 ORDER BY start_ms, id")
+            .and_then(|mut q| q.query_map([id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))).and_then(|r| r.collect()))
+            .map_err(err)?;
+        let (echoed, checked) = if mic.is_empty() {
+            (vec![false; rows.len()], echo::Summary { version: echo::VERSION, skipped: Some("no audio".into()), ..Default::default() })
+        } else {
+            let said: Vec<echo::Said> = rows.iter().map(|r| echo::Said { start_ms: r.1, end_ms: r.2, me: r.3 == "Me", text: &r.4 }).collect();
+            echo::judge(&mic, &them, &said)
+        };
+        let changed = rows.iter().zip(&echoed).any(|(r, e)| r.5 != *e);
+        let mut db = self.db.lock().unwrap();
+        let tx = db.transaction().map_err(err)?;
+        for (r, e) in rows.iter().zip(&echoed).filter(|(r, e)| r.5 != **e) {
+            tx.execute("UPDATE segment SET echo = ?2 WHERE id = ?1", (r.0, e)).map_err(err)?;
+        }
+        let note: Option<String> = tx.query_row("SELECT note FROM meeting WHERE id = ?1", [id], |r| r.get(0)).map_err(err)?;
+        tx.execute("UPDATE meeting SET echo = ?2, note = ?3 WHERE id = ?1", (id, serde_json::to_string(&checked).ok(), echo_note(note, &checked))).map_err(err)?;
+        tx.commit().map_err(err)?;
+        Ok(changed)
+    }
+
     /// The meeting's mute changes, in time order, ms from its start.
     fn timeline(&self, id: i64) -> Result<Vec<(i64, MuteState)>, String> {
         let db = self.db.lock().unwrap();
@@ -945,6 +989,9 @@ impl Meetings {
         said.sort_by(|a, b| a.0.total_cmp(&b.0)); // stable: Me before Them when they start together
         let spans: Vec<(i64, i64)> = said.iter().map(|s| ((s.0 * 1000.0).round() as i64, (s.1 * 1000.0).round() as i64)).collect();
         let them_lines: Vec<usize> = (0..said.len()).filter(|&i| said[i].2 == "Them").collect();
+        // The call coming back through the speakers into the mic: kept, left out like a muted line.
+        let lines: Vec<echo::Said> = said.iter().zip(&spans).map(|(s, &(start_ms, end_ms))| echo::Said { start_ms, end_ms, me: s.2 == "Me", text: &s.3 }).collect();
+        let (echoed, checked) = echo::judge(&mic, &them, &lines);
         let (mut labels, mut note) = (vec![None; said.len()], None);
         if !them_lines.is_empty() {
             progress(pieces.len() as f32 / (pieces.len() + 1) as f32);
@@ -953,7 +1000,7 @@ impl Meetings {
             match who.diarize(&audio) {
                 Ok(turns) => {
                     let names = self.captions(id)?;
-                    let me: Vec<_> = (0..said.len()).filter(|&i| said[i].2 == "Me").map(|i| spans[i]).collect();
+                    let me: Vec<_> = (0..said.len()).filter(|&i| said[i].2 == "Me" && !echoed[i]).map(|i| spans[i]).collect();
                     let got = speakers::label(&them_lines.iter().map(|&i| spans[i]).collect::<Vec<_>>(), &me, &turns, &names);
                     for (&i, l) in them_lines.iter().zip(got) {
                         labels[i] = l;
@@ -965,16 +1012,18 @@ impl Meetings {
                 Err(e) => note = Some(format!("Couldn't tell voices apart: {e}")),
             }
         }
+        let note = echo_note(note, &checked);
+        let checked = serde_json::to_string(&checked).ok();
         let mut db = self.db.lock().unwrap();
         let save = |db: &mut Connection| -> rusqlite::Result<()> {
             let tx = db.transaction()?;
             tx.execute("DELETE FROM segment WHERE meeting = ?1", [id])?; // a retry starts clean
-            for (((_, _, who, text), (start, end)), label) in said.iter().zip(&spans).zip(&labels) {
+            for ((((_, _, who, text), (start, end)), label), echo) in said.iter().zip(&spans).zip(&labels).zip(&echoed) {
                 let mute = if *who == "Me" { mute_of(&events, *start, *end).map(MuteState::as_str) } else { None };
-                tx.execute("INSERT INTO segment(meeting, start_ms, end_ms, speaker, text, mute, label) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", (id, start, end, who, text, mute, label))?;
+                tx.execute("INSERT INTO segment(meeting, start_ms, end_ms, speaker, text, mute, label, echo) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", (id, start, end, who, text, mute, label, echo))?;
             }
             // A meeting cut off by a crash never got its length.
-            tx.execute("UPDATE meeting SET state = 'done', failure = NULL, note = ?3, duration_ms = COALESCE(duration_ms, ?2), stt = ?4 WHERE id = ?1", (id, mic.len() as i64 * 1000 / RATE as i64, &note, &stt_record))?;
+            tx.execute("UPDATE meeting SET state = 'done', failure = NULL, note = ?3, duration_ms = COALESCE(duration_ms, ?2), stt = ?4, echo = ?5 WHERE id = ?1", (id, mic.len() as i64 * 1000 / RATE as i64, &note, &stt_record, &checked))?;
             tx.commit()
         };
         save(&mut db).map_err(|e| format!("Couldn't save the notes: {e}"))
@@ -1057,6 +1106,18 @@ pub struct Row {
     pub incomplete: bool,
 }
 
+/// The meeting's note with how many lines echo left out, after any note about voices. An earlier check's count goes.
+fn echo_note(note: Option<String>, checked: &echo::Summary) -> Option<String> {
+    const SAID: &str = "Your speakers played the call into the mic";
+    let note = note.and_then(|v| v.split(" · ").filter(|p| !p.starts_with(SAID)).map(String::from).reduce(|a, b| format!("{a} · {b}")));
+    if checked.lines == 0 {
+        return note;
+    }
+    let n = checked.lines;
+    let echo = format!("{SAID}: {n} line{} that repeated it {} left out.", if n == 1 { "" } else { "s" }, if n == 1 { "is" } else { "are" });
+    Some(note.map_or(echo.clone(), |v| format!("{v} · {echo}")))
+}
+
 /// The state of the mute button over a stretch of speech, from the timeline: the state that covers more than half
 /// of it, else `Unknown` (shown, never hidden). Before the first change it's `Unknown`. None when the add-on never
 /// reported, so a meeting without it has no marks.
@@ -1094,7 +1155,9 @@ pub struct Line {
     /// Said while the add-on showed the mic muted.
     pub muted: bool,
     pub included: bool,
-    /// Muted, not included, and not kept by the setting: collapsed on the page, out of Copy and anything sent to an AI.
+    /// The call coming back through the speakers into the mic, not the user (`echo.rs`).
+    pub echo: bool,
+    /// Muted and not kept by the setting, or echo, and not included: collapsed on the page, out of Copy and anything sent to an AI.
     pub hidden: bool,
 }
 
@@ -1141,13 +1204,13 @@ pub(crate) fn lines(db: &Connection, id: i64) -> Result<Vec<Line>, String> {
         Site::Meet => notes.keep_meet,
         Site::Other => false,
     };
-    db.prepare("SELECT id, COALESCE(label, speaker), start_ms, text, mute, included, clean, end_ms FROM segment WHERE meeting = ?1 ORDER BY start_ms, id")
+    db.prepare("SELECT id, COALESCE(label, speaker), start_ms, text, mute, included, clean, end_ms, echo FROM segment WHERE meeting = ?1 ORDER BY start_ms, id")
         .and_then(|mut q| {
             q.query_map([id], |r| {
-                let (mute, included): (Option<String>, bool) = (r.get(4)?, r.get(5)?);
+                let (mute, included, echo): (Option<String>, bool, bool) = (r.get(4)?, r.get(5)?, r.get(8)?);
                 let muted = mute.as_deref() == Some("muted");
-                let hidden = muted && !included && !keep;
-                Ok(Line { id: r.get(0)?, speaker: r.get(1)?, start_ms: r.get(2)?, end_ms: r.get(7)?, text: if hidden { String::new() } else { r.get(3)? }, clean: if hidden { None } else { r.get(6)? }, muted, included, hidden })
+                let hidden = (muted && !keep || echo) && !included;
+                Ok(Line { id: r.get(0)?, speaker: r.get(1)?, start_ms: r.get(2)?, end_ms: r.get(7)?, text: if hidden { String::new() } else { r.get(3)? }, clean: if hidden { None } else { r.get(6)? }, muted, included, echo, hidden })
             })
             .and_then(|r| r.collect())
         })
@@ -1533,6 +1596,91 @@ pub(crate) mod tests {
         for at in at {
             m.db.lock().unwrap().execute("INSERT INTO caption_event(meeting, at_ms, name) VALUES (?1, ?2, ?3)", (id, at, name)).unwrap();
         }
+    }
+
+    /// A minute on speakers: the mic hears every call line 120 ms later, and the user says one thing in a pause.
+    fn on_speakers(tmp: &std::path::Path) -> (Meetings, i64, Script) {
+        use crate::echo::tests::{bursts, mic, pcm, turns};
+        let mut m = meetings(tmp, Fake(0));
+        m.chunk = 60 * RATE as usize;
+        let id = m.db.lock().unwrap().query_row("INSERT INTO meeting(started, state) VALUES (1, 'recorded') RETURNING id", [], |r| r.get(0)).unwrap();
+        let at = turns(60);
+        let mine = (at[4].0 + at[4].1 + 0.1, 0.8);
+        let call = bursts(60, &at, 0.3, 1);
+        let folder = tmp.join(format!("meetings/{id}"));
+        std::fs::create_dir_all(&folder).unwrap();
+        for (name, track) in [("mic.wav", mic(&call, |_| RATE as usize * 120 / 1000, 0.5, &bursts(60, &[mine], 0.4, 7))), ("them.wav", pcm(&call))] {
+            let mut w = create(folder.join(name)).unwrap();
+            track.into_iter().for_each(|s| w.write_sample(s).unwrap());
+            w.finalize().unwrap();
+        }
+        let line = |a: (f32, f32), shift: f32, text: String| seg(a.0 + shift, a.0 + a.1 + shift, &text);
+        let mut me: Vec<Segment> = at.iter().enumerate().map(|(i, &a)| line(a, 0.12, format!("point number {i} on the plan"))).collect();
+        me.push(line(mine, 0.0, "hold on".into()));
+        me.sort_by(|a, b| a.start.total_cmp(&b.start));
+        let them = at.iter().enumerate().map(|(i, &a)| line(a, 0.0, format!("point number {i} on the plan"))).collect();
+        (m, id, Script(Mutex::new(vec![me, them])))
+    }
+
+    #[test]
+    fn a_meeting_on_speakers_leaves_the_echo_out_and_include_brings_it_back() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (m, id, stt) = on_speakers(tmp.path());
+        m.transcribe(id, &stt, &Voiced(Ok(vec![])), Via::Local, &mut |_| {}).unwrap();
+        let db = m.db.lock().unwrap();
+        let all = lines(&db, id).unwrap();
+        let me: Vec<&Line> = all.iter().filter(|l| l.speaker == "Me").collect();
+        let echoed = me.iter().filter(|l| l.echo).count();
+        assert_eq!(echoed, me.len() - 1, "every Me line but the user's own is echo");
+        assert!(me.iter().all(|l| l.hidden == l.echo && (l.text.is_empty() == l.echo)), "echo is left out, its words never leave the backend");
+        assert!(all.iter().filter(|l| l.speaker != "Me").all(|l| !l.echo && !l.hidden));
+        let copy = outgoing(&db, id, false).unwrap();
+        assert_eq!(copy.matches("Me ").count(), 1, "Copy and the AI get the user's line only: {copy}");
+        assert!(copy.contains("hold on"));
+        let n = echoed;
+        let note: String = db.query_row("SELECT note FROM meeting WHERE id = ?1", [id], |r| r.get(0)).unwrap();
+        assert_eq!(note, format!("Your speakers played the call into the mic: {n} lines that repeated it are left out."));
+        let checked: echo::Summary = serde_json::from_str(&db.query_row::<String, _, _>("SELECT echo FROM meeting WHERE id = ?1", [id], |r| r.get(0)).unwrap()).unwrap();
+        assert_eq!((checked.version, checked.lines, checked.headphones), (echo::VERSION, n, false));
+        include(&db, &[me[0].id]).unwrap();
+        let back = lines(&db, id).unwrap().into_iter().find(|l| l.id == me[0].id).unwrap();
+        assert!(back.echo && !back.hidden && back.text == "point number 0 on the plan");
+    }
+
+    #[test]
+    fn a_meeting_written_up_before_echo_is_checked_once_from_its_stored_lines() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (m, id, stt) = on_speakers(tmp.path());
+        m.transcribe(id, &stt, &Voiced(Ok(vec![])), Via::Local, &mut |_| {}).unwrap();
+        let count = |m: &Meetings| m.db.lock().unwrap().query_row("SELECT SUM(echo) FROM segment WHERE meeting = ?1", [id], |r| r.get::<_, i64>(0)).unwrap();
+        let n = count(&m);
+        // As an older build left it: no echo marks, never checked.
+        m.db.lock().unwrap().execute_batch("UPDATE segment SET echo = 0; UPDATE meeting SET echo = NULL, note = NULL;").unwrap();
+        let gone = m.db.lock().unwrap().query_row("INSERT INTO meeting(started, state) VALUES (0, 'done') RETURNING id", [], |r| r.get::<_, i64>(0)).unwrap();
+        m.db.lock().unwrap().execute("INSERT INTO meeting(started, state) VALUES (2, 'transcribing')", []).unwrap();
+        assert_eq!(m.unchecked(), [id, gone], "finished meetings only, newest first");
+        assert_eq!(m.check_echo(id), Ok(true));
+        assert_eq!(count(&m), n, "the same lines as a fresh write-up");
+        assert!(note(&m, id).unwrap().ends_with(&format!("{n} lines that repeated it are left out.")));
+        assert_eq!(m.check_echo(gone), Ok(false));
+        let skipped: String = m.db.lock().unwrap().query_row("SELECT echo FROM meeting WHERE id = ?1", [gone], |r| r.get(0)).unwrap();
+        assert_eq!(serde_json::from_str::<echo::Summary>(&skipped).unwrap().skipped.as_deref(), Some("no audio"));
+        assert_eq!(m.unchecked(), Vec::<i64>::new(), "a checked meeting isn't checked again");
+        assert_eq!(m.check_echo(id), Ok(false), "checking again changes nothing");
+        assert_eq!(note(&m, id).unwrap().matches("Your speakers").count(), 1);
+        m.db.lock().unwrap().execute("UPDATE meeting SET echo = '{\"version\": 0}' WHERE id = ?1", [id]).unwrap();
+        assert_eq!(m.unchecked(), [id], "an older detector's verdict is checked again");
+    }
+
+    #[test]
+    fn the_echo_note_follows_a_voices_note() {
+        let s = |lines| echo::Summary { lines, ..Default::default() };
+        assert_eq!(echo_note(None, &s(0)), None);
+        assert_eq!(echo_note(Some("Teams captions weren't available, so voices are numbered.".into()), &s(1)).unwrap(),
+            "Teams captions weren't available, so voices are numbered. · Your speakers played the call into the mic: 1 line that repeated it is left out.");
+        let old = Some("Voices. · Your speakers played the call into the mic: 9 lines that repeated it are left out.".to_string());
+        assert_eq!(echo_note(old.clone(), &s(0)).unwrap(), "Voices.", "a re-check replaces the old count");
+        assert!(echo_note(old, &s(2)).unwrap().ends_with(": 2 lines that repeated it are left out."));
     }
 
     #[test]

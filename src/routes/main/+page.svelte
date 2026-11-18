@@ -96,6 +96,8 @@
         if (was === payload.state && payload.state === "transcribing") return;
         refresh().then(() => void (page?.id === payload.id && openMeeting(payload.id, false)));
       }),
+      // A meeting recorded before echo handling was checked, and lines the speakers played into the mic were left out.
+      listen<number>("meeting-echo", ({ payload }) => void refresh().then(() => void (page?.id === payload && openMeeting(payload, false)))),
       listen<SummaryRun>("meeting-summary", ({ payload }) => { summaries[payload.id] = payload; }),
       listen<CleanupRun>("meeting-cleanup", ({ payload }) => {
         cleanups[payload.id] = payload;

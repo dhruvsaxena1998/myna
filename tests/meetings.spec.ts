@@ -207,6 +207,36 @@ test("lines said while muted collapse into one row, Include keeps them with a ma
   expect(await calls(page, "meeting_text")).toEqual([{ id: 5, original: false }]);
 });
 
+test("echo lines collapse into their own row, apart from muted ones, and Include brings them back without a muted marker", async ({ page }) => {
+  const lines = JSON.stringify([
+    line(1, "Me", 12000, "Okay, let's start."),
+    line(2, "Me", 20000, "", { muted: true, hidden: true }),
+    line(3, "Me", 21000, "", { echo: true, hidden: true }), line(4, "Me", 22000, "", { echo: true, hidden: true }),
+    line(5, "Speaker 2", 30000, "Go on."),
+  ]);
+  await open(page, `meeting_page: () => ({ ...${MEETINGS}[0], note: "Your speakers played the call into the mic: 2 lines that repeated it are left out.", segments: window.__lines ?? ${lines} }),
+    segments_include: ({ ids }) => { window.__lines = ${lines}.map((l) => ids.includes(l.id) ? { ...l, hidden: false, included: true, text: "Go on, heard again." } : l); }`);
+  await page.getByRole("button", { name: "Untitled meeting" }).first().click();
+  await expect(page.locator(".note")).toHaveText("Your speakers played the call into the mic: 2 lines that repeated it are left out.");
+  await expect(page.locator(".seg")).toHaveCount(4); // the muted line and the two echo lines are two rows
+  const echo = page.locator(".seg").filter({ hasText: "Heard from your speakers · left out" });
+  await expect(echo).toHaveCount(1);
+  await expect(page.locator(".seg").filter({ hasText: "Said while muted · left out" })).toHaveCount(1);
+  await echo.getByRole("button", { name: "Include" }).click();
+  expect(await calls(page, "segments_include")).toEqual([{ ids: [3, 4] }]);
+  await expect(page.getByText("Go on, heard again.")).toHaveCount(2);
+  await expect(page.getByText("Said while muted", { exact: true })).toHaveCount(0);
+});
+
+test("meeting-echo, from checking a meeting recorded before echo handling, reloads the open page", async ({ page }) => {
+  await open(page, `meeting_page: () => ({ ...${MEETINGS}[0], note: window.__note ?? null, segments: ${SEGMENTS} })`);
+  await page.getByRole("button", { name: "Untitled meeting" }).first().click();
+  await expect(page.locator(".note")).toHaveCount(0);
+  await page.evaluate(() => ((window as any).__note = "Your speakers played the call into the mic: 3 lines that repeated it are left out."));
+  await emit(page, "meeting-echo", 5);
+  await expect(page.locator(".note")).toHaveText("Your speakers played the call into the mic: 3 lines that repeated it are left out.");
+});
+
 test("cleanup shows its progress, then the cleaned lines with changed words marked; Show original shows what was heard, and Copy follows", async ({ page }) => {
   const clean = JSON.stringify([line(1, "Me", 12000, "so um we ship on friday", { clean: "So we ship on Friday." }), line(2, "Them", 75000, "Launch is still the 18th.")]);
   await open(page, `meeting_page: () => ({ ...${MEETINGS}[0], ...(window.__clean ? { segments: ${clean}, cleanup: { provider: "OpenRouter", model: "small", cost: { kind: "free" } } } : { segments: ${SEGMENTS}, cleanup: null }) })`);

@@ -429,11 +429,11 @@
         {#each rows as g}
           {#if "left" in g}
             <div class="seg" class:hit={hit === g.left[0].id} class:playing={playing === g.left[0].id} id="seg-{g.left[0].id}" tabindex="-1"><div class="who"><b>Me</b><button class="at" aria-label="Play from {clock(g.left[0].start_ms)}" onclick={() => play(g.left[0].start_ms)}><time>{clock(g.left[0].start_ms)}</time></button></div>
-              <p class="left"><span>Said while muted · left out</span><button class="btn small" onclick={() => oninclude(g.left.map((l) => l.id))}>Include</button></p></div>
+              <p class="left"><span>{g.left[0].echo ? "Heard from your speakers · left out" : "Said while muted · left out"}</span><button class="btn small" onclick={() => oninclude(g.left.map((l) => l.id))}>Include</button></p></div>
           {:else}
             {@const l = g.lines[0]}
             <div class="seg" class:hit={hit === l.id} class:playing={playing === l.id} id="seg-{l.id}" tabindex="-1"><div class="who">{@render who(l)}<button class="at" aria-label="Play from {clock(l.start_ms)}" onclick={() => play(l.start_ms)}><time>{clock(l.start_ms)}</time></button></div>
-              <p>{#each g.lines as line, n}{n ? " " : ""}{#if line.clean && !orig}{#each changes(line.text, line.clean) as c, i}{i ? " " : ""}{#if c.heard === undefined}{c.text}{:else}<mark class="chg" title={c.heard ? `Heard “${c.heard}”` : "Added in cleanup"}>{c.text}</mark>{/if}{/each}{:else}{line.text}{/if}{/each}{#if l.included}<span class="mark">Said while muted</span>{/if}</p></div>
+              <p>{#each g.lines as line, n}{n ? " " : ""}{#if line.clean && !orig}{#each changes(line.text, line.clean) as c, i}{i ? " " : ""}{#if c.heard === undefined}{c.text}{:else}<mark class="chg" title={c.heard ? `Heard “${c.heard}”` : "Added in cleanup"}>{c.text}</mark>{/if}{/each}{:else}{line.text}{/if}{/each}{#if l.included && l.muted}<span class="mark">Said while muted</span>{/if}</p></div>
           {/if}
         {/each}
       </div>
