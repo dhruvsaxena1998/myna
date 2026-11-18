@@ -1,6 +1,6 @@
 # 09: Speakers and transcript
 
-**Status:** draft
+**Status:** draft. **Next up:** speaker editing (rename, hear their clips, merge) is the priority for the next round (user, 2026-11-18). Diarization already runs (Sortformer, story 07).
 **Spec stories:** 30–35, 38
 **Depends on:** 05
 

@@ -4,6 +4,11 @@ All stories are **draft**. Edit any file, then ask for one story to be built. No
 
 Each story's done-check includes running the real app from a fresh install, not just tests.
 
+## Next up
+
+1. **Speaker editing** (story [09](09-transcript-and-speakers.md)): rename a speaker once and the whole meeting follows, hearing their clips, and merge split speakers. The user made this the priority for the next round on 2026-11-18.
+2. Echo handling ([`.scratch/echo-bleed/spec.md`](../../echo-bleed/spec.md), tickets 01 to 03): spec'd and ready for an agent.
+
 | # | Feature | Depends on |
 |---|---|---|
 | 01 | [App shell and menubar](01-app-shell.md) | none |
