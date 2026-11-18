@@ -18,6 +18,7 @@
   let pill = $state<Shown>({ state: "listening", hold: true, key: "Alt+Space" });
   let on = $state(false);
   let wave = $state<number[]>(Array(WAVE).fill(0));
+  let meetLevel = $state(0); // the recording's mic loudness, 0 to 1, about 8 times a second
   let started = 0;
   let secs = $state(0);
   // A meeting recording: its start time, or null. Its pill shares the dictation pill's spot, so it steps aside while dictation shows.
@@ -126,6 +127,7 @@
       // Over the buttons (pill.rs tells us; the page can't see the pointer leave): up to 8 s, then 1.5 s after leaving. Never for good.
       listen<boolean>("pill-hover", ({ payload }) => ask && ask.rated !== "up" && close(payload ? 8000 : 1500)),
       listen<number>("dictation-level", ({ payload }) => (wave = [...wave.slice(1), payload])),
+      listen<number>("meeting-level", ({ payload }) => (meetLevel = payload)),
       listen<Look>("pill-look", ({ payload }) => (look = payload)),
       listen<Appearance>("look", ({ payload }) => (appearance = payload)),
     ];
@@ -185,10 +187,10 @@
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions (dragging is pointer-only; the window never takes keyboard focus) -->
 <div class="spot {look.place}" class:on={meeting} class:drag={shown?.state === "recording"} role="status" bind:this={meetSpot} onpointerdown={down} onpointermove={drag} onpointerup={up}>
   {#if shown}
-    <Pill style="capsule" pill={shown} {wave} secs={meetSecs}>
+    <Pill style="capsule" pill={shown} wave={[meetLevel]} secs={meetSecs}>
       {#snippet actions()}
         <span class="acts" class:call={shown.state === "detected" || shown.state === "ending"} bind:this={notesEl}>
-          {#if shown.state === "recording"}<button class="act x" aria-label="Hide recording pill" title="Hide (click the dot to bring it back)" onclick={() => (mini = true)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12" /></svg></button>
+          {#if shown.state === "recording"}<button class="act x" aria-label="Hide recording pill" title="Hide (click it to bring it back)" onclick={() => (mini = true)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12" /></svg></button>
           {:else if shown.state === "detected"}<button class="act primary" onclick={() => callDo("call_start")}>Start notes</button>
           {:else if shown.state === "ending"}<button class="act primary" onclick={() => callDo("call_keep")}>Keep recording</button><button class="act quiet" onclick={() => callDo("call_stop")}>Stop now</button>
           {:else if notes?.state === "failed"}<button class="act" onclick={retry}>Try again</button>

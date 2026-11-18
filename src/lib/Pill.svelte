@@ -6,7 +6,7 @@
   export type Shown =
     | { state: "listening"; hold: boolean; key: string; limit?: number }
     | { state: "writing" | "cleaning" | "added" }
-    /** A meeting is recording (capsule only); `secs` is how long. `mini`: hidden down to its red dot. */
+    /** A meeting is recording (capsule only); `secs` is how long. `mini`: hidden down to a small red level meter. */
     | { state: "recording"; words?: string; mini?: boolean }
     /** A finished meeting: being written up (`progress` 0 to 1), saved, or failed with `reason` (capsule only). */
     | { state: "notes"; progress: number }
@@ -59,7 +59,7 @@
   <span class="lvl" aria-hidden="true">{#each WEIGHTS as w}<i style:transform="scaleY({0.2 + 0.8 * level * w})"></i>{/each}</span>
 {/snippet}
 
-<div class="hud {style}" class:quiet>
+<div class="hud {style}" class:quiet class:mini={pill.state === "recording" && pill.mini}>
   {#if style === "card"}
     <span class="ring" class:live={pill.state === "listening"} style:--s={0.85 + 0.3 * level} style:--o={0.35 + 0.65 * level}>
       {#if pill.state === "listening"}{@render icon("mic")}{:else if pill.state === "writing" || pill.state === "cleaning"}<span class="spin"></span>{:else if pill.state === "added"}{@render icon("check")}{:else}{@render icon("warn")}{/if}
@@ -73,7 +73,7 @@
       {:else if note}<span class="t">{note.title}</span><span class="sub">{note.hint}</span>{/if}
     </span>
   {:else if pill.state === "recording"}
-    <span class="recdot" aria-hidden="true"></span>{#if pill.mini}<span class="sr-only">Recording</span>{:else}<span>Recording</span><time>{clock}</time><span class="sub">{pill.words}</span>{@render actions?.()}{/if}
+    {#if pill.mini}{@render bars()}<span class="sr-only">Recording</span>{:else}<span class="recdot" aria-hidden="true"></span><span>Recording</span><time>{clock}</time><span class="sub">{pill.words}</span>{@render actions?.()}{/if}
   {:else if pill.state === "notes"}
     <span>Writing up your notes…</span><span class="bar" aria-hidden="true"><i style:width="{Math.round(pill.progress * 100)}%"></i></span><time>{Math.round(pill.progress * 100)}%</time>
   {:else if pill.state === "notes-saved"}
@@ -114,6 +114,9 @@
   .lvl { display: flex; align-items: center; gap: 2px; height: 16px; }
   .lvl i { width: 3px; height: 16px; border-radius: 2px; background: currentColor; transition: transform 80ms linear; }
 
+  /* Hidden recording pill: a short capsule of red bars that move with the mic. */
+  .mini { padding: 0 14px; }
+  .mini .lvl { color: var(--rec); gap: 3px; }
   .recdot { width: 8px; height: 8px; border-radius: 50%; background: var(--rec); flex: none; animation: pulse 1.6s ease-in-out infinite; }
   .live { width: 8px; height: 8px; border-radius: 50%; background: #30d158; flex: none; } /* the mockup's live-dot */
   .t { font-weight: var(--fw-medium); }

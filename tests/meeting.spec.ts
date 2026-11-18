@@ -175,7 +175,7 @@ const emit = (page: Page, event: string, payload: unknown) => page.evaluate(([e,
 test("the recording pill says Muted or Mic live, mirrored from Teams, only while mirroring", async ({ page }) => {
   await fakeTauri(page, `{}`);
   await page.goto("/pill");
-  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(10);
+  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(11);
   const pill = page.getByRole("status");
   await emit(page, "meeting", { started: Date.now(), mic: "live", words: "Mic live · mirrored from Teams" });
   await expect(pill).toContainText("Mic live · mirrored from Teams");
@@ -189,7 +189,7 @@ test("the recording pill shows Recording, the timer and Mic live, and goes when 
   await fakeTauri(page, `{}`);
   await page.clock.install({ time: 100_000 });
   await page.goto("/pill");
-  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(10);
+  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(11);
   const pill = page.getByRole("status");
   await expect(pill).toBeHidden();
   await emit(page, "meeting", { started: 100_000 - 65_000, mic: null, words: "Mic live" });
@@ -200,14 +200,14 @@ test("the recording pill shows Recording, the timer and Mic live, and goes when 
   await expect(pill).toBeHidden();
 });
 
-test("the recording pill hides down to its dot, a click on the dot brings it back, and a drag moves the window", async ({ page }) => {
+test("the recording pill hides down to a level meter, a click on it brings it back, and a drag moves the window", async ({ page }) => {
   await fakeTauri(page, `{}`);
   await page.goto("/pill");
-  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(10);
+  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(11);
   const pill = page.getByRole("status");
   await emit(page, "meeting", { started: Date.now(), mic: null, words: "Mic live" });
   await pill.getByRole("button", { name: "Hide recording pill" }).click();
-  await expect(pill).toHaveText("Recording"); // only the dot shows; the word is for screen readers
+  await expect(pill).toHaveText("Recording"); // only the level meter shows; the word is for screen readers
   await expect(pill.getByRole("button")).toHaveCount(0);
   await pill.locator(".hud").click();
   await expect(pill).toContainText("Mic live");
@@ -223,7 +223,7 @@ test("after Stop the pill shows the notes being written with progress, then Note
   await fakeTauri(page, `{}`);
   await page.clock.install({ time: 100_000 });
   await page.goto("/pill");
-  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(10);
+  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(11);
   const pill = page.getByRole("status");
   await emit(page, "meeting-notes", { id: 7, state: "transcribing", progress: 0, error: null });
   await expect(pill).toHaveText("Writing up your notes…0%");
@@ -241,7 +241,7 @@ test("after Stop the pill shows the notes being written with progress, then Note
 test("Open on Notes saved opens the meeting, and the dismiss button just closes it", async ({ page }) => {
   await fakeTauri(page, `{ meeting_open: () => {} }`);
   await page.goto("/pill");
-  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(10);
+  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(11);
   await emit(page, "meeting-notes", { id: 7, state: "done", progress: 1, error: null });
   await page.getByRole("button", { name: "Open" }).click();
   expect(await calls(page, "meeting_open")).toEqual([{ id: 7 }]);
@@ -256,7 +256,7 @@ test("a failure says why and stays; Try again asks the backend and the pill foll
   await fakeTauri(page, `{ meeting_retry: () => {} }`);
   await page.clock.install({ time: 100_000 });
   await page.goto("/pill");
-  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(10);
+  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(11);
   const pill = page.getByRole("status");
   await emit(page, "meeting-notes", { id: 7, state: "failed", progress: 0, error: "Download Parakeet v3 in Settings › Speech models" });
   await expect(pill).toHaveText("Couldn’t write up your notesDownload Parakeet v3 in Settings › Speech modelsTry again");
@@ -271,7 +271,7 @@ test("a failure says why and stays; Try again asks the backend and the pill foll
 test("a retry the backend refuses shows its reason", async ({ page }) => {
   await fakeTauri(page, `{ meeting_retry: () => { throw "That meeting isn't waiting to be tried again."; } }`);
   await page.goto("/pill");
-  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(10);
+  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(11);
   await emit(page, "meeting-notes", { id: 7, state: "failed", progress: 0, error: "x" });
   await page.getByRole("button", { name: "Try again" }).click();
   await expect(page.getByRole("status")).toContainText("That meeting isn't waiting to be tried again.");

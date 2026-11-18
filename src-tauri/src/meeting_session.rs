@@ -27,7 +27,7 @@ pub trait World: Stt + Voices + 'static {
     fn place(&self, place: String);
     /// The menu item and the tray title for a running meeting.
     fn menu_running(&self, clock: &str, note: &str);
-    /// The menu bar icon while recording: its wave follows the mic's loudness, 0 to 1.
+    /// The menu bar icon while recording, and the hidden recording pill: their wave follows the mic's loudness, 0 to 1.
     fn menu_wave(&self, level: f32);
     /// The menu item, its note and the tray title for no meeting.
     fn menu_idle(&self);
@@ -382,6 +382,7 @@ impl World for Mac {
         });
     }
     fn menu_wave(&self, level: f32) {
+        let _ = self.0.emit_to("pill", "meeting-level", level);
         // A coloured icon can't be a template, so there's a frame for a light menu bar and one for a dark one.
         const FRAMES: [[&[u8]; 5]; 2] = [
             [include_bytes!("../icons/tray-rec/light-0.png"), include_bytes!("../icons/tray-rec/light-1.png"), include_bytes!("../icons/tray-rec/light-2.png"), include_bytes!("../icons/tray-rec/light-3.png"), include_bytes!("../icons/tray-rec/light-4.png")],
