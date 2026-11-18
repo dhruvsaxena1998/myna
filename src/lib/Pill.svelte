@@ -6,7 +6,7 @@
   export type Shown =
     | { state: "listening"; hold: boolean; key: string; limit?: number }
     | { state: "writing" | "cleaning" | "added" }
-    /** A meeting is recording (capsule only); `secs` is how long. `mini`: hidden down to a small red level meter. */
+    /** A meeting is recording (capsule only); `secs` is how long. `mini`: hidden down to an upright bubble with the Myna glyph. */
     | { state: "recording"; words?: string; mini?: boolean; paused?: boolean }
     /** A finished meeting: being written up (`progress` 0 to 1), saved, or failed with `reason` (capsule only). */
     | { state: "notes"; progress: number }
@@ -34,6 +34,8 @@
   let { style, pill, wave, secs, left = null, actions }: { style: Style; pill: Shown; wave: number[]; secs: number; left?: number | null; actions?: Snippet } = $props();
   const level = $derived(wave.at(-1) ?? 0);
   const WEIGHTS = [0.5, 0.8, 1, 0.75, 0.45]; // the middle bars move most
+  // The menu bar glyph's wave (tray.svg, scripts/tray-icons.mjs): flat in silence, up to 3.7 high at full voice.
+  const crest = $derived(pill.state === "recording" && pill.paused ? 0 : 3.7 * Math.min(1, level));
   // What needs words even on the orb: an error, or a fallback.
   const note = $derived(pill.state === "error" ? { title: pill.title, hint: pill.hint } : pill.state === "fallback" ? { title: "Added without cleanup", hint: pill.reason } : null);
   // Orb says nothing while things go well, so screen readers still get words.
@@ -73,7 +75,7 @@
       {:else if note}<span class="t">{note.title}</span><span class="sub">{note.hint}</span>{/if}
     </span>
   {:else if pill.state === "recording"}
-    {#if pill.mini}{@render bars()}<span class="sr-only">{pill.paused ? "Recording paused" : "Recording"}</span>
+    {#if pill.mini}<svg class="glyph" viewBox="0 0 18 18" aria-hidden="true"><path class="wv" d="M3 5q1.5-{crest} 3 0t3 0 3 0 3 0" /><path d="M3 9.5h12M3 14h5.5M11.5 12.25v3.5" /></svg><span class="sr-only">{pill.paused ? "Recording paused" : "Recording"}</span>
     {:else if pill.paused}<span class="recdot" aria-hidden="true"></span><span>Paused</span><time>{clock}</time>{@render actions?.()}
     {:else}<span class="recdot" aria-hidden="true"></span><span>Recording</span><time>{clock}</time><span class="sub">{pill.words}</span>{@render actions?.()}{/if}
   {:else if pill.state === "notes"}
@@ -116,9 +118,11 @@
   .lvl { display: flex; align-items: center; gap: 2px; height: 16px; }
   .lvl i { width: 3px; height: 16px; border-radius: 2px; background: currentColor; transition: transform 80ms linear; }
 
-  /* Hidden recording pill: a short capsule of red bars that move with the mic. */
-  .mini { padding: 0 14px; }
-  .mini .lvl { color: var(--rec); gap: 3px; }
+  /* Hidden recording pill: a small upright bubble with the menu bar's Myna glyph, its wave in Myna orange moving with the mic. */
+  .hud.mini { width: 34px; height: 54px; padding: 0; justify-content: center; border-radius: var(--r-full); }
+  .glyph { width: 22px; height: 22px; fill: none; stroke: var(--hud-fg); stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+  .glyph .wv { stroke: #E8572A; } /* ORANGE in scripts/tray-icons.mjs */
+  .paused .glyph .wv { stroke: var(--hud-2); }
   /* Paused: the dot and bars go grey and still. */
   .paused .recdot { background: var(--hud-2); animation: none; }
   .paused .lvl { color: var(--hud-2); }

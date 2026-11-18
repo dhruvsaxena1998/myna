@@ -45,6 +45,8 @@ pub trait World: Stt + Voices + 'static {
     fn clean(&self, id: i64);
     /// Meeting `id` is written up: its Summary may run now (story 16), in the background.
     fn summarize(&self, id: i64);
+    /// Meeting `id` is written up: the Title model names it if it's still untitled. Returns when done or failed.
+    fn name(&self, _id: i64) {}
     /// `meeting-echo`: checking meeting `id`, recorded before echo handling, left lines out.
     fn echo_checked(&self, id: i64);
     /// Where AI providers' keys are, for meeting speech-to-text on an Endpoint.
@@ -329,6 +331,7 @@ impl MeetingSession {
                     w.notes(id, "done", 1.0, None);
                     w.recent(); // before cleanup, which can take minutes on a local model
                     w.clean(id); // a failed cleanup keeps the text as heard, and the Summary runs on that
+                    w.name(id); // on the cleaned lines, before the Summary, so the list shows a name soon
                     w.summarize(id);
                 }
                 Err(e) => {
@@ -481,6 +484,9 @@ impl World for Mac {
     fn summarize(&self, id: i64) {
         crate::summarize(&self.0, id);
     }
+    fn name(&self, id: i64) {
+        crate::name_meeting(&self.0, id);
+    }
     fn echo_checked(&self, id: i64) {
         let _ = self.0.emit("meeting-echo", id);
     }
@@ -612,7 +618,7 @@ mod tests {
     fn rig(notes_on: bool, mic: Mic, denied: bool, them: impl crate::meeting::Them + 'static, tick: Duration) -> Rig {
         let tmp = tempfile::tempdir().unwrap();
         let db = Arc::new(Mutex::new(crate::storage::open(tmp.path()).unwrap()));
-        meeting::set(&db.lock().unwrap(), &meeting::Notes { on: notes_on, key: meeting::KEY.into(), keep_teams: false, keep_meet: false, offer_calls: true, stop_on_end: true }).unwrap();
+        meeting::set(&db.lock().unwrap(), &meeting::Notes { on: notes_on, key: meeting::KEY.into(), keep_teams: false, keep_meet: false, offer_calls: true, stop_on_end: true, show_pill: true }).unwrap();
         let meetings = Meetings::new(db.clone(), tmp.path().into(), Box::new(Fake(crate::runtime::RATE as usize)), Box::new(them));
         let saw = Arc::new(Mutex::new(vec![]));
         let fail = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -1028,7 +1034,7 @@ mod tests {
     fn asking(answer: Mic) -> (Arc<MeetingSession>, Arc<Mutex<Vec<Saw>>>, tempfile::TempDir) {
         let tmp = tempfile::tempdir().unwrap();
         let db = Arc::new(Mutex::new(crate::storage::open(tmp.path()).unwrap()));
-        meeting::set(&db.lock().unwrap(), &meeting::Notes { on: true, key: meeting::KEY.into(), keep_teams: false, keep_meet: false, offer_calls: true, stop_on_end: true }).unwrap();
+        meeting::set(&db.lock().unwrap(), &meeting::Notes { on: true, key: meeting::KEY.into(), keep_teams: false, keep_meet: false, offer_calls: true, stop_on_end: true, show_pill: true }).unwrap();
         let meetings = Meetings::new(db.clone(), tmp.path().into(), Box::new(Fake(crate::runtime::RATE as usize)), Box::new(Call(vec![])));
         let saw = Arc::new(Mutex::new(vec![]));
         let world = Scripted { mic: Mutex::new(Mic::Ask), on_ask: answer, denied: false, fail: Default::default(), saw: saw.clone(), keys: Default::default() };

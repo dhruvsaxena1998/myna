@@ -34,16 +34,17 @@
   // A detected call (calls.rs): the offer to record it, or the countdown to a stop after it ended.
   let call = $state<{ state: "offer"; title: string; label: string } | { state: "ending"; at: number } | null>(null);
   let now = $state(Date.now());
-  const meeting = $derived((meetStarted !== null || notes !== null || call !== null) && !on);
+  let showPill = $state(true); // Settings › Meeting notes › Show the recording pill
   const shown = $derived<Shown | null>(
     meetStarted !== null && call?.state === "ending" ? { state: "ending", left: Math.max(0, Math.ceil((call.at - now) / 1000)) }
-    : meetStarted !== null ? { state: "recording", words: meetWords, mini, paused }
+    : meetStarted !== null ? (showPill ? { state: "recording", words: meetWords, mini, paused } : null)
     : call?.state === "offer" ? { state: "detected", title: call.title, label: call.label }
     : !notes ? null
     : notes.state === "transcribing" ? { state: "notes", progress: notes.progress }
     : notes.state === "done" ? { state: "notes-saved" }
     : { state: "notes-failed", reason: notes.error ?? "Something went wrong." },
   );
+  const meeting = $derived(shown !== null && !on);
   // Dragging the recording pill moves the whole pill window, until the next dictation or recording puts it back in its place.
   let press: { x: number; y: number } | null = null;
   function down(e: PointerEvent) {
@@ -81,12 +82,17 @@
   let askEl = $state<HTMLElement>();
   const close = (after: number) => (clearTimeout(hide), (hide = setTimeout(() => ((on = false), (ask = null)), after)));
   // The window takes the mouse only over these buttons, or the whole recording pill (to drag it); the rest stays click-through (pill.rs `pill_hit`).
-  $effect(() => {
+  // Measured again once the slide-in ends: measured mid-slide, the area sat 8px off the buttons and missed clicks on them.
+  function hit() {
     const el = ask ? askEl : meeting && shown?.state === "recording" ? meetSpot.querySelector<HTMLElement>(".hud") : notesEl;
-    void [shown?.state, mini, meetWords]; // the buttons move when the pill's words change
     if (!el) return void invoke("pill_hit", { rect: null });
     const r = el.getBoundingClientRect();
     invoke("pill_hit", { rect: [r.x, r.y, r.width, r.height] });
+  }
+  const slid = (e: TransitionEvent) => e.target === e.currentTarget && e.propertyName === "translate" && hit(); // not the level bars' transitions
+  $effect(() => {
+    void [shown?.state, mini, meetWords]; // the buttons move when the pill's words change
+    hit();
   });
   async function rate(rating: "up" | "down") {
     if (!ask) return;
@@ -104,6 +110,7 @@
 
   $effect(() => {
     invoke<Look>("pill_look_get").then((l) => (look = l), () => {}); // the default look until it answers
+    invoke<{ show_pill?: boolean } | null>("meeting_get").then((n) => (showPill = n?.show_pill !== false), () => {}); // missing: shown
     const tick = setInterval(() => {
       if (pill.state === "listening") secs = Math.floor((Date.now() - started) / 1000);
       if (call?.state === "ending") now = Date.now();
@@ -135,6 +142,7 @@
       listen<number>("dictation-level", ({ payload }) => (wave = [...wave.slice(1), payload])),
       listen<number>("meeting-level", ({ payload }) => (meetLevel = payload)),
       listen<Look>("pill-look", ({ payload }) => (look = payload)),
+      listen<boolean>("meeting-show", ({ payload }) => (showPill = payload)),
       listen<Appearance>("look", ({ payload }) => (appearance = payload)),
     ];
     return () => (clearInterval(tick), un.forEach((p) => p.then((f) => f())));
@@ -149,7 +157,7 @@
     const mh = meetSpot.querySelector<HTMLElement>(".hud");
     if (mh) {
       const m = mh.getBoundingClientRect();
-      glass.push({ x: m.x, y: m.y, w: m.width, h: m.height, radius: m.height / 2, shown: meeting });
+      glass.push({ x: m.x, y: m.y, w: m.width, h: m.height, radius: Math.min(m.width, m.height) / 2, shown: meeting }); // the hidden pill stands upright
     }
     if (ask && askEl) {
       const a = askEl.getBoundingClientRect();
@@ -172,7 +180,7 @@
 </script>
 
 <!-- The window sits against the same screen edges (pill.rs `place`), so the pill keeps clear of the menubar and Dock. -->
-<div class="spot {look.place}" class:on role="status" bind:this={spot}>
+<div class="spot {look.place}" class:on role="status" bind:this={spot} ontransitionend={slid}>
   <span class="anchor {look.style}">
   <Pill style={look.style} {pill} {wave} {secs} {left} />
   {#if ask}
@@ -191,7 +199,7 @@
 </div>
 <!-- The recording isn't clickable yet (live notes will open from it); a detected call, its countdown and the written-up notes have buttons. -->
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions (dragging is pointer-only; the window never takes keyboard focus) -->
-<div class="spot {look.place}" class:on={meeting} class:drag={shown?.state === "recording"} role="status" bind:this={meetSpot} onpointerdown={down} onpointermove={drag} onpointerup={up}>
+<div class="spot {look.place}" class:on={meeting} class:drag={shown?.state === "recording"} role="status" bind:this={meetSpot} ontransitionend={slid} onpointerdown={down} onpointermove={drag} onpointerup={up}>
   {#if shown}
     <Pill style="capsule" pill={shown} wave={[meetLevel]} secs={meetSecs}>
       {#snippet actions()}

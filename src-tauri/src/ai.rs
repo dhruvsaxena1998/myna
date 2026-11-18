@@ -14,10 +14,11 @@ const KINDS: [&str; 2] = ["openai", "openrouter"];
 const SLOTS: [&str; 2] = ["main", "fast"];
 /// Features with their own model, as a setting: (key, label, the slot it uses while the key is missing).
 /// Meeting speech-to-text's "slot" is "local": while its key is missing, the Local model transcribes.
-const OWN: [(&str, &str, &str); 4] = [
+const OWN: [(&str, &str, &str); 5] = [
     ("summary_model", "Summary model", "main"),
     ("transcript_cleanup_model", "Cleanup model", "fast"),
     (DECIDE, "Decision model", "fast"),
+    (crate::title::KEY, "Title model", "fast"),
     (STT, "Meeting speech-to-text", "local"),
 ];
 /// The Decision model: a decision model picked from an OpenRouter Endpoint, else the Fast model with a JSON schema.

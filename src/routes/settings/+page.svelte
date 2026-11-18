@@ -16,6 +16,7 @@
   import CleanupStyles, { type Cleanup } from "$lib/CleanupStyles.svelte";
   import SummarySettings, { type Summary } from "$lib/SummarySettings.svelte";
   import TranscriptCleanup, { type Cleanup as Tcl } from "$lib/TranscriptCleanup.svelte";
+  import MeetingTitle from "$lib/MeetingTitle.svelte";
   import Write from "$lib/Write.svelte";
   import StagePath from "$lib/StagePath.svelte";
   import type { Ai } from "$lib/AiProviders.svelte";
@@ -355,6 +356,7 @@
                 {:else}<ErrorState title="Myna couldn't read the Summary settings" message={data.summary?.ok === false ? data.summary.error : ""} />{/if}
                 {#if tcl}<TranscriptCleanup bind:prefs={tcl} part="rows" {ai} {open} />
                 {:else}<ErrorState title="Myna couldn't read the cleanup settings" message={data.transcript?.ok === false ? data.transcript.error : ""} />{/if}
+                <MeetingTitle {ai} />
               {/snippet}
             </MeetingNotes>
             {:else}<ErrorState title="Myna couldn't read meeting notes' settings" message={data.notes?.ok === false ? data.notes.error : ""} />{/if}

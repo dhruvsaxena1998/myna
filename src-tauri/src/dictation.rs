@@ -1,6 +1,8 @@
 //! Dictation: record the mic while the hotkey is held, turn it into text, paste it into the focused app.
 
 use crate::runtime::{Transcriber, RATE};
+use rubato::audioadapter_buffers::direct::InterleavedSlice;
+use rubato::{Fft, FixedSync, Indexing, Resampler, WindowFunction};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -74,24 +76,104 @@ impl Recording {
     }
 }
 
-/// Downmixes interleaved audio and resamples it to the 16 kHz the models take.
-// shortcut: box-filter resampling (each output sample averages its input window); fine for speech,
-// switch to a sinc resampler if accuracy drops on 44.1 kHz mics.
+/// Downmixes interleaved audio and resamples it to the 16 kHz the models take, all at once.
 pub fn to_16k_mono(input: &[f32], rate: u32, channels: u16) -> Vec<f32> {
-    let ch = channels.max(1) as usize;
-    let mono: Vec<f32> = input.chunks_exact(ch).map(|f| f.iter().sum::<f32>() / ch as f32).collect();
-    if rate == RATE {
-        return mono;
+    let mut r = To16k::new(rate, channels);
+    let mut out = r.push(input);
+    out.extend(r.finish());
+    out
+}
+
+/// A stream downmixed and resampled to 16 kHz mono through a proper low-pass (rubato's FFT resampler, as Hex does).
+/// Averaging every 3 samples, as Myna did, let 9–12 kHz fold back as hiss and dulled "s" and "f".
+/// One per stream: it carries state from chunk to chunk, and its delay is trimmed so the output lines up with the input.
+pub struct To16k {
+    rate: u32,
+    channels: usize,
+    fft: Option<Fft<f32>>,
+    input: Vec<f32>,
+    delay: usize,
+    seen: usize,
+    made: usize,
+}
+
+const CHUNK: usize = 1024;
+
+impl To16k {
+    pub fn new(rate: u32, channels: u16) -> Self {
+        let fft = (rate != RATE)
+            .then(|| Fft::new_custom(rate as usize, RATE as usize, CHUNK, 1, 1, WindowFunction::BlackmanHarris2, FixedSync::Input).ok())
+            .flatten();
+        let delay = fft.as_ref().map_or(0, |f| f.output_delay());
+        To16k { rate, channels: channels.max(1) as usize, fft, input: Vec::with_capacity(CHUNK), delay, seen: 0, made: 0 }
     }
-    let step = rate as f64 / RATE as f64;
-    let n = (mono.len() as f64 / step) as usize;
-    (0..n)
-        .map(|i| {
-            let a = (i as f64 * step) as usize;
-            let b = (((i + 1) as f64 * step) as usize).clamp(a + 1, mono.len());
-            mono[a..b].iter().sum::<f32>() / (b - a) as f32
-        })
-        .collect()
+
+    /// More interleaved samples in; what's ready comes out (a little lags until `finish`).
+    pub fn push(&mut self, interleaved: &[f32]) -> Vec<f32> {
+        let ch = self.channels;
+        let mono = interleaved.chunks_exact(ch).map(|f| f.iter().sum::<f32>() / ch as f32);
+        let Some(fft) = &mut self.fft else {
+            if self.rate == RATE {
+                let out: Vec<f32> = mono.collect();
+                self.made += out.len();
+                return out;
+            }
+            // shortcut: a rate rubato refused (none seen) falls back to averaging; it's never been hit.
+            let m: Vec<f32> = mono.collect();
+            let step = self.rate as f64 / RATE as f64;
+            return (0..(m.len() as f64 / step) as usize)
+                .map(|i| {
+                    let a = (i as f64 * step) as usize;
+                    let b = (((i + 1) as f64 * step) as usize).clamp(a + 1, m.len());
+                    m[a..b].iter().sum::<f32>() / (b - a) as f32
+                })
+                .collect();
+        };
+        let mut out = vec![];
+        for s in mono {
+            self.seen += 1;
+            self.input.push(s);
+            if self.input.len() == CHUNK {
+                out.extend(chunk(fft, &self.input, false));
+                self.input.clear();
+            }
+        }
+        self.trim(out)
+    }
+
+    /// The rest, flushed, so the whole output is `seen × 16000 / rate` samples long.
+    pub fn finish(mut self) -> Vec<f32> {
+        let Some(mut fft) = self.fft.take() else { return vec![] };
+        let want = self.seen * RATE as usize / self.rate as usize;
+        let mut out = vec![];
+        if !self.input.is_empty() {
+            let rest = chunk(&mut fft, &self.input, true);
+            out.extend(self.trim(rest));
+        }
+        for _ in 0..8 {
+            if self.made >= want {
+                break;
+            }
+            let tail = chunk(&mut fft, &[], true);
+            out.extend(self.trim(tail));
+        }
+        out.truncate(out.len().saturating_sub(self.made.saturating_sub(want)));
+        out
+    }
+
+    fn trim(&mut self, mut out: Vec<f32>) -> Vec<f32> {
+        let n = self.delay.min(out.len());
+        out.drain(..n);
+        self.delay -= n;
+        self.made += out.len();
+        out
+    }
+}
+
+fn chunk(fft: &mut Fft<f32>, samples: &[f32], partial: bool) -> Vec<f32> {
+    let Ok(input) = InterleavedSlice::new(samples, 1, samples.len()) else { return vec![] };
+    let indexing = partial.then(|| Indexing { partial_len: Some(samples.len()), ..Indexing::default() });
+    fft.process(&input, indexing.as_ref()).map(|o| o.take_data()).unwrap_or_default()
 }
 
 /// The speech-to-text step's text for this 16 kHz mono audio: the model's segments joined into one line.
@@ -243,9 +325,38 @@ mod tests {
         let input: Vec<f32> = (0..48_000).flat_map(|_| [0.2, 0.6]).collect();
         let out = to_16k_mono(&input, 48_000, 2);
         assert_eq!(out.len(), 16_000);
-        assert!(out.iter().all(|s| (s - 0.4).abs() < 1e-6));
+        assert!(out[200..15_800].iter().all(|s| (s - 0.4).abs() < 1e-3), "the filter rings only at the very ends");
         assert_eq!(to_16k_mono(&[0.1, 0.2], RATE, 1), [0.1, 0.2]);
         assert_eq!(to_16k_mono(&vec![0.5; 44_100], 44_100, 1).len(), 16_000);
+    }
+
+    /// A second of a sine at `hz`, at 48 kHz, through the resampler: its loudness out (RMS, middle half).
+    fn through(hz: f32) -> f32 {
+        let tone: Vec<f32> = (0..48_000).map(|i| 0.5 * (std::f32::consts::TAU * hz * i as f32 / 48_000.0).sin()).collect();
+        let out = to_16k_mono(&tone, 48_000, 1);
+        let mid = &out[4_000..12_000];
+        (mid.iter().map(|s| s * s).sum::<f32>() / mid.len() as f32).sqrt()
+    }
+
+    #[test]
+    fn speech_passes_and_what_16_khz_cant_hold_doesnt_fold_back_as_hiss() {
+        let full = 0.5 / 2f32.sqrt();
+        assert!((through(1_000.0) / full - 1.0).abs() < 0.02, "1 kHz passes");
+        assert!(through(6_000.0) / full > 0.9, "6 kHz, an \"s\", passes");
+        for hz in [9_000.0, 10_500.0, 12_000.0] {
+            assert!(through(hz) / full < 0.01, "{hz} Hz is at least 40 dB down, not folded back");
+        }
+    }
+
+    #[test]
+    fn a_stream_in_pieces_comes_out_as_the_whole_does() {
+        let input: Vec<f32> = (0..96_000).map(|i| (i as f32 * 0.01).sin() * 0.3).collect();
+        let whole = to_16k_mono(&input, 48_000, 2);
+        let mut r = To16k::new(48_000, 2);
+        let mut pieces: Vec<f32> = input.chunks(9_600).flat_map(|c| r.push(c)).collect();
+        pieces.extend(r.finish());
+        assert_eq!(pieces.len(), whole.len());
+        assert!(pieces.iter().zip(&whole).all(|(a, b)| (a - b).abs() < 1e-5));
     }
 
     #[test]

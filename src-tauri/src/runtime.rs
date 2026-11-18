@@ -61,7 +61,8 @@ pub fn transcriber(m: &models::Model, models_dir: &Path) -> Result<Box<dyn Trans
         "whisper" => {
             let ctx = WhisperContext::new_with_params(first_file(m, models_dir), WhisperContextParameters::default())
                 .map_err(|e| err(e.to_string()))?;
-            Ok(Box::new(Whisper(ctx.create_state().map_err(|e| err(e.to_string()))?, String::new())))
+            let lang = if m.language.is_empty() { "auto".to_string() } else { m.language.clone() };
+            Ok(Box::new(Whisper(ctx.create_state().map_err(|e| err(e.to_string()))?, String::new(), lang)))
         }
         "apple-speech" => Ok(Box::new(AppleSpeech)),
         "voz" => Ok(Box::new(crate::voz::Voz::load(&dir).map_err(err)?)),
@@ -147,8 +148,8 @@ impl<T: parakeet_rs::Transcriber + Send> Transcriber for Parakeet<T> {
     }
 }
 
-/// The model state and the initial prompt.
-struct Whisper(WhisperState, String);
+/// The model state, the initial prompt, and the language ("auto" to detect).
+struct Whisper(WhisperState, String, String);
 
 impl Transcriber for Whisper {
     fn bias(&mut self, words: &str) {
@@ -157,7 +158,7 @@ impl Transcriber for Whisper {
 
     fn transcribe(&mut self, audio: &[f32]) -> Result<Vec<Segment>, String> {
         let mut p = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-        p.set_language(Some("auto"));
+        p.set_language(Some(&self.2));
         p.set_print_progress(false);
         p.set_print_realtime(false);
         p.set_print_special(false);
@@ -341,6 +342,13 @@ mod tests {
         for id in ["whisper-small", "whisper-medium", "whisper-large-v3-turbo", "whisper-large-v3"] {
             transcribes_the_fixture(id);
         }
+    }
+
+    #[test]
+    #[ignore = "slow: needs the downloaded Whisper Hinglish model"]
+    fn whisper_hinglish_transcribes() {
+        // Told it hears English, as Oriserve's card says: English speech comes out as English.
+        transcribes_the_fixture("whisper-hinglish-apex");
     }
 
     #[test]
