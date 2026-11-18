@@ -205,16 +205,25 @@
     e.preventDefault();
     if (await act(() => invoke("summary_edit", { id: page.id, text: draft }))) draft = null;
   }
-  // A speaker's popover: `row` is the paragraph whose name was clicked, `from` the name it has now.
-  let spk = $state<{ row: number; from: string; name: string; err: string } | null>(null);
+  // A speaker's popover: `row` is the paragraph whose name was clicked, `from` the name it has now, `merge` the
+  // speaker it is about to be merged into, waiting for the user to confirm.
+  let spk = $state<{ row: number; from: string; name: string; err: string; merge: string | null } | null>(null);
   const focus = (el: HTMLInputElement) => (el.focus(), el.select());
-  async function renameSpeaker(e: SubmitEvent) {
+  const speakers = $derived([...new Set(page.segments.filter((l) => !l.hidden && l.speaker !== "Me").map((l) => l.speaker))]);
+  function renameSpeaker(e: SubmitEvent) {
     e.preventDefault();
     if (!spk) return;
-    const { from, name } = spk;
-    if (name.trim() === from) return void (spk = null);
+    const to = spk.name.trim();
+    if (to === spk.from) return void (spk = null);
+    // Another speaker's name, in any case, is a merge into them: ask first.
+    const other = speakers.find((n) => n !== spk!.from && n.toLowerCase() === to.toLowerCase());
+    if (other) spk.merge = other;
+    else relabel(to);
+  }
+  async function relabel(to: string) {
+    if (!spk) return;
     try {
-      await invoke("speaker_rename", { id: page.id, from, to: name });
+      await invoke("speaker_rename", { id: page.id, from: spk.from, to });
       spk = null;
       await onreload();
     } catch (err) {
@@ -223,7 +232,7 @@
   }
 
   function outside(e: PointerEvent) {
-    if ((pop || spk) && !(e.target as Element).closest("[data-pop]")) (pop = ""), (spk = null);
+    if ((pop || spk) && !(e.target as Element).closest("[data-pop], [popover]")) (pop = ""), (spk = null);
   }
   function keys(e: KeyboardEvent) {
     if (e.key === "Escape" && (pop || spk)) (e.preventDefault(), (pop = ""), (spk = null));
@@ -237,10 +246,14 @@
 
 <!-- No whitespace around the name: the row reads "Ana 00:10". -->
 {#snippet who(l: (typeof page.segments)[number])}{#if l.speaker === "Me"}<b>Me</b>{:else}<span class="pop-wrap" data-pop><button class="name" aria-haspopup="dialog" aria-expanded={spk?.row === l.id}
-  onclick={() => (spk = spk?.row === l.id ? null : { row: l.id, from: l.speaker, name: l.speaker, err: "" })}>{l.speaker}</button>{#if spk?.row === l.id}{@render speaker(spk)}{/if}</span>{/if}{/snippet}
+  onclick={() => (spk = spk?.row === l.id ? null : { row: l.id, from: l.speaker, name: l.speaker, err: "", merge: null })}>{l.speaker}</button>{#if spk?.row === l.id}{@render speaker(spk)}{/if}</span>{/if}{/snippet}
 
 {#snippet speaker(s: NonNullable<typeof spk>)}
-  <div class="pop spk left" role="dialog" aria-label="Speaker {s.from}"><form onsubmit={renameSpeaker}>
+  <div class="pop spk left" role="dialog" aria-label="Speaker {s.from}">{#if s.merge}
+    <p>Merge {s.from} into {s.merge}? Their lines can’t be told apart again.</p>
+    {#if s.err}<p class="err" role="status">{s.err}</p>{/if}
+    <div class="end"><span class="grow"></span><button class="btn" onclick={() => (s.merge = null)}>Cancel</button><button class="btn primary" onclick={() => relabel(s.merge!)}>Merge</button></div>
+  {:else}<form onsubmit={renameSpeaker}>
     <label class="field"><span class="label">Name</span>
       <input class="input" maxlength="100" bind:value={s.name} use:focus aria-describedby="spk-h" /></label>
     <span class="help" id="spk-h">Renames every line of {s.from} in this meeting.</span>
@@ -254,7 +267,15 @@
     {/if}
     {#if s.err}<p class="err" role="status">{s.err}</p>{/if}
     <div class="end"><span class="grow"></span><button class="btn primary" disabled={!s.name.trim()}>Rename</button></div>
-  </form></div>
+    {#if speakers.length > 1}
+      <label class="field"><span class="label">Merge into</span>
+        <select class="select" value="" aria-describedby="spk-mh" onchange={(e) => (s.merge = e.currentTarget.value)}>
+          <option value="" disabled>Choose a speaker</option>
+          {#each speakers.filter((n) => n !== s.from) as n (n)}<option value={n}>{n}</option>{/each}
+        </select></label>
+      <span class="help" id="spk-mh">For one person Myna heard as two.</span>
+    {/if}
+  </form>{/if}</div>
 {/snippet}
 
 {#snippet regen(left: boolean)}
@@ -457,6 +478,7 @@
   .name:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
   .spk { width: 260px; padding: var(--sp-3); font-weight: normal; }
   .spk form { display: grid; gap: var(--sp-2); }
+  .spk > p { margin: 0 0 var(--sp-2); }
   .spk .input { width: 100%; box-sizing: border-box; }
   .clips { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
   .clips .btn { padding-left: 8px; font-variant-numeric: tabular-nums; }

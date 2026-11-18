@@ -17,7 +17,8 @@ Speakers separated automatically; rename once and the whole meeting follows; rem
 
 ## Done when
 - [ ] Diarization runs with the chosen model
-- [ ] Rename, merge, remember, suggest
+- [x] Rename, hear their clips, merge (`.scratch/speaker-editing`, 2026-11-18)
+- [ ] Remember and suggest voices across meetings (`.scratch/speaker-editing/issues/04`)
 - [ ] Checked on a real multi-person call
 
 ## Open questions for you

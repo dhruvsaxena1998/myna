@@ -330,6 +330,28 @@ test("a speaker's popover plays their three longest paragraphs, each stopping at
   await expect(player.getByRole("button", { name: "Play" })).toBeVisible();
 });
 
+test("Merge into asks first, then the two speakers are one; renaming onto another's name asks the same", async ({ page }) => {
+  await speakers(page);
+  const segs = page.locator(".seg");
+  await segs.nth(2).getByRole("button", { name: "Speaker 3" }).click();
+  const pop = page.getByRole("dialog", { name: "Speaker Speaker 3" });
+  const into = pop.getByRole("combobox", { name: "Merge into" });
+  await expect(into.locator("option:not([disabled])")).toHaveText(["Speaker 2"]); // never Me, never themselves
+  await into.selectOption("Speaker 2");
+  await expect(pop).toContainText("Merge Speaker 3 into Speaker 2? Their lines can’t be told apart again.");
+  await pop.getByRole("button", { name: "Cancel" }).click();
+  expect(await calls(page, "speaker_rename")).toEqual([]);
+  await pop.getByRole("textbox", { name: "Name" }).fill("speaker 2");
+  await page.keyboard.press("Enter");
+  await expect(pop).toContainText("Merge Speaker 3 into Speaker 2?");
+  await pop.getByRole("button", { name: "Merge" }).click();
+  await expect(pop).toBeHidden();
+  expect(await calls(page, "speaker_rename")).toEqual([{ id: 5, from: "Speaker 3", to: "Speaker 2" }]);
+  await expect(segs.nth(2)).toContainText("Speaker 200:20");
+  await segs.nth(1).getByRole("button", { name: "Speaker 2" }).click();
+  await expect(page.getByRole("dialog").getByRole("combobox", { name: "Merge into" })).toHaveCount(0); // nobody left to merge with
+});
+
 // Story 16: the Summary is the document; the transcript opens beside it.
 const version = (id: number, template: string, text: string, more = {}) => ({ id, template, prompt: "p", provider: "OpenRouter", model: "big", created: Date.now(), parts: 2, cost: { kind: "usd", usd: 0.012 }, text, edited: false, ...more });
 const AI = JSON.stringify({ providers: [{ id: 1, kind: "openrouter", name: "OpenRouter", url: "https://openrouter.ai/api/v1", has_key: true, off_device: true }], main: { provider: 1, model: "big", gone: false }, fast: null });
