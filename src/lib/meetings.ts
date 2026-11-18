@@ -45,6 +45,14 @@ export function groups(lines: Line[]): ({ lines: Line[] } | { left: Line[] })[] 
   return out;
 }
 
+/** A speaker's `n` longest paragraphs, longest first: the clips to hear while naming them. Left-out lines are never offered. */
+export function clips(lines: Line[], speaker: string, n = 3): { start_ms: number; end_ms: number }[] {
+  return groups(lines)
+    .flatMap((g) => ("lines" in g && g.lines[0].speaker === speaker ? [{ start_ms: g.lines[0].start_ms, end_ms: g.lines.at(-1)!.end_ms }] : []))
+    .sort((a, b) => b.end_ms - b.start_ms - (a.end_ms - a.start_ms) || a.start_ms - b.start_ms)
+    .slice(0, n);
+}
+
 /**
  * The cleaned line in runs of words: the ones that differ from what Myna heard carry `heard`, the words they took the
  * place of ("" for a word cleanup added). Words cleanup only took out (filler) have nothing to mark and don't show.

@@ -22,10 +22,11 @@
   import { tick, untrack } from "svelte";
   import type { Ai, Model } from "./AiProviders.svelte";
   import HostPill from "./HostPill.svelte";
-  import { changes, clock, dayHead, groups, hm, meta, writing, type CleanupRun, type Cost, type Page, type Progress, type SummaryRun, type Version } from "./meetings";
+  import { changes, clips, clock, dayHead, groups, hm, meta, writing, type CleanupRun, type Cost, type Page, type Progress, type SummaryRun, type Version } from "./meetings";
 
-  let { page, progress, summary, cleanup, onback, onretry, onlocal, oninclude }: {
-    page: Page; progress?: Progress; summary?: SummaryRun; cleanup?: CleanupRun; onback: () => void; onretry: (id: number) => void; onlocal: (id: number) => void; oninclude: (ids: number[]) => void;
+  // `onreload`: the page's lines changed in the backend (a speaker renamed), so it reads them again.
+  let { page, progress, summary, cleanup, onback, onretry, onlocal, oninclude, onreload }: {
+    page: Page; progress?: Progress; summary?: SummaryRun; cleanup?: CleanupRun; onback: () => void; onretry: (id: number) => void; onlocal: (id: number) => void; oninclude: (ids: number[]) => void; onreload: () => Promise<void>;
   } = $props();
   let copied = $state<"" | "doc" | "panel">("");
   let error = $state("");
@@ -50,9 +51,10 @@
   // svelte-ignore state_referenced_locally
   let length = $state(page.duration_ms ?? 0); // the page is remade for each meeting
   let audioErr = $state("");
-  async function play(from?: number) {
+  let until: number | null = null; // a speaker's clip stops here, ms
+  async function play(from?: number, to?: number) {
     if (!audio) return;
-    audioErr = "";
+    (audioErr = ""), (until = to ?? null);
     if (!src) {
       try {
         src = convertFileSrc(await invoke<string>("meeting_audio", { id: page.id }));
@@ -203,11 +205,37 @@
     e.preventDefault();
     if (await act(() => invoke("summary_edit", { id: page.id, text: draft }))) draft = null;
   }
+  // A speaker's popover: `row` is the paragraph whose name was clicked, `from` the name it has now, `merge` the
+  // speaker it is about to be merged into, waiting for the user to confirm.
+  let spk = $state<{ row: number; from: string; name: string; err: string; merge: string | null } | null>(null);
+  const focus = (el: HTMLInputElement) => (el.focus(), el.select());
+  const speakers = $derived([...new Set(page.segments.filter((l) => !l.hidden && l.speaker !== "Me").map((l) => l.speaker))]);
+  function renameSpeaker(e: SubmitEvent) {
+    e.preventDefault();
+    if (!spk) return;
+    const to = spk.name.trim();
+    if (to === spk.from) return void (spk = null);
+    // Another speaker's name, in any case, is a merge into them: ask first.
+    const other = speakers.find((n) => n !== spk!.from && n.toLowerCase() === to.toLowerCase());
+    if (other) spk.merge = other;
+    else relabel(to);
+  }
+  async function relabel(to: string) {
+    if (!spk) return;
+    try {
+      await invoke("speaker_rename", { id: page.id, from: spk.from, to });
+      spk = null;
+      await onreload();
+    } catch (err) {
+      if (spk) spk.err = String(err);
+    }
+  }
+
   function outside(e: PointerEvent) {
-    if (pop && !(e.target as Element).closest("[data-pop]")) pop = "";
+    if ((pop || spk) && !(e.target as Element).closest("[data-pop], [popover]")) (pop = ""), (spk = null);
   }
   function keys(e: KeyboardEvent) {
-    if (e.key === "Escape" && pop) (e.preventDefault(), (pop = ""));
+    if (e.key === "Escape" && (pop || spk)) (e.preventDefault(), (pop = ""), (spk = null));
   }
 </script>
 
@@ -215,6 +243,40 @@
 
 {#snippet icon(d: string)}<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">{@html d}</svg>{/snippet}
 {#snippet copyIcon(done: boolean)}{@render icon(done ? '<path d="M5 12.5l4.5 4.5L19 7.5"/>' : '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5.5A1.5 1.5 0 0 0 14.5 4h-9A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16H8"/>')}{/snippet}
+
+<!-- No whitespace around the name: the row reads "Ana 00:10". -->
+{#snippet who(l: (typeof page.segments)[number])}{#if l.speaker === "Me"}<b>Me</b>{:else}<span class="pop-wrap" data-pop><button class="name" aria-haspopup="dialog" aria-expanded={spk?.row === l.id}
+  onclick={() => (spk = spk?.row === l.id ? null : { row: l.id, from: l.speaker, name: l.speaker, err: "", merge: null })}>{l.speaker}</button>{#if spk?.row === l.id}{@render speaker(spk)}{/if}</span>{/if}{/snippet}
+
+{#snippet speaker(s: NonNullable<typeof spk>)}
+  <div class="pop spk left" role="dialog" aria-label="Speaker {s.from}">{#if s.merge}
+    <p>Merge {s.from} into {s.merge}? Their lines can’t be told apart again.</p>
+    {#if s.err}<p class="err" role="status">{s.err}</p>{/if}
+    <div class="end"><span class="grow"></span><button class="btn" onclick={() => (s.merge = null)}>Cancel</button><button class="btn primary" onclick={() => relabel(s.merge!)}>Merge</button></div>
+  {:else}<form onsubmit={renameSpeaker}>
+    <label class="field"><span class="label">Name</span>
+      <input class="input" maxlength="100" bind:value={s.name} use:focus aria-describedby="spk-h" /></label>
+    <span class="help" id="spk-h">Renames every line of {s.from} in this meeting.</span>
+    {#if !writing(page)}
+      <div class="clips" role="group" aria-label="Hear {s.from}">
+        {#each clips(page.segments, s.from) as c (c.start_ms)}
+          <button type="button" class="btn small" aria-label="Play {s.from} at {clock(c.start_ms)}" onclick={() => play(c.start_ms, c.end_ms)}>
+            {@render icon('<path d="M8 5.5v13l10.5-6.5z"/>')}{clock(c.start_ms)} · {Math.max(1, Math.round((c.end_ms - c.start_ms) / 1000))} s</button>
+        {/each}
+      </div>
+    {/if}
+    {#if s.err}<p class="err" role="status">{s.err}</p>{/if}
+    <div class="end"><span class="grow"></span><button class="btn primary" disabled={!s.name.trim()}>Rename</button></div>
+    {#if speakers.length > 1}
+      <label class="field"><span class="label">Merge into</span>
+        <select class="select" value="" aria-describedby="spk-mh" onchange={(e) => (s.merge = e.currentTarget.value)}>
+          <option value="" disabled>Choose a speaker</option>
+          {#each speakers.filter((n) => n !== s.from) as n (n)}<option value={n}>{n}</option>{/each}
+        </select></label>
+      <span class="help" id="spk-mh">For one person Myna heard as two.</span>
+    {/if}
+  </form>{/if}</div>
+{/snippet}
 
 {#snippet regen(left: boolean)}
   <div class="pop regen" class:left role="dialog" aria-labelledby="rg-h"><form onsubmit={submit}>
@@ -263,7 +325,7 @@
         <div class="player" role="group" aria-label="Meeting audio">
           <!-- svelte-ignore a11y_media_has_caption -->
           <audio bind:this={audio} {src} preload="metadata" onplay={() => (paused = false)} onpause={() => (paused = true)} onended={() => (paused = true)}
-            ontimeupdate={() => (at = audio!.currentTime * 1000)} onloadedmetadata={() => isFinite(audio!.duration) && (length = audio!.duration * 1000)}></audio>
+            ontimeupdate={() => { at = audio!.currentTime * 1000; if (until !== null && at >= until) (until = null), audio!.pause(); }} onloadedmetadata={() => isFinite(audio!.duration) && (length = audio!.duration * 1000)}></audio>
           <button class="btn icon" aria-label={paused ? "Play" : "Pause"} onclick={() => (paused ? play() : audio?.pause())}>
             {@render icon(paused ? '<path d="M8 5.5v13l10.5-6.5z"/>' : '<path d="M8 5v14M16 5v14"/>')}
           </button>
@@ -370,7 +432,7 @@
               <p class="left"><span>Said while muted · left out</span><button class="btn small" onclick={() => oninclude(g.left.map((l) => l.id))}>Include</button></p></div>
           {:else}
             {@const l = g.lines[0]}
-            <div class="seg" class:hit={hit === l.id} class:playing={playing === l.id} id="seg-{l.id}" tabindex="-1"><div class="who"><b>{l.speaker}</b><button class="at" aria-label="Play from {clock(l.start_ms)}" onclick={() => play(l.start_ms)}><time>{clock(l.start_ms)}</time></button></div>
+            <div class="seg" class:hit={hit === l.id} class:playing={playing === l.id} id="seg-{l.id}" tabindex="-1"><div class="who">{@render who(l)}<button class="at" aria-label="Play from {clock(l.start_ms)}" onclick={() => play(l.start_ms)}><time>{clock(l.start_ms)}</time></button></div>
               <p>{#each g.lines as line, n}{n ? " " : ""}{#if line.clean && !orig}{#each changes(line.text, line.clean) as c, i}{i ? " " : ""}{#if c.heard === undefined}{c.text}{:else}<mark class="chg" title={c.heard ? `Heard “${c.heard}”` : "Added in cleanup"}>{c.text}</mark>{/if}{/each}{:else}{line.text}{/if}{/each}{#if l.included}<span class="mark">Said while muted</span>{/if}</p></div>
           {/if}
         {/each}
@@ -411,6 +473,15 @@
   .seg:focus { outline: none; }
   .who { display: flex; align-items: baseline; gap: var(--sp-2); }
   .who b { font-weight: var(--fw-semibold); }
+  .name { padding: 0 var(--sp-1); margin: 0 calc(-1 * var(--sp-1)); border: 0; border-radius: var(--r-sm); background: none; color: var(--text); font: inherit; font-weight: var(--fw-semibold); }
+  .name:hover, .name[aria-expanded="true"] { background: var(--fill-hover); }
+  .name:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+  .spk { width: 260px; padding: var(--sp-3); font-weight: normal; }
+  .spk form { display: grid; gap: var(--sp-2); }
+  .spk > p { margin: 0 0 var(--sp-2); }
+  .spk .input { width: 100%; box-sizing: border-box; }
+  .clips { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
+  .clips .btn { padding-left: 8px; font-variant-numeric: tabular-nums; }
   .who time { color: var(--text-3); font-size: var(--fs-footnote); font-variant-numeric: tabular-nums; }
   .at { padding: 0 var(--sp-1); margin: 0 calc(-1 * var(--sp-1)); border: 0; border-radius: var(--r-sm); background: none; font: inherit; }
   .at:hover { background: var(--fill-hover); }

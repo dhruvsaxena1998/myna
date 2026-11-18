@@ -275,6 +275,83 @@ test("the other side's lines show their speaker names, and a note says why voice
   await expect(page.locator(".note")).toHaveText("Couldn't tell voices apart: Download Sortformer in Settings › Speech models");
 });
 
+// Story 09: a speaker's name opens a popover to rename them in the whole meeting. The fake relabels like the backend.
+const SPEAKERS = JSON.stringify([
+  { ...line(1, "Me", 1000, "Okay, let's start."), end_ms: 3000 }, { ...line(2, "Speaker 2", 10000, "Hi all."), end_ms: 12000 },
+  { ...line(3, "Speaker 3", 20000, "Launch is the 18th."), end_ms: 29000 }, { ...line(4, "Speaker 2", 40000, "Agreed, the 18th it is."), end_ms: 46000 },
+]);
+async function speakers(page: Page, extra = "") {
+  await open(page, `meeting_page: () => ({ ...${MEETINGS}[0], segments: window.__segs ??= ${SPEAKERS} }),
+    speaker_rename: ({ from, to }) => { if (to.trim().toLowerCase() === "me") throw "Me is you. Pick another name."; window.__segs = window.__segs.map((l) => l.speaker === from ? { ...l, speaker: to.trim() } : l); }, ${extra}`);
+  await page.getByRole("button", { name: "Untitled meeting" }).first().click();
+}
+
+test("a speaker renamed once is renamed on every line; Me isn't a button, and a refused name says why", async ({ page }) => {
+  await speakers(page);
+  const segs = page.locator(".seg");
+  await expect(segs.first().getByRole("button", { name: "Me" })).toHaveCount(0);
+  await segs.nth(1).getByRole("button", { name: "Speaker 2" }).click();
+  const pop = page.getByRole("dialog", { name: "Speaker Speaker 2" });
+  await expect(pop.getByRole("textbox", { name: "Name" })).toBeFocused();
+  await pop.getByRole("textbox", { name: "Name" }).fill("me");
+  await pop.getByRole("button", { name: "Rename" }).click();
+  await expect(pop.getByText("Me is you. Pick another name.")).toBeVisible();
+  await pop.getByRole("textbox", { name: "Name" }).fill("Ana Ruiz");
+  await page.keyboard.press("Enter");
+  await expect(pop).toBeHidden();
+  expect((await calls(page, "speaker_rename")).at(-1)).toEqual({ id: 5, from: "Speaker 2", to: "Ana Ruiz" });
+  await expect(segs.nth(1)).toContainText("Ana Ruiz00:10");
+  await expect(segs.nth(3)).toContainText("Ana Ruiz00:40");
+  await expect(segs.nth(2)).toContainText("Speaker 300:20");
+  await segs.nth(2).getByRole("button", { name: "Speaker 3" }).click();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toBeHidden();
+  expect(await calls(page, "speaker_rename")).toHaveLength(2);
+});
+
+test("a speaker's popover plays their three longest paragraphs, each stopping at its end", async ({ page }) => {
+  await page.addInitScript(() => {
+    HTMLMediaElement.prototype.play = function () { this.dispatchEvent(new Event("play")); return Promise.resolve(); };
+    HTMLMediaElement.prototype.pause = function () { this.dispatchEvent(new Event("pause")); };
+    Object.defineProperty(HTMLMediaElement.prototype, "currentTime", { get() { return this._t ?? 0; }, set(v) { this._t = v; this.dispatchEvent(new Event("timeupdate")); } });
+  });
+  await speakers(page, `meeting_audio: () => "/data/meetings/5/mix.wav",`);
+  await page.locator(".seg").nth(1).getByRole("button", { name: "Speaker 2" }).click();
+  const hear = page.getByRole("group", { name: "Hear Speaker 2" });
+  await expect(hear.getByRole("button")).toHaveText(["00:40 · 6 s", "00:10 · 2 s"]);
+  await hear.getByRole("button", { name: "Play Speaker 2 at 00:40" }).click();
+  expect(await calls(page, "meeting_audio")).toEqual([{ id: 5 }]);
+  const player = page.getByRole("group", { name: "Meeting audio" });
+  await expect(player).toContainText("00:40");
+  await expect(player.getByRole("button", { name: "Pause" })).toBeVisible();
+  await page.evaluate(() => { document.querySelector("audio")!.currentTime = 45; });
+  await expect(player.getByRole("button", { name: "Pause" })).toBeVisible(); // still inside the clip
+  await page.evaluate(() => { document.querySelector("audio")!.currentTime = 46.2; });
+  await expect(player.getByRole("button", { name: "Play" })).toBeVisible();
+});
+
+test("Merge into asks first, then the two speakers are one; renaming onto another's name asks the same", async ({ page }) => {
+  await speakers(page);
+  const segs = page.locator(".seg");
+  await segs.nth(2).getByRole("button", { name: "Speaker 3" }).click();
+  const pop = page.getByRole("dialog", { name: "Speaker Speaker 3" });
+  const into = pop.getByRole("combobox", { name: "Merge into" });
+  await expect(into.locator("option:not([disabled])")).toHaveText(["Speaker 2"]); // never Me, never themselves
+  await into.selectOption("Speaker 2");
+  await expect(pop).toContainText("Merge Speaker 3 into Speaker 2? Their lines can’t be told apart again.");
+  await pop.getByRole("button", { name: "Cancel" }).click();
+  expect(await calls(page, "speaker_rename")).toEqual([]);
+  await pop.getByRole("textbox", { name: "Name" }).fill("speaker 2");
+  await page.keyboard.press("Enter");
+  await expect(pop).toContainText("Merge Speaker 3 into Speaker 2?");
+  await pop.getByRole("button", { name: "Merge" }).click();
+  await expect(pop).toBeHidden();
+  expect(await calls(page, "speaker_rename")).toEqual([{ id: 5, from: "Speaker 3", to: "Speaker 2" }]);
+  await expect(segs.nth(2)).toContainText("Speaker 200:20");
+  await segs.nth(1).getByRole("button", { name: "Speaker 2" }).click();
+  await expect(page.getByRole("dialog").getByRole("combobox", { name: "Merge into" })).toHaveCount(0); // nobody left to merge with
+});
+
 // Story 16: the Summary is the document; the transcript opens beside it.
 const version = (id: number, template: string, text: string, more = {}) => ({ id, template, prompt: "p", provider: "OpenRouter", model: "big", created: Date.now(), parts: 2, cost: { kind: "usd", usd: 0.012 }, text, edited: false, ...more });
 const AI = JSON.stringify({ providers: [{ id: 1, kind: "openrouter", name: "OpenRouter", url: "https://openrouter.ai/api/v1", has_key: true, off_device: true }], main: { provider: 1, model: "big", gone: false }, fast: null });

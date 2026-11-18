@@ -1170,6 +1170,24 @@ pub fn include(db: &Connection, ids: &[i64]) -> Result<(), String> {
     Ok(())
 }
 
+/// Renames speaker `from` to `to` on every line of meeting `id`. A name another speaker has merges the two.
+/// The Summary's chunk notes are keyed by their input, so the next run redoes the parts this speaker is in.
+pub fn rename_speaker(db: &Connection, id: i64, from: &str, to: &str) -> Result<(), String> {
+    let to = to.trim();
+    if from == "Me" {
+        return Err("Me is you. Only the other side's speakers can be renamed.".into());
+    }
+    if to.is_empty() {
+        return Err("A speaker needs a name.".into());
+    }
+    if to.eq_ignore_ascii_case("me") {
+        return Err("Me is you. Pick another name.".into());
+    }
+    db.execute("UPDATE segment SET label = ?3 WHERE meeting = ?1 AND speaker <> 'Me' AND COALESCE(label, speaker) = ?2", (id, from, to))
+        .map(drop)
+        .map_err(|e| format!("Couldn't rename the speaker: {e}"))
+}
+
 /// "Today 14:05", "Yesterday 09:00" or "3 Nov 14:05", on this Mac's clock: the menubar's Recent items.
 pub fn when(ms: i64, now: i64) -> String {
     // The local day number and broken-down time of `ms`.
@@ -1582,6 +1600,40 @@ pub(crate) mod tests {
         db.execute("INSERT INTO meeting(started, state) VALUES (1, 'done')", []).unwrap();
         db.execute("INSERT INTO segment(meeting, start_ms, end_ms, speaker, text, label) VALUES (1, 3000, 0, 'Them', 'right', 'Ana'), (1, 4000, 0, 'Them', 'old row', NULL)", []).unwrap();
         assert_eq!(outgoing(&db, 1, false).unwrap(), "Ana 00:03\nright\n\nThem 00:04\nold row");
+    }
+
+    #[test]
+    fn a_speaker_renamed_once_is_renamed_on_every_line_of_that_meeting_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let m = meetings(tmp.path(), Fake(0));
+        let db = m.db.lock().unwrap();
+        db.execute_batch("INSERT INTO meeting(started, state) VALUES (1, 'done'), (2, 'done');
+            INSERT INTO segment(meeting, start_ms, end_ms, speaker, text, label) VALUES
+              (1, 1000, 0, 'Them', 'a', 'Speaker 2'), (1, 2000, 0, 'Me', 'b', NULL), (1, 3000, 0, 'Them', 'c', 'Speaker 3'),
+              (1, 4000, 0, 'Them', 'd', 'Speaker 2'), (2, 1000, 0, 'Them', 'e', 'Speaker 2'), (1, 5000, 0, 'Them', 'f', NULL);").unwrap();
+        let who = |id| lines(&db, id).unwrap().into_iter().map(|l| l.speaker).collect::<Vec<_>>();
+        rename_speaker(&db, 1, "Speaker 2", "  Ana ").unwrap();
+        assert_eq!(who(1), ["Ana", "Me", "Speaker 3", "Ana", "Them"]);
+        assert_eq!(who(2), ["Speaker 2"], "another meeting's Speaker 2 is someone else");
+        assert!(outgoing(&db, 1, false).unwrap().starts_with("Ana 00:01\na"), "Copy and the AI read the new name");
+        rename_speaker(&db, 1, "Them", "Bo").unwrap();
+        assert_eq!(who(1)[4], "Bo", "a line no voice was told for can be named too");
+        for (from, to) in [("Ana", " "), ("Ana", "me"), ("Me", "Dhruv")] {
+            assert!(rename_speaker(&db, 1, from, to).is_err(), "{from} → {to:?} is refused");
+        }
+        assert_eq!(who(1), ["Ana", "Me", "Speaker 3", "Ana", "Bo"], "a refused rename writes nothing");
+    }
+
+    #[test]
+    fn renaming_onto_another_speakers_name_merges_them() {
+        let tmp = tempfile::tempdir().unwrap();
+        let m = meetings(tmp.path(), Fake(0));
+        let db = m.db.lock().unwrap();
+        db.execute_batch("INSERT INTO meeting(started, state) VALUES (1, 'done');
+            INSERT INTO segment(meeting, start_ms, end_ms, speaker, text, label) VALUES (1, 1000, 0, 'Them', 'a', 'Ana'), (1, 2000, 0, 'Them', 'b', 'Speaker 3');").unwrap();
+        rename_speaker(&db, 1, "Speaker 3", "Ana").unwrap();
+        let n: i64 = db.query_row("SELECT COUNT(DISTINCT label) FROM segment WHERE meeting = 1", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 1);
     }
 
     fn said(m: &Meetings, id: i64) -> Vec<(i64, String, String)> {
