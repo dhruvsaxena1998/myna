@@ -143,10 +143,14 @@ test("a download that can't start says why and stays a Download button", async (
   await expect(row(page).getByRole("progressbar")).toHaveCount(0);
 });
 
-test("Remove uninstalls a model", async ({ page }) => {
+test("Remove asks before deleting a downloaded model, then uninstalls it", async ({ page }) => {
   await open(page, undefined, "model_delete: () => null");
   const whisper = stt(page).getByRole("listitem").nth(2);
   await whisper.getByRole("button", { name: "Remove whisper" }).click();
+  await whisper.getByRole("button", { name: "Keep" }).click();
+  await whisper.getByRole("button", { name: "Remove whisper" }).click();
+  expect(await calls(page, "model_delete")).toEqual([]);
+  await whisper.getByRole("button", { name: /^Delete whisper/ }).click();
   expect(await calls(page, "model_delete")).toEqual([["model_delete", { id: "whisper", task: "stt" }]]);
   await expect(whisper.getByRole("button", { name: "Download whisper" })).toBeVisible();
 });
@@ -155,6 +159,7 @@ test("removing the chosen model selects the one that takes over", async ({ page 
   await open(page, undefined, `model_delete: () => "parakeet"`);
   await page.getByRole("radio", { name: /whisper/ }).check();
   await page.getByRole("button", { name: "Remove whisper" }).click();
+  await page.getByRole("button", { name: /^Delete whisper/ }).click();
   await expect(page.getByRole("radio", { name: /parakeet/ })).toBeChecked();
   await expect(page.getByRole("button", { name: "Download whisper" })).not.toContainText("Retry");
 });

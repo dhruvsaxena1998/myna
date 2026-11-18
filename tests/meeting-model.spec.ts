@@ -55,6 +55,7 @@ test("removing a model from the meeting list asks for meeting notes' pick back",
   await row(page).getByRole("button", { name: "All models" }).click();
   await page.getByRole("radio", { name: "Use Model b" }).check();
   await page.getByRole("button", { name: "Remove Model b" }).click();
+  await page.getByRole("button", { name: /^Delete Model b/ }).click();
   expect(await calls(page, "model_delete")).toEqual([{ id: "b", task: "meeting_stt" }]);
   await expect(page.getByRole("radio", { name: "Use Model a" })).toBeChecked(); // back to voice typing's pick
 });
