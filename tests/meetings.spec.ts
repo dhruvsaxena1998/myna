@@ -183,6 +183,30 @@ test("Play loads the meeting's audio once, a paragraph's time plays from there, 
   expect(await calls(page, "meeting_audio")).toHaveLength(1);
 });
 
+test("on a meeting's page Space plays and pauses, and Esc closes what's open, then goes back", async ({ page }) => {
+  await page.addInitScript(() => {
+    HTMLMediaElement.prototype.play = function () { this.dispatchEvent(new Event("play")); return Promise.resolve(); };
+    HTMLMediaElement.prototype.pause = function () { this.dispatchEvent(new Event("pause")); };
+  });
+  await open(page, `meeting_audio: () => "/data/meetings/5/mix.wav",`);
+  await page.getByRole("listitem").filter({ hasText: "11:00" }).getByRole("button").first().click();
+  const player = page.getByRole("group", { name: "Meeting audio" });
+  await page.locator("article h1").click();
+  await page.keyboard.press(" ");
+  await expect(player.getByRole("button", { name: "Pause" })).toBeVisible();
+  await page.keyboard.press(" ");
+  await expect(player.getByRole("button", { name: "Play" })).toBeVisible();
+  const transcript = page.getByRole("button", { name: "Transcript", exact: true });
+  const was = await transcript.getAttribute("aria-pressed");
+  await transcript.focus(); // Space on a focused button presses it, not Play
+  await page.keyboard.press(" ");
+  await expect(transcript).not.toHaveAttribute("aria-pressed", was!);
+  await expect(player.getByRole("button", { name: "Play" })).toBeVisible();
+  await page.locator("article h1").click();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("heading", { name: "All meetings" })).toBeVisible();
+});
+
 test("a meeting whose audio is gone says so when Play is pressed", async ({ page }) => {
   await open(page, `meeting_audio: () => { throw "This meeting's audio isn't on this Mac anymore."; },`);
   await page.getByRole("listitem").filter({ hasText: "11:00" }).getByRole("button").first().click();
@@ -354,6 +378,7 @@ test("a speaker renamed once is renamed on every line; Me isn't a button, and a 
   await segs.nth(2).getByRole("button", { name: "Speaker 3" }).click();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toBeHidden();
+  await expect(page.getByRole("heading", { name: "All meetings" })).toHaveCount(0); // Esc closed the popover, not the page
   expect(await calls(page, "speaker_rename")).toHaveLength(2);
 });
 

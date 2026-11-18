@@ -237,7 +237,12 @@
     if ((pop || spk) && !(e.target as Element).closest("[data-pop], [popover]")) (pop = ""), (spk = null);
   }
   function keys(e: KeyboardEvent) {
-    if (e.key === "Escape" && (pop || spk)) (e.preventDefault(), (pop = ""), (spk = null));
+    if (e.key === "Escape" && (pop || spk)) return void (e.preventDefault(), (pop = ""), (spk = null));
+    // Esc goes back and Space plays, unless something else wants the key: a field, an open menu, a modifier.
+    const t = e.target as Element;
+    if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || t.closest("input, textarea, select, [contenteditable]") || document.querySelector(":popover-open")) return;
+    if (e.key === "Escape" && draft === null) (e.preventDefault(), onback());
+    else if (e.key === " " && !t.closest("button, a, [role^=menuitem]") && !writing(page)) (e.preventDefault(), paused ? play() : audio?.pause());
   }
 </script>
 
