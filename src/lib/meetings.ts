@@ -17,8 +17,8 @@ export type Line = { id: number; speaker: string; /* "Me", a caption name, "Spea
 /** `cleanup`: the last transcript cleanup run, none when it never ran. `stt`: the Endpoint that transcribed it (no cost while it runs), none for the Local model. */
 export type Page = Meeting & { segments: Line[]; cleanup: { provider: string; model: string; cost: Cost } | null; stt: { provider: string; model: string; off: boolean; cost?: Cost } | null };
 /** The recording in progress, or none. */
-/** `mic`: "live" or "muted" while the browser add-on mirrors the mute button, else null. `words`: how the mic reads on the card. */
-export type Running = { id: number; started: number; source: string | null; mic: "live" | "muted" | null; words: string } | null;
+/** `mic`: "paused" when paused, "live" or "muted" while the browser add-on mirrors the mute button, else null. `words`: how the mic reads on the card. */
+export type Running = { id: number; started: number; source: string | null; mic: "live" | "muted" | "paused" | null; words: string } | null;
 
 /** A pause this long or more between one speaker's lines starts a new paragraph; so does a paragraph this long. */
 const PAUSE = 2000, LONGEST = 60000;

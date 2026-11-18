@@ -241,6 +241,19 @@ test("the live card says how the mic is while the add-on mirrors it", async ({ p
   await expect(card).toContainText("Muted · mirrored from Teams");
 });
 
+test("Pause on the live card pauses the recording, and the card says Paused with Resume", async ({ page }) => {
+  await open(page, "meeting_pause: () => {},");
+  const started = Date.now();
+  await emit(page, "meeting-running", { id: 6, started, source: null, mic: null, words: "Mic live" });
+  await page.getByRole("region", { name: "Meeting recording in progress" }).getByRole("button", { name: "Pause" }).click();
+  expect(await calls(page, "meeting_pause")).toEqual([{ paused: true }]);
+  await emit(page, "meeting-running", { id: 6, started, source: null, mic: "paused", words: "Paused" });
+  const card = page.getByRole("region", { name: "Meeting recording paused" });
+  await expect(card).toContainText("Paused");
+  await card.getByRole("button", { name: "Resume" }).click();
+  expect(await calls(page, "meeting_pause")).toEqual([{ paused: true }, { paused: false }]);
+});
+
 test("meeting-open, from the pill or the menubar, goes to that meeting from any view", async ({ page }) => {
   await open(page);
   await nav(page).getByRole("button", { name: "Your dictation" }).click();

@@ -26,7 +26,7 @@ pub trait World: Stt + Voices + 'static {
     /// Moves the pill to "bottom", "top-right", ... where the user set it.
     fn place(&self, place: String);
     /// The menu item and the tray title for a running meeting.
-    fn menu_running(&self, clock: &str, note: &str);
+    fn menu_running(&self, clock: &str, note: &str, paused: bool);
     /// The menu bar icon while recording, and the hidden recording pill: their wave follows the mic's loudness, 0 to 1.
     fn menu_wave(&self, level: f32);
     /// The menu item, its note and the tray title for no meeting.
@@ -236,7 +236,12 @@ impl MeetingSession {
         if self.meetings.paused() { Some("paused") } else { mic_word(self.meetings.muted()) }
     }
 
-    /// Pause and Resume on the recording pill: the menu, pill and live card say so.
+    /// Pause or Resume in the menu bar menu: whichever it isn't.
+    pub fn toggle_pause(&self) -> Result<(), String> {
+        self.pause(!self.meetings.paused())
+    }
+
+    /// Pause and Resume on the recording pill, the menu and the live card: they all say so.
     pub fn pause(&self, on: bool) -> Result<(), String> {
         if !self.meetings.pause(on) {
             return Err("Nothing is recording.".into());
@@ -279,7 +284,7 @@ impl MeetingSession {
 
     fn show_menu(&self, started: i64) {
         // The note says how the mic is while recording; the idle menu puts the usual words back.
-        self.world.menu_running(&meeting::clock(now_ms() - started), &self.mic_words());
+        self.world.menu_running(&meeting::clock(now_ms() - started), &self.mic_words(), self.meetings.paused());
     }
 
     /// Writes up meeting `id` on its own thread, saying how it goes with `meeting-notes`: "transcribing" with progress
@@ -381,10 +386,18 @@ impl World for Mac {
     fn place(&self, place: String) {
         pill::place(&self.0, place)
     }
-    fn menu_running(&self, clock: &str, note: &str) {
+    fn menu_running(&self, clock: &str, note: &str, paused: bool) {
         if let Some(m) = self.0.try_state::<crate::MeetItem>() {
             let _ = m.item.set_text(format!("Stop recording  {clock}"));
             let _ = m.note.set_text(note);
+            let _ = m.pause.set_text(if paused { "Resume recording" } else { "Pause recording" });
+            // Right under Stop recording, once.
+            if m.menu.get("meeting-pause").is_none() {
+                let at = m.menu.items().ok().and_then(|items| items.iter().position(|i| i.id() == "meeting"));
+                if let Some(at) = at {
+                    let _ = m.menu.insert(&m.pause, at + 1);
+                }
+            }
         }
         // The icon says it's recording (menu_wave); the title is just the clock.
         let (app, clock) = (self.0.clone(), clock.to_string());
@@ -416,6 +429,7 @@ impl World for Mac {
     fn menu_idle(&self) {
         if let Some(m) = self.0.try_state::<crate::MeetItem>() {
             let _ = m.item.set_text("Start meeting notes");
+            let _ = m.menu.remove(&m.pause);
             let _ = crate::sync_meeting(&self.0); // puts the usual note back
         }
         let app = self.0.clone();
@@ -532,7 +546,7 @@ mod tests {
         fn place(&self, place: String) {
             self.log(Saw::Place(place))
         }
-        fn menu_running(&self, clock: &str, note: &str) {
+        fn menu_running(&self, clock: &str, note: &str, _: bool) {
             self.log(Saw::MenuRunning(format!("{clock} | {note}")))
         }
         fn menu_wave(&self, _: f32) {}

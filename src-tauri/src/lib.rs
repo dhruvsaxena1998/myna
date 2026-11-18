@@ -64,6 +64,9 @@ struct VoiceItem(MenuItem<Wry>);
 struct MeetItem {
     item: MenuItem<Wry>,
     note: MenuItem<Wry>,
+    /// "Pause recording" / "Resume recording", in the menu only while recording (menus can't hide an item).
+    pause: MenuItem<Wry>,
+    menu: tauri::menu::Menu<Wry>,
 }
 
 /// The last meetings under "Recent" in the menubar menu. Tauri menus can't hide an item, so they go in and out.
@@ -642,7 +645,7 @@ async fn meeting_audio(app: AppHandle, s: tauri::State<'_, Arc<MeetingSession>>,
     Ok(path.to_string_lossy().into_owned())
 }
 
-/// Pause and Resume on the recording pill.
+/// Pause and Resume on the recording pill and the Meetings list's live card.
 #[tauri::command]
 fn meeting_pause(s: tauri::State<Arc<MeetingSession>>, paused: bool) -> Result<(), String> {
     s.pause(paused)
@@ -1248,7 +1251,8 @@ pub fn run() {
             let meet_note = MenuItemBuilder::with_id("meeting-note", "Meeting notes are off. Turn them on in Settings.").enabled(false).build(app)?;
             let menu = MenuBuilder::new(app).item(&voice_item).separator().item(&meet_item).item(&meet_note).separator().item(&open_item).item(&settings_item).separator().item(&quit_item).build()?;
             app.manage(VoiceItem(voice_item));
-            app.manage(MeetItem { item: meet_item, note: meet_note });
+            let meet_pause = MenuItemBuilder::with_id("meeting-pause", "Pause recording").build(app)?;
+            app.manage(MeetItem { item: meet_item, note: meet_note, pause: meet_pause, menu: menu.clone() });
             // Not in the menu until a Fast model is set; sync_clean_item adds it.
             let clean_item = MenuItemBuilder::with_id("dictate-clean", "Start voice typing with cleanup").enabled(false).build(app)?;
             app.manage(CleanItem { item: clean_item, menu: menu.clone() });
@@ -1283,6 +1287,10 @@ pub fn run() {
                     "dictate" => app.state::<Arc<Session>>().toggle(false),
                     "dictate-clean" => app.state::<Arc<Session>>().toggle(true),
                     "meeting" => toggle_meeting(app),
+                    "meeting-pause" => {
+                        let app = app.clone(); // off the main thread: pausing updates this menu, which waits on it
+                        std::thread::spawn(move || drop(app.state::<Arc<MeetingSession>>().toggle_pause()));
+                    }
                     id if id.starts_with("recent-") => {
                         if let Ok(id) = id["recent-".len()..].parse() {
                             meeting_open(app.clone(), id);

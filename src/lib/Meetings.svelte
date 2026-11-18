@@ -80,11 +80,15 @@
     </div>
   {:else}
     {#if running}
-      <section class="card rec" aria-label="Meeting recording in progress">
-        <div class="main"><span class="label"><span class="dot" aria-hidden="true"></span>Recording{running.source ? ` · ${running.source}` : ""}</span><span class="time">{clock(now - running.started)}</span></div>
+      {@const paused = running.mic === "paused"}
+      <section class="card rec" class:paused aria-label={paused ? "Meeting recording paused" : "Meeting recording in progress"}>
+        <div class="main"><span class="label"><span class="dot" aria-hidden="true"></span>{paused ? "Paused" : "Recording"}{running.source ? ` · ${running.source}` : ""}</span><span class="time">{clock(now - running.started)}</span></div>
         <span class="lvl" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
         <span class="mic">{@render icon('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/>')}{running.words}</span>
         <span class="grow"></span>
+        <button class="btn" onclick={() => act("meeting_pause", { paused: !paused })}>
+          {@render icon(paused ? '<path d="M8 5.5v13l10.5-6.5z"/>' : '<path d="M9 6v12M15 6v12"/>')}{paused ? "Resume" : "Pause"}
+        </button>
         <button class="btn danger" onclick={onstop}>{@render icon('<rect x="7" y="7" width="10" height="10" rx="2"/>')}Stop</button>
       </section>
     {/if}
@@ -187,7 +191,9 @@
   .label { display: flex; align-items: center; gap: var(--sp-2); font-weight: var(--fw-semibold); }
   .time { font-size: var(--fs-title2); line-height: 1.15; font-weight: var(--fw-semibold); font-variant-numeric: tabular-nums; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--rec); flex: none; animation: pulse 1.6s ease-in-out infinite; }
-  .dot.idle { background: var(--text-3); animation: none; }
+  .dot.idle, .paused .dot { background: var(--text-3); animation: none; }
+  .paused .lvl { color: var(--text-3); }
+  .paused .lvl i { animation: none; transform: scaleY(.3); }
   .lvl { display: flex; align-items: center; gap: 2px; height: 22px; color: var(--rec); }
   .lvl i { width: 3px; height: 22px; border-radius: 2px; background: currentColor; animation: lvl .9s ease-in-out infinite; }
   .lvl i:nth-child(2) { animation-delay: .15s; } .lvl i:nth-child(3) { animation-delay: .3s; } .lvl i:nth-child(4) { animation-delay: .45s; } .lvl i:nth-child(5) { animation-delay: .6s; }
