@@ -516,7 +516,7 @@ mod tests {
     }
 
     fn line(id: i64, secs: i64, text: &str) -> Line {
-        Line { id, speaker: "Me".into(), start_ms: secs * 1000, end_ms: secs * 1000, text: text.into(), clean: None, muted: false, included: false, hidden: false }
+        Line { id, speaker: "Me".into(), start_ms: secs * 1000, end_ms: secs * 1000, text: text.into(), clean: None, muted: false, included: false, echo: false, hidden: false }
     }
     fn ids(c: Vec<Vec<&Line>>) -> Vec<Vec<i64>> {
         c.into_iter().map(|p| p.into_iter().map(|l| l.id).collect()).collect()

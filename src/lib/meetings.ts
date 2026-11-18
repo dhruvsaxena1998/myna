@@ -12,8 +12,8 @@ export type Meeting = {
   /** Failed with an Endpoint's chunks undone: Transcribe locally is offered beside Try again. */
   incomplete: boolean;
 };
-/** `hidden`: said while muted and left out; its `text` is empty. `included`: kept by the user, shown with a marker. */
-export type Line = { id: number; speaker: string; /* "Me", a caption name, "Speaker 2"…, or "Them" when voices weren't told apart */ start_ms: number; end_ms: number; text: string; /* as transcript cleanup wrote it, when it did */ clean: string | null; muted: boolean; included: boolean; hidden: boolean };
+/** `hidden`: said while muted, or `echo` (the call heard back through the speakers), and left out; its `text` is empty. `included`: kept by the user, shown with a marker. */
+export type Line = { id: number; speaker: string; /* "Me", a caption name, "Speaker 2"…, or "Them" when voices weren't told apart */ start_ms: number; end_ms: number; text: string; /* as transcript cleanup wrote it, when it did */ clean: string | null; muted: boolean; included: boolean; echo?: boolean; hidden: boolean };
 /** `cleanup`: the last transcript cleanup run, none when it never ran. `stt`: the Endpoint that transcribed it (no cost while it runs), none for the Local model. */
 export type Page = Meeting & { segments: Line[]; cleanup: { provider: string; model: string; cost: Cost } | null; stt: { provider: string; model: string; off: boolean; cost?: Cost } | null };
 /** The recording in progress, or none. */
@@ -24,7 +24,7 @@ export type Running = { id: number; started: number; source: string | null; mic:
 const PAUSE = 2000, LONGEST = 60000;
 
 /**
- * The transcript's rows: runs of lines that are left out show as one row, and one speaker's lines with only short
+ * The transcript's rows: runs of lines that are left out for one reason (muted, or echo) show as one row, and one speaker's lines with only short
  * pauses between them read as one paragraph. An included line ("Said while muted") never joins ordinary ones.
  */
 export function groups(lines: Line[]): ({ lines: Line[] } | { left: Line[] })[] {
@@ -32,7 +32,7 @@ export function groups(lines: Line[]): ({ lines: Line[] } | { left: Line[] })[] 
   for (const line of lines) {
     const last = out.at(-1);
     if (line.hidden) {
-      if (last && "left" in last) last.left.push(line);
+      if (last && "left" in last && !!last.left[0].echo === !!line.echo) last.left.push(line);
       else out.push({ left: [line] });
       continue;
     }
