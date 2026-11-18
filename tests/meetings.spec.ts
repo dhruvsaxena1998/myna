@@ -440,6 +440,13 @@ test("versions: pick one, delete never the last, and Edit › Save adds an Edite
   await expect(page.getByRole("heading", { name: "Recap", level: 1 })).toBeVisible();
   await page.getByRole("button", { name: "2 versions" }).click();
   await page.getByRole("button", { name: /Delete the Action items version/ }).click();
+  const menu = page.getByRole("menu", { name: "Versions" });
+  await expect(menu).toContainText("Delete this version?"); // asks first: there's no undo
+  await menu.getByRole("button", { name: "Cancel" }).click();
+  await expect(menu.getByRole("menuitemradio")).toHaveCount(2);
+  await page.getByRole("button", { name: /Delete the Action items version/ }).click();
+  expect(await calls(page, "summary_delete")).toEqual([]);
+  await menu.getByRole("button", { name: "Delete", exact: true }).click();
   expect(await calls(page, "summary_delete")).toEqual([{ id: 5, version: 9 }]);
   await expect(page.getByRole("button", { name: "2 versions" })).toBeHidden();
   await page.getByRole("button", { name: "Edit" }).click();

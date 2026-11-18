@@ -38,6 +38,7 @@
   let orig = $state(false); // Show original: the transcript as Myna heard it, before cleanup
   let hit = $state<number | null>(null);
   let pop = $state<"" | "vers" | "regen">("");
+  let doomed = $state<number | null>(null); // the version whose × was pressed, asking before it goes
   let draft = $state<string | null>(null); // the Markdown being edited
   let templates = $state<Template[]>([]);
   let models = $state<Record<number, Model[]>>({});
@@ -349,12 +350,18 @@
                     <div class="pop vmenu left" role="menu" aria-label="Versions">
                       {#each sum.versions as v (v.id)}
                         <div class="vrow">
+                          {#if doomed === v.id}
+                            <span class="ask">Delete this {v.edited ? "edited " : ""}version?</span>
+                            <button class="btn small" onclick={() => (doomed = null)}>Cancel</button>
+                            <button class="btn small danger" onclick={() => ((doomed = null), act(() => invoke("summary_delete", { id: page.id, version: v.id })))}>Delete</button>
+                          {:else}
                           <button class="pk" role="menuitemradio" aria-checked={v.id === sum.showing} onclick={() => ((pop = ""), act(() => invoke("summary_pick", { id: page.id, version: v.id })))}>
                             <span class="pk-t"><span class="trunc">{v.template} · {v.model}</span>{#if v.id === sum.showing}{@render icon('<path d="M5 12.5l4.5 4.5L19 7.5"/>')}{/if}</span>
                             <span class="pk-m">{when(v.created)}{v.edited ? " · Edited" : ""}</span>
                           </button>
                           <button class="btn icon plain" aria-label="Delete the {v.template} version from {when(v.created)}" disabled={sum.versions.length === 1}
-                            onclick={() => act(() => invoke("summary_delete", { id: page.id, version: v.id }))}>{@render icon('<path d="M7 7l10 10M17 7L7 17"/>')}</button>
+                            onclick={() => (doomed = v.id)}>{@render icon('<path d="M7 7l10 10M17 7L7 17"/>')}</button>
+                          {/if}
                         </div>
                       {/each}
                     </div>
@@ -530,6 +537,8 @@
   .est { margin: 0; color: var(--caution-text); font-size: var(--fs-footnote); }
   .vmenu { width: 340px; }
   .vrow { display: flex; align-items: center; gap: 2px; }
+  .ask { flex: 1; padding: 8px 10px; }
+  .btn.danger { color: var(--danger-text); }
   .pk { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: stretch; padding: 4px 10px; border: 0; border-radius: var(--r-sm); background: none; color: var(--text); font: inherit; text-align: left; }
   .pk:hover, .pk:focus-visible { background: var(--accent); color: var(--on-accent); outline: none; }
   .pk:hover .pk-m, .pk:focus-visible .pk-m { color: inherit; }
