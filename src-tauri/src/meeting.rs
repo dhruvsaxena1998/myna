@@ -526,6 +526,9 @@ pub struct Meetings {
     mirrored: Mutex<Option<(MuteState, Site)>>,
     /// The mic's loudness right now, 0 to 1, as `f32` bits; 0 when not recording.
     level: Arc<std::sync::atomic::AtomicU32>,
+    /// Paused from the pill: the mic writes silence, so the meeting clock keeps its time, and the call's audio and
+    /// captions are left out until it resumes.
+    paused: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// `at` on the meeting clock that starts at `origin`.
@@ -535,7 +538,7 @@ fn on_clock(origin: Instant, at: Instant) -> u64 {
 
 impl Meetings {
     pub fn new(db: Arc<Mutex<Connection>>, dir: PathBuf, mic: Box<dyn Mic>, them: Box<dyn Them>) -> Self {
-        Meetings { db, dir, mic, them, active: Default::default(), job: Default::default(), chunk: CHUNK, backoff: Duration::from_secs(2), mirrored: Default::default(), level: Default::default() }
+        Meetings { db, dir, mic, them, active: Default::default(), job: Default::default(), chunk: CHUNK, backoff: Duration::from_secs(2), mirrored: Default::default(), level: Default::default(), paused: Default::default() }
     }
 
     /// Whether Myna can't hear the other people on the call (the mic records regardless).
@@ -572,7 +575,7 @@ impl Meetings {
 
     /// The call's captions showed `name` speaking at `at` (unix ms); `now` is the clock now. Kept only while recording, trimmed and capped.
     pub fn caption(&self, name: &str, at: i64, text: Option<&str>, now: i64) {
-        let Some((id, started)) = self.running() else { return };
+        let Some((id, started)) = self.running().filter(|_| !self.paused()) else { return };
         let cap = |s: &str, n| s.trim().chars().take(n).collect::<String>();
         let (name, text) = (cap(name, 80), text.map(|t| cap(t, 300)).filter(|t| !t.is_empty()));
         if name.is_empty() {
@@ -603,12 +606,27 @@ impl Meetings {
         f32::from_bits(self.level.load(std::sync::atomic::Ordering::Relaxed))
     }
 
+    /// Whether the recording is paused.
+    pub fn paused(&self) -> bool {
+        self.paused.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Pauses or resumes the recording; false when nothing is recording.
+    pub fn pause(&self, on: bool) -> bool {
+        let recording = self.active.lock().unwrap().is_some();
+        if recording {
+            self.paused.store(on, std::sync::atomic::Ordering::Relaxed);
+        }
+        recording
+    }
+
     pub fn start(&self, now: i64) -> Result<i64, String> {
         let begun = Instant::now();
         let mut slot = self.active.lock().unwrap();
         if let Some(a) = slot.as_ref() {
             return Ok(a.id);
         }
+        self.paused.store(false, std::sync::atomic::Ordering::Relaxed);
         let db = self.db.lock().unwrap();
         db.execute("INSERT INTO meeting(started, state) VALUES (?1, 'recording')", [now]).map_err(|e| format!("Couldn't save the meeting: {e}"))?;
         let id = db.last_insert_rowid();
@@ -620,23 +638,27 @@ impl Meetings {
             let them = Arc::new(Mutex::new(Track { wav: Some(create(folder.join("them.wav"))?), ..Default::default() }));
             // The meeting clock starts with the mic's first sample.
             let origin = Arc::new(OnceLock::<Instant>::new());
-            let (w, o, level) = (wav.clone(), origin.clone(), self.level.clone());
+            let (w, o, level, paused) = (wav.clone(), origin.clone(), self.level.clone(), self.paused.clone());
             let mut since_flush = 0;
             let on = move |samples: &[f32]| {
-                level.store(crate::dictation::loudness(samples).to_bits(), std::sync::atomic::Ordering::Relaxed);
+                let silent = paused.load(std::sync::atomic::Ordering::Relaxed);
+                level.store(if silent { 0 } else { crate::dictation::loudness(samples).to_bits() }, std::sync::atomic::Ordering::Relaxed);
                 o.get_or_init(|| Instant::now().checked_sub(Duration::from_secs_f64(samples.len() as f64 / RATE as f64)).unwrap_or_else(Instant::now));
                 if let Some(wav) = w.lock().unwrap().as_mut() {
-                    write(wav, &mut since_flush, samples);
+                    // Paused: silence of the same length, so what's said after it keeps its place on the clock.
+                    let quiet;
+                    write(wav, &mut since_flush, if silent { quiet = vec![0.0; samples.len()]; &quiet } else { samples });
                 }
             };
             let stop = self.mic.open(Box::new(on))?;
-            let (t, db, clock) = (them.clone(), self.db.clone(), origin.clone());
+            let (t, db, clock, paused) = (them.clone(), self.db.clone(), origin.clone(), self.paused.clone());
             let ear = move |h: Heard| {
                 let mut t = t.lock().unwrap();
                 match h {
-                    // Before the mic's first sample there's no meeting clock yet; that's a moment at most.
+                    // Before the mic's first sample there's no meeting clock yet; that's a moment at most. Paused: left
+                    // out, and the gap is silence once it resumes.
                     Heard::Audio(at, samples) => {
-                        if let Some(o) = origin.get() {
+                        if let Some(o) = origin.get().filter(|_| !paused.load(std::sync::atomic::Ordering::Relaxed)) {
                             t.tap(on_clock(*o, at), samples)
                         }
                     }
@@ -685,7 +707,7 @@ impl Meetings {
     /// A tab frame (see `Track::put_tab`); dropped when nothing is recording or the meeting clock hasn't started.
     pub fn tab_audio(&self, at: Instant, ts: i64, samples: &[f32]) {
         let slot = self.active.lock().unwrap();
-        let Some(a) = slot.as_ref() else { return };
+        let Some(a) = slot.as_ref().filter(|_| !self.paused()) else { return };
         if let Some(o) = a.origin.get() {
             a.them.lock().unwrap().put_tab(on_clock(*o, at), ts, samples);
         }
@@ -996,6 +1018,7 @@ impl Meetings {
         let Some(a) = self.active.lock().unwrap().take() else { return Ok(None) };
         (a.stop)();
         self.level.store(0, std::sync::atomic::Ordering::Relaxed);
+        self.paused.store(false, std::sync::atomic::Ordering::Relaxed);
         if let Some(stop) = a.stop_them {
             stop();
         }
@@ -1785,6 +1808,41 @@ pub(crate) mod tests {
         assert_eq!(p.meeting.title, "Untitled meeting");
         assert!(page(&db, 2).is_err(), "still recording: no page");
         assert!(page(&db, 99).is_err());
+    }
+
+    /// A mic the test speaks into after it opens.
+    #[derive(Clone, Default)]
+    struct Held(Arc<Mutex<Option<Sink>>>);
+    impl Mic for Held {
+        fn open(&self, on: Sink) -> Result<Stop, String> {
+            *self.0.lock().unwrap() = Some(on);
+            Ok(Box::new(|| {}))
+        }
+    }
+
+    #[test]
+    fn paused_the_mic_keeps_its_time_as_silence_and_captions_are_left_out() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mic = Held::default();
+        let m = meetings(tmp.path(), mic.clone());
+        assert!(!m.pause(true), "nothing is recording");
+        let id = m.start(1_000).unwrap();
+        let say = |v: f32| (mic.0.lock().unwrap().as_mut().unwrap())(&[v; 4]);
+        say(0.5);
+        assert!(m.pause(true) && m.paused());
+        say(0.5);
+        assert_eq!(m.level(), 0.0);
+        m.caption("Ana", 1_500, Some("secret"), 2_000);
+        assert!(m.pause(false));
+        say(0.5);
+        m.caption("Bo", 1_500, Some("hello"), 2_000);
+        m.pause(true);
+        m.stop().unwrap();
+        assert!(!m.paused(), "a stop ends the pause");
+        let half = (0.5 * i16::MAX as f32) as i16;
+        assert_eq!(samples(tmp.path().join(format!("meetings/{id}/mic.wav"))), [[half; 4], [0; 4], [half; 4]].concat());
+        let names: Vec<String> = m.db.lock().unwrap().prepare("SELECT name FROM caption_event").unwrap().query_map([], |r| r.get(0)).unwrap().flatten().collect();
+        assert_eq!(names, ["Bo"]);
     }
 
     #[test]

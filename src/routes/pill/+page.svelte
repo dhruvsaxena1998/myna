@@ -25,7 +25,8 @@
   let meetStarted = $state<number | null>(null);
   let meetSecs = $state(0);
   let meetWords = $state(""); // how the mic is, in words, while a meeting records
-  let mini = $state(false); // the recording pill hidden down to its red dot; a click brings it back
+  let mini = $state(false); // the recording pill hidden down to its level meter; a click brings it back
+  let paused = $state(false); // the recording is paused (Pause on the pill)
   // A finished meeting's notes: being written up, saved, or failed. Shown in the same spot once the recording is over.
   let notes = $state<{ id: number; state: "transcribing" | "done" | "failed"; progress: number; error: string | null } | null>(null);
   let notesEl = $state<HTMLElement>();
@@ -36,7 +37,7 @@
   const meeting = $derived((meetStarted !== null || notes !== null || call !== null) && !on);
   const shown = $derived<Shown | null>(
     meetStarted !== null && call?.state === "ending" ? { state: "ending", left: Math.max(0, Math.ceil((call.at - now) / 1000)) }
-    : meetStarted !== null ? { state: "recording", words: meetWords, mini }
+    : meetStarted !== null ? { state: "recording", words: meetWords, mini, paused }
     : call?.state === "offer" ? { state: "detected", title: call.title, label: call.label }
     : !notes ? null
     : notes.state === "transcribing" ? { state: "notes", progress: notes.progress }
@@ -56,6 +57,11 @@
   function up() {
     if (press && mini) mini = false; // a click, not a drag: the dot opens back up
     press = null;
+  }
+  // Pause and Resume: the pill changes at once; the backend's "meeting" event confirms it.
+  function pause() {
+    paused = !paused;
+    invoke("meeting_pause", { paused }).catch(() => (paused = !paused));
   }
   const dismiss = () => (clearTimeout(notesHide), (notes = null));
   // The call's buttons: what the backend does, then the pill drops it at once.
@@ -116,7 +122,7 @@
         if (payload.state === "fallback") hide = setTimeout(() => (on = false), 2600);
         if (payload.state === "error") hide = setTimeout(() => (on = false), 4000);
       }),
-      listen<{ started: number | null; words: string | null }>("meeting", ({ payload }) => ((mini &&= payload.started !== null), (meetStarted = payload.started), (meetWords = payload.words ?? ""), (meetSecs = payload.started === null ? 0 : Math.max(0, Math.floor((Date.now() - payload.started) / 1000))))),
+      listen<{ started: number | null; mic: string | null; words: string | null }>("meeting", ({ payload }) => ((mini &&= payload.started !== null), (paused = payload.mic === "paused"), (meetStarted = payload.started), (meetWords = payload.words ?? ""), (meetSecs = payload.started === null ? 0 : Math.max(0, Math.floor((Date.now() - payload.started) / 1000))))),
       listen<NonNullable<typeof notes>>("meeting-notes", ({ payload }) => {
         clearTimeout(notesHide);
         notes = payload;
@@ -190,7 +196,9 @@
     <Pill style="capsule" pill={shown} wave={[meetLevel]} secs={meetSecs}>
       {#snippet actions()}
         <span class="acts" class:call={shown.state === "detected" || shown.state === "ending"} bind:this={notesEl}>
-          {#if shown.state === "recording"}<button class="act x" aria-label="Hide recording pill" title="Hide (click it to bring it back)" onclick={() => (mini = true)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12" /></svg></button>
+          {#if shown.state === "recording"}<button class="act x" aria-label={paused ? "Resume recording" : "Pause recording"} title={paused ? "Resume" : "Pause"} onclick={pause}>
+              <svg viewBox="0 0 24 24" aria-hidden="true">{#if paused}<path class="fill" d="M8 5.5v13l10.5-6.5z" />{:else}<path d="M9 6v12M15 6v12" />{/if}</svg></button>
+            <button class="act x" aria-label="Hide recording pill" title="Hide (click it to bring it back)" onclick={() => (mini = true)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12" /></svg></button>
           {:else if shown.state === "detected"}<button class="act primary" onclick={() => callDo("call_start")}>Start notes</button>
           {:else if shown.state === "ending"}<button class="act primary" onclick={() => callDo("call_keep")}>Keep recording</button><button class="act quiet" onclick={() => callDo("call_stop")}>Stop now</button>
           {:else if notes?.state === "failed"}<button class="act" onclick={retry}>Try again</button>
@@ -217,7 +225,8 @@
   .act.quiet { height: 28px; background: none; color: var(--hud-2); }
   .act.quiet:hover { background: var(--hud-fill); color: var(--hud-fg); }
   .act.x { width: 24px; padding: 0; display: grid; place-items: center; background: none; color: var(--hud-2); }
-  .act.x svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: var(--ic-stroke); stroke-linecap: round; }
+  .act.x svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: var(--ic-stroke); stroke-linecap: round; stroke-linejoin: round; }
+  .act.x svg .fill { fill: currentColor; }
   /* A grid, not flex: WebKit sizes a flex wrapper without the card's 280px minimum, so the card overflowed it
      (under the segment, and off the window at the right). */
   .anchor { position: relative; display: inline-grid; flex: none; --seg-r: var(--r-full); }

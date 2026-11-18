@@ -213,7 +213,7 @@ impl MeetingSession {
     pub fn running(&self) -> Option<serde_json::Value> {
         let (id, started) = self.meetings.running()?;
         let source: Option<String> = self.db.lock().unwrap().query_row("SELECT source_app FROM meeting WHERE id = ?1", [id], |r| r.get(0)).ok().flatten();
-        Some(serde_json::json!({ "id": id, "started": started, "source": source, "mic": mic_word(self.meetings.muted()), "words": self.mic_words() }))
+        Some(serde_json::json!({ "id": id, "started": started, "source": source, "mic": self.mic_word(), "words": self.mic_words() }))
     }
 
     /// The call page's mute button changed: the timeline, then the menu, pill and live card.
@@ -228,7 +228,21 @@ impl MeetingSession {
     }
 
     fn mic_words(&self) -> String {
-        mic_words(self.meetings.muted(), self.meetings.site())
+        if self.meetings.paused() { "Paused".into() } else { mic_words(self.meetings.muted(), self.meetings.site()) }
+    }
+
+    /// The mic for the pill and the live card: "paused" from the pill, else "live" or "muted" while the add-on mirrors it.
+    fn mic_word(&self) -> Option<&'static str> {
+        if self.meetings.paused() { Some("paused") } else { mic_word(self.meetings.muted()) }
+    }
+
+    /// Pause and Resume on the recording pill: the menu, pill and live card say so.
+    pub fn pause(&self, on: bool) -> Result<(), String> {
+        if !self.meetings.pause(on) {
+            return Err("Nothing is recording.".into());
+        }
+        self.show_running();
+        Ok(())
     }
 
     /// What the add-on reports. Mute and a drop go to the timeline, then the menu, pill and live card; captions are kept
@@ -260,7 +274,7 @@ impl MeetingSession {
         let Some((_, started)) = self.meetings.running() else { return };
         self.show_menu(started);
         self.world.running(self.running());
-        self.world.pill(Some(started), mic_word(self.meetings.muted()), Some(&self.mic_words()));
+        self.world.pill(Some(started), self.mic_word(), Some(&self.mic_words()));
     }
 
     fn show_menu(&self, started: i64) {
@@ -623,6 +637,23 @@ mod tests {
         assert_eq!(seen[..2], [Saw::Place("bottom".into()), Saw::Pill(Some(started), None, Some("Mic live".into()))]);
         assert!(matches!(&seen[2], Saw::MenuRunning(m) if m.ends_with("| Mic live")));
         assert_eq!(seen[3..5], [Saw::Running(Some(serde_json::json!({ "id": id, "started": started, "source": null, "mic": null, "words": "Mic live" }))), Saw::Pill(Some(started), None, Some("Mic live".into()))]);
+        s.stop();
+        settled(&saw_);
+    }
+
+    #[test]
+    fn pause_and_resume_say_so_on_the_pill_menu_and_live_card() {
+        let (s, saw_, _tmp) = session(true, Mic::Allowed, false);
+        assert!(s.pause(true).is_err(), "nothing is recording");
+        s.start();
+        let started = s.running().unwrap()["started"].as_i64().unwrap();
+        s.pause(true).unwrap();
+        assert_eq!((s.running().unwrap()["mic"].clone(), s.running().unwrap()["words"].clone()), (serde_json::json!("paused"), serde_json::json!("Paused")));
+        let seen = saw(&saw_);
+        assert!(seen.iter().any(|x| matches!(x, Saw::MenuRunning(m) if m.ends_with("| Paused"))), "{seen:?}");
+        assert_eq!(seen.last(), Some(&Saw::Pill(Some(started), Some("paused".into()), Some("Paused".into()))));
+        s.pause(false).unwrap();
+        assert_eq!(saw(&saw_).last(), Some(&Saw::Pill(Some(started), None, Some("Mic live".into()))));
         s.stop();
         settled(&saw_);
     }

@@ -219,6 +219,22 @@ test("the recording pill hides down to a level meter, a click on it brings it ba
   expect(await calls(page, "plugin:window|start_dragging")).toHaveLength(1);
 });
 
+test("Pause on the recording pill pauses it, says Paused, and Resume picks it back up", async ({ page }) => {
+  await fakeTauri(page, `{ meeting_pause: () => {} }`);
+  await page.goto("/pill");
+  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(11);
+  const pill = page.getByRole("status");
+  const started = Date.now();
+  await emit(page, "meeting", { started, mic: null, words: "Mic live" });
+  await pill.getByRole("button", { name: "Pause recording" }).click();
+  expect(await calls(page, "meeting_pause")).toEqual([{ paused: true }]);
+  await expect(pill).toHaveText(/^Paused\d+:\d+\s*$/);
+  await emit(page, "meeting", { started, mic: "paused", words: "Paused" }); // the backend confirms
+  await pill.getByRole("button", { name: "Resume recording" }).click();
+  expect(await calls(page, "meeting_pause")).toEqual([{ paused: true }, { paused: false }]);
+  await expect(pill).toContainText("Recording");
+});
+
 test("after Stop the pill shows the notes being written with progress, then Notes saved, which goes away", async ({ page }) => {
   await fakeTauri(page, `{}`);
   await page.clock.install({ time: 100_000 });
