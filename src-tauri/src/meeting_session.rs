@@ -26,8 +26,8 @@ pub trait World: Stt + Voices + 'static {
     /// Moves the pill to "bottom", "top-right", ... where the user set it.
     fn place(&self, place: String);
     /// The menu item and the tray title for a running meeting.
-    fn menu_running(&self, clock: &str, note: &str);
-    /// The menu bar icon while recording: its wave follows the mic's loudness, 0 to 1.
+    fn menu_running(&self, clock: &str, note: &str, paused: bool);
+    /// The menu bar icon while recording, and the hidden recording pill: their wave follows the mic's loudness, 0 to 1.
     fn menu_wave(&self, level: f32);
     /// The menu item, its note and the tray title for no meeting.
     fn menu_idle(&self);
@@ -183,6 +183,25 @@ impl MeetingSession {
         Ok(())
     }
 
+    /// Play on a meeting's page: where its mixed audio is.
+    pub fn audio(&self, id: i64) -> Result<std::path::PathBuf, String> {
+        self.meetings.audio(id)
+    }
+
+    /// Rename on the Meetings list; "Recent" in the menu shows the new name.
+    pub fn rename(&self, id: i64, title: &str) -> Result<(), String> {
+        self.meetings.rename(id, title)?;
+        self.world.recent();
+        Ok(())
+    }
+
+    /// Delete (one meeting) and Clear all (`id` none) on the Meetings list.
+    pub fn delete(&self, id: Option<i64>) -> Result<(), String> {
+        self.meetings.delete(id)?;
+        self.world.recent();
+        Ok(())
+    }
+
     /// At launch: finishes and writes up the meetings the app died or quit in the middle of.
     pub fn resume(self: &Arc<Self>) {
         for id in self.meetings.unfinished() {
@@ -194,7 +213,7 @@ impl MeetingSession {
     pub fn running(&self) -> Option<serde_json::Value> {
         let (id, started) = self.meetings.running()?;
         let source: Option<String> = self.db.lock().unwrap().query_row("SELECT source_app FROM meeting WHERE id = ?1", [id], |r| r.get(0)).ok().flatten();
-        Some(serde_json::json!({ "id": id, "started": started, "source": source, "mic": mic_word(self.meetings.muted()), "words": self.mic_words() }))
+        Some(serde_json::json!({ "id": id, "started": started, "source": source, "mic": self.mic_word(), "words": self.mic_words() }))
     }
 
     /// The call page's mute button changed: the timeline, then the menu, pill and live card.
@@ -209,7 +228,26 @@ impl MeetingSession {
     }
 
     fn mic_words(&self) -> String {
-        mic_words(self.meetings.muted(), self.meetings.site())
+        if self.meetings.paused() { "Paused".into() } else { mic_words(self.meetings.muted(), self.meetings.site()) }
+    }
+
+    /// The mic for the pill and the live card: "paused" from the pill, else "live" or "muted" while the add-on mirrors it.
+    fn mic_word(&self) -> Option<&'static str> {
+        if self.meetings.paused() { Some("paused") } else { mic_word(self.meetings.muted()) }
+    }
+
+    /// Pause or Resume in the menu bar menu: whichever it isn't.
+    pub fn toggle_pause(&self) -> Result<(), String> {
+        self.pause(!self.meetings.paused())
+    }
+
+    /// Pause and Resume on the recording pill, the menu and the live card: they all say so.
+    pub fn pause(&self, on: bool) -> Result<(), String> {
+        if !self.meetings.pause(on) {
+            return Err("Nothing is recording.".into());
+        }
+        self.show_running();
+        Ok(())
     }
 
     /// What the add-on reports. Mute and a drop go to the timeline, then the menu, pill and live card; captions are kept
@@ -241,12 +279,12 @@ impl MeetingSession {
         let Some((_, started)) = self.meetings.running() else { return };
         self.show_menu(started);
         self.world.running(self.running());
-        self.world.pill(Some(started), mic_word(self.meetings.muted()), Some(&self.mic_words()));
+        self.world.pill(Some(started), self.mic_word(), Some(&self.mic_words()));
     }
 
     fn show_menu(&self, started: i64) {
         // The note says how the mic is while recording; the idle menu puts the usual words back.
-        self.world.menu_running(&meeting::clock(now_ms() - started), &self.mic_words());
+        self.world.menu_running(&meeting::clock(now_ms() - started), &self.mic_words(), self.meetings.paused());
     }
 
     /// Writes up meeting `id` on its own thread, saying how it goes with `meeting-notes`: "transcribing" with progress
@@ -348,10 +386,18 @@ impl World for Mac {
     fn place(&self, place: String) {
         pill::place(&self.0, place)
     }
-    fn menu_running(&self, clock: &str, note: &str) {
+    fn menu_running(&self, clock: &str, note: &str, paused: bool) {
         if let Some(m) = self.0.try_state::<crate::MeetItem>() {
             let _ = m.item.set_text(format!("Stop recording  {clock}"));
             let _ = m.note.set_text(note);
+            let _ = m.pause.set_text(if paused { "Resume recording" } else { "Pause recording" });
+            // Right under Stop recording, once.
+            if m.menu.get("meeting-pause").is_none() {
+                let at = m.menu.items().ok().and_then(|items| items.iter().position(|i| i.id() == "meeting"));
+                if let Some(at) = at {
+                    let _ = m.menu.insert(&m.pause, at + 1);
+                }
+            }
         }
         // The icon says it's recording (menu_wave); the title is just the clock.
         let (app, clock) = (self.0.clone(), clock.to_string());
@@ -363,6 +409,7 @@ impl World for Mac {
         });
     }
     fn menu_wave(&self, level: f32) {
+        let _ = self.0.emit_to("pill", "meeting-level", level);
         // A coloured icon can't be a template, so there's a frame for a light menu bar and one for a dark one.
         const FRAMES: [[&[u8]; 5]; 2] = [
             [include_bytes!("../icons/tray-rec/light-0.png"), include_bytes!("../icons/tray-rec/light-1.png"), include_bytes!("../icons/tray-rec/light-2.png"), include_bytes!("../icons/tray-rec/light-3.png"), include_bytes!("../icons/tray-rec/light-4.png")],
@@ -382,6 +429,7 @@ impl World for Mac {
     fn menu_idle(&self) {
         if let Some(m) = self.0.try_state::<crate::MeetItem>() {
             let _ = m.item.set_text("Start meeting notes");
+            let _ = m.menu.remove(&m.pause);
             let _ = crate::sync_meeting(&self.0); // puts the usual note back
         }
         let app = self.0.clone();
@@ -498,7 +546,7 @@ mod tests {
         fn place(&self, place: String) {
             self.log(Saw::Place(place))
         }
-        fn menu_running(&self, clock: &str, note: &str) {
+        fn menu_running(&self, clock: &str, note: &str, _: bool) {
             self.log(Saw::MenuRunning(format!("{clock} | {note}")))
         }
         fn menu_wave(&self, _: f32) {}
@@ -603,6 +651,23 @@ mod tests {
         assert_eq!(seen[..2], [Saw::Place("bottom".into()), Saw::Pill(Some(started), None, Some("Mic live".into()))]);
         assert!(matches!(&seen[2], Saw::MenuRunning(m) if m.ends_with("| Mic live")));
         assert_eq!(seen[3..5], [Saw::Running(Some(serde_json::json!({ "id": id, "started": started, "source": null, "mic": null, "words": "Mic live" }))), Saw::Pill(Some(started), None, Some("Mic live".into()))]);
+        s.stop();
+        settled(&saw_);
+    }
+
+    #[test]
+    fn pause_and_resume_say_so_on_the_pill_menu_and_live_card() {
+        let (s, saw_, _tmp) = session(true, Mic::Allowed, false);
+        assert!(s.pause(true).is_err(), "nothing is recording");
+        s.start();
+        let started = s.running().unwrap()["started"].as_i64().unwrap();
+        s.pause(true).unwrap();
+        assert_eq!((s.running().unwrap()["mic"].clone(), s.running().unwrap()["words"].clone()), (serde_json::json!("paused"), serde_json::json!("Paused")));
+        let seen = saw(&saw_);
+        assert!(seen.iter().any(|x| matches!(x, Saw::MenuRunning(m) if m.ends_with("| Paused"))), "{seen:?}");
+        assert_eq!(seen.last(), Some(&Saw::Pill(Some(started), Some("paused".into()), Some("Paused".into()))));
+        s.pause(false).unwrap();
+        assert_eq!(saw(&saw_).last(), Some(&Saw::Pill(Some(started), None, Some("Mic live".into()))));
         s.stop();
         settled(&saw_);
     }

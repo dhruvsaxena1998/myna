@@ -1,10 +1,12 @@
-<!-- Clear all, in the headers of Voice typing history and Stats for nerds (docs/index.html `clip-clear`). Both read the same stored dictations. -->
+<!-- Clear all, in the headers of Voice typing history and Stats for nerds (docs/index.html `clip-clear`), and of All meetings. -->
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { tick } from "svelte";
 
-  // `count`: how many dictations there are, so the button waits until there is something to clear. `onclear`: tells the page the list is empty now.
-  let { count, onclear }: { count: number; onclear: () => void } = $props();
+  // `count`: how many there are, so the button waits until there is something to clear. `onclear`: tells the page the list is empty now.
+  // `ask` and `clear`: what it deletes; dictations unless told otherwise.
+  let { count, onclear, ask: question = "Delete all dictations, with their stats? This can’t be undone.", clear = () => invoke("traces_clear") }:
+    { count: number; onclear: () => void; ask?: string; clear?: () => Promise<unknown> } = $props();
   let asking = $state(false);
   let error = $state("");
   let button: HTMLButtonElement;
@@ -18,7 +20,7 @@
   }
   async function yes() {
     try {
-      await invoke("traces_clear");
+      await clear();
       onclear();
       await ask(false);
     } catch (err) {
@@ -33,7 +35,7 @@
   <button class="btn" bind:this={button} disabled={!count} aria-haspopup="dialog" aria-expanded={asking} onclick={() => ask(true)}>Clear all</button>
   {#if asking}
     <div class="confirm" role="alertdialog" aria-labelledby="clr-t">
-      <span id="clr-t">Delete all dictations, with their stats? This can’t be undone.</span>
+      <span id="clr-t">{question}</span>
       {#if error}<span class="err" role="status">{error}</span>{/if}
       <span class="acts"><button class="btn" bind:this={no} onclick={() => ask(false)}>Cancel</button><button class="btn danger" onclick={yes}>Delete all</button></span>
     </div>

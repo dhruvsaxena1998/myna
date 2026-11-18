@@ -498,6 +498,14 @@ fn wav_samples(path: &std::path::Path) -> Result<Vec<i16>, String> {
     r.into_samples::<i16>().collect::<Result<_, _>>().map_err(|e| format!("Couldn't read {}: {e}", path.display()))
 }
 
+/// Two tracks on the same clock played as one: summed sample by sample and clipped, the shorter one silent at its end.
+fn mix(mut a: impl Iterator<Item = i16>, mut b: impl Iterator<Item = i16>) -> impl Iterator<Item = i16> {
+    std::iter::from_fn(move || match (a.next(), b.next()) {
+        (None, None) => None,
+        (x, y) => Some((x.unwrap_or(0) as i32 + y.unwrap_or(0) as i32).clamp(i16::MIN as i32, i16::MAX as i32) as i16),
+    })
+}
+
 /// Meetings that still need writing up: cut off while recording (a crash or quit), or while transcribing.
 const MAX_CAPTIONS: i64 = 20_000;
 const UNFINISHED: &str = "('recording', 'recorded', 'transcribing')";
@@ -518,6 +526,9 @@ pub struct Meetings {
     mirrored: Mutex<Option<(MuteState, Site)>>,
     /// The mic's loudness right now, 0 to 1, as `f32` bits; 0 when not recording.
     level: Arc<std::sync::atomic::AtomicU32>,
+    /// Paused from the pill: the mic writes silence, so the meeting clock keeps its time, and the call's audio and
+    /// captions are left out until it resumes.
+    paused: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// `at` on the meeting clock that starts at `origin`.
@@ -527,7 +538,7 @@ fn on_clock(origin: Instant, at: Instant) -> u64 {
 
 impl Meetings {
     pub fn new(db: Arc<Mutex<Connection>>, dir: PathBuf, mic: Box<dyn Mic>, them: Box<dyn Them>) -> Self {
-        Meetings { db, dir, mic, them, active: Default::default(), job: Default::default(), chunk: CHUNK, backoff: Duration::from_secs(2), mirrored: Default::default(), level: Default::default() }
+        Meetings { db, dir, mic, them, active: Default::default(), job: Default::default(), chunk: CHUNK, backoff: Duration::from_secs(2), mirrored: Default::default(), level: Default::default(), paused: Default::default() }
     }
 
     /// Whether Myna can't hear the other people on the call (the mic records regardless).
@@ -564,7 +575,7 @@ impl Meetings {
 
     /// The call's captions showed `name` speaking at `at` (unix ms); `now` is the clock now. Kept only while recording, trimmed and capped.
     pub fn caption(&self, name: &str, at: i64, text: Option<&str>, now: i64) {
-        let Some((id, started)) = self.running() else { return };
+        let Some((id, started)) = self.running().filter(|_| !self.paused()) else { return };
         let cap = |s: &str, n| s.trim().chars().take(n).collect::<String>();
         let (name, text) = (cap(name, 80), text.map(|t| cap(t, 300)).filter(|t| !t.is_empty()));
         if name.is_empty() {
@@ -595,12 +606,27 @@ impl Meetings {
         f32::from_bits(self.level.load(std::sync::atomic::Ordering::Relaxed))
     }
 
+    /// Whether the recording is paused.
+    pub fn paused(&self) -> bool {
+        self.paused.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Pauses or resumes the recording; false when nothing is recording.
+    pub fn pause(&self, on: bool) -> bool {
+        let recording = self.active.lock().unwrap().is_some();
+        if recording {
+            self.paused.store(on, std::sync::atomic::Ordering::Relaxed);
+        }
+        recording
+    }
+
     pub fn start(&self, now: i64) -> Result<i64, String> {
         let begun = Instant::now();
         let mut slot = self.active.lock().unwrap();
         if let Some(a) = slot.as_ref() {
             return Ok(a.id);
         }
+        self.paused.store(false, std::sync::atomic::Ordering::Relaxed);
         let db = self.db.lock().unwrap();
         db.execute("INSERT INTO meeting(started, state) VALUES (?1, 'recording')", [now]).map_err(|e| format!("Couldn't save the meeting: {e}"))?;
         let id = db.last_insert_rowid();
@@ -612,23 +638,27 @@ impl Meetings {
             let them = Arc::new(Mutex::new(Track { wav: Some(create(folder.join("them.wav"))?), ..Default::default() }));
             // The meeting clock starts with the mic's first sample.
             let origin = Arc::new(OnceLock::<Instant>::new());
-            let (w, o, level) = (wav.clone(), origin.clone(), self.level.clone());
+            let (w, o, level, paused) = (wav.clone(), origin.clone(), self.level.clone(), self.paused.clone());
             let mut since_flush = 0;
             let on = move |samples: &[f32]| {
-                level.store(crate::dictation::loudness(samples).to_bits(), std::sync::atomic::Ordering::Relaxed);
+                let silent = paused.load(std::sync::atomic::Ordering::Relaxed);
+                level.store(if silent { 0 } else { crate::dictation::loudness(samples).to_bits() }, std::sync::atomic::Ordering::Relaxed);
                 o.get_or_init(|| Instant::now().checked_sub(Duration::from_secs_f64(samples.len() as f64 / RATE as f64)).unwrap_or_else(Instant::now));
                 if let Some(wav) = w.lock().unwrap().as_mut() {
-                    write(wav, &mut since_flush, samples);
+                    // Paused: silence of the same length, so what's said after it keeps its place on the clock.
+                    let quiet;
+                    write(wav, &mut since_flush, if silent { quiet = vec![0.0; samples.len()]; &quiet } else { samples });
                 }
             };
             let stop = self.mic.open(Box::new(on))?;
-            let (t, db, clock) = (them.clone(), self.db.clone(), origin.clone());
+            let (t, db, clock, paused) = (them.clone(), self.db.clone(), origin.clone(), self.paused.clone());
             let ear = move |h: Heard| {
                 let mut t = t.lock().unwrap();
                 match h {
-                    // Before the mic's first sample there's no meeting clock yet; that's a moment at most.
+                    // Before the mic's first sample there's no meeting clock yet; that's a moment at most. Paused: left
+                    // out, and the gap is silence once it resumes.
                     Heard::Audio(at, samples) => {
-                        if let Some(o) = origin.get() {
+                        if let Some(o) = origin.get().filter(|_| !paused.load(std::sync::atomic::Ordering::Relaxed)) {
                             t.tap(on_clock(*o, at), samples)
                         }
                     }
@@ -677,7 +707,7 @@ impl Meetings {
     /// A tab frame (see `Track::put_tab`); dropped when nothing is recording or the meeting clock hasn't started.
     pub fn tab_audio(&self, at: Instant, ts: i64, samples: &[f32]) {
         let slot = self.active.lock().unwrap();
-        let Some(a) = slot.as_ref() else { return };
+        let Some(a) = slot.as_ref().filter(|_| !self.paused()) else { return };
         if let Some(o) = a.origin.get() {
             a.them.lock().unwrap().put_tab(on_clock(*o, at), ts, samples);
         }
@@ -701,6 +731,85 @@ impl Meetings {
     pub fn failed(&self, id: i64) -> bool {
         let state: Option<String> = self.db.lock().unwrap().query_row("SELECT state FROM meeting WHERE id = ?1", [id], |r| r.get(0)).optional().unwrap_or(None);
         state.is_some_and(|s| s == "failed")
+    }
+
+    /// Meeting `id`'s audio to play on its page: Me and the other side mixed into `mix.wav` in its folder, made the
+    /// first time and kept, so Delete takes it with the rest.
+    pub fn audio(&self, id: i64) -> Result<PathBuf, String> {
+        let state: Option<String> = self.db.lock().unwrap().query_row("SELECT state FROM meeting WHERE id = ?1", [id], |r| r.get(0)).optional().map_err(|e| format!("Couldn't read the meeting: {e}"))?;
+        match state.as_deref() {
+            None => return Err("That meeting isn't there anymore.".into()),
+            Some("done" | "failed") => {}
+            // Still recording or being written up: a mix now would be cut short and kept.
+            Some(_) => return Err("The audio plays once the notes are written up.".into()),
+        }
+        let folder = self.dir.join("meetings").join(id.to_string());
+        let out = folder.join("mix.wav");
+        if out.exists() {
+            return Ok(out);
+        }
+        let track = |name: &str| {
+            let path = folder.join(name);
+            // A crash before the first flush leaves no header at all: nothing was kept.
+            let reader = (std::fs::metadata(&path).map_or(0, |m| m.len()) >= 44).then(|| hound::WavReader::open(&path).ok()).flatten();
+            reader.into_iter().flat_map(|r| r.into_samples::<i16>().map_while(Result::ok))
+        };
+        let (mut me, mut them) = (track("mic.wav").peekable(), track("them.wav").peekable());
+        if me.peek().is_none() && them.peek().is_none() {
+            return Err("This meeting's audio isn't on this Mac anymore.".into());
+        }
+        let err = |e: hound::Error| format!("Couldn't get the meeting's audio ready: {e}");
+        let part = folder.join("mix.wav.part");
+        let spec = hound::WavSpec { channels: 1, sample_rate: RATE, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
+        let mut w = hound::WavWriter::create(&part, spec).map_err(err)?;
+        for s in mix(me, them) {
+            w.write_sample(s).map_err(err)?;
+        }
+        w.finalize().map_err(err)?;
+        // Written aside and moved in whole, so a crash never leaves a short mix to be kept.
+        std::fs::rename(&part, &out).map_err(|e| format!("Couldn't get the meeting's audio ready: {e}"))?;
+        Ok(out)
+    }
+
+    /// Renames meeting `id`; a blank name is refused.
+    pub fn rename(&self, id: i64, title: &str) -> Result<(), String> {
+        let title = title.trim();
+        if title.is_empty() {
+            return Err("A meeting needs a name.".into());
+        }
+        let title: String = title.chars().take(200).collect();
+        let n = self.db.lock().unwrap().execute("UPDATE meeting SET title = ?1 WHERE id = ?2", (&title, id)).map_err(|e| format!("Couldn't rename the meeting: {e}"))?;
+        if n == 0 { Err("That meeting isn't there anymore.".into()) } else { Ok(()) }
+    }
+
+    /// Deletes meeting `id`, or every meeting when none, with its transcript, summaries and audio. One still recording
+    /// or being written up is left alone.
+    pub fn delete(&self, id: Option<i64>) -> Result<(), String> {
+        let err = |e: rusqlite::Error| format!("Couldn't delete the meeting: {e}");
+        let ids: Vec<i64> = {
+            let db = self.db.lock().unwrap();
+            let ids: Vec<i64> = db
+                .prepare(&format!("SELECT id FROM meeting WHERE (?1 IS NULL OR id = ?1) AND state NOT IN {UNFINISHED}"))
+                .and_then(|mut q| q.query_map([id], |r| r.get(0)).and_then(|r| r.collect()))
+                .map_err(err)?;
+            let tx = db.unchecked_transaction().map_err(err)?;
+            for m in &ids {
+                for table in ["segment", "mute_event", "caption_event", "chunk_note", "summary"] {
+                    tx.execute(&format!("DELETE FROM {table} WHERE meeting = ?1"), [m]).map_err(err)?;
+                }
+                tx.execute("DELETE FROM meeting WHERE id = ?1", [m]).map_err(err)?;
+            }
+            tx.commit().map_err(err)?;
+            ids
+        };
+        if id.is_some() && ids.is_empty() {
+            return Err("That meeting is still being recorded or written up.".into());
+        }
+        // The rows are gone, so a folder left behind is only wasted space, never a broken meeting.
+        for m in ids {
+            let _ = std::fs::remove_dir_all(self.dir.join("meetings").join(m.to_string()));
+        }
+        Ok(())
     }
 
     /// Writes up meeting `id` from its two tracks: Me from the mic, Them from the call, merged by time. `progress`
@@ -909,6 +1018,7 @@ impl Meetings {
         let Some(a) = self.active.lock().unwrap().take() else { return Ok(None) };
         (a.stop)();
         self.level.store(0, std::sync::atomic::Ordering::Relaxed);
+        self.paused.store(false, std::sync::atomic::Ordering::Relaxed);
         if let Some(stop) = a.stop_them {
             stop();
         }
@@ -976,6 +1086,7 @@ pub struct Line {
     /// "Me", or for the other side "Speaker 2", a name from the captions, or "Them" when voices weren't told apart.
     pub speaker: String,
     pub start_ms: i64,
+    pub end_ms: i64,
     /// Empty when `hidden`: what's left out never leaves the backend.
     pub text: String,
     /// The line as transcript cleanup wrote it, when it did; none when `hidden`.
@@ -1030,13 +1141,13 @@ pub(crate) fn lines(db: &Connection, id: i64) -> Result<Vec<Line>, String> {
         Site::Meet => notes.keep_meet,
         Site::Other => false,
     };
-    db.prepare("SELECT id, COALESCE(label, speaker), start_ms, text, mute, included, clean FROM segment WHERE meeting = ?1 ORDER BY start_ms, id")
+    db.prepare("SELECT id, COALESCE(label, speaker), start_ms, text, mute, included, clean, end_ms FROM segment WHERE meeting = ?1 ORDER BY start_ms, id")
         .and_then(|mut q| {
             q.query_map([id], |r| {
                 let (mute, included): (Option<String>, bool) = (r.get(4)?, r.get(5)?);
                 let muted = mute.as_deref() == Some("muted");
                 let hidden = muted && !included && !keep;
-                Ok(Line { id: r.get(0)?, speaker: r.get(1)?, start_ms: r.get(2)?, text: if hidden { String::new() } else { r.get(3)? }, clean: if hidden { None } else { r.get(6)? }, muted, included, hidden })
+                Ok(Line { id: r.get(0)?, speaker: r.get(1)?, start_ms: r.get(2)?, end_ms: r.get(7)?, text: if hidden { String::new() } else { r.get(3)? }, clean: if hidden { None } else { r.get(6)? }, muted, included, hidden })
             })
             .and_then(|r| r.collect())
         })
@@ -1697,6 +1808,99 @@ pub(crate) mod tests {
         assert_eq!(p.meeting.title, "Untitled meeting");
         assert!(page(&db, 2).is_err(), "still recording: no page");
         assert!(page(&db, 99).is_err());
+    }
+
+    /// A mic the test speaks into after it opens.
+    #[derive(Clone, Default)]
+    struct Held(Arc<Mutex<Option<Sink>>>);
+    impl Mic for Held {
+        fn open(&self, on: Sink) -> Result<Stop, String> {
+            *self.0.lock().unwrap() = Some(on);
+            Ok(Box::new(|| {}))
+        }
+    }
+
+    #[test]
+    fn paused_the_mic_keeps_its_time_as_silence_and_captions_are_left_out() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mic = Held::default();
+        let m = meetings(tmp.path(), mic.clone());
+        assert!(!m.pause(true), "nothing is recording");
+        let id = m.start(1_000).unwrap();
+        let say = |v: f32| (mic.0.lock().unwrap().as_mut().unwrap())(&[v; 4]);
+        say(0.5);
+        assert!(m.pause(true) && m.paused());
+        say(0.5);
+        assert_eq!(m.level(), 0.0);
+        m.caption("Ana", 1_500, Some("secret"), 2_000);
+        assert!(m.pause(false));
+        say(0.5);
+        m.caption("Bo", 1_500, Some("hello"), 2_000);
+        m.pause(true);
+        m.stop().unwrap();
+        assert!(!m.paused(), "a stop ends the pause");
+        let half = (0.5 * i16::MAX as f32) as i16;
+        assert_eq!(samples(tmp.path().join(format!("meetings/{id}/mic.wav"))), [[half; 4], [0; 4], [half; 4]].concat());
+        let names: Vec<String> = m.db.lock().unwrap().prepare("SELECT name FROM caption_event").unwrap().query_map([], |r| r.get(0)).unwrap().flatten().collect();
+        assert_eq!(names, ["Bo"]);
+    }
+
+    #[test]
+    fn mix_sums_both_tracks_clips_and_runs_to_the_longer() {
+        let m: Vec<i16> = mix([1, 30_000, -30_000, 5].into_iter(), [2, 30_000, -30_000].into_iter()).collect();
+        assert_eq!(m, [3, i16::MAX, i16::MIN, 5]);
+    }
+
+    #[test]
+    fn audio_is_mixed_once_for_a_written_up_meeting_and_refused_otherwise() {
+        let tmp = tempfile::tempdir().unwrap();
+        let m = meetings(tmp.path(), Fake(0));
+        {
+            let db = m.db.lock().unwrap();
+            for state in ["done", "transcribing", "done"] {
+                db.execute("INSERT INTO meeting(started, state) VALUES (0, ?1)", [state]).unwrap();
+            }
+        }
+        let folder = tmp.path().join("meetings/1");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("mic.wav"), wav_bytes(&[100, 200, 300])).unwrap();
+        std::fs::write(folder.join("them.wav"), wav_bytes(&[10, 20])).unwrap();
+        let path = m.audio(1).unwrap();
+        assert_eq!(samples(path.clone()), [110, 220, 300]);
+        std::fs::write(folder.join("mic.wav"), wav_bytes(&[0])).unwrap();
+        assert_eq!(samples(m.audio(1).unwrap()), [110, 220, 300], "kept, not mixed again");
+        assert!(m.audio(2).is_err(), "still being written up");
+        assert!(m.audio(3).is_err(), "no audio on disk");
+        assert!(m.audio(99).is_err());
+    }
+
+    #[test]
+    fn rename_and_delete_leave_a_meeting_being_written_up_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let m = meetings(tmp.path(), Fake(0));
+        {
+            let db = m.db.lock().unwrap();
+            for (started, state) in [(10, "done"), (20, "failed"), (30, "transcribing")] {
+                db.execute("INSERT INTO meeting(started, state) VALUES (?1, ?2)", (started, state)).unwrap();
+                db.execute("INSERT INTO segment(meeting, start_ms, end_ms, speaker, text) VALUES (last_insert_rowid(), 0, 0, 'Me', 'hi')", []).unwrap();
+            }
+        }
+        for id in 1..=3 {
+            std::fs::create_dir_all(tmp.path().join(format!("meetings/{id}"))).unwrap();
+        }
+        m.rename(1, "  Standup  ").unwrap();
+        assert!(m.rename(1, "   ").is_err());
+        assert!(m.rename(99, "x").is_err());
+        assert_eq!(list(&m.db.lock().unwrap()).unwrap().iter().find(|r| r.id == 1).unwrap().title, "Standup");
+
+        assert!(m.delete(Some(3)).is_err(), "being written up");
+        m.delete(Some(1)).unwrap();
+        assert!(!tmp.path().join("meetings/1").exists());
+        m.delete(None).unwrap();
+        let db = m.db.lock().unwrap();
+        assert_eq!(list(&db).unwrap().iter().map(|r| r.id).collect::<Vec<_>>(), [3]);
+        assert_eq!(db.query_row("SELECT COUNT(*) FROM segment", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+        assert!(tmp.path().join("meetings/3").exists() && !tmp.path().join("meetings/2").exists());
     }
 
     #[test]

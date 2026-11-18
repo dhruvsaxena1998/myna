@@ -113,6 +113,12 @@ pub trait Backend: Send {
     fn key_usage(&self) -> Result<Option<(f64, Option<f64>)>, String>;
     /// One user message, after an optional system message, answered within `secs` seconds.
     fn chat(&self, model: &str, system: Option<&str>, prompt: &str, secs: u64) -> Result<Reply, String>;
+    /// `chat`, handing `on` the reply's text so far each time more arrives, for a service that streams; others hand it once, whole.
+    fn chat_stream(&self, model: &str, system: Option<&str>, prompt: &str, secs: u64, on: &mut dyn FnMut(&str)) -> Result<Reply, String> {
+        let r = self.chat(model, system, prompt, secs)?;
+        on(&r.text);
+        Ok(r)
+    }
     /// The service's decision models (OpenRouter); none elsewhere.
     fn decision_models(&self) -> Result<Vec<Model>, String> {
         Ok(vec![])
@@ -186,6 +192,14 @@ impl OpenAi {
 
     /// `send` with a body of any type: (bytes, Content-Type).
     fn send_as(&self, path: &str, body: Option<(Vec<u8>, String)>, secs: u64) -> Result<Value, String> {
+        let mut res = self.request(path, body, secs)?;
+        let status = res.status().as_u16();
+        let text = res.body_mut().read_to_string().map_err(|e| format!("Couldn't reach {}: {e}", self.url))?;
+        self.answer(status, &text)
+    }
+
+    /// The request sent, its answer not yet read.
+    fn request(&self, path: &str, body: Option<(Vec<u8>, String)>, secs: u64) -> Result<ureq::http::Response<ureq::Body>, String> {
         let unreachable = |e: String| format!("Couldn't reach {}: {e}", self.url);
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .timeout_connect(Some(Duration::from_secs(5)))
@@ -202,9 +216,12 @@ impl OpenAi {
             req = req.header("Authorization", format!("Bearer {k}"));
         }
         let req = req.body(body.unwrap_or_default()).map_err(|_| unreachable("that key can't be sent".into()))?;
-        let mut res = agent.run(req).map_err(|e| unreachable(e.to_string()))?;
-        let status = res.status().as_u16();
-        let text = res.body_mut().read_to_string().map_err(|e| unreachable(e.to_string()))?;
+        agent.run(req).map_err(|e| unreachable(e.to_string()))
+    }
+
+    /// An answer's JSON, or why there is none: a refused key, the service's error message, or not JSON.
+    fn answer(&self, status: u16, text: &str) -> Result<Value, String> {
+        let unreachable = |e: String| format!("Couldn't reach {}: {e}", self.url);
         let json: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
         if status == 401 || status == 403 {
             return Err(format!("{} refused the key (HTTP {status})", self.url));
@@ -260,22 +277,83 @@ impl OpenAi {
     }
 
     fn ask(&self, model: &str, system: Option<&str>, prompt: &str, format: Option<Value>, secs: u64) -> Result<Reply, String> {
-        let messages: Vec<Value> = system.map(|s| json!({"role": "system", "content": s})).into_iter().chain([json!({"role": "user", "content": prompt})]).collect();
-        let mut body = json!({"model": model, "messages": messages});
+        let mut body = json!({"model": model, "messages": messages(system, prompt)});
         if let Some(f) = format {
             body["response_format"] = f;
         }
         let json = self.send("/chat/completions", Some(body.to_string()), secs)?;
         let text = json["choices"][0]["message"]["content"].as_str().ok_or_else(|| format!("{} sent no reply", self.url))?.to_string();
-        let tokens = json["usage"]["prompt_tokens"].as_u64().zip(json["usage"]["completion_tokens"].as_u64());
-        let reported = json["usage"]["cost"].as_f64();
+        Ok(self.reply(model, text, &json["usage"]))
+    }
+
+    /// `ask` as a stream (server-sent events), `on` getting the text so far as it grows. A server that ignores
+    /// `stream` and answers whole is read as `ask` reads it.
+    fn ask_stream(&self, model: &str, system: Option<&str>, prompt: &str, secs: u64, on: &mut dyn FnMut(&str)) -> Result<Reply, String> {
+        use std::io::BufRead;
+        let unreachable = |e: String| format!("Couldn't reach {}: {e}", self.url);
+        let body = json!({"model": model, "messages": messages(system, prompt), "stream": true, "stream_options": {"include_usage": true}});
+        let mut res = self.request("/chat/completions", Some((body.to_string().into_bytes(), "application/json".into())), secs)?;
+        let status = res.status().as_u16();
+        if status >= 400 {
+            let text = res.body_mut().read_to_string().unwrap_or_default();
+            return self.answer(status, &text).and_then(|_| Err(unreachable(format!("HTTP {status}"))));
+        }
+        let (mut text, mut usage, mut whole, mut streamed) = (String::new(), Value::Null, String::new(), false);
+        for line in std::io::BufReader::new(res.body_mut().as_reader()).lines() {
+            let line = line.map_err(|e| unreachable(e.to_string()))?;
+            let Some(data) = line.strip_prefix("data:") else {
+                // ":" lines keep the connection open; anything else is a reply sent whole.
+                if !line.starts_with(':') {
+                    whole.push_str(&line);
+                    whole.push('\n');
+                }
+                continue;
+            };
+            streamed = true;
+            let data = data.trim();
+            if data == "[DONE]" {
+                break;
+            }
+            let Ok(v) = serde_json::from_str::<Value>(data) else { continue };
+            if let Some(why) = v["error"]["message"].as_str() {
+                return Err(unreachable(why.into()));
+            }
+            if let Some(d) = v["choices"][0]["delta"]["content"].as_str().filter(|d| !d.is_empty()) {
+                text.push_str(d);
+                on(&text);
+            }
+            if v["usage"].is_object() {
+                usage = v["usage"].clone();
+            }
+        }
+        if !streamed {
+            let json = self.answer(status, &whole)?;
+            text = json["choices"][0]["message"]["content"].as_str().ok_or_else(|| format!("{} sent no reply", self.url))?.to_string();
+            usage = json["usage"].clone();
+            on(&text);
+        }
+        if text.is_empty() {
+            return Err(format!("{} sent no reply", self.url));
+        }
+        Ok(self.reply(model, text, &usage))
+    }
+
+    /// A reply's text with its tokens and cost, from the `usage` the service sent.
+    fn reply(&self, model: &str, text: String, usage: &Value) -> Reply {
+        let tokens = usage["prompt_tokens"].as_u64().zip(usage["completion_tokens"].as_u64());
+        let reported = usage["cost"].as_f64();
         // Only fetch prices when the reply didn't carry its own cost.
         let price = match (reported, self.rich) {
             (None, true) => self.models().ok().and_then(|l| l.into_iter().find(|m| m.id == model)).and_then(|m| m.input_per_m.zip(m.output_per_m)),
             _ => None,
         };
-        Ok(Reply { text, tokens, cost: cost_of(reported, price, tokens, !off_device(&self.url)) })
+        Reply { text, tokens, cost: cost_of(reported, price, tokens, !off_device(&self.url)) }
     }
+}
+
+/// A chat's messages: the system message, when there is one, then the user's.
+fn messages(system: Option<&str>, prompt: &str) -> Vec<Value> {
+    system.map(|s| json!({"role": "system", "content": s})).into_iter().chain([json!({"role": "user", "content": prompt})]).collect()
 }
 
 impl Backend for OpenAi {
@@ -294,6 +372,10 @@ impl Backend for OpenAi {
 
     fn chat(&self, model: &str, system: Option<&str>, prompt: &str, secs: u64) -> Result<Reply, String> {
         self.ask(model, system, prompt, None, secs)
+    }
+
+    fn chat_stream(&self, model: &str, system: Option<&str>, prompt: &str, secs: u64, on: &mut dyn FnMut(&str)) -> Result<Reply, String> {
+        self.ask_stream(model, system, prompt, secs, on)
     }
 
     fn decision_models(&self) -> Result<Vec<Model>, String> {
@@ -883,6 +965,30 @@ pub(crate) mod tests {
 
     fn adapter(url: String, rich: bool) -> OpenAi {
         OpenAi { url, key: Some("k".into()), rich }
+    }
+
+    #[test]
+    fn a_streamed_reply_grows_as_it_arrives_and_a_whole_one_or_an_error_is_read_too() {
+        const SSE: &str = ": keep-alive\n\ndata: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"# Re\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"cap\"}}]}\n\ndata: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":2,\"cost\":0.01}}\n\ndata: [DONE]\n\n";
+        let (base, bodies) = server(|_, _, _| (200, SSE.into()));
+        let mut seen = vec![];
+        let r = adapter(format!("{base}/v1"), true).chat_stream("m", Some("sys"), "hi", 10, &mut |t| seen.push(t.to_string())).unwrap();
+        assert_eq!(seen, ["# Re", "# Recap"]);
+        assert_eq!((r.text.as_str(), r.tokens, r.cost), ("# Recap", Some((5, 2)), Cost::Usd { usd: 0.01 }));
+        let sent: Value = serde_json::from_slice(&bodies.lock().unwrap()[0]).unwrap();
+        assert_eq!(sent["stream"], true);
+
+        let whole = stub(vec![("/v1/chat/completions", 200, r#"{"choices":[{"message":{"content":"All at once"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"cost":0.02}}"#)]);
+        let mut seen = vec![];
+        let r = adapter(format!("{whole}/v1"), true).chat_stream("m", None, "hi", 10, &mut |t| seen.push(t.to_string())).unwrap();
+        assert_eq!((seen, r.text.as_str(), r.cost), (vec!["All at once".to_string()], "All at once", Cost::Usd { usd: 0.02 }));
+
+        let (broken, _) = server(|_, _, _| (200, "data: {\"choices\":[{\"delta\":{\"content\":\"# Re\"}}]}\n\ndata: {\"error\":{\"message\":\"Provider died\"}}\n\n".into()));
+        let e = adapter(format!("{broken}/v1"), true).chat_stream("m", None, "hi", 10, &mut |_| {}).unwrap_err();
+        assert!(e.ends_with("Provider died"), "{e}");
+        let refused = stub(vec![("/v1/chat/completions", 402, r#"{"error":{"message":"Insufficient credits"}}"#)]);
+        let e = adapter(format!("{refused}/v1"), true).chat_stream("m", None, "hi", 10, &mut |_| {}).unwrap_err();
+        assert!(e.ends_with("Insufficient credits"), "{e}");
     }
 
     #[test]

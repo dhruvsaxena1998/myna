@@ -55,6 +55,30 @@ test("a meeting an Endpoint left incomplete offers Transcribe locally beside Try
   await expect(page.getByRole("button", { name: "Transcribe locally" })).toHaveCount(1);
 });
 
+test("Rename names a meeting, Delete asks first, and Clear all deletes every meeting", async ({ page }) => {
+  await open(page, "meeting_rename: () => {}, meeting_delete: () => {},");
+  const row = page.getByRole("listitem").filter({ hasText: "11:00" });
+  await row.hover();
+  await row.getByRole("button", { name: "Rename" }).click();
+  await row.getByRole("textbox", { name: "Meeting name" }).fill("Launch sync");
+  await row.getByRole("textbox", { name: "Meeting name" }).press("Enter");
+  expect(await calls(page, "meeting_rename")).toEqual([{ id: 5, title: "Launch sync" }]);
+  await row.getByRole("button", { name: "Rename" }).click();
+  await row.getByRole("textbox", { name: "Meeting name" }).press("Escape");
+  expect(await calls(page, "meeting_rename")).toHaveLength(1);
+
+  await row.getByRole("button", { name: "Delete" }).click();
+  await row.getByRole("button", { name: "Cancel" }).click();
+  expect(await calls(page, "meeting_delete")).toEqual([]);
+  await row.getByRole("button", { name: "Delete" }).click();
+  await row.getByRole("button", { name: "Delete" }).click();
+  expect(await calls(page, "meeting_delete")).toEqual([{ id: 5 }]);
+
+  await page.getByRole("button", { name: "Clear all" }).click();
+  await page.getByRole("button", { name: "Delete all" }).click();
+  expect(await calls(page, "meeting_delete")).toEqual([{ id: 5 }, { id: null }]);
+});
+
 test("Start notes starts, the live card shows the recording, and Stop ends it", async ({ page }) => {
   await open(page);
   await page.getByRole("button", { name: "Start notes" }).click();
@@ -127,6 +151,45 @@ const MUTED = JSON.stringify([
   line(5, "Me", 40000, "I said this muted but keep it.", { muted: true, included: true }),
 ]);
 
+test("Play loads the meeting's audio once, a paragraph's time plays from there, and the paragraph being said is highlighted", async ({ page }) => {
+  const segs = JSON.stringify([
+    { ...line(1, "Me", 1000, "Okay,"), end_ms: 1800 }, { ...line(2, "Me", 2000, "let's start."), end_ms: 3000 },
+    { ...line(3, "Them", 75000, "Launch is still the 18th."), end_ms: 78000 },
+  ]);
+  await page.addInitScript(() => {
+    // No real audio in the test: play and the playhead are driven by hand.
+    HTMLMediaElement.prototype.play = function () { this.dispatchEvent(new Event("play")); return Promise.resolve(); };
+    HTMLMediaElement.prototype.pause = function () { this.dispatchEvent(new Event("pause")); };
+    Object.defineProperty(HTMLMediaElement.prototype, "currentTime", { get() { return this._t ?? 0; }, set(v) { this._t = v; this.dispatchEvent(new Event("timeupdate")); } });
+  });
+  await open(page, `meeting_audio: () => "/data/meetings/5/mix.wav", meeting_page: ({ id }) => ({ ...${MEETINGS}.find((m) => m.id === id), segments: ${segs} }),`);
+  await page.getByRole("listitem").filter({ hasText: "11:00" }).getByRole("button").first().click();
+  const player = page.getByRole("group", { name: "Meeting audio" });
+  await expect(player).toContainText("42:00");
+  expect(await calls(page, "meeting_audio")).toEqual([]);
+
+  await player.getByRole("button", { name: "Play" }).click();
+  expect(await calls(page, "meeting_audio")).toEqual([{ id: 5 }]);
+  await expect(page.locator("audio")).toHaveAttribute("src", "asset://localhost/data/meetings/5/mix.wav");
+  await player.getByRole("button", { name: "Pause" }).click();
+
+  const rows = page.locator(".seg");
+  await expect(rows).toHaveCount(2); // "Okay," and "let's start." are one paragraph
+  await expect(rows.first()).toContainText("Okay, let's start.");
+  await page.getByRole("button", { name: "Play from 01:15" }).click();
+  await expect(player).toContainText("01:15");
+  await expect(rows.nth(1)).toHaveClass(/playing/);
+  await expect(rows.first()).not.toHaveClass(/playing/);
+  expect(await calls(page, "meeting_audio")).toHaveLength(1);
+});
+
+test("a meeting whose audio is gone says so when Play is pressed", async ({ page }) => {
+  await open(page, `meeting_audio: () => { throw "This meeting's audio isn't on this Mac anymore."; },`);
+  await page.getByRole("listitem").filter({ hasText: "11:00" }).getByRole("button").first().click();
+  await page.getByRole("group", { name: "Meeting audio" }).getByRole("button", { name: "Play" }).click();
+  await expect(page.getByText("This meeting's audio isn't on this Mac anymore.")).toBeVisible();
+});
+
 test("lines said while muted collapse into one row, Include keeps them with a marker, and Copy asks the backend", async ({ page }) => {
   await open(page, `meeting_page: () => ({ ...${MEETINGS}[0], segments: window.__lines ?? ${MUTED} }),
     segments_include: ({ ids }) => { window.__lines = ${MUTED}.map((l) => ids.includes(l.id) ? { ...l, hidden: false, included: true, text: "Said muted, kept." } : l); }`);
@@ -176,6 +239,19 @@ test("the live card says how the mic is while the add-on mirrors it", async ({ p
   await expect(card).toContainText("Mic live · mirrored from Teams");
   await emit(page, "meeting-running", { id: 6, started: Date.now(), source: "Microsoft Teams", mic: "muted", words: "Muted · mirrored from Teams" });
   await expect(card).toContainText("Muted · mirrored from Teams");
+});
+
+test("Pause on the live card pauses the recording, and the card says Paused with Resume", async ({ page }) => {
+  await open(page, "meeting_pause: () => {},");
+  const started = Date.now();
+  await emit(page, "meeting-running", { id: 6, started, source: null, mic: null, words: "Mic live" });
+  await page.getByRole("region", { name: "Meeting recording in progress" }).getByRole("button", { name: "Pause" }).click();
+  expect(await calls(page, "meeting_pause")).toEqual([{ paused: true }]);
+  await emit(page, "meeting-running", { id: 6, started, source: null, mic: "paused", words: "Paused" });
+  const card = page.getByRole("region", { name: "Meeting recording paused" });
+  await expect(card).toContainText("Paused");
+  await card.getByRole("button", { name: "Resume" }).click();
+  expect(await calls(page, "meeting_pause")).toEqual([{ paused: true }, { paused: false }]);
 });
 
 test("meeting-open, from the pill or the menubar, goes to that meeting from any view", async ({ page }) => {
@@ -283,6 +359,12 @@ test("Regenerate: template, prompt and model for this run only, the estimate abo
   await expect(page.getByText("Couldn’t summarize: The model is down.")).toBeVisible();
   await page.getByRole("button", { name: "Try again" }).click();
   expect(await calls(page, "summary_run")).toEqual([ask, ask]);
+  // The Summary shows as the model writes it, in place of the one showing, then the kept version takes its place.
+  await emit(page, "meeting-summary", { id: 5, state: "writing", text: "# Act" });
+  await expect(page.getByRole("heading", { name: "Act", exact: true })).toBeVisible();
+  await emit(page, "meeting-summary", { id: 5, state: "writing", text: "# Actions\n\n- Priya: ship" });
+  await expect(page.getByText("Priya: ship")).toBeVisible();
+  await expect(page.locator(".sum")).toHaveCount(1);
   const before = (await calls(page, "summary_get")).length;
   await emit(page, "meeting-summary", { id: 5, state: "done", version: version(10, "Action items", "# Actions") });
   await expect.poll(async () => (await calls(page, "summary_get")).length).toBe(before + 1);

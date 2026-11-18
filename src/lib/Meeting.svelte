@@ -17,9 +17,9 @@
 </script>
 
 <script lang="ts">
-  import { invoke } from "@tauri-apps/api/core";
+  import { convertFileSrc, invoke } from "@tauri-apps/api/core";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { tick } from "svelte";
+  import { tick, untrack } from "svelte";
   import type { Ai, Model } from "./AiProviders.svelte";
   import HostPill from "./HostPill.svelte";
   import { changes, clock, dayHead, groups, hm, meta, writing, type CleanupRun, type Cost, type Page, type Progress, type SummaryRun, type Version } from "./meetings";
@@ -42,11 +42,44 @@
   let form = $state({ tpl: "", prompt: "", pick: "" }); // pick: "provider id|model"
   let est = $state<number | null>(null);
 
+  // Play: the meeting's audio, both sides mixed, loaded the first time Play is pressed.
+  let audio = $state<HTMLAudioElement>();
+  let src = $state("");
+  let paused = $state(true);
+  let at = $state(0); // where it's playing, ms
+  // svelte-ignore state_referenced_locally
+  let length = $state(page.duration_ms ?? 0); // the page is remade for each meeting
+  let audioErr = $state("");
+  async function play(from?: number) {
+    if (!audio) return;
+    audioErr = "";
+    if (!src) {
+      try {
+        src = convertFileSrc(await invoke<string>("meeting_audio", { id: page.id }));
+      } catch (err) {
+        return void (audioErr = String(err));
+      }
+      await tick();
+      from ??= at; // dragged before the audio loaded
+    }
+    if (from !== undefined) audio.currentTime = from / 1000;
+    audio.play().catch((err) => (audioErr = `Couldn't play the audio: ${err}`));
+  }
+  // The row being said: the last one starting at or before the playhead, once it has played.
+  const playing = $derived.by(() => {
+    if (paused && !at) return null;
+    const row = rows.findLast((g) => ("left" in g ? g.left : g.lines)[0].start_ms <= at);
+    return row ? ("left" in row ? row.left : row.lines)[0].id : null;
+  });
+  $effect(() => {
+    if (panel && playing !== null && !paused) document.getElementById(`seg-${playing}`)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  });
+
   const date = $derived(dayHead(page.started));
   const rows = $derived(groups(page.segments));
   const cleaned = $derived(page.segments.some((l) => l.clean));
   const shown = $derived(sum?.versions.find((v) => v.id === sum!.showing));
-  const busy = $derived(summary?.state === "reading" || summary?.state === "merging");
+  const busy = $derived(summary?.state === "reading" || summary?.state === "merging" || summary?.state === "writing");
   let sumModel = $state<{ provider: number; model: string } | null>(null); // the Summary model (summary::model), Main's unless the user picked one
   let sumErr = $state(""); // why there's none: "Summary model: Not set", or Main's
   const done = $derived(summary?.state === "done" ? summary : null);
@@ -76,8 +109,12 @@
   const own = $derived(sumErr.startsWith("Summary model")); // the user's own pick is Not set, not Main
   // On open, and when a run finishes: the newest version shows.
   $effect(() => {
-    void done;
-    load();
+    // The new version shows at once, so the streamed text never gives way to the old one while the list loads.
+    const v = done?.version;
+    untrack(() => {
+      if (v && sum) sum = { versions: [v, ...sum.versions.filter((x) => x.id !== v.id)], showing: v.id };
+      load();
+    });
   });
   // A model set in Settings shows here on coming back.
   $effect(() => {
@@ -115,8 +152,9 @@
   async function jump(e: MouseEvent) {
     const ms = (e.target as Element).closest<HTMLElement>("[data-ms]")?.dataset.ms;
     if (ms === undefined) return;
-    const first = (g: (typeof rows)[number]) => ("left" in g ? g.left[0] : g.line);
-    const row = rows.find((g) => first(g).start_ms >= +ms) ?? rows.at(-1);
+    const all = (g: (typeof rows)[number]) => ("left" in g ? g.left : g.lines);
+    const first = (g: (typeof rows)[number]) => all(g)[0];
+    const row = rows.find((g) => all(g).at(-1)!.start_ms >= +ms) ?? rows.at(-1); // the row holding the first line at or after it
     if (!row) return;
     (panel = true), (hit = first(row).id);
     await tick();
@@ -221,6 +259,21 @@
       <h1 id="mt">{page.title}</h1>
       <p class="meta">{date[1] ? `${date[1]} · ` : `${date[0]} · `}{meta(page)}</p>
       {#if page.note}<p class="note">{page.note}</p>{/if}
+      {#if !writing(page)}
+        <div class="player" role="group" aria-label="Meeting audio">
+          <!-- svelte-ignore a11y_media_has_caption -->
+          <audio bind:this={audio} {src} preload="metadata" onplay={() => (paused = false)} onpause={() => (paused = true)} onended={() => (paused = true)}
+            ontimeupdate={() => (at = audio!.currentTime * 1000)} onloadedmetadata={() => isFinite(audio!.duration) && (length = audio!.duration * 1000)}></audio>
+          <button class="btn icon" aria-label={paused ? "Play" : "Pause"} onclick={() => (paused ? play() : audio?.pause())}>
+            {@render icon(paused ? '<path d="M8 5.5v13l10.5-6.5z"/>' : '<path d="M8 5v14M16 5v14"/>')}
+          </button>
+          <span class="ptime">{clock(at)}</span>
+          <input type="range" aria-label="Position" min="0" max={Math.max(1, length)} step="1000" value={at}
+            oninput={(e) => { at = +e.currentTarget.value; if (src && audio) audio.currentTime = at / 1000; }} />
+          <span class="ptime">{clock(length)}</span>
+        </div>
+        {#if audioErr}<p class="err" role="status">{audioErr}</p>{/if}
+      {/if}
       <p class="err" role="status">{error}</p>
       {#if page.segments.length}
         <section class="sumdoc" aria-label="Summary">
@@ -253,7 +306,10 @@
               </div>
             </div>
           {/if}
-          {#if busy}
+          {#if summary?.state === "writing"}
+            <p class="sum-prog" role="status">Writing the {asks.get(page.id)?.template ?? "Summary"}…</p>
+            <div class="sum" aria-busy="true">{@html render(summary.text)}</div>
+          {:else if busy}
             <p class="sum-prog" role="status">{summary?.state === "reading" ? `Reading part ${summary.n} of ${summary.of}…` : `Writing the ${asks.get(page.id)?.template ?? "Summary"}…`}</p>
           {:else if summary?.state === "failed"}
             <p class="sum-prog" role="status"><span class="fail">Couldn’t summarize: {summary.error}</span> <button class="btn small" onclick={again}>Try again</button></p>
@@ -264,7 +320,7 @@
               <div class="end"><span class="help grow">Saving adds an Edited version. Regenerate never overwrites it.</span>
                 <button type="button" class="btn" onclick={() => (draft = null)}>Cancel</button><button class="btn primary">Save</button></div>
             </form>
-          {:else if shown}
+          {:else if shown && summary?.state !== "writing"}
             <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (the timestamps are buttons; this only hears their clicks) -->
             <div class="sum" onclick={jump}>{@html render(shown.text)}</div>
             <p class="sum-cost">{[cost(shown), shown.template, shown.model, `Summarized in ${shown.parts} part${shown.parts === 1 ? "" : "s"}`].join(" · ")}</p>
@@ -310,11 +366,12 @@
         {#if cleaned}<p class="tmeta">{orig ? "What Myna heard, before cleanup." : `Cleaned up by ${page.cleanup?.model ?? "AI"}${page.cleanup ? ` · ${price(page.cleanup.cost)}` : ""}. Point at an underlined word to see what Myna heard.`}</p>{/if}
         {#each rows as g}
           {#if "left" in g}
-            <div class="seg" class:hit={hit === g.left[0].id} id="seg-{g.left[0].id}" tabindex="-1"><div class="who"><b>Me</b><time>{clock(g.left[0].start_ms)}</time></div>
+            <div class="seg" class:hit={hit === g.left[0].id} class:playing={playing === g.left[0].id} id="seg-{g.left[0].id}" tabindex="-1"><div class="who"><b>Me</b><button class="at" aria-label="Play from {clock(g.left[0].start_ms)}" onclick={() => play(g.left[0].start_ms)}><time>{clock(g.left[0].start_ms)}</time></button></div>
               <p class="left"><span>Said while muted · left out</span><button class="btn small" onclick={() => oninclude(g.left.map((l) => l.id))}>Include</button></p></div>
           {:else}
-            <div class="seg" class:hit={hit === g.line.id} id="seg-{g.line.id}" tabindex="-1"><div class="who"><b>{g.line.speaker}</b><time>{clock(g.line.start_ms)}</time></div>
-              <p>{#if g.line.clean && !orig}{#each changes(g.line.text, g.line.clean) as c, i}{i ? " " : ""}{#if c.heard === undefined}{c.text}{:else}<mark class="chg" title={c.heard ? `Heard “${c.heard}”` : "Added in cleanup"}>{c.text}</mark>{/if}{/each}{:else}{g.line.text}{/if}{#if g.line.included}<span class="mark">Said while muted</span>{/if}</p></div>
+            {@const l = g.lines[0]}
+            <div class="seg" class:hit={hit === l.id} class:playing={playing === l.id} id="seg-{l.id}" tabindex="-1"><div class="who"><b>{l.speaker}</b><button class="at" aria-label="Play from {clock(l.start_ms)}" onclick={() => play(l.start_ms)}><time>{clock(l.start_ms)}</time></button></div>
+              <p>{#each g.lines as line, n}{n ? " " : ""}{#if line.clean && !orig}{#each changes(line.text, line.clean) as c, i}{i ? " " : ""}{#if c.heard === undefined}{c.text}{:else}<mark class="chg" title={c.heard ? `Heard “${c.heard}”` : "Added in cleanup"}>{c.text}</mark>{/if}{/each}{:else}{line.text}{/if}{/each}{#if l.included}<span class="mark">Said while muted</span>{/if}</p></div>
           {/if}
         {/each}
       </div>
@@ -355,6 +412,14 @@
   .who { display: flex; align-items: baseline; gap: var(--sp-2); }
   .who b { font-weight: var(--fw-semibold); }
   .who time { color: var(--text-3); font-size: var(--fs-footnote); font-variant-numeric: tabular-nums; }
+  .at { padding: 0 var(--sp-1); margin: 0 calc(-1 * var(--sp-1)); border: 0; border-radius: var(--r-sm); background: none; font: inherit; }
+  .at:hover { background: var(--fill-hover); }
+  .at:hover time { color: var(--accent-text); }
+  .at:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+  .seg.playing { margin: 0 calc(-1 * var(--sp-2)); padding-left: var(--sp-2); padding-right: var(--sp-2); border-radius: var(--r-md); background: var(--fill-hover); box-shadow: inset 2px 0 0 var(--accent); }
+  .player { display: flex; align-items: center; gap: var(--sp-2); margin-top: var(--sp-3); max-width: 520px; }
+  .player input { flex: 1; min-width: 0; accent-color: var(--accent); }
+  .ptime { color: var(--text-3); font-size: var(--fs-footnote); font-variant-numeric: tabular-nums; }
   .seg p { margin: 0; font-size: var(--fs-reading); line-height: var(--lh-reading); overflow-wrap: anywhere; }
   .left { display: flex; align-items: center; gap: var(--sp-2); color: var(--text-3); font-size: var(--fs-footnote); }
   .btn.small { height: 24px; padding: 0 10px; font-size: var(--fs-footnote); }

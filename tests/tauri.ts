@@ -11,6 +11,7 @@ export async function fakeTauri(page: Page, handlers: string) {
     const calls: [string, unknown][] = ((window as any).__calls = []);
     (window as any).__TAURI_INTERNALS__ = {
       metadata: { currentWindow: { label: "settings" }, currentWebview: { label: "settings" } },
+      convertFileSrc: (path: string) => `asset://localhost${path}`,
       transformCallback: (cb: Function) => { const id = Object.keys(cbs).length + 1; cbs[id] = cb; return id; },
       invoke: async (cmd: string, args: unknown) => {
         calls.push([cmd, args]);

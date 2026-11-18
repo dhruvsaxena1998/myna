@@ -64,6 +64,9 @@ struct VoiceItem(MenuItem<Wry>);
 struct MeetItem {
     item: MenuItem<Wry>,
     note: MenuItem<Wry>,
+    /// "Pause recording" / "Resume recording", in the menu only while recording (menus can't hide an item).
+    pause: MenuItem<Wry>,
+    menu: tauri::menu::Menu<Wry>,
 }
 
 /// The last meetings under "Recent" in the menubar menu. Tauri menus can't hide an item, so they go in and out.
@@ -632,6 +635,34 @@ fn meeting_local(s: tauri::State<Arc<MeetingSession>>, id: i64) -> Result<(), St
     s.retry_local(id)
 }
 
+/// Play on a meeting's page: the path of its mixed audio, which the page may now load and nothing else near it.
+#[tauri::command]
+async fn meeting_audio(app: AppHandle, s: tauri::State<'_, Arc<MeetingSession>>, id: i64) -> Result<String, String> {
+    let s = s.inner().clone();
+    // An hour of audio takes a moment to mix the first time.
+    let path = tauri::async_runtime::spawn_blocking(move || s.audio(id)).await.map_err(|e| e.to_string())??;
+    app.asset_protocol_scope().allow_file(&path).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// Pause and Resume on the recording pill and the Meetings list's live card.
+#[tauri::command]
+fn meeting_pause(s: tauri::State<Arc<MeetingSession>>, paused: bool) -> Result<(), String> {
+    s.pause(paused)
+}
+
+/// Rename on the Meetings list.
+#[tauri::command]
+fn meeting_rename(s: tauri::State<Arc<MeetingSession>>, id: i64, title: String) -> Result<(), String> {
+    s.rename(id, &title)
+}
+
+/// Delete on a meeting in the Meetings list, or Clear all when `id` is none.
+#[tauri::command]
+fn meeting_delete(s: tauri::State<Arc<MeetingSession>>, id: Option<i64>) -> Result<(), String> {
+    s.delete(id)
+}
+
 /// Every meeting, newest first, for the Meetings list.
 #[tauri::command]
 fn meetings_list(d: tauri::State<Data>) -> Result<Vec<meeting::Row>, String> {
@@ -757,7 +788,7 @@ fn transcript_prefs_set(d: tauri::State<Data>, prefs: transcript::Prefs) -> Resu
 }
 
 /// Runs meeting `id`'s Summary on its own thread when it should (summary::auto), saying how it goes with
-/// `meeting-summary`: "reading" part `n` of `of`, "merging", then "done" with the version, "failed" with why,
+/// `meeting-summary`: "reading" part `n` of `of`, "merging", "writing" with the text so far, then "done" with the version, "failed" with why,
 /// or "skipped" (Summarize when a meeting finishes is off, or Main is Not set).
 fn summarize(app: &AppHandle, id: i64) {
     let app = app.clone();
@@ -768,6 +799,7 @@ fn summarize(app: &AppHandle, id: i64) {
         let mut progress = |p: summary::Progress| match p {
             summary::Progress::Part(n, of) => say(serde_json::json!({ "id": id, "state": "reading", "n": n, "of": of })),
             summary::Progress::Merging => say(serde_json::json!({ "id": id, "state": "merging" })),
+            summary::Progress::Writing(text) => say(serde_json::json!({ "id": id, "state": "writing", "text": text })),
         };
         say(match summary::auto(&d.db, &open, id, &mut progress) {
             Ok(Some(v)) => serde_json::json!({ "id": id, "state": "done", "version": v }),
@@ -816,6 +848,7 @@ async fn summary_run(app: AppHandle, id: i64, template: String, prompt: String, 
             summary::run(&d.db, &*backend, id, &ask, &mut |p| match p {
                 summary::Progress::Part(n, of) => say(serde_json::json!({ "id": id, "state": "reading", "n": n, "of": of })),
                 summary::Progress::Merging => say(serde_json::json!({ "id": id, "state": "merging" })),
+            summary::Progress::Writing(text) => say(serde_json::json!({ "id": id, "state": "writing", "text": text })),
             })
         };
         let r = run();
@@ -1142,7 +1175,7 @@ fn open_update(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![pill::pill_hit, dictation_fix, fix_take, debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, ai_test_draft, ai_decide_models, ai_decide_set, ai_decide, storage_status, storage_reveal, models_list, model_select, model_download, model_cancel, model_delete, model_add, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, meeting_get, meeting_set, meeting_text, segments_include, addon_get, addon_disconnect, addon_folder, meeting_retry, meeting_local, meeting_stt_get, meeting_stt_local, meeting_stt_models, meeting_stt_test, meeting_open, meetings_list, meeting_page, meeting_running, meeting_toggle, call_start, call_dismiss, call_keep, call_stop, summary_get, summary_pick, summary_delete, summary_edit, summary_run, summary_estimate, summary_model, summary_prefs_get, summary_prefs_set, summary_templates_get, summary_templates_set, transcript_prefs_get, transcript_prefs_set, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
+        .invoke_handler(tauri::generate_handler![pill::pill_hit, dictation_fix, fix_take, debug_on, ai_get, ai_add, ai_remove, ai_set, ai_models, ai_test, ai_test_draft, ai_decide_models, ai_decide_set, ai_decide, storage_status, storage_reveal, models_list, model_select, model_download, model_cancel, model_delete, model_add, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, meeting_get, meeting_set, meeting_text, segments_include, addon_get, addon_disconnect, addon_folder, meeting_retry, meeting_local, meeting_rename, meeting_delete, meeting_audio, meeting_pause, meeting_stt_get, meeting_stt_local, meeting_stt_models, meeting_stt_test, meeting_open, meetings_list, meeting_page, meeting_running, meeting_toggle, call_start, call_dismiss, call_keep, call_stop, summary_get, summary_pick, summary_delete, summary_edit, summary_run, summary_estimate, summary_model, summary_prefs_get, summary_prefs_set, summary_templates_get, summary_templates_set, transcript_prefs_get, transcript_prefs_set, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::Updates::default())
         .setup(|app| {
@@ -1218,7 +1251,8 @@ pub fn run() {
             let meet_note = MenuItemBuilder::with_id("meeting-note", "Meeting notes are off. Turn them on in Settings.").enabled(false).build(app)?;
             let menu = MenuBuilder::new(app).item(&voice_item).separator().item(&meet_item).item(&meet_note).separator().item(&open_item).item(&settings_item).separator().item(&quit_item).build()?;
             app.manage(VoiceItem(voice_item));
-            app.manage(MeetItem { item: meet_item, note: meet_note });
+            let meet_pause = MenuItemBuilder::with_id("meeting-pause", "Pause recording").build(app)?;
+            app.manage(MeetItem { item: meet_item, note: meet_note, pause: meet_pause, menu: menu.clone() });
             // Not in the menu until a Fast model is set; sync_clean_item adds it.
             let clean_item = MenuItemBuilder::with_id("dictate-clean", "Start voice typing with cleanup").enabled(false).build(app)?;
             app.manage(CleanItem { item: clean_item, menu: menu.clone() });
@@ -1253,6 +1287,10 @@ pub fn run() {
                     "dictate" => app.state::<Arc<Session>>().toggle(false),
                     "dictate-clean" => app.state::<Arc<Session>>().toggle(true),
                     "meeting" => toggle_meeting(app),
+                    "meeting-pause" => {
+                        let app = app.clone(); // off the main thread: pausing updates this menu, which waits on it
+                        std::thread::spawn(move || drop(app.state::<Arc<MeetingSession>>().toggle_pause()));
+                    }
                     id if id.starts_with("recent-") => {
                         if let Ok(id) = id["recent-".len()..].parse() {
                             meeting_open(app.clone(), id);

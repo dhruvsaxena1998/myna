@@ -21,7 +21,12 @@ pub struct Ask {
 pub enum Progress {
     Part(usize, usize),
     Merging,
+    /// The Summary so far, as the model writes it.
+    Writing(String),
 }
+
+/// How often the growing Summary goes to the page, at most.
+const EVERY: std::time::Duration = std::time::Duration::from_millis(80);
 
 /// A kept Summary version.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -89,7 +94,13 @@ pub fn run(db: &Mutex<Connection>, backend: &dyn Backend, meeting: i64, ask: &As
         }
         notes = next;
     }
-    let r = backend.chat(&ask.model, Some(&system), &format!("<notes>\n{}\n</notes>", notes.join("\n\n")), SECS)?;
+    let mut last: Option<std::time::Instant> = None;
+    let r = backend.chat_stream(&ask.model, Some(&system), &format!("<notes>\n{}\n</notes>", notes.join("\n\n")), SECS, &mut |text| {
+        if last.is_none_or(|t| t.elapsed() >= EVERY) {
+            last = Some(std::time::Instant::now());
+            progress(Progress::Writing(text.to_string()));
+        }
+    })?;
     cost.push(r.cost);
     let v = Version {
         id: 0,
@@ -499,13 +510,13 @@ mod tests {
         assert!(seen[1].1.contains("[00:05:00] Me: ship it"));
         assert!(seen[2].0.starts_with("Summarize the meeting."));
         assert!(seen[2].1.contains("note 1") && seen[2].1.contains("note 2"));
-        assert_eq!(steps, [Progress::Part(1, 2), Progress::Part(2, 2), Progress::Merging]);
+        assert_eq!(steps, [Progress::Part(1, 2), Progress::Part(2, 2), Progress::Merging, Progress::Writing("# Recap".into())]);
         assert_eq!((v.text.as_str(), v.template.as_str(), v.provider.as_str(), v.parts, v.edited), ("# Recap", "Recap", "OpenRouter", 2, false));
         assert_eq!(v.cost, Cost::Usd { usd: 0.03 });
     }
 
     fn line(id: i64, secs: i64, text: &str) -> Line {
-        Line { id, speaker: "Me".into(), start_ms: secs * 1000, text: text.into(), clean: None, muted: false, included: false, hidden: false }
+        Line { id, speaker: "Me".into(), start_ms: secs * 1000, end_ms: secs * 1000, text: text.into(), clean: None, muted: false, included: false, hidden: false }
     }
     fn ids(c: Vec<Vec<&Line>>) -> Vec<Vec<i64>> {
         c.into_iter().map(|p| p.into_iter().map(|l| l.id).collect()).collect()
@@ -554,7 +565,7 @@ mod tests {
         let last = &seen[5];
         assert!(last.0.starts_with("Summarize.") && last.1.matches("combined").count() == 2);
         assert_eq!((v.text.as_str(), v.parts), ("# Recap", 3));
-        assert_eq!(steps.last(), Some(&Progress::Merging));
+        assert_eq!(steps.last(), Some(&Progress::Writing("# Recap".into())));
     }
 
     #[test]
