@@ -30,6 +30,7 @@
     if (name.trim() && name.trim() !== m.title) act("meeting_rename", { id: m.id, title: name });
   }
   const focus = (el: HTMLInputElement) => (el.focus(), el.select());
+  const focusOn = (el: HTMLElement) => el.focus();
 
   // One tick a second drives the recording's timer.
   let now = $state(Date.now());
@@ -122,8 +123,9 @@
                 {#if m.state === "failed"}<button class="btn" onclick={() => onretry(m.id)}>Try again</button>{/if}
                 {#if deleting === m.id}
                   <span class="ask">Delete this meeting and its audio?</span>
-                  <button class="btn" onclick={() => (deleting = null)}>Cancel</button>
-                  <button class="btn danger" onclick={() => ((deleting = null), act("meeting_delete", { id: m.id }))}>Delete</button>
+                  <!-- Takes focus from the Delete icon it replaced; Esc cancels, like Clear all. -->
+                  <button class="btn" use:focusOn onclick={() => (deleting = null)} onkeydown={(e) => e.key === "Escape" && (deleting = null)}>Cancel</button>
+                  <button class="btn danger" onclick={() => ((deleting = null), act("meeting_delete", { id: m.id }))} onkeydown={(e) => e.key === "Escape" && (deleting = null)}>Delete</button>
                 {:else if editing !== m.id}
                   <span class="acts">
                     <button class="icon" aria-label="Rename" title="Rename" onclick={() => ((name = m.title), (editing = m.id))}>{@render icon('<path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4"/>')}</button>

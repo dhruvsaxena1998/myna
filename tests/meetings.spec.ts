@@ -68,6 +68,10 @@ test("Rename names a meeting, Delete asks first, and Clear all deletes every mee
   expect(await calls(page, "meeting_rename")).toHaveLength(1);
 
   await row.getByRole("button", { name: "Delete" }).click();
+  await expect(row.getByRole("button", { name: "Cancel" })).toBeFocused(); // focus moves to the confirm
+  await page.keyboard.press("Escape");
+  await expect(row.getByText("Delete this meeting and its audio?")).toBeHidden();
+  await row.getByRole("button", { name: "Delete" }).click();
   await row.getByRole("button", { name: "Cancel" }).click();
   expect(await calls(page, "meeting_delete")).toEqual([]);
   await row.getByRole("button", { name: "Delete" }).click();
