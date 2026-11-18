@@ -55,6 +55,30 @@ test("a meeting an Endpoint left incomplete offers Transcribe locally beside Try
   await expect(page.getByRole("button", { name: "Transcribe locally" })).toHaveCount(1);
 });
 
+test("Rename names a meeting, Delete asks first, and Clear all deletes every meeting", async ({ page }) => {
+  await open(page, "meeting_rename: () => {}, meeting_delete: () => {},");
+  const row = page.getByRole("listitem").filter({ hasText: "11:00" });
+  await row.hover();
+  await row.getByRole("button", { name: "Rename" }).click();
+  await row.getByRole("textbox", { name: "Meeting name" }).fill("Launch sync");
+  await row.getByRole("textbox", { name: "Meeting name" }).press("Enter");
+  expect(await calls(page, "meeting_rename")).toEqual([{ id: 5, title: "Launch sync" }]);
+  await row.getByRole("button", { name: "Rename" }).click();
+  await row.getByRole("textbox", { name: "Meeting name" }).press("Escape");
+  expect(await calls(page, "meeting_rename")).toHaveLength(1);
+
+  await row.getByRole("button", { name: "Delete" }).click();
+  await row.getByRole("button", { name: "Cancel" }).click();
+  expect(await calls(page, "meeting_delete")).toEqual([]);
+  await row.getByRole("button", { name: "Delete" }).click();
+  await row.getByRole("button", { name: "Delete" }).click();
+  expect(await calls(page, "meeting_delete")).toEqual([{ id: 5 }]);
+
+  await page.getByRole("button", { name: "Clear all" }).click();
+  await page.getByRole("button", { name: "Delete all" }).click();
+  expect(await calls(page, "meeting_delete")).toEqual([{ id: 5 }, { id: null }]);
+});
+
 test("Start notes starts, the live card shows the recording, and Stop ends it", async ({ page }) => {
   await open(page);
   await page.getByRole("button", { name: "Start notes" }).click();

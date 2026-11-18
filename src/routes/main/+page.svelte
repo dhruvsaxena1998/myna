@@ -187,7 +187,7 @@
     {:else if view === "meetings" && page}
       {#key page.id}<Meeting {page} progress={progress[page.id]} summary={summaries[page.id]} cleanup={cleanups[page.id]} onback={() => (page = null)} onretry={retry} onlocal={local} oninclude={include} />{/key}
     {:else if view === "meetings"}
-      <Meetings {meetings} {running} {progress} on={notes.on} error={meetingError} onenable={enable} onopen={openMeeting} onretry={retry} onlocal={local}
+      <Meetings {meetings} {running} {progress} on={notes.on} error={meetingError} onenable={enable} onopen={openMeeting} onretry={retry} onlocal={local} onchange={refresh}
         onstart={() => invoke("meeting_toggle")} onstop={() => invoke("meeting_toggle")} />
     {:else if !data.traces?.ok || ((view === "nerds" || view === "yours") && !data.all?.ok)}
       {@const failed = !data.traces?.ok ? data.traces : data.all}

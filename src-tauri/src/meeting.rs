@@ -703,6 +703,47 @@ impl Meetings {
         state.is_some_and(|s| s == "failed")
     }
 
+    /// Renames meeting `id`; a blank name is refused.
+    pub fn rename(&self, id: i64, title: &str) -> Result<(), String> {
+        let title = title.trim();
+        if title.is_empty() {
+            return Err("A meeting needs a name.".into());
+        }
+        let title: String = title.chars().take(200).collect();
+        let n = self.db.lock().unwrap().execute("UPDATE meeting SET title = ?1 WHERE id = ?2", (&title, id)).map_err(|e| format!("Couldn't rename the meeting: {e}"))?;
+        if n == 0 { Err("That meeting isn't there anymore.".into()) } else { Ok(()) }
+    }
+
+    /// Deletes meeting `id`, or every meeting when none, with its transcript, summaries and audio. One still recording
+    /// or being written up is left alone.
+    pub fn delete(&self, id: Option<i64>) -> Result<(), String> {
+        let err = |e: rusqlite::Error| format!("Couldn't delete the meeting: {e}");
+        let ids: Vec<i64> = {
+            let db = self.db.lock().unwrap();
+            let ids: Vec<i64> = db
+                .prepare(&format!("SELECT id FROM meeting WHERE (?1 IS NULL OR id = ?1) AND state NOT IN {UNFINISHED}"))
+                .and_then(|mut q| q.query_map([id], |r| r.get(0)).and_then(|r| r.collect()))
+                .map_err(err)?;
+            let tx = db.unchecked_transaction().map_err(err)?;
+            for m in &ids {
+                for table in ["segment", "mute_event", "caption_event", "chunk_note", "summary"] {
+                    tx.execute(&format!("DELETE FROM {table} WHERE meeting = ?1"), [m]).map_err(err)?;
+                }
+                tx.execute("DELETE FROM meeting WHERE id = ?1", [m]).map_err(err)?;
+            }
+            tx.commit().map_err(err)?;
+            ids
+        };
+        if id.is_some() && ids.is_empty() {
+            return Err("That meeting is still being recorded or written up.".into());
+        }
+        // The rows are gone, so a folder left behind is only wasted space, never a broken meeting.
+        for m in ids {
+            let _ = std::fs::remove_dir_all(self.dir.join("meetings").join(m.to_string()));
+        }
+        Ok(())
+    }
+
     /// Writes up meeting `id` from its two tracks: Me from the mic, Them from the call, merged by time. `progress`
     /// gets 0 to 1 as chunks finish, the last step being telling the voices on Them apart. Fails, with the reason kept in the meeting, without touching the audio.
     pub fn transcribe(&self, id: i64, stt: &dyn Stt, who: &dyn Voices, via: Via, progress: &mut dyn FnMut(f32)) -> Result<(), String> {
@@ -1697,6 +1738,35 @@ pub(crate) mod tests {
         assert_eq!(p.meeting.title, "Untitled meeting");
         assert!(page(&db, 2).is_err(), "still recording: no page");
         assert!(page(&db, 99).is_err());
+    }
+
+    #[test]
+    fn rename_and_delete_leave_a_meeting_being_written_up_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let m = meetings(tmp.path(), Fake(0));
+        {
+            let db = m.db.lock().unwrap();
+            for (started, state) in [(10, "done"), (20, "failed"), (30, "transcribing")] {
+                db.execute("INSERT INTO meeting(started, state) VALUES (?1, ?2)", (started, state)).unwrap();
+                db.execute("INSERT INTO segment(meeting, start_ms, end_ms, speaker, text) VALUES (last_insert_rowid(), 0, 0, 'Me', 'hi')", []).unwrap();
+            }
+        }
+        for id in 1..=3 {
+            std::fs::create_dir_all(tmp.path().join(format!("meetings/{id}"))).unwrap();
+        }
+        m.rename(1, "  Standup  ").unwrap();
+        assert!(m.rename(1, "   ").is_err());
+        assert!(m.rename(99, "x").is_err());
+        assert_eq!(list(&m.db.lock().unwrap()).unwrap().iter().find(|r| r.id == 1).unwrap().title, "Standup");
+
+        assert!(m.delete(Some(3)).is_err(), "being written up");
+        m.delete(Some(1)).unwrap();
+        assert!(!tmp.path().join("meetings/1").exists());
+        m.delete(None).unwrap();
+        let db = m.db.lock().unwrap();
+        assert_eq!(list(&db).unwrap().iter().map(|r| r.id).collect::<Vec<_>>(), [3]);
+        assert_eq!(db.query_row("SELECT COUNT(*) FROM segment", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+        assert!(tmp.path().join("meetings/3").exists() && !tmp.path().join("meetings/2").exists());
     }
 
     #[test]

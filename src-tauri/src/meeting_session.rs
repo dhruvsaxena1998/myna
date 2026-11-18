@@ -183,6 +183,20 @@ impl MeetingSession {
         Ok(())
     }
 
+    /// Rename on the Meetings list; "Recent" in the menu shows the new name.
+    pub fn rename(&self, id: i64, title: &str) -> Result<(), String> {
+        self.meetings.rename(id, title)?;
+        self.world.recent();
+        Ok(())
+    }
+
+    /// Delete (one meeting) and Clear all (`id` none) on the Meetings list.
+    pub fn delete(&self, id: Option<i64>) -> Result<(), String> {
+        self.meetings.delete(id)?;
+        self.world.recent();
+        Ok(())
+    }
+
     /// At launch: finishes and writes up the meetings the app died or quit in the middle of.
     pub fn resume(self: &Arc<Self>) {
         for id in self.meetings.unfinished() {
