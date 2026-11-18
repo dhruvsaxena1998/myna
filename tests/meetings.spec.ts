@@ -554,6 +554,12 @@ test("no Summary yet: the transcript shows, Main Not set offers AI providers, an
   expect(await calls(page, "summary_run")).toEqual([{ id: 5, template: "Recap", prompt: "Write a Recap.", provider: 1, model: "big" }]);
 });
 
+test("no Summary and the AI providers can't be read: it says why instead of showing nothing", async ({ page }) => {
+  await open(page, `ai_get: () => { throw "database is locked"; }`);
+  await page.getByRole("button", { name: "Untitled meeting" }).first().click();
+  await expect(page.getByText("Couldn’t read your AI providers: database is locked")).toBeVisible();
+});
+
 test("the Summary model, not Main, is Regenerate's default; Not set says to set it and Set up opens Meeting notes", async ({ page }) => {
   await summary(page, [version(9, "Recap", "# Recap")], `summary_model: () => { if (window.__none) throw "Summary model: Not set"; return { provider: 1, model: "small" }; },`);
   await page.getByRole("button", { name: "Regenerate" }).click();

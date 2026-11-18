@@ -86,6 +86,7 @@
   const busy = $derived(summary?.state === "reading" || summary?.state === "merging" || summary?.state === "writing");
   let sumModel = $state<{ provider: number; model: string } | null>(null); // the Summary model (summary::model), Main's unless the user picked one
   let sumErr = $state(""); // why there's none: "Summary model: Not set", or Main's
+  let aiErr = $state(""); // the AI providers couldn't be read, so the Summary area can't offer anything
   const done = $derived(summary?.state === "done" ? summary : null);
   const split = (pick: string) => [+pick.slice(0, pick.indexOf("|")), pick.slice(pick.indexOf("|") + 1)] as const;
   const chosen = $derived(ai?.providers.find((p) => p.id === split(form.pick)[0]));
@@ -108,7 +109,7 @@
   const loadAi = () =>
     Promise.all([
       invoke<{ provider: number; model: string }>("summary_model").then((m) => ((sumModel = m), (sumErr = "")), (err) => ((sumModel = null), (sumErr = String(err)))),
-      invoke<Ai>("ai_get").then((a) => (ai = a), () => {}),
+      invoke<Ai>("ai_get").then((a) => ((ai = a), (aiErr = "")), (err) => (aiErr = String(err))),
     ]);
   const own = $derived(sumErr.startsWith("Summary model")); // the user's own pick is Not set, not Main
   // On open, and when a run finishes: the newest version shows.
@@ -400,6 +401,8 @@
             <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (the timestamps are buttons; this only hears their clicks) -->
             <div class="sum" onclick={jump}>{@html render(shown.text)}</div>
             <p class="sum-cost">{[cost(shown), shown.template, shown.model, `Summarized in ${shown.parts} part${shown.parts === 1 ? "" : "s"}`].join(" · ")}</p>
+          {:else if aiErr && !ai && !busy}
+            <p class="sum-prog fail" role="status">Couldn’t read your AI providers: {aiErr}</p>
           {:else if sum && ai && !busy}
             <div class="sum-empty">
               {#if sumModel}
