@@ -26,8 +26,9 @@
 
   // `onreload`: the page's lines changed in the backend (a speaker renamed), so it reads them again.
   // `error`: why something the main window did for this page (Include, Try again, a reload) failed.
-  let { page, progress, summary, cleanup, error: failed = "", onback, onretry, onlocal, oninclude, onreload }: {
-    page: Page; progress?: Progress; summary?: SummaryRun; cleanup?: CleanupRun; error?: string; onback: () => void; onretry: (id: number) => void; onlocal: (id: number) => void; oninclude: (ids: number[]) => void; onreload: () => Promise<void>;
+  // `ondelete`: the meeting is gone, so the page closes.
+  let { page, progress, summary, cleanup, error: failed = "", onback, onretry, onlocal, oninclude, onreload, ondelete }: {
+    page: Page; progress?: Progress; summary?: SummaryRun; cleanup?: CleanupRun; error?: string; onback: () => void; onretry: (id: number) => void; onlocal: (id: number) => void; oninclude: (ids: number[]) => void; onreload: () => Promise<void>; ondelete: () => void;
   } = $props();
   let copied = $state<"" | "doc" | "panel">("");
   let error = $state("");
@@ -38,6 +39,7 @@
   let orig = $state(false); // Show original: the transcript as Myna heard it, before cleanup
   let hit = $state<number | null>(null);
   let pop = $state<"" | "vers" | "regen">("");
+  let deleting = $state(false); // Delete was pressed: asking before the meeting goes
   let doomed = $state<number | null>(null); // the version whose × was pressed, asking before it goes
   let draft = $state<string | null>(null); // the Markdown being edited
   let templates = $state<Template[]>([]);
@@ -209,6 +211,10 @@
     if (a) start(a);
     else openRegen();
   }
+  async function remove() {
+    deleting = false;
+    if (await act(() => invoke("meeting_delete", { id: page.id }))) ondelete();
+  }
   const setup = () => invoke("settings_open", { page: own ? "meetings" : "ai" });
 
   async function save(e: SubmitEvent) {
@@ -219,6 +225,7 @@
   // speaker it is about to be merged into, waiting for the user to confirm.
   let spk = $state<{ row: number; from: string; name: string; err: string; merge: string | null } | null>(null);
   const focus = (el: HTMLInputElement) => (el.focus(), el.select());
+  const focusOn = (el: HTMLElement) => el.focus();
   const speakers = $derived([...new Set(page.segments.filter((l) => !l.hidden && l.speaker !== "Me").map((l) => l.speaker))]);
   function renameSpeaker(e: SubmitEvent) {
     e.preventDefault();
@@ -245,7 +252,7 @@
     if ((pop || spk) && !(e.target as Element).closest("[data-pop], [popover]")) (pop = ""), (spk = null);
   }
   function keys(e: KeyboardEvent) {
-    if (e.key === "Escape" && (pop || spk)) return void (e.preventDefault(), (pop = ""), (spk = null));
+    if (e.key === "Escape" && (pop || spk || deleting)) return void (e.preventDefault(), (pop = ""), (spk = null), (deleting = false));
     // Esc goes back and Space plays, unless something else wants the key: a field, an open menu, a modifier.
     const t = e.target as Element;
     if (e.defaultPrevented || pop || e.metaKey || e.ctrlKey || e.altKey || t.closest("input, textarea, select, [contenteditable]") || document.querySelector(":popover-open")) return;
@@ -329,6 +336,13 @@
   {/if}
   {#if shown}
     <button class="btn" onclick={() => copy("doc")}>{@render copyIcon(copied === "doc")}{copied === "doc" ? "Copied" : "Copy"}</button>
+  {/if}
+  {#if deleting}
+    <span class="del-ask">Delete this meeting and its audio?</span>
+    <button class="btn" use:focusOn onclick={() => (deleting = false)}>Cancel</button>
+    <button class="btn danger" onclick={remove}>Delete</button>
+  {:else if !writing(page) && !busy}
+    <button class="btn icon" aria-label="Delete meeting" title="Delete meeting" onclick={() => (deleting = true)}>{@render icon('<path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/>')}</button>
   {/if}
 </header>
 <div class="content" class:split={panel}>
@@ -555,6 +569,7 @@
   .vmenu { width: 340px; }
   .vrow { display: flex; align-items: center; gap: 2px; }
   .ask { flex: 1; padding: 8px 10px; }
+  .del-ask { color: var(--text-2); }
   .btn.danger { color: var(--danger-text); }
   .pk { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: stretch; padding: 4px 10px; border: 0; border-radius: var(--r-sm); background: none; color: var(--text); font: inherit; text-align: left; }
   .pk:hover, .pk:focus-visible { background: var(--accent); color: var(--on-accent); outline: none; }

@@ -83,6 +83,31 @@ test("Rename names a meeting, Delete asks first, and Clear all deletes every mee
   expect(await calls(page, "meeting_delete")).toEqual([{ id: 5 }, { id: null }]);
 });
 
+test("a meeting's page deletes it: Delete asks first, Esc and Cancel keep it, and Delete goes back to a list without it", async ({ page }) => {
+  await open(page, `meeting_delete: ({ id }) => { if (window.__locked) throw "database is locked"; window.__gone = id; },
+    meetings_list: () => ${MEETINGS}.filter((m) => m.id !== window.__gone),`);
+  await page.getByRole("button", { name: "Untitled meeting" }).first().click();
+  const del = page.getByRole("button", { name: "Delete meeting" });
+  await del.click();
+  await expect(page.getByRole("button", { name: "Cancel" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByText("Delete this meeting and its audio?")).toBeHidden();
+  await expect(page.getByRole("button", { name: "Back to meetings" })).toBeVisible(); // Esc closed the ask, not the page
+  await del.click();
+  await page.getByRole("button", { name: "Cancel" }).click();
+  expect(await calls(page, "meeting_delete")).toEqual([]);
+  await page.evaluate(() => ((window as any).__locked = true));
+  await del.click();
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(page.getByText("database is locked")).toBeVisible(); // a failure stays on the page, saying why
+  await page.evaluate(() => ((window as any).__locked = false));
+  await del.click();
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  expect((await calls(page, "meeting_delete")).at(-1)).toEqual({ id: 5 });
+  await expect(page.getByRole("heading", { name: "All meetings" })).toBeVisible();
+  await expect(page.getByRole("listitem")).toHaveCount(3);
+});
+
 test("Start notes starts, the live card shows the recording, and Stop ends it", async ({ page }) => {
   await open(page);
   await page.getByRole("button", { name: "Start notes" }).click();

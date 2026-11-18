@@ -190,7 +190,7 @@
       <header data-tauri-drag-region><h1>All meetings</h1></header>
       <div class="content"><ErrorState title="Myna couldn't read your meetings" message={data.meetings.error} /></div>
     {:else if view === "meetings" && page}
-      {#key page.id}<Meeting {page} progress={progress[page.id]} summary={summaries[page.id]} cleanup={cleanups[page.id]} error={meetingError} onback={() => ((page = null), (meetingError = ""))} onretry={retry} onlocal={local} oninclude={include} onreload={() => openMeeting(page!.id)} />{/key}
+      {#key page.id}<Meeting {page} progress={progress[page.id]} summary={summaries[page.id]} cleanup={cleanups[page.id]} error={meetingError} onback={() => ((page = null), (meetingError = ""))} onretry={retry} onlocal={local} oninclude={include} onreload={() => openMeeting(page!.id)} ondelete={() => ((page = null), refresh())} />{/key}
     {:else if view === "meetings"}
       <Meetings {meetings} {running} {progress} on={notes.on} error={meetingError} onenable={enable} onopen={openMeeting} onretry={retry} onlocal={local} onchange={refresh}
         onstart={() => invoke("meeting_toggle")} onstop={() => invoke("meeting_toggle")} />
