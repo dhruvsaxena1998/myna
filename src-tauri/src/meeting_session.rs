@@ -612,7 +612,7 @@ mod tests {
     fn rig(notes_on: bool, mic: Mic, denied: bool, them: impl crate::meeting::Them + 'static, tick: Duration) -> Rig {
         let tmp = tempfile::tempdir().unwrap();
         let db = Arc::new(Mutex::new(crate::storage::open(tmp.path()).unwrap()));
-        meeting::set(&db.lock().unwrap(), &meeting::Notes { on: notes_on, key: meeting::KEY.into(), keep_teams: false, keep_meet: false, offer_calls: true, stop_on_end: true }).unwrap();
+        meeting::set(&db.lock().unwrap(), &meeting::Notes { on: notes_on, key: meeting::KEY.into(), keep_teams: false, keep_meet: false, offer_calls: true, stop_on_end: true, show_pill: true }).unwrap();
         let meetings = Meetings::new(db.clone(), tmp.path().into(), Box::new(Fake(crate::runtime::RATE as usize)), Box::new(them));
         let saw = Arc::new(Mutex::new(vec![]));
         let fail = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -1028,7 +1028,7 @@ mod tests {
     fn asking(answer: Mic) -> (Arc<MeetingSession>, Arc<Mutex<Vec<Saw>>>, tempfile::TempDir) {
         let tmp = tempfile::tempdir().unwrap();
         let db = Arc::new(Mutex::new(crate::storage::open(tmp.path()).unwrap()));
-        meeting::set(&db.lock().unwrap(), &meeting::Notes { on: true, key: meeting::KEY.into(), keep_teams: false, keep_meet: false, offer_calls: true, stop_on_end: true }).unwrap();
+        meeting::set(&db.lock().unwrap(), &meeting::Notes { on: true, key: meeting::KEY.into(), keep_teams: false, keep_meet: false, offer_calls: true, stop_on_end: true, show_pill: true }).unwrap();
         let meetings = Meetings::new(db.clone(), tmp.path().into(), Box::new(Fake(crate::runtime::RATE as usize)), Box::new(Call(vec![])));
         let saw = Arc::new(Mutex::new(vec![]));
         let world = Scripted { mic: Mutex::new(Mic::Ask), on_ask: answer, denied: false, fail: Default::default(), saw: saw.clone(), keys: Default::default() };

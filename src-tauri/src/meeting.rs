@@ -35,6 +35,9 @@ pub struct Notes {
     /// Count down to a stop when the recorded call's app leaves (#214).
     #[serde(default = "yes")]
     pub stop_on_end: bool,
+    /// Show the recording pill while a meeting records; off, only the menu bar says it's recording.
+    #[serde(default = "yes")]
+    pub show_pill: bool,
 }
 
 fn yes() -> bool {
@@ -50,6 +53,7 @@ pub fn get(conn: &Connection) -> Result<Notes, String> {
         keep_meet: read_switch(conn, "meeting_keep_meet", false).map_err(err)?,
         offer_calls: read_switch(conn, "meeting_offer_calls", true).map_err(err)?,
         stop_on_end: read_switch(conn, "meeting_stop_on_end", true).map_err(err)?,
+        show_pill: read_switch(conn, "meeting_show_pill", true).map_err(err)?,
     })
 }
 
@@ -65,6 +69,7 @@ pub fn set(conn: &Connection, n: &Notes) -> Result<(), String> {
     write_switch(conn, "meeting_keep_meet", n.keep_meet).map_err(err)?;
     write_switch(conn, "meeting_offer_calls", n.offer_calls).map_err(err)?;
     write_switch(conn, "meeting_stop_on_end", n.stop_on_end).map_err(err)?;
+    write_switch(conn, "meeting_show_pill", n.show_pill).map_err(err)?;
     Ok(())
 }
 
@@ -1932,13 +1937,13 @@ pub(crate) mod tests {
         assert!(out(&db).contains("secret") && page(&db, 1).unwrap().segments[1].included);
         db.execute("UPDATE segment SET included = 0", []).unwrap();
         assert!(!out(&db).contains("secret"));
-        set(&db, &Notes { on: true, key: KEY.into(), keep_teams: true, keep_meet: false, offer_calls: true, stop_on_end: true }).unwrap();
+        set(&db, &Notes { on: true, key: KEY.into(), keep_teams: true, keep_meet: false, offer_calls: true, stop_on_end: true, show_pill: true }).unwrap();
         assert!(out(&db).contains("secret"), "the setting keeps muted lines, old meetings too");
         db.execute("INSERT INTO mute_event(meeting, at_ms, state, source) VALUES (1, 0, 'muted', 'meet')", []).unwrap();
         assert!(!out(&db).contains("secret"), "a Meet meeting goes by the Meet switch");
-        set(&db, &Notes { on: true, key: KEY.into(), keep_teams: false, keep_meet: true, offer_calls: true, stop_on_end: true }).unwrap();
+        set(&db, &Notes { on: true, key: KEY.into(), keep_teams: false, keep_meet: true, offer_calls: true, stop_on_end: true, show_pill: true }).unwrap();
         assert!(out(&db).contains("secret"));
-        set(&db, &Notes { on: true, key: KEY.into(), keep_teams: true, keep_meet: true, offer_calls: true, stop_on_end: true }).unwrap();
+        set(&db, &Notes { on: true, key: KEY.into(), keep_teams: true, keep_meet: true, offer_calls: true, stop_on_end: true, show_pill: true }).unwrap();
         db.execute("INSERT INTO mute_event(meeting, at_ms, state, source) VALUES (1, 1, 'muted', 'other')", []).unwrap();
         assert!(!out(&db).contains("secret"), "no switch keeps a page this build doesn't know");
     }
@@ -1987,7 +1992,7 @@ pub(crate) mod tests {
     fn settings_default_off_and_save_only_real_shortcuts() {
         let tmp = tempfile::tempdir().unwrap();
         let conn = crate::storage::open(tmp.path()).unwrap();
-        let n = |on, key: &str| Notes { on, key: key.into(), keep_teams: false, keep_meet: false, offer_calls: true, stop_on_end: true };
+        let n = |on, key: &str| Notes { on, key: key.into(), keep_teams: false, keep_meet: false, offer_calls: true, stop_on_end: true, show_pill: true };
         assert_eq!(get(&conn), Ok(n(false, "Ctrl+Alt+KeyM")));
         set(&conn, &n(true, "")).unwrap();
         assert_eq!(get(&conn), Ok(n(true, "")));
@@ -2013,7 +2018,7 @@ pub(crate) mod tests {
         for (k, v) in [("meeting_on", "yes"), ("meeting_keep_teams", "true"), ("meeting_key", "")] {
             conn.execute("INSERT INTO setting(key, value) VALUES (?1, ?2)", [k, v]).unwrap();
         }
-        assert_eq!(get(&conn), Ok(Notes { on: false, key: "".into(), keep_teams: false, keep_meet: false, offer_calls: true, stop_on_end: true }), "unknown switches are off; \"\" stays no shortcut");
+        assert_eq!(get(&conn), Ok(Notes { on: false, key: "".into(), keep_teams: false, keep_meet: false, offer_calls: true, stop_on_end: true, show_pill: true }), "unknown switches are off; \"\" stays no shortcut");
         // Today a stored shortcut is returned as saved, even one this build can't parse.
         conn.execute("UPDATE setting SET value = 'Alt+Nope' WHERE key = 'meeting_key'", []).unwrap();
         assert_eq!(get(&conn).unwrap().key, "Alt+Nope");

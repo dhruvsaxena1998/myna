@@ -588,6 +588,7 @@ async fn meeting_set(app: AppHandle, d: tauri::State<'_, Data>, notes: meeting::
         return back(e);
     }
     let _ = sync_meeting(&app);
+    let _ = app.emit_to("pill", "meeting-show", notes.show_pill);
     if !notes.on {
         app.state::<Arc<MeetingSession>>().stop();
     }

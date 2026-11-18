@@ -258,7 +258,7 @@ mod tests {
     }
 
     fn notes(on: bool, key: &str) -> Notes {
-        Notes { on, key: key.into(), keep_teams: false, keep_meet: false, offer_calls: true, stop_on_end: true }
+        Notes { on, key: key.into(), keep_teams: false, keep_meet: false, offer_calls: true, stop_on_end: true, show_pill: true }
     }
 
     fn all() -> Voice {

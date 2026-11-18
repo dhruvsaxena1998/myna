@@ -1,7 +1,7 @@
 <!-- The Meeting notes page (docs/settings.html, VIEWS.meetings): the switch and its shortcut, the Summary and transcript cleanup, the muted-voice switch, the browser add-on, models and permissions. -->
 <script lang="ts" module>
   /** `key` is an accelerator, or "" for no shortcut. */
-  export type Notes = { on: boolean; key: string; keep_teams: boolean; keep_meet: boolean; offer_calls: boolean; stop_on_end: boolean };
+  export type Notes = { on: boolean; key: string; keep_teams: boolean; keep_meet: boolean; offer_calls: boolean; stop_on_end: boolean; show_pill: boolean };
 </script>
 
 <script lang="ts">
@@ -71,6 +71,10 @@
       <li class="row">
         <span><label class="name" for="stop-on-end">Stop when the call ends</label><span class="desc">When the call's app lets go of your mic and goes quiet, Myna stops after 30 seconds unless you keep recording. An app that keeps the mic open between calls, such as Arc, Zoom or a Gather space, hides the end.</span></span>
         <input id="stop-on-end" type="checkbox" role="switch" class="switch" checked={notes.stop_on_end} onchange={(e) => save({ ...notes, stop_on_end: e.currentTarget.checked })} />
+      </li>
+      <li class="row">
+        <span><label class="name" for="show-pill">Show the recording pill</label><span class="desc">Off, nothing floats on screen while recording; the menu bar still shows the time, Pause and Stop. Call offers and the end countdown still show.</span></span>
+        <input id="show-pill" type="checkbox" role="switch" class="switch" checked={notes.show_pill} onchange={(e) => save({ ...notes, show_pill: e.currentTarget.checked })} />
       </li>
     {/if}
   </ul>
