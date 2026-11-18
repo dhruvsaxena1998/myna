@@ -275,6 +275,40 @@ test("the other side's lines show their speaker names, and a note says why voice
   await expect(page.locator(".note")).toHaveText("Couldn't tell voices apart: Download Sortformer in Settings › Speech models");
 });
 
+// Story 09: a speaker's name opens a popover to rename them in the whole meeting. The fake relabels like the backend.
+const SPEAKERS = JSON.stringify([
+  { ...line(1, "Me", 1000, "Okay, let's start."), end_ms: 3000 }, { ...line(2, "Speaker 2", 10000, "Hi all."), end_ms: 12000 },
+  { ...line(3, "Speaker 3", 20000, "Launch is the 18th."), end_ms: 29000 }, { ...line(4, "Speaker 2", 40000, "Agreed, the 18th it is."), end_ms: 46000 },
+]);
+async function speakers(page: Page, extra = "") {
+  await open(page, `meeting_page: () => ({ ...${MEETINGS}[0], segments: window.__segs ??= ${SPEAKERS} }),
+    speaker_rename: ({ from, to }) => { if (to.trim().toLowerCase() === "me") throw "Me is you. Pick another name."; window.__segs = window.__segs.map((l) => l.speaker === from ? { ...l, speaker: to.trim() } : l); }, ${extra}`);
+  await page.getByRole("button", { name: "Untitled meeting" }).first().click();
+}
+
+test("a speaker renamed once is renamed on every line; Me isn't a button, and a refused name says why", async ({ page }) => {
+  await speakers(page);
+  const segs = page.locator(".seg");
+  await expect(segs.first().getByRole("button", { name: "Me" })).toHaveCount(0);
+  await segs.nth(1).getByRole("button", { name: "Speaker 2" }).click();
+  const pop = page.getByRole("dialog", { name: "Speaker Speaker 2" });
+  await expect(pop.getByRole("textbox", { name: "Name" })).toBeFocused();
+  await pop.getByRole("textbox", { name: "Name" }).fill("me");
+  await pop.getByRole("button", { name: "Rename" }).click();
+  await expect(pop.getByText("Me is you. Pick another name.")).toBeVisible();
+  await pop.getByRole("textbox", { name: "Name" }).fill("Ana Ruiz");
+  await page.keyboard.press("Enter");
+  await expect(pop).toBeHidden();
+  expect((await calls(page, "speaker_rename")).at(-1)).toEqual({ id: 5, from: "Speaker 2", to: "Ana Ruiz" });
+  await expect(segs.nth(1)).toContainText("Ana Ruiz00:10");
+  await expect(segs.nth(3)).toContainText("Ana Ruiz00:40");
+  await expect(segs.nth(2)).toContainText("Speaker 300:20");
+  await segs.nth(2).getByRole("button", { name: "Speaker 3" }).click();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toBeHidden();
+  expect(await calls(page, "speaker_rename")).toHaveLength(2);
+});
+
 // Story 16: the Summary is the document; the transcript opens beside it.
 const version = (id: number, template: string, text: string, more = {}) => ({ id, template, prompt: "p", provider: "OpenRouter", model: "big", created: Date.now(), parts: 2, cost: { kind: "usd", usd: 0.012 }, text, edited: false, ...more });
 const AI = JSON.stringify({ providers: [{ id: 1, kind: "openrouter", name: "OpenRouter", url: "https://openrouter.ai/api/v1", has_key: true, off_device: true }], main: { provider: 1, model: "big", gone: false }, fast: null });
