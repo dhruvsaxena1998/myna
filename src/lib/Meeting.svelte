@@ -391,8 +391,9 @@
           {/if}
           {#if draft !== null}
             <form class="sum-edit" onsubmit={save}>
-              <textarea class="input" aria-label="Summary text, in Markdown" bind:value={draft}></textarea>
-              <div class="end"><span class="help grow">Saving adds an Edited version. Regenerate never overwrites it.</span>
+              <textarea class="input" aria-label="Summary text, in Markdown" aria-describedby="se-h" bind:value={draft}
+                onkeydown={(e) => { if (e.key === "Enter" && e.metaKey) (e.preventDefault(), e.currentTarget.form?.requestSubmit()); else if (e.key === "Escape") (e.preventDefault(), (draft = null)); }}></textarea>
+              <div class="end"><span class="help grow" id="se-h">Saving adds an Edited version. Regenerate never overwrites it. ⌘↩ saves, esc cancels.</span>
                 <button type="button" class="btn" onclick={() => (draft = null)}>Cancel</button><button class="btn primary">Save</button></div>
             </form>
           {:else if shown && summary?.state !== "writing"}

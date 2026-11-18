@@ -487,6 +487,17 @@ test("versions: pick one, delete never the last, and Edit › Save adds an Edite
   await expect(page.locator(".sum-cost")).toHaveText("Edited · Recap · big · Summarized in 2 parts");
   await page.getByRole("button", { name: "2 versions" }).click();
   await expect(page.getByRole("menuitemradio", { name: /Edited/ })).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Edit" }).click();
+  await box.fill("# Dropped");
+  await box.press("Escape");
+  await expect(box).toBeHidden();
+  await expect(page.getByRole("heading", { name: "My recap", level: 1 })).toBeVisible(); // Esc left the page where it was
+  await page.getByRole("button", { name: "Edit" }).click();
+  await box.fill("# Kept");
+  await box.press("Meta+Enter");
+  expect((await calls(page, "summary_edit")).at(-1)).toEqual({ id: 5, text: "# Kept" });
+  await expect(page.getByRole("heading", { name: "Kept", level: 1 })).toBeVisible();
 });
 
 test("Regenerate: template, prompt and model for this run only, the estimate above $1, then progress, failure and Try again with the same ask", async ({ page }) => {
