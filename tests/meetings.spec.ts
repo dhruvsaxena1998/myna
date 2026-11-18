@@ -346,6 +346,12 @@ test("Regenerate: template, prompt and model for this run only, the estimate abo
   await expect(page.getByText("Couldn’t summarize: The model is down.")).toBeVisible();
   await page.getByRole("button", { name: "Try again" }).click();
   expect(await calls(page, "summary_run")).toEqual([ask, ask]);
+  // The Summary shows as the model writes it, in place of the one showing, then the kept version takes its place.
+  await emit(page, "meeting-summary", { id: 5, state: "writing", text: "# Act" });
+  await expect(page.getByRole("heading", { name: "Act", exact: true })).toBeVisible();
+  await emit(page, "meeting-summary", { id: 5, state: "writing", text: "# Actions\n\n- Priya: ship" });
+  await expect(page.getByText("Priya: ship")).toBeVisible();
+  await expect(page.locator(".sum")).toHaveCount(1);
   const before = (await calls(page, "summary_get")).length;
   await emit(page, "meeting-summary", { id: 5, state: "done", version: version(10, "Action items", "# Actions") });
   await expect.poll(async () => (await calls(page, "summary_get")).length).toBe(before + 1);

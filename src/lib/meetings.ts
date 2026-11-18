@@ -110,7 +110,7 @@ export const meta = (m: Meeting) => [hm(m.started), m.duration_ms === null ? "" 
 export type Cost = { kind: "usd"; usd: number } | { kind: "free" } | { kind: "unknown" };
 /** A kept Summary version (`summary_get`). */
 export type Version = { id: number; template: string; prompt: string; provider: string; model: string; created: number; parts: number; cost: Cost; text: string; edited: boolean };
-/** `meeting-summary`: how a Summary run is going. */
-export type SummaryRun = { id: number } & ({ state: "reading"; n: number; of: number } | { state: "merging" | "skipped" } | { state: "done"; version: Version } | { state: "failed"; error: string });
+/** `meeting-summary`: how a Summary run is going. `writing`: the Summary so far, as the model writes it. */
+export type SummaryRun = { id: number } & ({ state: "reading"; n: number; of: number } | { state: "merging" | "skipped" } | { state: "writing"; text: string } | { state: "done"; version: Version } | { state: "failed"; error: string });
 /** `meeting-cleanup`: how transcript cleanup is going. */
 export type CleanupRun = { id: number } & ({ state: "reading"; n: number; of: number } | { state: "done"; cost: Cost } | { state: "failed"; error: string });

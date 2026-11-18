@@ -19,7 +19,7 @@
 <script lang="ts">
   import { convertFileSrc, invoke } from "@tauri-apps/api/core";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { tick } from "svelte";
+  import { tick, untrack } from "svelte";
   import type { Ai, Model } from "./AiProviders.svelte";
   import HostPill from "./HostPill.svelte";
   import { changes, clock, dayHead, groups, hm, meta, writing, type CleanupRun, type Cost, type Page, type Progress, type SummaryRun, type Version } from "./meetings";
@@ -79,7 +79,7 @@
   const rows = $derived(groups(page.segments));
   const cleaned = $derived(page.segments.some((l) => l.clean));
   const shown = $derived(sum?.versions.find((v) => v.id === sum!.showing));
-  const busy = $derived(summary?.state === "reading" || summary?.state === "merging");
+  const busy = $derived(summary?.state === "reading" || summary?.state === "merging" || summary?.state === "writing");
   let sumModel = $state<{ provider: number; model: string } | null>(null); // the Summary model (summary::model), Main's unless the user picked one
   let sumErr = $state(""); // why there's none: "Summary model: Not set", or Main's
   const done = $derived(summary?.state === "done" ? summary : null);
@@ -109,8 +109,12 @@
   const own = $derived(sumErr.startsWith("Summary model")); // the user's own pick is Not set, not Main
   // On open, and when a run finishes: the newest version shows.
   $effect(() => {
-    void done;
-    load();
+    // The new version shows at once, so the streamed text never gives way to the old one while the list loads.
+    const v = done?.version;
+    untrack(() => {
+      if (v && sum) sum = { versions: [v, ...sum.versions.filter((x) => x.id !== v.id)], showing: v.id };
+      load();
+    });
   });
   // A model set in Settings shows here on coming back.
   $effect(() => {
@@ -302,7 +306,10 @@
               </div>
             </div>
           {/if}
-          {#if busy}
+          {#if summary?.state === "writing"}
+            <p class="sum-prog" role="status">Writing the {asks.get(page.id)?.template ?? "Summary"}…</p>
+            <div class="sum" aria-busy="true">{@html render(summary.text)}</div>
+          {:else if busy}
             <p class="sum-prog" role="status">{summary?.state === "reading" ? `Reading part ${summary.n} of ${summary.of}…` : `Writing the ${asks.get(page.id)?.template ?? "Summary"}…`}</p>
           {:else if summary?.state === "failed"}
             <p class="sum-prog" role="status"><span class="fail">Couldn’t summarize: {summary.error}</span> <button class="btn small" onclick={again}>Try again</button></p>
@@ -313,7 +320,7 @@
               <div class="end"><span class="help grow">Saving adds an Edited version. Regenerate never overwrites it.</span>
                 <button type="button" class="btn" onclick={() => (draft = null)}>Cancel</button><button class="btn primary">Save</button></div>
             </form>
-          {:else if shown}
+          {:else if shown && summary?.state !== "writing"}
             <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (the timestamps are buttons; this only hears their clicks) -->
             <div class="sum" onclick={jump}>{@html render(shown.text)}</div>
             <p class="sum-cost">{[cost(shown), shown.template, shown.model, `Summarized in ${shown.parts} part${shown.parts === 1 ? "" : "s"}`].join(" · ")}</p>

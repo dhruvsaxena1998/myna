@@ -779,7 +779,7 @@ fn transcript_prefs_set(d: tauri::State<Data>, prefs: transcript::Prefs) -> Resu
 }
 
 /// Runs meeting `id`'s Summary on its own thread when it should (summary::auto), saying how it goes with
-/// `meeting-summary`: "reading" part `n` of `of`, "merging", then "done" with the version, "failed" with why,
+/// `meeting-summary`: "reading" part `n` of `of`, "merging", "writing" with the text so far, then "done" with the version, "failed" with why,
 /// or "skipped" (Summarize when a meeting finishes is off, or Main is Not set).
 fn summarize(app: &AppHandle, id: i64) {
     let app = app.clone();
@@ -790,6 +790,7 @@ fn summarize(app: &AppHandle, id: i64) {
         let mut progress = |p: summary::Progress| match p {
             summary::Progress::Part(n, of) => say(serde_json::json!({ "id": id, "state": "reading", "n": n, "of": of })),
             summary::Progress::Merging => say(serde_json::json!({ "id": id, "state": "merging" })),
+            summary::Progress::Writing(text) => say(serde_json::json!({ "id": id, "state": "writing", "text": text })),
         };
         say(match summary::auto(&d.db, &open, id, &mut progress) {
             Ok(Some(v)) => serde_json::json!({ "id": id, "state": "done", "version": v }),
@@ -838,6 +839,7 @@ async fn summary_run(app: AppHandle, id: i64, template: String, prompt: String, 
             summary::run(&d.db, &*backend, id, &ask, &mut |p| match p {
                 summary::Progress::Part(n, of) => say(serde_json::json!({ "id": id, "state": "reading", "n": n, "of": of })),
                 summary::Progress::Merging => say(serde_json::json!({ "id": id, "state": "merging" })),
+            summary::Progress::Writing(text) => say(serde_json::json!({ "id": id, "state": "writing", "text": text })),
             })
         };
         let r = run();
