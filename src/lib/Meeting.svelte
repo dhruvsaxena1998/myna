@@ -170,13 +170,20 @@
 
   async function openRegen() {
     if (pop === "regen") return (pop = "");
-    (pop = "regen"), (error = ""), (est = null);
+    (error = ""), (est = null);
     await loadAi();
     templates = await invoke<Template[]>("summary_templates_get").catch((err) => ((error = String(err)), []));
     const t = templates.find((t) => t.name === shown?.template) ?? templates[0];
     form = { tpl: t?.id ?? "", prompt: t?.text ?? "", pick: sumModel ? `${sumModel.provider}|${sumModel.model}` : "" };
+    pop = "regen"; // opens filled in, so its primary button can take focus
     await Promise.all((ai?.providers ?? []).map((p) => invoke<Model[]>("ai_models", { id: p.id, fresh: false }).then((l) => { models[p.id] = l; }, () => {})));
   }
+  // Regenerate is a modal dialog: in the top layer, nothing in the page can clip it.
+  let dlg = $state<HTMLDialogElement>();
+  $effect(() => {
+    if (pop === "regen") dlg?.showModal();
+    else dlg?.close();
+  });
   // The estimate shows only above $1; a price that isn't known shows nothing.
   $effect(() => {
     const pick = form.pick;
@@ -241,7 +248,7 @@
     if (e.key === "Escape" && (pop || spk)) return void (e.preventDefault(), (pop = ""), (spk = null));
     // Esc goes back and Space plays, unless something else wants the key: a field, an open menu, a modifier.
     const t = e.target as Element;
-    if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || t.closest("input, textarea, select, [contenteditable]") || document.querySelector(":popover-open")) return;
+    if (e.defaultPrevented || pop || e.metaKey || e.ctrlKey || e.altKey || t.closest("input, textarea, select, [contenteditable]") || document.querySelector(":popover-open")) return;
     if (e.key === "Escape" && draft === null) (e.preventDefault(), onback());
     else if (e.key === " " && !t.closest("button, a, [role^=menuitem]") && !writing(page)) (e.preventDefault(), paused ? play() : audio?.pause());
   }
@@ -286,12 +293,13 @@
   </form>{/if}</div>
 {/snippet}
 
-{#snippet regen(left: boolean)}
-  <div class="pop regen" class:left role="dialog" aria-labelledby="rg-h"><form onsubmit={submit}>
+<!-- svelte-ignore a11y_autofocus -->
+<dialog class="regen" data-pop aria-labelledby="rg-h" aria-describedby="rg-d" bind:this={dlg} onclose={() => pop === "regen" && (pop = "")}><form onsubmit={submit}>
     <h3 id="rg-h">{shown ? "Regenerate the summary" : "Summarize this meeting"}</h3>
+    <p class="help" id="rg-d">{shown ? "Writes a new version. The one showing now is kept." : "Writes a summary from the transcript."}</p>
     {#if !ai?.providers.length}
       <p class="help">Add an AI provider to summarize. Myna runs no AI itself.</p>
-      <div class="end"><button type="button" class="btn" onclick={setup}>Set up</button></div>
+      <div class="end"><button type="button" class="btn" onclick={() => (pop = "")}>Cancel</button><button type="button" class="btn primary" autofocus onclick={setup}>Set up</button></div>
     {:else}
       <label class="field"><span class="label">Template</span>
         <select class="select" value={form.tpl} onchange={(e) => { form.tpl = e.currentTarget.value; form.prompt = templates.find((t) => t.id === form.tpl)?.text ?? ""; }}>
@@ -308,10 +316,10 @@
         <span class="help" id="rg-mh">Picking a model here doesn’t change your Summary model.</span></label>
       {#if est !== null && est > 1}<p class="est" role="status">About {usd(est)} for this meeting.</p>{/if}
       <div class="end">{#if chosen}<HostPill off={chosen.off_device} />{/if}<span class="grow"></span>
-        <button class="btn primary" disabled={!form.pick || !form.prompt.trim()}>{shown ? "Regenerate" : "Summarize"}</button></div>
+        <button type="button" class="btn" onclick={() => (pop = "")}>Cancel</button>
+        <button class="btn primary" autofocus disabled={!form.pick || !form.prompt.trim()}>{shown ? "Regenerate" : "Summarize"}</button></div>
     {/if}
-  </form></div>
-{/snippet}
+  </form></dialog>
 
 <header data-tauri-drag-region>
   <button class="btn plain" aria-label="Back to meetings" onclick={onback}>{@render icon('<path d="M15 5l-7 7 7 7"/>')}Meetings</button>
@@ -376,10 +384,7 @@
               {/if}
               <span class="grow"></span>
               <button class="btn" disabled={busy || draft !== null} onclick={() => (draft = shown?.text ?? "")}>Edit</button>
-              <div class="pop-wrap" data-pop>
-                <button class="btn" aria-haspopup="dialog" aria-expanded={pop === "regen"} disabled={busy || draft !== null} onclick={openRegen}>Regenerate</button>
-                {#if pop === "regen"}{@render regen(false)}{/if}
-              </div>
+              <button class="btn" aria-haspopup="dialog" disabled={busy || draft !== null} onclick={openRegen}>Regenerate</button>
             </div>
           {/if}
           {#if summary?.state === "writing"}
@@ -407,10 +412,7 @@
             <div class="sum-empty">
               {#if sumModel}
                 <h2>No summary yet</h2>
-                <div class="pop-wrap" data-pop>
-                  <button class="btn primary" aria-haspopup="dialog" aria-expanded={pop === "regen"} onclick={openRegen}>Summarize</button>
-                  {#if pop === "regen"}{@render regen(true)}{/if}
-                </div>
+                <button class="btn primary" aria-haspopup="dialog" onclick={openRegen}>Summarize</button>
               {:else}
                 <h2>Set a {own ? "Summary" : "Main"} model to summarize</h2>
                 <p class="help">Summaries are written by an AI model you choose. Myna runs none itself.</p>
@@ -537,9 +539,15 @@
   /* DESIGN.md › Motion: popovers enter with an 8px rise and a fade. */
   @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
   @media (prefers-reduced-motion: reduce) { .pop { animation: none; } }
-  .regen { width: min(440px, calc(100vw - 96px)); padding: var(--sp-4); display: grid; gap: var(--sp-3); }
+  .regen { width: min(520px, calc(100vw - 48px)); max-height: calc(100vh - 48px); overflow: auto; box-sizing: border-box; margin: auto; padding: var(--sp-5); border: 0;
+    border-radius: var(--r-xl); background: var(--bg-raised); color: var(--text);
+    box-shadow: inset 0 0 0 .5px var(--edge), var(--shadow-window); }
+  .regen[open] { display: grid; gap: var(--sp-3); animation: rise var(--dur) var(--ease-out); }
+  .regen::backdrop { background: rgba(0, 0, 0, .35); }
+  @media (prefers-reduced-motion: reduce) { .regen[open] { animation: none; } }
   .regen form { display: contents; }
-  .regen h3 { margin: 0; font-size: var(--fs-body); font-weight: var(--fw-semibold); }
+  .regen h3 { margin: 0; font-size: var(--fs-title3); font-weight: var(--fw-semibold); }
+  .regen textarea { min-height: 120px; }
   .field { display: grid; gap: var(--sp-1); }
   .label { font-weight: var(--fw-medium); }
   .field textarea { resize: vertical; }

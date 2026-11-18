@@ -514,6 +514,15 @@ test("Regenerate: template, prompt and model for this run only, the estimate abo
   await expect(pop.getByRole("combobox", { name: "Model" })).toHaveValue("1|big");
   await expect(pop.getByText("About $1.40 for this meeting.")).toBeVisible();
   await expect(pop.getByText("Sends text off this Mac")).toBeVisible();
+  // A modal: Regenerate has focus, and Cancel or Esc closes it without running.
+  await expect(pop.getByRole("button", { name: "Regenerate" })).toBeFocused();
+  await pop.getByRole("button", { name: "Cancel" }).click();
+  await expect(pop).toBeHidden();
+  await page.getByRole("button", { name: "Regenerate" }).click();
+  await page.keyboard.press("Escape");
+  await expect(pop).toBeHidden();
+  await expect(page.getByRole("heading", { name: "Recap", level: 1 })).toBeVisible(); // Esc closed it, not the page
+  await page.getByRole("button", { name: "Regenerate" }).click();
   await pop.getByRole("combobox", { name: "Template" }).selectOption("actions");
   await expect(pop.getByRole("textbox", { name: "Instructions" })).toHaveValue("List them.");
   await pop.getByRole("textbox", { name: "Instructions" }).fill("Only Priya's items.");
@@ -555,7 +564,9 @@ test("no Summary yet: the transcript shows, Main Not set offers AI providers, an
   await expect(page.getByText("No summary yet")).toBeVisible();
   await page.getByRole("button", { name: "Summarize" }).click();
   const pop = page.getByRole("dialog", { name: "Summarize this meeting" });
-  await pop.getByRole("button", { name: "Summarize" }).click();
+  await expect(pop.getByRole("button", { name: "Summarize" })).toBeFocused();
+  await page.keyboard.press("Enter"); // the defaults, in one key
+  await expect(pop).toBeHidden();
   expect(await calls(page, "summary_run")).toEqual([{ id: 5, template: "Recap", prompt: "Write a Recap.", provider: 1, model: "big" }]);
 });
 
@@ -571,6 +582,7 @@ test("the Summary model, not Main, is Regenerate's default; Not set says to set 
   const pop = page.getByRole("dialog", { name: "Regenerate the summary" });
   await expect(pop.getByRole("combobox", { name: "Model" })).toHaveValue("1|small");
   await expect(pop.getByText("Picking a model here doesn’t change your Summary model.")).toBeVisible();
+  await page.keyboard.press("Escape");
   await page.evaluate(() => { (window as any).__none = true; (window as any).__sum = { versions: [], showing: null }; });
   await page.getByRole("button", { name: "Back to meetings" }).click();
   await page.getByRole("button", { name: "Untitled meeting" }).first().click();
