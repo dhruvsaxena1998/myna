@@ -101,6 +101,8 @@
       }),
       // A meeting recorded before echo handling was checked, and lines the speakers played into the mic were left out.
       listen<number>("meeting-echo", ({ payload }) => void refresh().then(() => void (page?.id === payload && openMeeting(payload, false)))),
+      // The Title model named a meeting.
+      listen<number>("meeting-title", ({ payload }) => void refresh().then(() => void (page?.id === payload && openMeeting(payload, false)))),
       listen<SummaryRun>("meeting-summary", ({ payload }) => { summaries[payload.id] = payload; }),
       listen<CleanupRun>("meeting-cleanup", ({ payload }) => {
         cleanups[payload.id] = payload;
