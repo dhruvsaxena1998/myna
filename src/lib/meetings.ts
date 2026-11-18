@@ -13,21 +13,34 @@ export type Meeting = {
   incomplete: boolean;
 };
 /** `hidden`: said while muted and left out; its `text` is empty. `included`: kept by the user, shown with a marker. */
-export type Line = { id: number; speaker: string; /* "Me", a caption name, "Speaker 2"…, or "Them" when voices weren't told apart */ start_ms: number; text: string; /* as transcript cleanup wrote it, when it did */ clean: string | null; muted: boolean; included: boolean; hidden: boolean };
+export type Line = { id: number; speaker: string; /* "Me", a caption name, "Speaker 2"…, or "Them" when voices weren't told apart */ start_ms: number; end_ms: number; text: string; /* as transcript cleanup wrote it, when it did */ clean: string | null; muted: boolean; included: boolean; hidden: boolean };
 /** `cleanup`: the last transcript cleanup run, none when it never ran. `stt`: the Endpoint that transcribed it (no cost while it runs), none for the Local model. */
 export type Page = Meeting & { segments: Line[]; cleanup: { provider: string; model: string; cost: Cost } | null; stt: { provider: string; model: string; off: boolean; cost?: Cost } | null };
 /** The recording in progress, or none. */
 /** `mic`: "live" or "muted" while the browser add-on mirrors the mute button, else null. `words`: how the mic reads on the card. */
 export type Running = { id: number; started: number; source: string | null; mic: "live" | "muted" | null; words: string } | null;
 
-/** Runs of lines that are left out show as one row; the rest show as they are. */
-export function groups(lines: Line[]): ({ line: Line } | { left: Line[] })[] {
-  const out: ({ line: Line } | { left: Line[] })[] = [];
+/** A pause this long or more between one speaker's lines starts a new paragraph; so does a paragraph this long. */
+const PAUSE = 2000, LONGEST = 60000;
+
+/**
+ * The transcript's rows: runs of lines that are left out show as one row, and one speaker's lines with only short
+ * pauses between them read as one paragraph. An included line ("Said while muted") never joins ordinary ones.
+ */
+export function groups(lines: Line[]): ({ lines: Line[] } | { left: Line[] })[] {
+  const out: ({ lines: Line[] } | { left: Line[] })[] = [];
   for (const line of lines) {
     const last = out.at(-1);
-    if (!line.hidden) out.push({ line });
-    else if (last && "left" in last) last.left.push(line);
-    else out.push({ left: [line] });
+    if (line.hidden) {
+      if (last && "left" in last) last.left.push(line);
+      else out.push({ left: [line] });
+      continue;
+    }
+    const prev = last && "lines" in last ? last.lines.at(-1)! : null;
+    const joins = prev && last && "lines" in last && prev.speaker === line.speaker && prev.included === line.included &&
+      line.start_ms - prev.end_ms < PAUSE && line.start_ms - last.lines[0].start_ms < LONGEST;
+    if (joins) last.lines.push(line);
+    else out.push({ lines: [line] });
   }
   return out;
 }

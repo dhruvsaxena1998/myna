@@ -115,8 +115,9 @@
   async function jump(e: MouseEvent) {
     const ms = (e.target as Element).closest<HTMLElement>("[data-ms]")?.dataset.ms;
     if (ms === undefined) return;
-    const first = (g: (typeof rows)[number]) => ("left" in g ? g.left[0] : g.line);
-    const row = rows.find((g) => first(g).start_ms >= +ms) ?? rows.at(-1);
+    const all = (g: (typeof rows)[number]) => ("left" in g ? g.left : g.lines);
+    const first = (g: (typeof rows)[number]) => all(g)[0];
+    const row = rows.find((g) => all(g).at(-1)!.start_ms >= +ms) ?? rows.at(-1); // the row holding the first line at or after it
     if (!row) return;
     (panel = true), (hit = first(row).id);
     await tick();
@@ -313,8 +314,9 @@
             <div class="seg" class:hit={hit === g.left[0].id} id="seg-{g.left[0].id}" tabindex="-1"><div class="who"><b>Me</b><time>{clock(g.left[0].start_ms)}</time></div>
               <p class="left"><span>Said while muted · left out</span><button class="btn small" onclick={() => oninclude(g.left.map((l) => l.id))}>Include</button></p></div>
           {:else}
-            <div class="seg" class:hit={hit === g.line.id} id="seg-{g.line.id}" tabindex="-1"><div class="who"><b>{g.line.speaker}</b><time>{clock(g.line.start_ms)}</time></div>
-              <p>{#if g.line.clean && !orig}{#each changes(g.line.text, g.line.clean) as c, i}{i ? " " : ""}{#if c.heard === undefined}{c.text}{:else}<mark class="chg" title={c.heard ? `Heard “${c.heard}”` : "Added in cleanup"}>{c.text}</mark>{/if}{/each}{:else}{g.line.text}{/if}{#if g.line.included}<span class="mark">Said while muted</span>{/if}</p></div>
+            {@const l = g.lines[0]}
+            <div class="seg" class:hit={hit === l.id} id="seg-{l.id}" tabindex="-1"><div class="who"><b>{l.speaker}</b><time>{clock(l.start_ms)}</time></div>
+              <p>{#each g.lines as line, n}{n ? " " : ""}{#if line.clean && !orig}{#each changes(line.text, line.clean) as c, i}{i ? " " : ""}{#if c.heard === undefined}{c.text}{:else}<mark class="chg" title={c.heard ? `Heard “${c.heard}”` : "Added in cleanup"}>{c.text}</mark>{/if}{/each}{:else}{line.text}{/if}{/each}{#if l.included}<span class="mark">Said while muted</span>{/if}</p></div>
           {/if}
         {/each}
       </div>
