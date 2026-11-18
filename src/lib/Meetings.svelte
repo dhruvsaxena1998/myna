@@ -65,7 +65,7 @@
     <ClearAll count={listed.length} onclear={onchange} ask="Delete every meeting, with its transcript, summaries and audio? This can’t be undone." clear={() => invoke("meeting_delete", { id: null })} />
   {/if}
   {#if on && !running}
-    <button class="btn primary" aria-label="Start notes" disabled={busy.length > 0} onclick={onstart}>
+    <button class="btn primary" aria-label="Start notes" disabled={busy.length > 0} title={busy.length ? "Wait until the last meeting’s notes are written up" : undefined} onclick={onstart}>
       {@render icon('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/>')}Start notes
     </button>
   {/if}

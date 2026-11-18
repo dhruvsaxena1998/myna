@@ -105,6 +105,7 @@ test("after Stop the card says it is writing up the notes, then the meeting join
   const card = page.getByRole("status").filter({ hasText: "Writing up your notes…" });
   await expect(card).toBeVisible();
   await expect(page.getByRole("button", { name: "Start notes" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Start notes" })).toHaveAttribute("title", "Wait until the last meeting’s notes are written up");
   await emit(page, "meeting-notes", { id: 6, state: "transcribing", progress: 0.4, error: null });
   await expect(card).toContainText("40%");
   const before = await page.getByRole("region", { name: /^Yesterday/ }).boundingBox();
