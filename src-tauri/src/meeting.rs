@@ -127,27 +127,36 @@ impl Mic for Cpal {
     }
 }
 
-/// Interleaved samples gathered a tenth of a second at a time and handed on as 16 kHz mono, so resampling's
-/// rounding stays tiny (48 kHz and 44.1 kHz give whole samples).
+/// Interleaved samples gathered a tenth of a second at a time and handed on as 16 kHz mono.
 struct Chunks {
     rate: u32,
     channels: u16,
     pending: Vec<f32>,
+    to16k: crate::dictation::To16k,
 }
 
 impl Chunks {
     fn new(rate: u32, channels: u16) -> Self {
-        Chunks { rate, channels, pending: vec![] }
+        Chunks { rate, channels, pending: vec![], to16k: crate::dictation::To16k::new(rate, channels) }
     }
 
-    /// `last` hands on the rest too.
+    /// `last` hands on the rest too, the resampler's tail included.
     fn push(&mut self, data: &[f32], last: bool, on: &mut impl FnMut(&[f32])) {
         let chunk = (self.rate as usize / 10) * self.channels as usize;
         self.pending.extend_from_slice(data);
         while self.pending.len() >= chunk || (last && !self.pending.is_empty()) {
             let n = self.pending.len().min(chunk);
-            on(&crate::dictation::to_16k_mono(&self.pending[..n], self.rate, self.channels));
+            let out = self.to16k.push(&self.pending[..n]);
+            if !out.is_empty() {
+                on(&out);
+            }
             self.pending.drain(..n);
+        }
+        if last {
+            let tail = std::mem::replace(&mut self.to16k, crate::dictation::To16k::new(self.rate, self.channels)).finish();
+            if !tail.is_empty() {
+                on(&tail);
+            }
         }
     }
 }
