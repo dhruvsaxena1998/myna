@@ -25,8 +25,10 @@
   import { changes, clips, clock, dayHead, groups, hm, meta, writing, type CleanupRun, type Cost, type Page, type Progress, type SummaryRun, type Version } from "./meetings";
 
   // `onreload`: the page's lines changed in the backend (a speaker renamed), so it reads them again.
-  let { page, progress, summary, cleanup, onback, onretry, onlocal, oninclude, onreload }: {
-    page: Page; progress?: Progress; summary?: SummaryRun; cleanup?: CleanupRun; onback: () => void; onretry: (id: number) => void; onlocal: (id: number) => void; oninclude: (ids: number[]) => void; onreload: () => Promise<void>;
+  // `error`: why something the main window did for this page (Include, Try again, a reload) failed.
+  // `ondelete`: the meeting is gone, so the page closes.
+  let { page, progress, summary, cleanup, error: failed = "", onback, onretry, onlocal, oninclude, onreload, ondelete }: {
+    page: Page; progress?: Progress; summary?: SummaryRun; cleanup?: CleanupRun; error?: string; onback: () => void; onretry: (id: number) => void; onlocal: (id: number) => void; oninclude: (ids: number[]) => void; onreload: () => Promise<void>; ondelete: () => void;
   } = $props();
   let copied = $state<"" | "doc" | "panel">("");
   let error = $state("");
@@ -37,6 +39,8 @@
   let orig = $state(false); // Show original: the transcript as Myna heard it, before cleanup
   let hit = $state<number | null>(null);
   let pop = $state<"" | "vers" | "regen">("");
+  let deleting = $state(false); // Delete was pressed: asking before the meeting goes
+  let doomed = $state<number | null>(null); // the version whose × was pressed, asking before it goes
   let draft = $state<string | null>(null); // the Markdown being edited
   let templates = $state<Template[]>([]);
   let models = $state<Record<number, Model[]>>({});
@@ -84,6 +88,7 @@
   const busy = $derived(summary?.state === "reading" || summary?.state === "merging" || summary?.state === "writing");
   let sumModel = $state<{ provider: number; model: string } | null>(null); // the Summary model (summary::model), Main's unless the user picked one
   let sumErr = $state(""); // why there's none: "Summary model: Not set", or Main's
+  let aiErr = $state(""); // the AI providers couldn't be read, so the Summary area can't offer anything
   const done = $derived(summary?.state === "done" ? summary : null);
   const split = (pick: string) => [+pick.slice(0, pick.indexOf("|")), pick.slice(pick.indexOf("|") + 1)] as const;
   const chosen = $derived(ai?.providers.find((p) => p.id === split(form.pick)[0]));
@@ -106,7 +111,7 @@
   const loadAi = () =>
     Promise.all([
       invoke<{ provider: number; model: string }>("summary_model").then((m) => ((sumModel = m), (sumErr = "")), (err) => ((sumModel = null), (sumErr = String(err)))),
-      invoke<Ai>("ai_get").then((a) => (ai = a), () => {}),
+      invoke<Ai>("ai_get").then((a) => ((ai = a), (aiErr = "")), (err) => (aiErr = String(err))),
     ]);
   const own = $derived(sumErr.startsWith("Summary model")); // the user's own pick is Not set, not Main
   // On open, and when a run finishes: the newest version shows.
@@ -167,13 +172,20 @@
 
   async function openRegen() {
     if (pop === "regen") return (pop = "");
-    (pop = "regen"), (error = ""), (est = null);
+    (error = ""), (est = null);
     await loadAi();
     templates = await invoke<Template[]>("summary_templates_get").catch((err) => ((error = String(err)), []));
     const t = templates.find((t) => t.name === shown?.template) ?? templates[0];
     form = { tpl: t?.id ?? "", prompt: t?.text ?? "", pick: sumModel ? `${sumModel.provider}|${sumModel.model}` : "" };
+    pop = "regen"; // opens filled in, so its primary button can take focus
     await Promise.all((ai?.providers ?? []).map((p) => invoke<Model[]>("ai_models", { id: p.id, fresh: false }).then((l) => { models[p.id] = l; }, () => {})));
   }
+  // Regenerate is a modal dialog: in the top layer, nothing in the page can clip it.
+  let dlg = $state<HTMLDialogElement>();
+  $effect(() => {
+    if (pop === "regen") dlg?.showModal();
+    else dlg?.close();
+  });
   // The estimate shows only above $1; a price that isn't known shows nothing.
   $effect(() => {
     const pick = form.pick;
@@ -199,6 +211,10 @@
     if (a) start(a);
     else openRegen();
   }
+  async function remove() {
+    deleting = false;
+    if (await act(() => invoke("meeting_delete", { id: page.id }))) ondelete();
+  }
   const setup = () => invoke("settings_open", { page: own ? "meetings" : "ai" });
 
   async function save(e: SubmitEvent) {
@@ -209,6 +225,7 @@
   // speaker it is about to be merged into, waiting for the user to confirm.
   let spk = $state<{ row: number; from: string; name: string; err: string; merge: string | null } | null>(null);
   const focus = (el: HTMLInputElement) => (el.focus(), el.select());
+  const focusOn = (el: HTMLElement) => el.focus();
   const speakers = $derived([...new Set(page.segments.filter((l) => !l.hidden && l.speaker !== "Me").map((l) => l.speaker))]);
   function renameSpeaker(e: SubmitEvent) {
     e.preventDefault();
@@ -235,7 +252,12 @@
     if ((pop || spk) && !(e.target as Element).closest("[data-pop], [popover]")) (pop = ""), (spk = null);
   }
   function keys(e: KeyboardEvent) {
-    if (e.key === "Escape" && (pop || spk)) (e.preventDefault(), (pop = ""), (spk = null));
+    if (e.key === "Escape" && (pop || spk || deleting)) return void (e.preventDefault(), (pop = ""), (spk = null), (deleting = false));
+    // Esc goes back and Space plays, unless something else wants the key: a field, an open menu, a modifier.
+    const t = e.target as Element;
+    if (e.defaultPrevented || pop || e.metaKey || e.ctrlKey || e.altKey || t.closest("input, textarea, select, [contenteditable]") || document.querySelector(":popover-open")) return;
+    if (e.key === "Escape" && draft === null) (e.preventDefault(), onback());
+    else if (e.key === " " && !t.closest("button, a, [role^=menuitem]") && !writing(page)) (e.preventDefault(), paused ? play() : audio?.pause());
   }
 </script>
 
@@ -278,12 +300,13 @@
   </form>{/if}</div>
 {/snippet}
 
-{#snippet regen(left: boolean)}
-  <div class="pop regen" class:left role="dialog" aria-labelledby="rg-h"><form onsubmit={submit}>
+<!-- svelte-ignore a11y_autofocus -->
+<dialog class="regen" data-pop aria-labelledby="rg-h" aria-describedby="rg-d" bind:this={dlg} onclose={() => pop === "regen" && (pop = "")}><form onsubmit={submit}>
     <h3 id="rg-h">{shown ? "Regenerate the summary" : "Summarize this meeting"}</h3>
+    <p class="help" id="rg-d">{shown ? "Writes a new version. The one showing now is kept." : "Writes a summary from the transcript."}</p>
     {#if !ai?.providers.length}
       <p class="help">Add an AI provider to summarize. Myna runs no AI itself.</p>
-      <div class="end"><button type="button" class="btn" onclick={setup}>Set up</button></div>
+      <div class="end"><button type="button" class="btn" onclick={() => (pop = "")}>Cancel</button><button type="button" class="btn primary" autofocus onclick={setup}>Set up</button></div>
     {:else}
       <label class="field"><span class="label">Template</span>
         <select class="select" value={form.tpl} onchange={(e) => { form.tpl = e.currentTarget.value; form.prompt = templates.find((t) => t.id === form.tpl)?.text ?? ""; }}>
@@ -300,10 +323,10 @@
         <span class="help" id="rg-mh">Picking a model here doesn’t change your Summary model.</span></label>
       {#if est !== null && est > 1}<p class="est" role="status">About {usd(est)} for this meeting.</p>{/if}
       <div class="end">{#if chosen}<HostPill off={chosen.off_device} />{/if}<span class="grow"></span>
-        <button class="btn primary" disabled={!form.pick || !form.prompt.trim()}>{shown ? "Regenerate" : "Summarize"}</button></div>
+        <button type="button" class="btn" onclick={() => (pop = "")}>Cancel</button>
+        <button class="btn primary" autofocus disabled={!form.pick || !form.prompt.trim()}>{shown ? "Regenerate" : "Summarize"}</button></div>
     {/if}
-  </form></div>
-{/snippet}
+  </form></dialog>
 
 <header data-tauri-drag-region>
   <button class="btn plain" aria-label="Back to meetings" onclick={onback}>{@render icon('<path d="M15 5l-7 7 7 7"/>')}Meetings</button>
@@ -313,6 +336,13 @@
   {/if}
   {#if shown}
     <button class="btn" onclick={() => copy("doc")}>{@render copyIcon(copied === "doc")}{copied === "doc" ? "Copied" : "Copy"}</button>
+  {/if}
+  {#if deleting}
+    <span class="del-ask">Delete this meeting and its audio?</span>
+    <button class="btn" use:focusOn onclick={() => (deleting = false)}>Cancel</button>
+    <button class="btn danger" onclick={remove}>Delete</button>
+  {:else if !writing(page) && !busy}
+    <button class="btn icon" aria-label="Delete meeting" title="Delete meeting" onclick={() => (deleting = true)}>{@render icon('<path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/>')}</button>
   {/if}
 </header>
 <div class="content" class:split={panel}>
@@ -336,7 +366,7 @@
         </div>
         {#if audioErr}<p class="err" role="status">{audioErr}</p>{/if}
       {/if}
-      <p class="err" role="status">{error}</p>
+      <p class="err" role="status">{error || failed}</p>
       {#if page.segments.length}
         <section class="sumdoc" aria-label="Summary">
           {#if sum?.versions.length}
@@ -348,12 +378,18 @@
                     <div class="pop vmenu left" role="menu" aria-label="Versions">
                       {#each sum.versions as v (v.id)}
                         <div class="vrow">
+                          {#if doomed === v.id}
+                            <span class="ask">Delete this {v.edited ? "edited " : ""}version?</span>
+                            <button class="btn small" onclick={() => (doomed = null)}>Cancel</button>
+                            <button class="btn small danger" onclick={() => ((doomed = null), act(() => invoke("summary_delete", { id: page.id, version: v.id })))}>Delete</button>
+                          {:else}
                           <button class="pk" role="menuitemradio" aria-checked={v.id === sum.showing} onclick={() => ((pop = ""), act(() => invoke("summary_pick", { id: page.id, version: v.id })))}>
                             <span class="pk-t"><span class="trunc">{v.template} · {v.model}</span>{#if v.id === sum.showing}{@render icon('<path d="M5 12.5l4.5 4.5L19 7.5"/>')}{/if}</span>
                             <span class="pk-m">{when(v.created)}{v.edited ? " · Edited" : ""}</span>
                           </button>
                           <button class="btn icon plain" aria-label="Delete the {v.template} version from {when(v.created)}" disabled={sum.versions.length === 1}
-                            onclick={() => act(() => invoke("summary_delete", { id: page.id, version: v.id }))}>{@render icon('<path d="M7 7l10 10M17 7L7 17"/>')}</button>
+                            onclick={() => (doomed = v.id)}>{@render icon('<path d="M7 7l10 10M17 7L7 17"/>')}</button>
+                          {/if}
                         </div>
                       {/each}
                     </div>
@@ -362,10 +398,7 @@
               {/if}
               <span class="grow"></span>
               <button class="btn" disabled={busy || draft !== null} onclick={() => (draft = shown?.text ?? "")}>Edit</button>
-              <div class="pop-wrap" data-pop>
-                <button class="btn" aria-haspopup="dialog" aria-expanded={pop === "regen"} disabled={busy || draft !== null} onclick={openRegen}>Regenerate</button>
-                {#if pop === "regen"}{@render regen(false)}{/if}
-              </div>
+              <button class="btn" aria-haspopup="dialog" disabled={busy || draft !== null} onclick={openRegen}>Regenerate</button>
             </div>
           {/if}
           {#if summary?.state === "writing"}
@@ -378,22 +411,22 @@
           {/if}
           {#if draft !== null}
             <form class="sum-edit" onsubmit={save}>
-              <textarea class="input" aria-label="Summary text, in Markdown" bind:value={draft}></textarea>
-              <div class="end"><span class="help grow">Saving adds an Edited version. Regenerate never overwrites it.</span>
+              <textarea class="input" aria-label="Summary text, in Markdown" aria-describedby="se-h" bind:value={draft}
+                onkeydown={(e) => { if (e.key === "Enter" && e.metaKey) (e.preventDefault(), e.currentTarget.form?.requestSubmit()); else if (e.key === "Escape") (e.preventDefault(), (draft = null)); }}></textarea>
+              <div class="end"><span class="help grow" id="se-h">Saving adds an Edited version. Regenerate never overwrites it. ⌘↩ saves, esc cancels.</span>
                 <button type="button" class="btn" onclick={() => (draft = null)}>Cancel</button><button class="btn primary">Save</button></div>
             </form>
           {:else if shown && summary?.state !== "writing"}
             <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (the timestamps are buttons; this only hears their clicks) -->
             <div class="sum" onclick={jump}>{@html render(shown.text)}</div>
             <p class="sum-cost">{[cost(shown), shown.template, shown.model, `Summarized in ${shown.parts} part${shown.parts === 1 ? "" : "s"}`].join(" · ")}</p>
+          {:else if aiErr && !ai && !busy}
+            <p class="sum-prog fail" role="status">Couldn’t read your AI providers: {aiErr}</p>
           {:else if sum && ai && !busy}
             <div class="sum-empty">
               {#if sumModel}
                 <h2>No summary yet</h2>
-                <div class="pop-wrap" data-pop>
-                  <button class="btn primary" aria-haspopup="dialog" aria-expanded={pop === "regen"} onclick={openRegen}>Summarize</button>
-                  {#if pop === "regen"}{@render regen(true)}{/if}
-                </div>
+                <button class="btn primary" aria-haspopup="dialog" onclick={openRegen}>Summarize</button>
               {:else}
                 <h2>Set a {own ? "Summary" : "Main"} model to summarize</h2>
                 <p class="help">Summaries are written by an AI model you choose. Myna runs none itself.</p>
@@ -520,15 +553,24 @@
   /* DESIGN.md › Motion: popovers enter with an 8px rise and a fade. */
   @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
   @media (prefers-reduced-motion: reduce) { .pop { animation: none; } }
-  .regen { width: min(440px, calc(100vw - 96px)); padding: var(--sp-4); display: grid; gap: var(--sp-3); }
+  .regen { width: min(520px, calc(100vw - 48px)); max-height: calc(100vh - 48px); overflow: auto; box-sizing: border-box; margin: auto; padding: var(--sp-5); border: 0;
+    border-radius: var(--r-xl); background: var(--bg-raised); color: var(--text);
+    box-shadow: inset 0 0 0 .5px var(--edge), var(--shadow-window); }
+  .regen[open] { display: grid; gap: var(--sp-3); animation: rise var(--dur) var(--ease-out); }
+  .regen::backdrop { background: rgba(0, 0, 0, .35); }
+  @media (prefers-reduced-motion: reduce) { .regen[open] { animation: none; } }
   .regen form { display: contents; }
-  .regen h3 { margin: 0; font-size: var(--fs-body); font-weight: var(--fw-semibold); }
+  .regen h3 { margin: 0; font-size: var(--fs-title3); font-weight: var(--fw-semibold); }
+  .regen textarea { min-height: 120px; }
   .field { display: grid; gap: var(--sp-1); }
   .label { font-weight: var(--fw-medium); }
   .field textarea { resize: vertical; }
   .est { margin: 0; color: var(--caution-text); font-size: var(--fs-footnote); }
   .vmenu { width: 340px; }
   .vrow { display: flex; align-items: center; gap: 2px; }
+  .ask { flex: 1; padding: 8px 10px; }
+  .del-ask { color: var(--text-2); }
+  .btn.danger { color: var(--danger-text); }
   .pk { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: stretch; padding: 4px 10px; border: 0; border-radius: var(--r-sm); background: none; color: var(--text); font: inherit; text-align: left; }
   .pk:hover, .pk:focus-visible { background: var(--accent); color: var(--on-accent); outline: none; }
   .pk:hover .pk-m, .pk:focus-visible .pk-m { color: inherit; }

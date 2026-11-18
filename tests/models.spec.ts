@@ -90,6 +90,18 @@ test("a failed model list shows the error, not a blank page", async ({ page }) =
   await expect(page.getByRole("alert")).toContainText("Couldn't read the chosen models: locked");
 });
 
+test("a model list that fails to reload while its drill-in is open says why, not a blank page", async ({ page }) => {
+  // Adding a model reloads the lists; this time the read fails.
+  await open(page, undefined, `model_add: () => { window.__broken = true; return { id: "custom-x", installed: true }; }`);
+  await page.evaluate(() => {
+    const t = (window as any).__TAURI_INTERNALS__, invoke = t.invoke;
+    t.invoke = (cmd: string, args: unknown) => ((window as any).__broken && cmd === "models_list" ? Promise.reject("Couldn't read the chosen models: locked") : invoke(cmd, args));
+  });
+  await page.getByRole("form", { name: "Add a model" }).getByRole("textbox", { name: "Path or repo" }).fill("/Users/me/x.bin");
+  await page.getByRole("button", { name: "Add model" }).click();
+  await expect(page.getByRole("alert")).toContainText("Couldn't read the chosen models: locked");
+});
+
 const emit = (page: import("@playwright/test").Page, p: object) => page.evaluate((p) => (window as any).__emit("model-state", p), p);
 const calls = (page: import("@playwright/test").Page, cmd: string) => page.evaluate((cmd) => (window as any).__calls.filter((c: any) => c[0] === cmd), cmd);
 const stt = (page: import("@playwright/test").Page) => page.getByRole("radiogroup", { name: "Speech-to-text model" });
@@ -143,10 +155,14 @@ test("a download that can't start says why and stays a Download button", async (
   await expect(row(page).getByRole("progressbar")).toHaveCount(0);
 });
 
-test("Remove uninstalls a model", async ({ page }) => {
+test("Remove asks before deleting a downloaded model, then uninstalls it", async ({ page }) => {
   await open(page, undefined, "model_delete: () => null");
   const whisper = stt(page).getByRole("listitem").nth(2);
   await whisper.getByRole("button", { name: "Remove whisper" }).click();
+  await whisper.getByRole("button", { name: "Keep" }).click();
+  await whisper.getByRole("button", { name: "Remove whisper" }).click();
+  expect(await calls(page, "model_delete")).toEqual([]);
+  await whisper.getByRole("button", { name: /^Delete whisper/ }).click();
   expect(await calls(page, "model_delete")).toEqual([["model_delete", { id: "whisper", task: "stt" }]]);
   await expect(whisper.getByRole("button", { name: "Download whisper" })).toBeVisible();
 });
@@ -155,6 +171,7 @@ test("removing the chosen model selects the one that takes over", async ({ page 
   await open(page, undefined, `model_delete: () => "parakeet"`);
   await page.getByRole("radio", { name: /whisper/ }).check();
   await page.getByRole("button", { name: "Remove whisper" }).click();
+  await page.getByRole("button", { name: /^Delete whisper/ }).click();
   await expect(page.getByRole("radio", { name: /parakeet/ })).toBeChecked();
   await expect(page.getByRole("button", { name: "Download whisper" })).not.toContainText("Retry");
 });

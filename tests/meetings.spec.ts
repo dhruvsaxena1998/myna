@@ -68,6 +68,10 @@ test("Rename names a meeting, Delete asks first, and Clear all deletes every mee
   expect(await calls(page, "meeting_rename")).toHaveLength(1);
 
   await row.getByRole("button", { name: "Delete" }).click();
+  await expect(row.getByRole("button", { name: "Cancel" })).toBeFocused(); // focus moves to the confirm
+  await page.keyboard.press("Escape");
+  await expect(row.getByText("Delete this meeting and its audio?")).toBeHidden();
+  await row.getByRole("button", { name: "Delete" }).click();
   await row.getByRole("button", { name: "Cancel" }).click();
   expect(await calls(page, "meeting_delete")).toEqual([]);
   await row.getByRole("button", { name: "Delete" }).click();
@@ -77,6 +81,58 @@ test("Rename names a meeting, Delete asks first, and Clear all deletes every mee
   await page.getByRole("button", { name: "Clear all" }).click();
   await page.getByRole("button", { name: "Delete all" }).click();
   expect(await calls(page, "meeting_delete")).toEqual([{ id: 5 }, { id: null }]);
+});
+
+test("a meeting's page deletes it: Delete asks first, Esc and Cancel keep it, and Delete goes back to a list without it", async ({ page }) => {
+  await open(page, `meeting_delete: ({ id }) => { if (window.__locked) throw "database is locked"; window.__gone = id; },
+    meetings_list: () => ${MEETINGS}.filter((m) => m.id !== window.__gone),`);
+  await page.getByRole("button", { name: "Untitled meeting" }).first().click();
+  const del = page.getByRole("button", { name: "Delete meeting" });
+  await del.click();
+  await expect(page.getByRole("button", { name: "Cancel" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByText("Delete this meeting and its audio?")).toBeHidden();
+  await expect(page.getByRole("button", { name: "Back to meetings" })).toBeVisible(); // Esc closed the ask, not the page
+  await del.click();
+  await page.getByRole("button", { name: "Cancel" }).click();
+  expect(await calls(page, "meeting_delete")).toEqual([]);
+  await page.evaluate(() => ((window as any).__locked = true));
+  await del.click();
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(page.getByText("database is locked")).toBeVisible(); // a failure stays on the page, saying why
+  await page.evaluate(() => ((window as any).__locked = false));
+  await del.click();
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  expect((await calls(page, "meeting_delete")).at(-1)).toEqual({ id: 5 });
+  await expect(page.getByRole("heading", { name: "All meetings" })).toBeVisible();
+  await expect(page.getByRole("listitem")).toHaveCount(3);
+});
+
+test("search lists the meetings the backend matched, keeps them while a meeting is open, and clears", async ({ page }) => {
+  await open(page, `meetings_search: ({ q }) => (q === "budget" ? [5, 2] : [])`);
+  await page.keyboard.press("/");
+  const box = page.getByRole("searchbox", { name: "Search meetings" });
+  await expect(box).toBeFocused();
+  await box.fill("  budget ");
+  expect((await calls(page, "meetings_search")).at(-1)).toEqual({ q: "budget" });
+  await expect(page.getByRole("listitem")).toHaveCount(2);
+  await expect(page.getByRole("button", { name: "Clear all" })).toBeHidden(); // it would delete more than the matches
+  await page.getByRole("listitem").first().getByRole("button", { name: "Untitled meeting" }).click();
+  await page.getByRole("button", { name: "Back to meetings" }).click();
+  await expect(box).toHaveValue("  budget ");
+  await expect(page.getByRole("listitem")).toHaveCount(2);
+  await box.fill("zebra");
+  await expect(page.getByText("No matches")).toBeVisible();
+  await page.getByRole("button", { name: "Clear search" }).click();
+  await expect(box).toBeFocused();
+  await expect(page.getByRole("listitem")).toHaveCount(4);
+  await box.fill("budget");
+  await box.press("Escape");
+  await expect(box).toHaveValue("");
+  await expect(page.getByRole("button", { name: "Clear all" })).toBeVisible();
+  await box.blur();
+  await page.keyboard.press("Meta+f");
+  await expect(box).toBeFocused();
 });
 
 test("Start notes starts, the live card shows the recording, and Stop ends it", async ({ page }) => {
@@ -101,6 +157,7 @@ test("after Stop the card says it is writing up the notes, then the meeting join
   const card = page.getByRole("status").filter({ hasText: "Writing up your notes…" });
   await expect(card).toBeVisible();
   await expect(page.getByRole("button", { name: "Start notes" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Start notes" })).toHaveAttribute("title", "Wait until the last meeting’s notes are written up");
   await emit(page, "meeting-notes", { id: 6, state: "transcribing", progress: 0.4, error: null });
   await expect(card).toContainText("40%");
   const before = await page.getByRole("region", { name: /^Yesterday/ }).boundingBox();
@@ -183,6 +240,30 @@ test("Play loads the meeting's audio once, a paragraph's time plays from there, 
   expect(await calls(page, "meeting_audio")).toHaveLength(1);
 });
 
+test("on a meeting's page Space plays and pauses, and Esc closes what's open, then goes back", async ({ page }) => {
+  await page.addInitScript(() => {
+    HTMLMediaElement.prototype.play = function () { this.dispatchEvent(new Event("play")); return Promise.resolve(); };
+    HTMLMediaElement.prototype.pause = function () { this.dispatchEvent(new Event("pause")); };
+  });
+  await open(page, `meeting_audio: () => "/data/meetings/5/mix.wav",`);
+  await page.getByRole("listitem").filter({ hasText: "11:00" }).getByRole("button").first().click();
+  const player = page.getByRole("group", { name: "Meeting audio" });
+  await page.locator("article h1").click();
+  await page.keyboard.press(" ");
+  await expect(player.getByRole("button", { name: "Pause" })).toBeVisible();
+  await page.keyboard.press(" ");
+  await expect(player.getByRole("button", { name: "Play" })).toBeVisible();
+  const transcript = page.getByRole("button", { name: "Transcript", exact: true });
+  const was = await transcript.getAttribute("aria-pressed");
+  await transcript.focus(); // Space on a focused button presses it, not Play
+  await page.keyboard.press(" ");
+  await expect(transcript).not.toHaveAttribute("aria-pressed", was!);
+  await expect(player.getByRole("button", { name: "Play" })).toBeVisible();
+  await page.locator("article h1").click();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("heading", { name: "All meetings" })).toBeVisible();
+});
+
 test("a meeting whose audio is gone says so when Play is pressed", async ({ page }) => {
   await open(page, `meeting_audio: () => { throw "This meeting's audio isn't on this Mac anymore."; },`);
   await page.getByRole("listitem").filter({ hasText: "11:00" }).getByRole("button").first().click();
@@ -235,6 +316,24 @@ test("meeting-echo, from checking a meeting recorded before echo handling, reloa
   await page.evaluate(() => ((window as any).__note = "Your speakers played the call into the mic: 3 lines that repeated it are left out."));
   await emit(page, "meeting-echo", 5);
   await expect(page.locator(".note")).toHaveText("Your speakers played the call into the mic: 3 lines that repeated it are left out.");
+});
+
+test("what fails on a meeting's page says why there: Include, Try again, and a reload, which keeps the page", async ({ page }) => {
+  await open(page, `meeting_page: ({ id }) => { if (window.__gone) throw "That meeting isn't there anymore."; return { ...${MEETINGS}.find((m) => m.id === id), segments: id === 5 ? ${MUTED} : [] }; },
+    segments_include: () => { throw "database is locked"; }, meeting_retry: () => { throw "Another meeting is being written up."; }`);
+  await page.getByRole("button", { name: "Untitled meeting" }).first().click();
+  await page.locator(".seg").filter({ hasText: "Said while muted · left out" }).getByRole("button", { name: "Include" }).click();
+  await expect(page.locator("article .err").last()).toHaveText("database is locked");
+  await page.evaluate(() => ((window as any).__gone = true));
+  await emit(page, "meeting-echo", 5);
+  await expect(page.locator("article .err").last()).toHaveText("That meeting isn't there anymore.");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Untitled meeting"); // still on the page
+  await page.getByRole("button", { name: "Back to meetings" }).click();
+  await expect(page.getByText("That meeting isn't there anymore.")).toHaveCount(0); // not carried to the list
+  await page.evaluate(() => ((window as any).__gone = false));
+  await page.getByRole("listitem").filter({ hasText: "The model fell over." }).getByRole("button").first().click();
+  await page.getByRole("button", { name: "Try again" }).click();
+  await expect(page.locator("article .err").last()).toHaveText("Another meeting is being written up.");
 });
 
 test("cleanup shows its progress, then the cleaned lines with changed words marked; Show original shows what was heard, and Copy follows", async ({ page }) => {
@@ -336,6 +435,7 @@ test("a speaker renamed once is renamed on every line; Me isn't a button, and a 
   await segs.nth(2).getByRole("button", { name: "Speaker 3" }).click();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toBeHidden();
+  await expect(page.getByRole("heading", { name: "All meetings" })).toHaveCount(0); // Esc closed the popover, not the page
   expect(await calls(page, "speaker_rename")).toHaveLength(2);
 });
 
@@ -422,6 +522,13 @@ test("versions: pick one, delete never the last, and Edit › Save adds an Edite
   await expect(page.getByRole("heading", { name: "Recap", level: 1 })).toBeVisible();
   await page.getByRole("button", { name: "2 versions" }).click();
   await page.getByRole("button", { name: /Delete the Action items version/ }).click();
+  const menu = page.getByRole("menu", { name: "Versions" });
+  await expect(menu).toContainText("Delete this version?"); // asks first: there's no undo
+  await menu.getByRole("button", { name: "Cancel" }).click();
+  await expect(menu.getByRole("menuitemradio")).toHaveCount(2);
+  await page.getByRole("button", { name: /Delete the Action items version/ }).click();
+  expect(await calls(page, "summary_delete")).toEqual([]);
+  await menu.getByRole("button", { name: "Delete", exact: true }).click();
   expect(await calls(page, "summary_delete")).toEqual([{ id: 5, version: 9 }]);
   await expect(page.getByRole("button", { name: "2 versions" })).toBeHidden();
   await page.getByRole("button", { name: "Edit" }).click();
@@ -437,6 +544,17 @@ test("versions: pick one, delete never the last, and Edit › Save adds an Edite
   await expect(page.locator(".sum-cost")).toHaveText("Edited · Recap · big · Summarized in 2 parts");
   await page.getByRole("button", { name: "2 versions" }).click();
   await expect(page.getByRole("menuitemradio", { name: /Edited/ })).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Edit" }).click();
+  await box.fill("# Dropped");
+  await box.press("Escape");
+  await expect(box).toBeHidden();
+  await expect(page.getByRole("heading", { name: "My recap", level: 1 })).toBeVisible(); // Esc left the page where it was
+  await page.getByRole("button", { name: "Edit" }).click();
+  await box.fill("# Kept");
+  await box.press("Meta+Enter");
+  expect((await calls(page, "summary_edit")).at(-1)).toEqual({ id: 5, text: "# Kept" });
+  await expect(page.getByRole("heading", { name: "Kept", level: 1 })).toBeVisible();
 });
 
 test("Regenerate: template, prompt and model for this run only, the estimate above $1, then progress, failure and Try again with the same ask", async ({ page }) => {
@@ -448,6 +566,15 @@ test("Regenerate: template, prompt and model for this run only, the estimate abo
   await expect(pop.getByRole("combobox", { name: "Model" })).toHaveValue("1|big");
   await expect(pop.getByText("About $1.40 for this meeting.")).toBeVisible();
   await expect(pop.getByText("Sends text off this Mac")).toBeVisible();
+  // A modal: Regenerate has focus, and Cancel or Esc closes it without running.
+  await expect(pop.getByRole("button", { name: "Regenerate" })).toBeFocused();
+  await pop.getByRole("button", { name: "Cancel" }).click();
+  await expect(pop).toBeHidden();
+  await page.getByRole("button", { name: "Regenerate" }).click();
+  await page.keyboard.press("Escape");
+  await expect(pop).toBeHidden();
+  await expect(page.getByRole("heading", { name: "Recap", level: 1 })).toBeVisible(); // Esc closed it, not the page
+  await page.getByRole("button", { name: "Regenerate" }).click();
   await pop.getByRole("combobox", { name: "Template" }).selectOption("actions");
   await expect(pop.getByRole("textbox", { name: "Instructions" })).toHaveValue("List them.");
   await pop.getByRole("textbox", { name: "Instructions" }).fill("Only Priya's items.");
@@ -489,8 +616,16 @@ test("no Summary yet: the transcript shows, Main Not set offers AI providers, an
   await expect(page.getByText("No summary yet")).toBeVisible();
   await page.getByRole("button", { name: "Summarize" }).click();
   const pop = page.getByRole("dialog", { name: "Summarize this meeting" });
-  await pop.getByRole("button", { name: "Summarize" }).click();
+  await expect(pop.getByRole("button", { name: "Summarize" })).toBeFocused();
+  await page.keyboard.press("Enter"); // the defaults, in one key
+  await expect(pop).toBeHidden();
   expect(await calls(page, "summary_run")).toEqual([{ id: 5, template: "Recap", prompt: "Write a Recap.", provider: 1, model: "big" }]);
+});
+
+test("no Summary and the AI providers can't be read: it says why instead of showing nothing", async ({ page }) => {
+  await open(page, `ai_get: () => { throw "database is locked"; }`);
+  await page.getByRole("button", { name: "Untitled meeting" }).first().click();
+  await expect(page.getByText("Couldn’t read your AI providers: database is locked")).toBeVisible();
 });
 
 test("the Summary model, not Main, is Regenerate's default; Not set says to set it and Set up opens Meeting notes", async ({ page }) => {
@@ -499,6 +634,7 @@ test("the Summary model, not Main, is Regenerate's default; Not set says to set 
   const pop = page.getByRole("dialog", { name: "Regenerate the summary" });
   await expect(pop.getByRole("combobox", { name: "Model" })).toHaveValue("1|small");
   await expect(pop.getByText("Picking a model here doesn’t change your Summary model.")).toBeVisible();
+  await page.keyboard.press("Escape");
   await page.evaluate(() => { (window as any).__none = true; (window as any).__sum = { versions: [], showing: null }; });
   await page.getByRole("button", { name: "Back to meetings" }).click();
   await page.getByRole("button", { name: "Untitled meeting" }).first().click();

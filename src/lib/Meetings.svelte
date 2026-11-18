@@ -1,4 +1,9 @@
 <!-- Meetings (docs/index.html `meetingsList()`): recorded meetings by day, with the live card while one records or is written up. -->
+<script lang="ts" module>
+  // The search outlives the list, so opening a meeting it found and coming back keeps it.
+  let q = $state("");
+</script>
+
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import ClearAll from "./ClearAll.svelte";
@@ -30,6 +35,7 @@
     if (name.trim() && name.trim() !== m.title) act("meeting_rename", { id: m.id, title: name });
   }
   const focus = (el: HTMLInputElement) => (el.focus(), el.select());
+  const focusOn = (el: HTMLElement) => el.focus();
 
   // One tick a second drives the recording's timer.
   let now = $state(Date.now());
@@ -42,7 +48,17 @@
 
   // A meeting being written up shows as its card, not a row, so finishing swaps one block for one of the same height.
   const busy = $derived(meetings.filter(writing));
-  const listed = $derived(meetings.filter((m) => !writing(m)));
+  // Search: the backend matches titles, transcripts, speakers and summaries; null shows every meeting.
+  let found = $state<Set<number> | null>(null);
+  let search = $state<HTMLInputElement>();
+  $effect(() => {
+    const query = q.trim();
+    void meetings; // a meeting written up or deleted while searching
+    if (!query) return void (found = null);
+    invoke<number[]>("meetings_search", { q: query }).then((ids) => q.trim() === query && (found = new Set(ids)), (err) => (failed = String(err)));
+  });
+  const all = $derived(meetings.filter((m) => !writing(m)));
+  const listed = $derived(found ? all.filter((m) => found!.has(m.id)) : all);
   const groups = $derived.by(() => {
     const out: { head: string; sub: string; items: Meeting[] }[] = [];
     for (const m of listed) {
@@ -52,19 +68,38 @@
     }
     return out;
   });
+  // "/" and ⌘F focus the search, as in History.
+  function onkeydown(e: KeyboardEvent) {
+    const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+    if (search && ((e.key === "/" && !typing && !e.metaKey && !e.ctrlKey) || (e.key === "f" && e.metaKey && !e.shiftKey && !e.altKey))) {
+      e.preventDefault();
+      search.focus();
+      search.select();
+    }
+  }
   const percent = (id: number) => Math.round((progress[id]?.progress ?? 0) * 100);
 </script>
+
+<svelte:window {onkeydown} />
 
 {#snippet icon(d: string)}<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">{@html d}</svg>{/snippet}
 
 <header data-tauri-drag-region>
   <h1>All meetings</h1>
   <span class="grow"></span>
-  {#if on && listed.length}
-    <ClearAll count={listed.length} onclear={onchange} ask="Delete every meeting, with its transcript, summaries and audio? This can’t be undone." clear={() => invoke("meeting_delete", { id: null })} />
+  {#if on && all.length}
+    <label class="search">
+      {@render icon('<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>')}
+      <input bind:this={search} bind:value={q} type="search" placeholder="Search meetings" aria-label="Search meetings" autocomplete="off" spellcheck="false"
+        onkeydown={(e) => { if (e.key === "Escape" && q) { e.preventDefault(); q = ""; } }} />
+      <kbd aria-hidden="true">/</kbd>
+    </label>
+  {/if}
+  {#if on && all.length && !q.trim()}
+    <ClearAll count={all.length} onclear={onchange} ask="Delete every meeting, with its transcript, summaries and audio? This can’t be undone." clear={() => invoke("meeting_delete", { id: null })} />
   {/if}
   {#if on && !running}
-    <button class="btn primary" aria-label="Start notes" disabled={busy.length > 0} onclick={onstart}>
+    <button class="btn primary" aria-label="Start notes" disabled={busy.length > 0} title={busy.length ? "Wait until the last meeting’s notes are written up" : undefined} onclick={onstart}>
       {@render icon('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/>')}Start notes
     </button>
   {/if}
@@ -122,8 +157,9 @@
                 {#if m.state === "failed"}<button class="btn" onclick={() => onretry(m.id)}>Try again</button>{/if}
                 {#if deleting === m.id}
                   <span class="ask">Delete this meeting and its audio?</span>
-                  <button class="btn" onclick={() => (deleting = null)}>Cancel</button>
-                  <button class="btn danger" onclick={() => ((deleting = null), act("meeting_delete", { id: m.id }))}>Delete</button>
+                  <!-- Takes focus from the Delete icon it replaced; Esc cancels, like Clear all. -->
+                  <button class="btn" use:focusOn onclick={() => (deleting = null)} onkeydown={(e) => e.key === "Escape" && (deleting = null)}>Cancel</button>
+                  <button class="btn danger" onclick={() => ((deleting = null), act("meeting_delete", { id: m.id }))} onkeydown={(e) => e.key === "Escape" && (deleting = null)}>Delete</button>
                 {:else if editing !== m.id}
                   <span class="acts">
                     <button class="icon" aria-label="Rename" title="Rename" onclick={() => ((name = m.title), (editing = m.id))}>{@render icon('<path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4"/>')}</button>
@@ -135,7 +171,13 @@
           </ul>
         </section>
       {/each}
-    {:else if !running && !busy.length}
+    {:else if q.trim() && found}
+      <div class="empty">
+        <h2>No matches</h2>
+        <p>Search looks in titles, what was said, speakers’ names and summaries.</p>
+        <button class="btn" onclick={() => { q = ""; search?.focus(); }}>Clear search</button>
+      </div>
+    {:else if !running && !busy.length && !q.trim()}
       <div class="empty">
         <h2>No meetings yet</h2>
         <p>Press Start notes, or use your shortcut from any app, and Myna writes up the call when it ends. The audio stays on this Mac.</p>
@@ -146,6 +188,9 @@
 
 <style>
   .grow { flex: 1; }
+  .search { flex: 0 1 220px; min-width: 120px; }
+  .search kbd { position: absolute; right: 8px; padding: 1px 6px; border-radius: 5px; font: 500 11px/1.4 var(--font); color: var(--text-3); box-shadow: inset 0 0 0 .5px var(--line-strong); pointer-events: none; }
+  .search input:focus + kbd, .search input:not(:placeholder-shown) + kbd { display: none; }
   .ic { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   .btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-1h); height: var(--h-ctl); padding: 0 14px; border: 0; border-radius: var(--r-full); flex: none;
     background: var(--fill-control); box-shadow: inset 0 0 0 .5px var(--line-strong); color: var(--text); font: inherit; }

@@ -242,15 +242,17 @@
       {#key hist.i + ":" + view.page + ":" + view.sub + ":" + view.arg}
         <div class="page prefs">
 
+          <!-- A model drill-in whose list failed to load, here or on a reload after a change. -->
+          {#snippet noModels()}<ErrorState title="Myna couldn't read the models" message={data.models?.ok === false ? data.models.error : ""} />{/snippet}
           <!-- Every setting lives in the database, so if it failed to open, every page shows why. -->
           {#if !data.storage.ok}
             <ErrorState title="Myna couldn't open its data folder" message={data.storage.error} />
           {:else if view.sub === "models"}
-            {#if stt}<ModelList task={stt} label="Speech-to-text model" help="Used for voice typing. Downloads are shared with meeting notes." bind:active={sttActive} onchange={() => reloadPicks("stt")} />{/if}
+            {#if stt}<ModelList task={stt} label="Speech-to-text model" help="Used for voice typing. Downloads are shared with meeting notes." bind:active={sttActive} onchange={() => reloadPicks("stt")} />{:else}{@render noModels()}{/if}
           {:else if view.sub === "mmodels"}
-            {#if meet}<ModelList task={meet} label="Meeting notes speech-to-text model" help="Used for meeting notes. Downloads are shared with voice typing." bind:active={meetActive} onchange={() => reloadPicks("meeting_stt")} />{/if}
+            {#if meet}<ModelList task={meet} label="Meeting notes speech-to-text model" help="Used for meeting notes. Downloads are shared with voice typing." bind:active={meetActive} onchange={() => reloadPicks("meeting_stt")} />{:else}{@render noModels()}{/if}
           {:else if view.sub === "diar"}
-            {#if diar}<ModelList task={diar} label="Speaker diarization model" help="Works out who said what. Runs on this Mac. Your own voice is always “Me”." search={false} bind:active={diarActive} />{/if}
+            {#if diar}<ModelList task={diar} label="Speaker diarization model" help="Works out who said what. Runs on this Mac. Your own voice is always “Me”." search={false} bind:active={diarActive} />{:else}{@render noModels()}{/if}
           {:else if view.sub === "remember" || view.sub === "keep"}
             {#if rules}<Words bind:rules part={view.sub} />
             {:else}<ErrorState title="Myna couldn't read your words" message={data.rules?.ok === false ? data.rules.error : ""} />{/if}

@@ -13,6 +13,8 @@
 
   let error = $state("");
   let q = $state("");
+  let doomed = $state<string | null>(null); // a downloaded model whose Remove was pressed: Keep or Delete
+
   const installed = (m: { id: string; installed: boolean }) => dl.installed[m.id] ?? m.installed;
   onMount(watchDownloads);
 
@@ -107,9 +109,13 @@
               {#if !m.system && !m.sdk}
                 <button class="btn quiet icon sm" aria-label="Stop downloading {m.name}" onclick={() => cancel(m.id)}><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" /></svg></button>
               {/if}
+            {:else if doomed === m.id}
+              <button class="btn quiet sm" onclick={() => (doomed = null)}>Keep</button>
+              <button class="btn sm danger" aria-label="Delete {m.name}{m.size ? `, ${fmtSize(m.size)}` : ''}" onclick={() => ((doomed = null), remove(m.id))}>Delete</button>
             {:else if installed(m)}
               <span class="ok"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>{m.system ? "Built in" : "Installed"}</span>
-              {#if !m.system}<button class="btn quiet sm" aria-label="Remove {m.name}" onclick={() => remove(m.id)}>Remove</button>{/if}
+              <!-- A download asks first; a model of the user's own on this Mac is never deleted, so it just goes. -->
+              {#if !m.system}<button class="btn quiet sm" aria-label="Remove {m.name}" onclick={() => (custom ? remove(m.id) : (doomed = m.id))}>Remove</button>{/if}
             {:else if m.files.length === 0 && !m.system && !m.sdk && !custom}
               <span class="pill">Coming later</span>
             {:else}
@@ -158,6 +164,7 @@
   .meta { flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-footnote); font-weight: var(--fw-regular); color: var(--text-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
   .mrow .desc.bad { color: var(--danger-text); }
   .mstate { width: 152px; }
+  .btn.danger { color: var(--danger-text); }
   .bar { width: 72px; height: 4px; border-radius: 2px; background: var(--fill-track); overflow: hidden; }
   .bar i { display: block; height: 100%; background: var(--accent); transform-origin: left; }
   .pct { min-width: 32px; text-align: right; font-size: var(--fs-footnote); color: var(--text-2); font-variant-numeric: tabular-nums; }

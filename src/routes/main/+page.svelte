@@ -52,6 +52,7 @@
   });
   const refresh = () => invoke<Row_[]>("meetings_list").then((r) => (meetings = r), () => {});
   async function include(ids: number[]) {
+    meetingError = "";
     try {
       await invoke("segments_include", { ids });
       if (page) await openMeeting(page.id); // reload: the included lines' words come from the backend
@@ -65,7 +66,8 @@
       page = await invoke<Page>("meeting_page", { id });
       meetingError = "";
     } catch (err) {
-      (page = null), (meetingError = String(err));
+      if (page?.id !== id) page = null; // a reload that fails keeps the page open, saying why
+      meetingError = String(err);
     }
     if (show) current = "meetings";
   }
@@ -78,6 +80,7 @@
     }
   }
   async function retry(id: number, local = false) {
+    meetingError = "";
     try {
       await invoke(local ? "meeting_local" : "meeting_retry", { id });
     } catch (err) {
@@ -187,7 +190,7 @@
       <header data-tauri-drag-region><h1>All meetings</h1></header>
       <div class="content"><ErrorState title="Myna couldn't read your meetings" message={data.meetings.error} /></div>
     {:else if view === "meetings" && page}
-      {#key page.id}<Meeting {page} progress={progress[page.id]} summary={summaries[page.id]} cleanup={cleanups[page.id]} onback={() => (page = null)} onretry={retry} onlocal={local} oninclude={include} onreload={() => openMeeting(page!.id)} />{/key}
+      {#key page.id}<Meeting {page} progress={progress[page.id]} summary={summaries[page.id]} cleanup={cleanups[page.id]} error={meetingError} onback={() => ((page = null), (meetingError = ""))} onretry={retry} onlocal={local} oninclude={include} onreload={() => openMeeting(page!.id)} ondelete={() => ((page = null), refresh())} />{/key}
     {:else if view === "meetings"}
       <Meetings {meetings} {running} {progress} on={notes.on} error={meetingError} onenable={enable} onopen={openMeeting} onretry={retry} onlocal={local} onchange={refresh}
         onstart={() => invoke("meeting_toggle")} onstop={() => invoke("meeting_toggle")} />
