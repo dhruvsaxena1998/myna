@@ -108,6 +108,33 @@ test("a meeting's page deletes it: Delete asks first, Esc and Cancel keep it, an
   await expect(page.getByRole("listitem")).toHaveCount(3);
 });
 
+test("search lists the meetings the backend matched, keeps them while a meeting is open, and clears", async ({ page }) => {
+  await open(page, `meetings_search: ({ q }) => (q === "budget" ? [5, 2] : [])`);
+  await page.keyboard.press("/");
+  const box = page.getByRole("searchbox", { name: "Search meetings" });
+  await expect(box).toBeFocused();
+  await box.fill("  budget ");
+  expect((await calls(page, "meetings_search")).at(-1)).toEqual({ q: "budget" });
+  await expect(page.getByRole("listitem")).toHaveCount(2);
+  await expect(page.getByRole("button", { name: "Clear all" })).toBeHidden(); // it would delete more than the matches
+  await page.getByRole("listitem").first().getByRole("button", { name: "Untitled meeting" }).click();
+  await page.getByRole("button", { name: "Back to meetings" }).click();
+  await expect(box).toHaveValue("  budget ");
+  await expect(page.getByRole("listitem")).toHaveCount(2);
+  await box.fill("zebra");
+  await expect(page.getByText("No matches")).toBeVisible();
+  await page.getByRole("button", { name: "Clear search" }).click();
+  await expect(box).toBeFocused();
+  await expect(page.getByRole("listitem")).toHaveCount(4);
+  await box.fill("budget");
+  await box.press("Escape");
+  await expect(box).toHaveValue("");
+  await expect(page.getByRole("button", { name: "Clear all" })).toBeVisible();
+  await box.blur();
+  await page.keyboard.press("Meta+f");
+  await expect(box).toBeFocused();
+});
+
 test("Start notes starts, the live card shows the recording, and Stop ends it", async ({ page }) => {
   await open(page);
   await page.getByRole("button", { name: "Start notes" }).click();

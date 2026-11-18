@@ -1184,6 +1184,19 @@ pub fn list(db: &Connection) -> Result<Vec<Row>, String> {
     Ok(rows)
 }
 
+/// The meetings whose title, app, transcript, speaker names or summaries hold `q`, for the Meetings list's search.
+/// shortcut: LIKE folds case for ASCII only, so "émile" won't find "Émile"; move to FTS5 if that matters.
+pub fn search(db: &Connection, q: &str) -> Result<Vec<i64>, String> {
+    let like = format!("%{}%", q.trim().replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
+    db.prepare(
+        "SELECT id FROM meeting WHERE state <> 'recording' AND (title LIKE ?1 ESCAPE '\\' OR source_app LIKE ?1 ESCAPE '\\'
+           OR id IN (SELECT meeting FROM segment WHERE text LIKE ?1 ESCAPE '\\' OR clean LIKE ?1 ESCAPE '\\' OR label LIKE ?1 ESCAPE '\\')
+           OR id IN (SELECT meeting FROM summary WHERE text LIKE ?1 ESCAPE '\\'))",
+    )
+    .and_then(|mut st| st.query_map([like], |r| r.get(0)).and_then(|r| r.collect()))
+    .map_err(|e| format!("Couldn't search your meetings: {e}"))
+}
+
 pub fn page(db: &Connection, id: i64) -> Result<Page, String> {
     let meeting = list(db)?.into_iter().find(|m| m.id == id).ok_or("That meeting isn't there anymore.")?;
     let (cleanup, stt): (Option<String>, Option<String>) = db.query_row("SELECT cleanup, stt FROM meeting WHERE id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?))).map_err(|e| format!("Couldn't read the meeting: {e}"))?;
@@ -1770,6 +1783,28 @@ pub(crate) mod tests {
             assert!(rename_speaker(&db, 1, from, to).is_err(), "{from} → {to:?} is refused");
         }
         assert_eq!(who(1), ["Ana", "Me", "Speaker 3", "Ana", "Bo"], "a refused rename writes nothing");
+    }
+
+    #[test]
+    fn search_finds_meetings_by_title_app_what_was_said_speaker_and_summary() {
+        let tmp = tempfile::tempdir().unwrap();
+        let m = meetings(tmp.path(), Fake(0));
+        let db = m.db.lock().unwrap();
+        db.execute_batch("INSERT INTO meeting(started, state, title, source_app) VALUES (1, 'done', 'Launch sync', 'Zoom'), (2, 'done', 'Untitled meeting', NULL),
+              (3, 'done', 'Untitled meeting', NULL), (4, 'recording', 'Untitled meeting', NULL), (5, 'done', 'Untitled meeting', NULL);
+            INSERT INTO segment(meeting, start_ms, end_ms, speaker, text, label, clean) VALUES (2, 0, 0, 'Them', 'the budget is 50% over', 'Priya', NULL),
+              (3, 0, 0, 'Me', 'um the roadmap', NULL, 'The roadmap.'), (4, 0, 0, 'Me', 'budget', NULL, NULL);
+            INSERT INTO summary(meeting, template, prompt, provider, model, created, parts, cost, text) VALUES (5, 'Recap', 'p', 'x', 'm', 0, 1, '{}', 'Hiring plan');").unwrap();
+        let find = |q| { let mut ids = search(&db, q).unwrap(); ids.sort(); ids };
+        assert_eq!(find("launch"), [1], "title, any case");
+        assert_eq!(find("zoom"), [1], "the app on the call");
+        assert_eq!(find("BUDGET"), [2], "what was said; a meeting still recording isn't listed");
+        assert_eq!(find("priya"), [2], "a speaker's name");
+        assert_eq!(find("roadmap."), [3], "the cleaned-up line");
+        assert_eq!(find("hiring"), [5], "a summary");
+        assert_eq!(find("50%"), [2]);
+        assert_eq!(find("5_%"), Vec::<i64>::new(), "% and _ are literal");
+        assert_eq!(find("  launch "), [1], "spaces around it are ignored");
     }
 
     #[test]
