@@ -183,6 +183,11 @@ impl MeetingSession {
         Ok(())
     }
 
+    /// Play on a meeting's page: where its mixed audio is.
+    pub fn audio(&self, id: i64) -> Result<std::path::PathBuf, String> {
+        self.meetings.audio(id)
+    }
+
     /// Rename on the Meetings list; "Recent" in the menu shows the new name.
     pub fn rename(&self, id: i64, title: &str) -> Result<(), String> {
         self.meetings.rename(id, title)?;

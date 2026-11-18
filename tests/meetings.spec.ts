@@ -151,6 +151,45 @@ const MUTED = JSON.stringify([
   line(5, "Me", 40000, "I said this muted but keep it.", { muted: true, included: true }),
 ]);
 
+test("Play loads the meeting's audio once, a paragraph's time plays from there, and the paragraph being said is highlighted", async ({ page }) => {
+  const segs = JSON.stringify([
+    { ...line(1, "Me", 1000, "Okay,"), end_ms: 1800 }, { ...line(2, "Me", 2000, "let's start."), end_ms: 3000 },
+    { ...line(3, "Them", 75000, "Launch is still the 18th."), end_ms: 78000 },
+  ]);
+  await page.addInitScript(() => {
+    // No real audio in the test: play and the playhead are driven by hand.
+    HTMLMediaElement.prototype.play = function () { this.dispatchEvent(new Event("play")); return Promise.resolve(); };
+    HTMLMediaElement.prototype.pause = function () { this.dispatchEvent(new Event("pause")); };
+    Object.defineProperty(HTMLMediaElement.prototype, "currentTime", { get() { return this._t ?? 0; }, set(v) { this._t = v; this.dispatchEvent(new Event("timeupdate")); } });
+  });
+  await open(page, `meeting_audio: () => "/data/meetings/5/mix.wav", meeting_page: ({ id }) => ({ ...${MEETINGS}.find((m) => m.id === id), segments: ${segs} }),`);
+  await page.getByRole("listitem").filter({ hasText: "11:00" }).getByRole("button").first().click();
+  const player = page.getByRole("group", { name: "Meeting audio" });
+  await expect(player).toContainText("42:00");
+  expect(await calls(page, "meeting_audio")).toEqual([]);
+
+  await player.getByRole("button", { name: "Play" }).click();
+  expect(await calls(page, "meeting_audio")).toEqual([{ id: 5 }]);
+  await expect(page.locator("audio")).toHaveAttribute("src", "asset://localhost/data/meetings/5/mix.wav");
+  await player.getByRole("button", { name: "Pause" }).click();
+
+  const rows = page.locator(".seg");
+  await expect(rows).toHaveCount(2); // "Okay," and "let's start." are one paragraph
+  await expect(rows.first()).toContainText("Okay, let's start.");
+  await page.getByRole("button", { name: "Play from 01:15" }).click();
+  await expect(player).toContainText("01:15");
+  await expect(rows.nth(1)).toHaveClass(/playing/);
+  await expect(rows.first()).not.toHaveClass(/playing/);
+  expect(await calls(page, "meeting_audio")).toHaveLength(1);
+});
+
+test("a meeting whose audio is gone says so when Play is pressed", async ({ page }) => {
+  await open(page, `meeting_audio: () => { throw "This meeting's audio isn't on this Mac anymore."; },`);
+  await page.getByRole("listitem").filter({ hasText: "11:00" }).getByRole("button").first().click();
+  await page.getByRole("group", { name: "Meeting audio" }).getByRole("button", { name: "Play" }).click();
+  await expect(page.getByText("This meeting's audio isn't on this Mac anymore.")).toBeVisible();
+});
+
 test("lines said while muted collapse into one row, Include keeps them with a marker, and Copy asks the backend", async ({ page }) => {
   await open(page, `meeting_page: () => ({ ...${MEETINGS}[0], segments: window.__lines ?? ${MUTED} }),
     segments_include: ({ ids }) => { window.__lines = ${MUTED}.map((l) => ids.includes(l.id) ? { ...l, hidden: false, included: true, text: "Said muted, kept." } : l); }`);

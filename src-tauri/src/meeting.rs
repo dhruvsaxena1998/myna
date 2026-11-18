@@ -498,6 +498,14 @@ fn wav_samples(path: &std::path::Path) -> Result<Vec<i16>, String> {
     r.into_samples::<i16>().collect::<Result<_, _>>().map_err(|e| format!("Couldn't read {}: {e}", path.display()))
 }
 
+/// Two tracks on the same clock played as one: summed sample by sample and clipped, the shorter one silent at its end.
+fn mix(mut a: impl Iterator<Item = i16>, mut b: impl Iterator<Item = i16>) -> impl Iterator<Item = i16> {
+    std::iter::from_fn(move || match (a.next(), b.next()) {
+        (None, None) => None,
+        (x, y) => Some((x.unwrap_or(0) as i32 + y.unwrap_or(0) as i32).clamp(i16::MIN as i32, i16::MAX as i32) as i16),
+    })
+}
+
 /// Meetings that still need writing up: cut off while recording (a crash or quit), or while transcribing.
 const MAX_CAPTIONS: i64 = 20_000;
 const UNFINISHED: &str = "('recording', 'recorded', 'transcribing')";
@@ -701,6 +709,44 @@ impl Meetings {
     pub fn failed(&self, id: i64) -> bool {
         let state: Option<String> = self.db.lock().unwrap().query_row("SELECT state FROM meeting WHERE id = ?1", [id], |r| r.get(0)).optional().unwrap_or(None);
         state.is_some_and(|s| s == "failed")
+    }
+
+    /// Meeting `id`'s audio to play on its page: Me and the other side mixed into `mix.wav` in its folder, made the
+    /// first time and kept, so Delete takes it with the rest.
+    pub fn audio(&self, id: i64) -> Result<PathBuf, String> {
+        let state: Option<String> = self.db.lock().unwrap().query_row("SELECT state FROM meeting WHERE id = ?1", [id], |r| r.get(0)).optional().map_err(|e| format!("Couldn't read the meeting: {e}"))?;
+        match state.as_deref() {
+            None => return Err("That meeting isn't there anymore.".into()),
+            Some("done" | "failed") => {}
+            // Still recording or being written up: a mix now would be cut short and kept.
+            Some(_) => return Err("The audio plays once the notes are written up.".into()),
+        }
+        let folder = self.dir.join("meetings").join(id.to_string());
+        let out = folder.join("mix.wav");
+        if out.exists() {
+            return Ok(out);
+        }
+        let track = |name: &str| {
+            let path = folder.join(name);
+            // A crash before the first flush leaves no header at all: nothing was kept.
+            let reader = (std::fs::metadata(&path).map_or(0, |m| m.len()) >= 44).then(|| hound::WavReader::open(&path).ok()).flatten();
+            reader.into_iter().flat_map(|r| r.into_samples::<i16>().map_while(Result::ok))
+        };
+        let (mut me, mut them) = (track("mic.wav").peekable(), track("them.wav").peekable());
+        if me.peek().is_none() && them.peek().is_none() {
+            return Err("This meeting's audio isn't on this Mac anymore.".into());
+        }
+        let err = |e: hound::Error| format!("Couldn't get the meeting's audio ready: {e}");
+        let part = folder.join("mix.wav.part");
+        let spec = hound::WavSpec { channels: 1, sample_rate: RATE, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
+        let mut w = hound::WavWriter::create(&part, spec).map_err(err)?;
+        for s in mix(me, them) {
+            w.write_sample(s).map_err(err)?;
+        }
+        w.finalize().map_err(err)?;
+        // Written aside and moved in whole, so a crash never leaves a short mix to be kept.
+        std::fs::rename(&part, &out).map_err(|e| format!("Couldn't get the meeting's audio ready: {e}"))?;
+        Ok(out)
     }
 
     /// Renames meeting `id`; a blank name is refused.
@@ -1739,6 +1785,35 @@ pub(crate) mod tests {
         assert_eq!(p.meeting.title, "Untitled meeting");
         assert!(page(&db, 2).is_err(), "still recording: no page");
         assert!(page(&db, 99).is_err());
+    }
+
+    #[test]
+    fn mix_sums_both_tracks_clips_and_runs_to_the_longer() {
+        let m: Vec<i16> = mix([1, 30_000, -30_000, 5].into_iter(), [2, 30_000, -30_000].into_iter()).collect();
+        assert_eq!(m, [3, i16::MAX, i16::MIN, 5]);
+    }
+
+    #[test]
+    fn audio_is_mixed_once_for_a_written_up_meeting_and_refused_otherwise() {
+        let tmp = tempfile::tempdir().unwrap();
+        let m = meetings(tmp.path(), Fake(0));
+        {
+            let db = m.db.lock().unwrap();
+            for state in ["done", "transcribing", "done"] {
+                db.execute("INSERT INTO meeting(started, state) VALUES (0, ?1)", [state]).unwrap();
+            }
+        }
+        let folder = tmp.path().join("meetings/1");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("mic.wav"), wav_bytes(&[100, 200, 300])).unwrap();
+        std::fs::write(folder.join("them.wav"), wav_bytes(&[10, 20])).unwrap();
+        let path = m.audio(1).unwrap();
+        assert_eq!(samples(path.clone()), [110, 220, 300]);
+        std::fs::write(folder.join("mic.wav"), wav_bytes(&[0])).unwrap();
+        assert_eq!(samples(m.audio(1).unwrap()), [110, 220, 300], "kept, not mixed again");
+        assert!(m.audio(2).is_err(), "still being written up");
+        assert!(m.audio(3).is_err(), "no audio on disk");
+        assert!(m.audio(99).is_err());
     }
 
     #[test]
