@@ -237,6 +237,24 @@ test("meeting-echo, from checking a meeting recorded before echo handling, reloa
   await expect(page.locator(".note")).toHaveText("Your speakers played the call into the mic: 3 lines that repeated it are left out.");
 });
 
+test("what fails on a meeting's page says why there: Include, Try again, and a reload, which keeps the page", async ({ page }) => {
+  await open(page, `meeting_page: ({ id }) => { if (window.__gone) throw "That meeting isn't there anymore."; return { ...${MEETINGS}.find((m) => m.id === id), segments: id === 5 ? ${MUTED} : [] }; },
+    segments_include: () => { throw "database is locked"; }, meeting_retry: () => { throw "Another meeting is being written up."; }`);
+  await page.getByRole("button", { name: "Untitled meeting" }).first().click();
+  await page.locator(".seg").filter({ hasText: "Said while muted · left out" }).getByRole("button", { name: "Include" }).click();
+  await expect(page.locator("article .err").last()).toHaveText("database is locked");
+  await page.evaluate(() => ((window as any).__gone = true));
+  await emit(page, "meeting-echo", 5);
+  await expect(page.locator("article .err").last()).toHaveText("That meeting isn't there anymore.");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Untitled meeting"); // still on the page
+  await page.getByRole("button", { name: "Back to meetings" }).click();
+  await expect(page.getByText("That meeting isn't there anymore.")).toHaveCount(0); // not carried to the list
+  await page.evaluate(() => ((window as any).__gone = false));
+  await page.getByRole("listitem").filter({ hasText: "The model fell over." }).getByRole("button").first().click();
+  await page.getByRole("button", { name: "Try again" }).click();
+  await expect(page.locator("article .err").last()).toHaveText("Another meeting is being written up.");
+});
+
 test("cleanup shows its progress, then the cleaned lines with changed words marked; Show original shows what was heard, and Copy follows", async ({ page }) => {
   const clean = JSON.stringify([line(1, "Me", 12000, "so um we ship on friday", { clean: "So we ship on Friday." }), line(2, "Them", 75000, "Launch is still the 18th.")]);
   await open(page, `meeting_page: () => ({ ...${MEETINGS}[0], ...(window.__clean ? { segments: ${clean}, cleanup: { provider: "OpenRouter", model: "small", cost: { kind: "free" } } } : { segments: ${SEGMENTS}, cleanup: null }) })`);

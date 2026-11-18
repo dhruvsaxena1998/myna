@@ -25,8 +25,9 @@
   import { changes, clips, clock, dayHead, groups, hm, meta, writing, type CleanupRun, type Cost, type Page, type Progress, type SummaryRun, type Version } from "./meetings";
 
   // `onreload`: the page's lines changed in the backend (a speaker renamed), so it reads them again.
-  let { page, progress, summary, cleanup, onback, onretry, onlocal, oninclude, onreload }: {
-    page: Page; progress?: Progress; summary?: SummaryRun; cleanup?: CleanupRun; onback: () => void; onretry: (id: number) => void; onlocal: (id: number) => void; oninclude: (ids: number[]) => void; onreload: () => Promise<void>;
+  // `error`: why something the main window did for this page (Include, Try again, a reload) failed.
+  let { page, progress, summary, cleanup, error: failed = "", onback, onretry, onlocal, oninclude, onreload }: {
+    page: Page; progress?: Progress; summary?: SummaryRun; cleanup?: CleanupRun; error?: string; onback: () => void; onretry: (id: number) => void; onlocal: (id: number) => void; oninclude: (ids: number[]) => void; onreload: () => Promise<void>;
   } = $props();
   let copied = $state<"" | "doc" | "panel">("");
   let error = $state("");
@@ -336,7 +337,7 @@
         </div>
         {#if audioErr}<p class="err" role="status">{audioErr}</p>{/if}
       {/if}
-      <p class="err" role="status">{error}</p>
+      <p class="err" role="status">{error || failed}</p>
       {#if page.segments.length}
         <section class="sumdoc" aria-label="Summary">
           {#if sum?.versions.length}
