@@ -71,7 +71,8 @@
 
   function onkeydown(e: KeyboardEvent) {
     const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
-    if (e.key === "/" && !typing && !e.metaKey && !e.ctrlKey) {
+    // "/" as on the web, ⌘F as everywhere else on a Mac.
+    if ((e.key === "/" && !typing && !e.metaKey && !e.ctrlKey) || (e.key === "f" && e.metaKey && !e.shiftKey && !e.altKey)) {
       e.preventDefault();
       search.focus();
       search.select();

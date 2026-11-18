@@ -66,9 +66,12 @@ test("a failed delete keeps the row and says why", async ({ page }) => {
   await expect(list(page)).toHaveCount(2);
 });
 
-test("/ focuses search; search filters by words and app; no matches can be cleared", async ({ page }) => {
+test("/ and ⌘F focus search; search filters by words and app; no matches can be cleared", async ({ page }) => {
   await open(page);
   const search = page.getByRole("searchbox", { name: "Search what you said" });
+  await page.keyboard.press("Meta+f");
+  await expect(search).toBeFocused();
+  await search.blur();
   await page.keyboard.press("/");
   await expect(search).toBeFocused();
   await page.keyboard.type("priya");
