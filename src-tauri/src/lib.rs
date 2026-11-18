@@ -5,6 +5,7 @@ mod calls;
 mod cleanup;
 mod dictation;
 mod download;
+mod echo;
 mod feedback;
 mod fnkey;
 mod look;
