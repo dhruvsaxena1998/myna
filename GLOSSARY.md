@@ -60,6 +60,10 @@ _Avoid_: dictation flow, dictation handler
 The part of Myna that runs one meeting recording, from the shortcut to the write-up: the checks before recording, the clock and the "can't hear the others" warning while it runs, stopping and keeping it, writing the notes up, trying again, finishing meetings cut off by a quit, and what the browser add-on reports during the call. It owns the app's recorder and reaches the Mac only through one port, so tests run it with a fake.
 _Avoid_: meeting flow, meeting handler
 
+**Follow-up**:
+The steps after a meeting is transcribed, in order: LLM cleanup of the transcript, the title, then the Summary; and Regenerate, the Summary again on a template and model picked for one run. Each step reports how it goes to the windows. It reaches the app only through one port, so tests run it with a fake.
+_Avoid_: post-processing, pipeline, after-steps
+
 **Rules cleanup**:
 The deterministic pass that removes filler words, collapses repeated words, writes spoken numbers as digits and applies the user's words to remember. It only deletes listed words, writes a number in digits, respells words the user listed, and repairs the gap left behind; it never adds, reorders or rephrases. It is on by default and the user can switch it off for dictation; words to remember always apply. It needs no AI provider.
 
