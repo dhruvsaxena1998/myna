@@ -156,3 +156,21 @@ test("a failed Clear all keeps the history and says why", async ({ page }) => {
   await expect(page.getByRole("alertdialog")).toContainText("disk full");
   await expect(list(page)).toHaveCount(2);
 });
+
+test("Keep history: Forever by default; 24 hours saves it and the list drops what Myna just forgot", async ({ page }) => {
+  await fakeTauri(page, `{
+    storage_status: () => "/tmp/Myna", text_copy: () => {}, settings_open: () => {},
+    traces_list: () => window.__kept ? ${ROWS}.slice(0, 2) : ${ROWS},
+    history_keep_get: () => "forever", history_keep_set: () => { window.__kept = true; },
+  }`);
+  await page.goto("/main");
+  await nav(page).getByRole("button", { name: /^Voice typing history/ }).click();
+  const keep = page.getByRole("combobox", { name: "Keep history" });
+  await expect(keep).toHaveValue("forever");
+  await expect(list(page)).toHaveCount(2);
+  await keep.click();
+  await page.getByRole("listbox", { name: "Keep history" }).getByRole("option", { name: "24 hours" }).click();
+  expect(await calls(page, "history_keep_set")).toEqual([{ keep: "1" }]);
+  await expect(list(page)).toHaveCount(1);
+  await expect(list(page)).toContainText("So ship the Postgres fix");
+});

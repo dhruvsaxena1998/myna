@@ -77,3 +77,16 @@ test("a removed provider shows Not set", async ({ page }) => {
   await open(page, "none", [LOCAL]);
   await expect(row(page)).toContainText("Not set: its provider was removed. New meetings wait");
 });
+
+test("Models: Transcribe with comes first, then the Local model or the Endpoint, never both", async ({ page }) => {
+  const names = () => page.getByRole("region", { name: "Models" }).locator(".row .name");
+  await open(page);
+  await expect(names()).toHaveText(["Transcribe with", "Speech-to-text model", "Speaker diarization"]);
+  await via(page).selectOption("endpoint");
+  await expect(names()).toHaveText(["Transcribe with", "Endpoint", "Speaker diarization"]);
+});
+
+test("a saved Endpoint names the Local model that keeps muted stretches on this Mac", async ({ page }) => {
+  await open(page, "1|openai/whisper-large-v3");
+  await expect(row(page)).toContainText("What you say while muted stays on this Mac, with Model a.");
+});

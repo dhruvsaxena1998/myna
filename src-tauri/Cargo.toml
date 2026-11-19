@@ -49,6 +49,11 @@ rubato = "5"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+# A meeting writes a 48 kHz listening copy beside each 16 kHz track; unoptimized, hound is slow enough to throw off
+# the timing tests that hand the fake mic seconds of audio at once.
+[profile.dev.package.hound]
+opt-level = 3
+
 [profile.release]
 codegen-units = 1
 lto = true

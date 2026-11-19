@@ -5,17 +5,17 @@
     "name": "ONNX Runtime",
     "vendor": "Microsoft",
     "desc": "Runs Parakeet and Sortformer. Downloaded with the first of them.",
-    "size": 33057743,
+    "size": 139145017,
     "files": [
       {
         "path": "libonnxruntime.dylib",
-        "size": 39350024,
-        "sha256": "0c8707e83b3389849d03a3264308e905169b94b546f84df6bf662649bd89c3bb",
+        "size": 39345168,
+        "sha256": "244e53902258550e4b3afc3231c3cf8ba860173fc47a1fb572082ed822e6973f",
         "archive": {
-          "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.28.3/onnxruntime-osx-arm64-1.28.3.tgz",
-          "size": 33057743,
-          "sha256": "c436bd9f47dbce6f6311ccc21de97f829b3c862c09d24aa321958cb72f0a1d32",
-          "member": "onnxruntime-osx-arm64-1.28.3/lib/libonnxruntime.1.28.3.dylib"
+          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/1.28.0/microsoft.ml.onnxruntime.1.28.0.nupkg",
+          "size": 139145017,
+          "sha256": "769d1d3ea8ab6cd69f737c9dd4d4462aa4ad0ccfa106eaf506efc40d7bead5db",
+          "member": "runtimes/osx-arm64/native/libonnxruntime.dylib"
         }
       }
     ]

@@ -73,7 +73,8 @@ pub fn set(conn: &Connection, n: &Notes) -> Result<(), String> {
     Ok(())
 }
 
-pub type Sink = Box<dyn FnMut(&[f32]) + Send>;
+/// 16 kHz mono samples, and the same moment as the 48 kHz listening copy when there is one (three samples to each).
+pub type Sink = Box<dyn FnMut(&[f32], Option<&[f32]>) + Send>;
 pub type Stop = Box<dyn FnOnce() + Send>;
 
 /// The mic. `open` starts it and hands `on` 16 kHz mono samples as they come; the returned function stops it,
@@ -99,7 +100,7 @@ impl Mic for Cpal {
                     return Err(format!("The microphone gives {} samples, which Myna can't read yet.", cfg.sample_format()));
                 }
                 let mut chunks = Chunks::new(cfg.sample_rate(), cfg.channels());
-                let emit = move |data: &[f32], last: bool| chunks.push(data, last, &mut on);
+                let emit = move |data: &[f32], last: bool| chunks.push(data, last, &mut |lo, hi| on(lo, hi));
                 let shared = Arc::new(Mutex::new(emit));
                 let cb = shared.clone();
                 let stream = dev
@@ -127,44 +128,67 @@ impl Mic for Cpal {
     }
 }
 
-/// Interleaved samples gathered a tenth of a second at a time and handed on as 16 kHz mono.
+/// Interleaved samples gathered a tenth of a second at a time and handed on as 16 kHz mono, with the 48 kHz
+/// listening copy of the same moment beside it: exactly three of its samples to each 16 kHz one, so both files keep one clock.
 struct Chunks {
     rate: u32,
     channels: u16,
     pending: Vec<f32>,
     to16k: crate::dictation::To16k,
+    to48k: crate::dictation::To16k,
+    /// 48 kHz samples made but not handed on yet; starts with a few ms of silence, so a sample the resampler is
+    /// late with mid-stream never leaves a gap.
+    hi: std::collections::VecDeque<f32>,
 }
+
+/// The listening copy's rate: what call apps and Macs play at. Three samples to each 16 kHz one.
+pub const HI: u32 = 48_000;
+const UP: usize = (HI / RATE) as usize;
 
 impl Chunks {
     fn new(rate: u32, channels: u16) -> Self {
-        Chunks { rate, channels, pending: vec![], to16k: crate::dictation::To16k::new(rate, channels) }
+        let (to16k, to48k) = (crate::dictation::To16k::new(rate, channels), crate::dictation::To16k::to(rate, channels, HI));
+        Chunks { rate, channels, pending: vec![], to16k, to48k, hi: std::iter::repeat_n(0.0, 256).collect() }
     }
 
     /// `last` hands on the rest too, the resampler's tail included.
-    fn push(&mut self, data: &[f32], last: bool, on: &mut impl FnMut(&[f32])) {
+    fn push(&mut self, data: &[f32], last: bool, on: &mut impl FnMut(&[f32], Option<&[f32]>)) {
         let chunk = (self.rate as usize / 10) * self.channels as usize;
         self.pending.extend_from_slice(data);
         while self.pending.len() >= chunk || (last && !self.pending.is_empty()) {
             let n = self.pending.len().min(chunk);
             let out = self.to16k.push(&self.pending[..n]);
-            if !out.is_empty() {
-                on(&out);
-            }
+            self.hi.extend(self.to48k.push(&self.pending[..n]));
+            self.hand_on(&out, on);
             self.pending.drain(..n);
         }
         if last {
             let tail = std::mem::replace(&mut self.to16k, crate::dictation::To16k::new(self.rate, self.channels)).finish();
-            if !tail.is_empty() {
-                on(&tail);
-            }
+            self.hi.extend(std::mem::replace(&mut self.to48k, crate::dictation::To16k::to(self.rate, self.channels, HI)).finish());
+            self.hand_on(&tail, on);
+            self.hi = std::iter::repeat_n(0.0, 256).collect();
         }
+    }
+
+    fn hand_on(&mut self, lo: &[f32], on: &mut impl FnMut(&[f32], Option<&[f32]>)) {
+        if lo.is_empty() {
+            return;
+        }
+        let n = UP * lo.len();
+        // Short only at the start, while one resampler is slower to begin than the other: the shortfall goes in
+        // front, as silence before the first sound, so the copy stays one unbroken stream.
+        for _ in self.hi.len()..n {
+            self.hi.push_front(0.0);
+        }
+        let hi: Vec<f32> = self.hi.drain(..n).collect();
+        on(lo, Some(&hi));
     }
 }
 
 /// What the other side of the call sends.
 pub enum Heard<'a> {
-    /// 16 kHz mono samples, the last of them heard at the instant given.
-    Audio(Instant, &'a [f32]),
+    /// 16 kHz mono samples, the last of them heard at the instant given, and their 48 kHz listening copy if any.
+    Audio(Instant, &'a [f32], Option<&'a [f32]>),
     /// The apps being listened to, when an app starts using the mic.
     Apps(Vec<String>),
     /// Listening stopped working: why.
@@ -196,11 +220,11 @@ extern "C" fn tap_audio(ctx: *mut c_void, data: *const f32, count: isize, channe
     let TapCtx { on, chunks } = &mut *ctx;
     // A new tap after an app joined can come at another rate.
     if (chunks.rate, chunks.channels) != (rate as u32, channels as u16) {
-        chunks.push(&[], true, &mut |s| on(Heard::Audio(Instant::now(), s)));
+        chunks.push(&[], true, &mut |s, h| on(Heard::Audio(Instant::now(), s, h)));
         *chunks = Chunks::new(rate as u32, channels as u16);
     }
     let data = unsafe { std::slice::from_raw_parts(data, count.max(0) as usize) };
-    chunks.push(data, false, &mut |s| on(Heard::Audio(Instant::now(), s)));
+    chunks.push(data, false, &mut |s, h| on(Heard::Audio(Instant::now(), s, h)));
 }
 
 extern "C" fn tap_event(ctx: *mut c_void, json: *const c_char) {
@@ -227,7 +251,7 @@ impl Them for Tap {
             unsafe { myna_tap_stop() }; // no callbacks after this, so the context can go
             let ctx = unsafe { Box::from_raw(ctx as *mut Mutex<TapCtx>) }.into_inner().unwrap();
             let TapCtx { mut on, mut chunks } = ctx;
-            chunks.push(&[], true, &mut |s| on(Heard::Audio(Instant::now(), s)));
+            chunks.push(&[], true, &mut |s, h| on(Heard::Audio(Instant::now(), s, h)));
         }))
     }
 }
@@ -235,21 +259,77 @@ impl Them for Tap {
 type Wav = hound::WavWriter<BufWriter<File>>;
 
 fn create(path: PathBuf) -> Result<Wav, String> {
-    let spec = hound::WavSpec { channels: 1, sample_rate: RATE, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
+    create_at(path, RATE)
+}
+
+fn create_at(path: PathBuf, rate: u32) -> Result<Wav, String> {
+    let spec = hound::WavSpec { channels: 1, sample_rate: rate, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
     hound::WavWriter::create(path, spec).map_err(|e| format!("Couldn't create the recording: {e}"))
 }
 
-/// Writes `samples`, flushing about once a second: a flush rewrites the header too, so a crash keeps everything
-/// up to the last second.
-fn write(wav: &mut Wav, since_flush: &mut usize, samples: &[f32]) {
+/// Writes `samples`, flushing about once a second (`per_sec`): a flush rewrites the header too, so a crash keeps
+/// everything up to the last second.
+fn write(wav: &mut Wav, since_flush: &mut usize, samples: &[f32], per_sec: u32) {
+    let mut w = wav.get_i16_writer(samples.len() as u32); // batched: three times the samples since the listening copy
     for s in samples {
-        let _ = wav.write_sample((s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16);
+        w.write_sample((s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16);
     }
+    let _ = w.flush();
     *since_flush += samples.len();
-    if *since_flush >= RATE as usize {
+    if *since_flush >= per_sec as usize {
         *since_flush = 0;
         let _ = wav.flush();
     }
+}
+
+/// One track's files: `<name>.wav` at 16 kHz, what speech-to-text reads (and all an older Myna knows), and
+/// `<name>.hq.wav` at 48 kHz, the listening copy Play is made from. Both are written together, so they share a clock.
+struct Rec {
+    lo: Wav,
+    hi: Option<Wav>,
+    lo_flush: usize,
+    hi_flush: usize,
+}
+
+impl Rec {
+    fn lo(lo: Wav) -> Self {
+        Rec { lo, hi: None, lo_flush: 0, hi_flush: 0 }
+    }
+
+    fn create(folder: &std::path::Path, name: &str) -> Result<Self, String> {
+        Ok(Rec { hi: Some(create_at(folder.join(format!("{name}.hq.wav")), HI)?), ..Rec::lo(create(folder.join(format!("{name}.wav")))?) })
+    }
+
+    /// 16 kHz samples written so far.
+    fn len(&self) -> u32 {
+        self.lo.len()
+    }
+
+    /// `lo`, and `hi` its listening copy; without one (silence, the Teams tab's 16 kHz frames) `lo` stands in.
+    fn put(&mut self, lo: &[f32], hi: Option<&[f32]>) {
+        write(&mut self.lo, &mut self.lo_flush, lo, RATE);
+        if let Some(w) = self.hi.as_mut() {
+            let up;
+            write(w, &mut self.hi_flush, match hi { Some(h) => h, None => { up = up3(lo); &up } }, HI);
+        }
+    }
+
+    fn finalize(self) -> Result<(), String> {
+        let err = |e: hound::Error| format!("Couldn't finish the recording: {e}");
+        self.lo.finalize().map_err(err)?;
+        self.hi.map_or(Ok(()), |w| w.finalize().map_err(err))
+    }
+}
+
+/// 16 kHz up to the listening copy's rate, for audio that never had more.
+// shortcut: straight lines between samples; fine for silence and 16 kHz speech, a real resampler if a source ever sends more.
+fn up3(lo: &[f32]) -> Vec<f32> {
+    let mut out = Vec::with_capacity(lo.len() * UP);
+    for (i, &a) in lo.iter().enumerate() {
+        let d = (lo.get(i + 1).copied().unwrap_or(a) - a) / UP as f32;
+        out.extend([a, a + d, a + 2.0 * d]);
+    }
+    out
 }
 
 /// Gaps shorter than this are the jitter of audio arriving in buffers, not silence.
@@ -266,8 +346,7 @@ const TAB_GAP_MS: i64 = 250;
 /// them.wav is sample N in mic.wav.
 #[derive(Default)]
 struct Track {
-    wav: Option<Wav>,
-    since_flush: usize,
+    wav: Option<Rec>,
     /// When an app first used the mic, on the meeting clock.
     app_at: Option<u64>,
     /// Where the latest audio ended.
@@ -277,8 +356,8 @@ struct Track {
     failed: bool,
     /// While the Teams tab's sound flows: where its last frame ended, in capture ms and on the meeting clock.
     tab: Option<(i64, u64)>,
-    /// What the process tap heard meanwhile (about the last 2 s), for when the tab stream stops short.
-    held: Vec<(u64, Vec<f32>)>,
+    /// What the process tap heard meanwhile (about the last 2 s) with its listening copy, for when the tab stream stops short.
+    held: Vec<(u64, Vec<f32>, Option<Vec<f32>>)>,
 }
 
 impl Track {
@@ -290,12 +369,12 @@ impl Track {
     fn pad(&mut self, to: u64) {
         let gap = to.saturating_sub(self.written()) as usize;
         if let Some(wav) = self.wav.as_mut() {
-            write(wav, &mut self.since_flush, &vec![0.0; gap]);
+            wav.put(&vec![0.0; gap], None);
         }
     }
 
-    /// `samples` whose last was heard at `end`.
-    fn put(&mut self, end: u64, samples: &[f32]) {
+    /// `samples` whose last was heard at `end`, and their listening copy if any.
+    fn put(&mut self, end: u64, samples: &[f32], hi: Option<&[f32]>) {
         let start = end.saturating_sub(samples.len() as u64);
         if start > self.written() + SLACK {
             self.pad(start);
@@ -303,7 +382,7 @@ impl Track {
         self.heard |= samples.iter().any(|s| *s != 0.0);
         self.end = self.end.max(end);
         if let Some(wav) = self.wav.as_mut() {
-            write(wav, &mut self.since_flush, samples);
+            wav.put(samples, hi);
         }
     }
 
@@ -320,19 +399,19 @@ impl Track {
             _ => now.saturating_sub(n).max(self.written()) + n, // never over what the tap already wrote
         };
         self.tab = Some((ts + n as i64 * 1000 / RATE as i64, end));
-        self.put(end, samples);
+        self.put(end, samples, None);
     }
 
     /// The process tap heard `samples` ending at `end`. It's kept, not written, while the tab stream is flowing.
-    fn tap(&mut self, end: u64, samples: &[f32]) {
+    fn tap(&mut self, end: u64, samples: &[f32], hi: Option<&[f32]>) {
         match self.tab {
             Some((_, t)) if end < t + TAB_QUIET => {
-                self.held.retain(|(e, _)| e + TAB_QUIET + SLACK >= end);
-                self.held.push((end, samples.to_vec()));
+                self.held.retain(|(e, ..)| e + TAB_QUIET + SLACK >= end);
+                self.held.push((end, samples.to_vec(), hi.map(<[f32]>::to_vec)));
             }
             _ => {
                 self.resume();
-                self.put(end, samples);
+                self.put(end, samples, hi);
             }
         }
     }
@@ -340,11 +419,11 @@ impl Track {
     /// The tab stream is over (or is taken to be): what the tap heard after it is written.
     fn resume(&mut self) {
         self.tab = None;
-        for (end, s) in std::mem::take(&mut self.held) {
+        for (end, s, hi) in std::mem::take(&mut self.held) {
             let start = end.saturating_sub(s.len() as u64);
             let skip = (self.written().saturating_sub(start) as usize).min(s.len());
             if skip < s.len() {
-                self.put(end, &s[skip..]);
+                self.put(end, &s[skip..], hi.as_ref().and_then(|h| h.get(skip * UP..)));
             }
         }
     }
@@ -361,7 +440,7 @@ struct Active {
     /// When `start` ran, so `stop` knows how long the meeting really lasted.
     begun: Instant,
     stop: Stop,
-    wav: Arc<Mutex<Option<Wav>>>,
+    wav: Arc<Mutex<Option<Rec>>>,
     stop_them: Option<Stop>,
     them: Arc<Mutex<Track>>,
     /// The meeting clock's start, once the mic has its first sample.
@@ -520,6 +599,29 @@ fn mix(mut a: impl Iterator<Item = i16>, mut b: impl Iterator<Item = i16>) -> im
     })
 }
 
+/// macOS's own audio converter: `AAC` keeps a listening copy small, `PCM` opens one again as a WAV.
+fn afconvert(from: &std::path::Path, to: &std::path::Path, how: &[&str]) -> Result<(), String> {
+    let out = std::process::Command::new("/usr/bin/afconvert").args(how).arg(from).arg(to).output().map_err(|e| format!("Couldn't convert the meeting's audio: {e}"))?;
+    if out.status.success() { Ok(()) } else { Err(format!("Couldn't convert the meeting's audio: {}", String::from_utf8_lossy(&out.stderr).trim())) }
+}
+const AAC: &[&str] = &["-f", "m4af", "-d", "aac", "-b", "128000"];
+const PCM: &[&str] = &["-f", "WAVE", "-d", "LEI16"];
+
+/// The mic's gain at sample `i` (of `rate` a second): 0 inside the echo lines (`(start_ms, end_ms)`, sorted), widened by a margin as
+/// their times are rough, and a fade back up so the cut doesn't click.
+fn muted(echo: &[(i64, i64)], rate: u32) -> impl Fn(usize) -> f32 {
+    const MARGIN_MS: i64 = 150;
+    let fade = rate as f32 / 50.0; // 20 ms
+    let at = move |ms: i64| (ms.max(0) * rate as i64 / 1000) as usize;
+    let spans: Vec<(usize, usize)> = echo.iter().map(|&(a, b)| (at(a - MARGIN_MS), at(b + MARGIN_MS))).collect();
+    move |i| {
+        let k = spans.partition_point(|&(_, b)| b < i); // the first span not wholly before i
+        let next = spans.get(k).map_or(usize::MAX, |&(a, _)| a.saturating_sub(i)); // 0 when inside it
+        let prev = k.checked_sub(1).map_or(usize::MAX, |p| i - spans[p].1);
+        (next.min(prev) as f32 / fade).min(1.0)
+    }
+}
+
 /// Meetings that still need writing up: cut off while recording (a crash or quit), or while transcribing.
 const MAX_CAPTIONS: i64 = 20_000;
 const UNFINISHED: &str = "('recording', 'recorded', 'transcribing')";
@@ -648,20 +750,18 @@ impl Meetings {
         let folder = self.dir.join("meetings").join(id.to_string());
         let open = || -> Result<Active, String> {
             std::fs::create_dir_all(&folder).map_err(|e| format!("Couldn't create {}: {e}", folder.display()))?;
-            let wav = Arc::new(Mutex::new(Some(create(folder.join("mic.wav"))?)));
-            let them = Arc::new(Mutex::new(Track { wav: Some(create(folder.join("them.wav"))?), ..Default::default() }));
+            let wav = Arc::new(Mutex::new(Some(Rec::create(&folder, "mic")?)));
+            let them = Arc::new(Mutex::new(Track { wav: Some(Rec::create(&folder, "them")?), ..Default::default() }));
             // The meeting clock starts with the mic's first sample.
             let origin = Arc::new(OnceLock::<Instant>::new());
             let (w, o, level, paused) = (wav.clone(), origin.clone(), self.level.clone(), self.paused.clone());
-            let mut since_flush = 0;
-            let on = move |samples: &[f32]| {
+            let on = move |samples: &[f32], hi: Option<&[f32]>| {
                 let silent = paused.load(std::sync::atomic::Ordering::Relaxed);
                 level.store(if silent { 0 } else { crate::dictation::loudness(samples).to_bits() }, std::sync::atomic::Ordering::Relaxed);
                 o.get_or_init(|| Instant::now().checked_sub(Duration::from_secs_f64(samples.len() as f64 / RATE as f64)).unwrap_or_else(Instant::now));
                 if let Some(wav) = w.lock().unwrap().as_mut() {
                     // Paused: silence of the same length, so what's said after it keeps its place on the clock.
-                    let quiet;
-                    write(wav, &mut since_flush, if silent { quiet = vec![0.0; samples.len()]; &quiet } else { samples });
+                    if silent { wav.put(&vec![0.0; samples.len()], None) } else { wav.put(samples, hi) }
                 }
             };
             let stop = self.mic.open(Box::new(on))?;
@@ -671,9 +771,9 @@ impl Meetings {
                 match h {
                     // Before the mic's first sample there's no meeting clock yet; that's a moment at most. Paused: left
                     // out, and the gap is silence once it resumes.
-                    Heard::Audio(at, samples) => {
+                    Heard::Audio(at, samples, hi) => {
                         if let Some(o) = origin.get().filter(|_| !paused.load(std::sync::atomic::Ordering::Relaxed)) {
-                            t.tap(on_clock(*o, at), samples)
+                            t.tap(on_clock(*o, at), samples, hi)
                         }
                     }
                     Heard::Apps(apps) if t.app_at.is_none() && !apps.is_empty() => {
@@ -741,14 +841,27 @@ impl Meetings {
         q.query_map([], |r| r.get(0)).map(|r| r.flatten().collect()).unwrap_or_default()
     }
 
+    /// Refuses a meeting that's gone, or still recording or being written up: Transcribe again waits for it.
+    pub fn settled(&self, id: i64) -> Result<(), String> {
+        let state: Option<String> = self.db.lock().unwrap().query_row("SELECT state FROM meeting WHERE id = ?1", [id], |r| r.get(0)).optional().map_err(|e| format!("Couldn't read the meeting: {e}"))?;
+        match state.as_deref() {
+            None => Err("That meeting isn't there anymore.".into()),
+            Some("done" | "failed") => Ok(()),
+            Some(_) => Err("That meeting is still being written up.".into()),
+        }
+    }
+
     /// Whether a failed meeting can be tried again.
     pub fn failed(&self, id: i64) -> bool {
         let state: Option<String> = self.db.lock().unwrap().query_row("SELECT state FROM meeting WHERE id = ?1", [id], |r| r.get(0)).optional().unwrap_or(None);
         state.is_some_and(|s| s == "failed")
     }
 
-    /// Meeting `id`'s audio to play on its page: Me and the other side mixed into `mix.wav` in its folder, made the
-    /// first time and kept, so Delete takes it with the rest.
+    /// Meeting `id`'s audio to play on its page: Me and the other side mixed, made the first time and kept in its
+    /// folder, so Delete takes it with the rest. From the 48 kHz listening copy into `play.m4a`; a meeting recorded
+    /// before there was one, from its 16 kHz tracks into `play.wav`. Where `echo.rs` found the mic only carried the call
+    /// back from the speakers, the mic is muted: summed in, every remote word played twice, ~100 ms apart.
+    /// shortcut: made once; a line Included later as the user's own stays muted. Remake it on Include if that matters.
     pub fn audio(&self, id: i64) -> Result<PathBuf, String> {
         let state: Option<String> = self.db.lock().unwrap().query_row("SELECT state FROM meeting WHERE id = ?1", [id], |r| r.get(0)).optional().map_err(|e| format!("Couldn't read the meeting: {e}"))?;
         match state.as_deref() {
@@ -758,31 +871,79 @@ impl Meetings {
             Some(_) => return Err("The audio plays once the notes are written up.".into()),
         }
         let folder = self.dir.join("meetings").join(id.to_string());
-        let out = folder.join("mix.wav");
+        // The listening copy as recorded, or as `compact` kept it.
+        let hq = |name: &str| [folder.join(format!("{name}.hq.wav")), folder.join(format!("{name}.m4a"))].into_iter().find(|p| p.exists());
+        let (mic_hq, them_hq) = (hq("mic"), hq("them"));
+        let rich = mic_hq.is_some() || them_hq.is_some();
+        let (out, rate) = if rich { (folder.join("play.m4a"), HI) } else { (folder.join("play.wav"), RATE) };
         if out.exists() {
             return Ok(out);
         }
-        let track = |name: &str| {
-            let path = folder.join(name);
-            // A crash before the first flush leaves no header at all: nothing was kept.
-            let reader = (std::fs::metadata(&path).map_or(0, |m| m.len()) >= 44).then(|| hound::WavReader::open(&path).ok()).flatten();
-            reader.into_iter().flat_map(|r| r.into_samples::<i16>().map_while(Result::ok))
+        let _ = std::fs::remove_file(folder.join("mix.wav")); // an older build's mix, echo and all; that build makes it again if it needs it
+        let echo: Vec<(i64, i64)> = {
+            let db = self.db.lock().unwrap();
+            let mut q = db.prepare("SELECT start_ms, end_ms FROM segment WHERE meeting = ?1 AND speaker = 'Me' AND echo = 1 ORDER BY start_ms").map_err(|e| format!("Couldn't read the meeting: {e}"))?;
+            q.query_map([id], |r| Ok((r.get(0)?, r.get(1)?))).and_then(|r| r.collect()).map_err(|e| format!("Couldn't read the meeting: {e}"))?
         };
-        let (mut me, mut them) = (track("mic.wav").peekable(), track("them.wav").peekable());
-        if me.peek().is_none() && them.peek().is_none() {
-            return Err("This meeting's audio isn't on this Mac anymore.".into());
+        let mut temps = vec![folder.join("play.part.wav"), folder.join("play.part.m4a")];
+        let made = (|| {
+            // A kept-small copy is opened again for the mix.
+            let mut source = |name: &str, hq: Option<PathBuf>| -> Result<PathBuf, String> {
+                match hq {
+                    None => Ok(folder.join(format!("{name}.wav"))),
+                    Some(p) if p.extension().is_some_and(|e| e == "m4a") => {
+                        let wav = folder.join(format!("{name}.part.wav"));
+                        temps.push(wav.clone());
+                        afconvert(&p, &wav, PCM).map(|_| wav)
+                    }
+                    Some(p) => Ok(p),
+                }
+            };
+            let (mic, them) = if rich { (source("mic", mic_hq)?, source("them", them_hq)?) } else { (source("mic", None)?, source("them", None)?) };
+            let track = |path: &std::path::Path| {
+                // A crash before the first flush leaves no header at all: nothing was kept.
+                let reader = (std::fs::metadata(path).map_or(0, |m| m.len()) >= 44).then(|| hound::WavReader::open(path).ok()).flatten();
+                reader.into_iter().flat_map(|r| r.into_samples::<i16>().map_while(Result::ok))
+            };
+            let (mut me, mut them) = (track(&mic).peekable(), track(&them).peekable());
+            if me.peek().is_none() && them.peek().is_none() {
+                return Err("This meeting's audio isn't on this Mac anymore.".to_string());
+            }
+            let err = |e: hound::Error| format!("Couldn't get the meeting's audio ready: {e}");
+            let spec = hound::WavSpec { channels: 1, sample_rate: rate, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
+            let mut w = hound::WavWriter::create(&temps[0], spec).map_err(err)?;
+            let gain = muted(&echo, rate);
+            for s in mix(me.enumerate().map(|(i, s)| (s as f32 * gain(i)) as i16), them) {
+                w.write_sample(s).map_err(err)?;
+            }
+            w.finalize().map_err(err)?;
+            // Written aside and moved in whole, so a crash never leaves a short mix to be kept.
+            let done = if rich { afconvert(&temps[0], &temps[1], AAC).map(|_| &temps[1])? } else { &temps[0] };
+            std::fs::rename(done, &out).map_err(|e| format!("Couldn't get the meeting's audio ready: {e}"))
+        })();
+        for t in &temps {
+            let _ = std::fs::remove_file(t);
         }
-        let err = |e: hound::Error| format!("Couldn't get the meeting's audio ready: {e}");
-        let part = folder.join("mix.wav.part");
-        let spec = hound::WavSpec { channels: 1, sample_rate: RATE, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
-        let mut w = hound::WavWriter::create(&part, spec).map_err(err)?;
-        for s in mix(me, them) {
-            w.write_sample(s).map_err(err)?;
+        made.map(|_| out)
+    }
+
+    /// Once a meeting is written up, its 48 kHz listening copy is kept as AAC (`<name>.m4a`, about 58 MB an hour a
+    /// track instead of 345): Play is made from it, and nothing else reads it.
+    pub fn compact(&self, id: i64) -> Result<(), String> {
+        let folder = self.dir.join("meetings").join(id.to_string());
+        for name in ["mic", "them"] {
+            let (wav, part) = (folder.join(format!("{name}.hq.wav")), folder.join(format!("{name}.part.m4a")));
+            if !wav.exists() {
+                continue;
+            }
+            let kept = afconvert(&wav, &part, AAC).and_then(|_| std::fs::rename(&part, folder.join(format!("{name}.m4a"))).map_err(|e| e.to_string()));
+            if let Err(e) = kept {
+                let _ = std::fs::remove_file(&part);
+                return Err(format!("Couldn't keep the meeting's audio small: {e}"));
+            }
+            let _ = std::fs::remove_file(&wav);
         }
-        w.finalize().map_err(err)?;
-        // Written aside and moved in whole, so a crash never leaves a short mix to be kept.
-        std::fs::rename(&part, &out).map_err(|e| format!("Couldn't get the meeting's audio ready: {e}"))?;
-        Ok(out)
+        Ok(())
     }
 
     /// Renames meeting `id`; a blank name is refused.
@@ -1040,7 +1201,11 @@ impl Meetings {
             tx.execute("UPDATE meeting SET state = 'done', failure = NULL, note = ?3, duration_ms = COALESCE(duration_ms, ?2), stt = ?4, echo = ?5 WHERE id = ?1", (id, mic.len() as i64 * 1000 / RATE as i64, &note, &stt_record, &checked))?;
             tx.commit()
         };
-        save(&mut db).map_err(|e| format!("Couldn't save the notes: {e}"))
+        save(&mut db).map_err(|e| format!("Couldn't save the notes: {e}"))?;
+        for play in ["play.wav", "play.m4a"] {
+            let _ = std::fs::remove_file(folder.join(play)); // made from the old lines' echo; the next Play makes it again
+        }
+        Ok(())
     }
 
     /// Sends `chunks` to the Endpoint, `PARALLEL` at a time, each tried `RETRIES` more times with doubling waits;
@@ -1092,8 +1257,8 @@ impl Meetings {
         them.resume();
         them.pad(wav.len() as u64);
         let them = them.wav.take().ok_or("The recording was already closed.")?;
-        wav.finalize().map_err(|e| format!("Couldn't finish the recording: {e}"))?;
-        them.finalize().map_err(|e| format!("Couldn't finish the recording: {e}"))?;
+        wav.finalize()?;
+        them.finalize()?;
         self.db
             .lock()
             .unwrap()
@@ -1307,11 +1472,33 @@ pub fn clock(ms: i64) -> String {
 pub(crate) mod tests {
     use super::*;
 
-    /// Hands `on` two seconds of a tone at once, like a mic that already heard it.
+    #[test]
+    fn capture_hands_on_a_48k_listening_copy_three_samples_to_each_16k_one() {
+        let mut c = Chunks::new(44_100, 2);
+        let (mut lo, mut hi, mut all) = (0, 0, vec![]);
+        let mut each = |l: &[f32], h: Option<&[f32]>| {
+            let h = h.expect("capture always has the listening copy");
+            assert_eq!(h.len(), 3 * l.len());
+            (lo, hi) = (lo + l.len(), hi + h.len());
+            all.extend_from_slice(h);
+        };
+        let second: Vec<f32> = (0..88_200).map(|i| ((i / 2) as f32 * 0.05).sin() * 0.2).collect();
+        for piece in second.chunks(1_234) {
+            c.push(piece, false, &mut each);
+        }
+        c.push(&[], true, &mut each);
+        assert_eq!((lo, hi), (16_000, 48_000));
+        let z: Vec<usize> = (1_000..47_000).filter(|&i| all[i] == 0.0).collect(); assert!(z.is_empty(), "no gap padded in mid-stream: {} at {:?}..{:?}", z.len(), z.first(), z.last());
+    }
+
+    /// Hands `on` that many 16 kHz samples of a tone at once, like a mic that already heard it, with its 48 kHz copy
+    /// as a real mic's capture always has.
     pub(crate) struct Fake(pub usize);
     impl Mic for Fake {
         fn open(&self, mut on: Sink) -> Result<Stop, String> {
-            on(&(0..self.0).map(|i| (i as f32 / 50.0).sin() * 0.5).collect::<Vec<_>>());
+            let lo: Vec<f32> = (0..self.0).map(|i| (i as f32 / 50.0).sin() * 0.5).collect();
+            let hi: Vec<f32> = (0..self.0 * UP).map(|i| (i as f32 / 150.0).sin() * 0.5).collect();
+            on(&lo, Some(&hi));
             Ok(Box::new(|| {}))
         }
     }
@@ -1332,7 +1519,7 @@ pub(crate) mod tests {
                     Event::Apps(a) => on(Heard::Apps(vec![a.into()])),
                     Event::Audio(v, n) => {
                         let d = Duration::from_secs_f64(at.abs());
-                        on(Heard::Audio(if at < 0.0 { now - d } else { now + d }, &vec![v; n]))
+                        on(Heard::Audio(if at < 0.0 { now - d } else { now + d }, &vec![v; n], None))
                     }
                     Event::Failed => on(Heard::Failed("denied".into())),
                 }
@@ -1356,18 +1543,18 @@ pub(crate) mod tests {
     fn track() -> (tempfile::TempDir, Track) {
         let tmp = tempfile::tempdir().unwrap();
         let wav = create(tmp.path().join("them.wav")).unwrap();
-        (tmp, Track { wav: Some(wav), ..Default::default() })
+        (tmp, Track { wav: Some(Rec::lo(wav)), ..Default::default() })
     }
 
     #[test]
     fn them_is_silence_before_the_first_sound_and_in_gaps_but_not_for_jitter() {
         let (_tmp, mut t) = track();
         let r = RATE as u64;
-        t.put(2 * r, &[0.5; RATE as usize]); // the first second of sound ends at 2 s
+        t.put(2 * r, &[0.5; RATE as usize], None); // the first second of sound ends at 2 s
         assert_eq!(t.written(), 2 * r, "a second of silence first");
-        t.put(3 * r + 100, &[0.5; RATE as usize]); // 100 samples late: jitter
+        t.put(3 * r + 100, &[0.5; RATE as usize], None); // 100 samples late: jitter
         assert_eq!(t.written(), 3 * r);
-        t.put(6 * r, &[0.5; RATE as usize]); // nothing from 3 s to 5 s
+        t.put(6 * r, &[0.5; RATE as usize], None); // nothing from 3 s to 5 s
         assert_eq!(t.written(), 6 * r);
         let wav = t.wav.take().unwrap();
         wav.finalize().unwrap();
@@ -1402,18 +1589,18 @@ pub(crate) mod tests {
     fn the_tap_is_held_while_the_tab_flows_and_takes_over_without_a_hole_when_it_stops_short() {
         let (tmp, mut t) = track();
         let (r, f) = (RATE as u64, 1600);
-        t.tap(r, &[0.25; 16000]); // before the tab: the tap writes
+        t.tap(r, &[0.25; 16000], None); // before the tab: the tap writes
         for i in 0..10 {
             t.put_tab(r + f * (i + 1), i as i64 * 100, &[0.5; 1600]); // a second of tab, from 1 s to 2 s
         }
         assert_eq!(t.written(), 2 * r);
         // The tap keeps hearing everything, tab's sound included; none of it is written while the tab is live.
         for i in 1..30 {
-            t.tap(r + f * i, &[0.25; 1600]);
+            t.tap(r + f * i, &[0.25; 1600], None);
         }
         // Frames stopped at 2 s; the first tap chunk 2 s later (4 s) finds the stream gone, and the tap's sound since comes out.
         assert_eq!(t.written(), 2 * r, "held until the tab was declared gone");
-        t.tap(r + f * 30, &[0.25; 1600]);
+        t.tap(r + f * 30, &[0.25; 1600], None);
         assert_eq!(t.written(), 4 * r, "no hole from the tab's last frame to the tap's next sound");
         let s = finish(&mut t, tmp.path());
         assert!(s[..r as usize].iter().all(|v| *v == 8191));
@@ -1445,14 +1632,14 @@ pub(crate) mod tests {
     fn a_tap_that_only_gives_silence_with_an_app_on_the_call_is_deaf() {
         let (_tmp, mut t) = track();
         let r = RATE as u64;
-        t.put(30 * r, &[0.0; 160]);
+        t.put(30 * r, &[0.0; 160], None);
         assert!(!t.deaf(), "no app on the mic yet: silence is right");
         t.app_at = Some(30 * r);
-        t.put(30 * r + DEAF - 160, &[0.0; 160]);
+        t.put(30 * r + DEAF - 160, &[0.0; 160], None);
         assert!(!t.deaf(), "not long enough yet");
-        t.put(30 * r + DEAF, &[0.0; 160]);
+        t.put(30 * r + DEAF, &[0.0; 160], None);
         assert!(t.deaf());
-        t.put(30 * r + DEAF + 160, &[0.1; 160]);
+        t.put(30 * r + DEAF + 160, &[0.1; 160], None);
         assert!(!t.deaf(), "someone spoke");
         let (_tmp, mut t) = track();
         t.failed = true;
@@ -2070,13 +2257,35 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_recording_keeps_a_48k_listening_copy_of_each_track_on_the_same_clock() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mic = Held::default();
+        let m = meetings(tmp.path(), mic.clone());
+        let id = m.start(1_000).unwrap();
+        let say = |lo: &[f32], hi: &[f32]| (mic.0.lock().unwrap().as_mut().unwrap())(lo, Some(hi));
+        say(&[0.5; 4], &[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.5, 0.5, 0.5]);
+        m.pause(true);
+        say(&[0.5; 4], &[0.5; 12]);
+        m.pause(false);
+        m.stop().unwrap();
+        let folder = tmp.path().join(format!("meetings/{id}"));
+        let rate = |f: &str| hound::WavReader::open(folder.join(f)).unwrap().spec().sample_rate;
+        assert_eq!((rate("mic.wav"), rate("mic.hq.wav"), rate("them.hq.wav")), (16_000, 48_000, 48_000));
+        let hq = samples(folder.join("mic.hq.wav"));
+        assert_eq!(hq.len(), 3 * samples(folder.join("mic.wav")).len());
+        assert_eq!(samples(folder.join("them.hq.wav")).len(), 3 * samples(folder.join("them.wav")).len(), "the call's copy is padded with it");
+        let q = |v: f32| (v * i16::MAX as f32) as i16;
+        assert_eq!((hq[0], hq[8], &hq[12..]), (q(0.1), q(0.9), &[0; 12][..]), "the mic's own 48 kHz samples, then the pause as silence");
+    }
+
+    #[test]
     fn paused_the_mic_keeps_its_time_as_silence_and_captions_are_left_out() {
         let tmp = tempfile::tempdir().unwrap();
         let mic = Held::default();
         let m = meetings(tmp.path(), mic.clone());
         assert!(!m.pause(true), "nothing is recording");
         let id = m.start(1_000).unwrap();
-        let say = |v: f32| (mic.0.lock().unwrap().as_mut().unwrap())(&[v; 4]);
+        let say = |v: f32| (mic.0.lock().unwrap().as_mut().unwrap())(&[v; 4], None);
         say(0.5);
         assert!(m.pause(true) && m.paused());
         say(0.5);
@@ -2121,6 +2330,90 @@ pub(crate) mod tests {
         assert!(m.audio(2).is_err(), "still being written up");
         assert!(m.audio(3).is_err(), "no audio on disk");
         assert!(m.audio(99).is_err());
+    }
+
+    #[test]
+    fn playback_mutes_the_mic_where_it_only_carried_the_call_back_from_the_speakers() {
+        let tmp = tempfile::tempdir().unwrap();
+        let m = meetings(tmp.path(), Fake(0));
+        {
+            let db = m.db.lock().unwrap();
+            db.execute("INSERT INTO meeting(started, state) VALUES (0, 'done')", []).unwrap();
+            db.execute("INSERT INTO segment(meeting, start_ms, end_ms, speaker, text, echo) VALUES (1, 500, 1500, 'Me', 'their words again', 1)", []).unwrap();
+            db.execute("INSERT INTO segment(meeting, start_ms, end_ms, speaker, text, echo) VALUES (1, 1800, 1900, 'Me', 'mine', 0)", []).unwrap();
+        }
+        let folder = tmp.path().join("meetings/1");
+        std::fs::create_dir_all(&folder).unwrap();
+        let n = 2 * RATE as usize;
+        std::fs::write(folder.join("mic.wav"), wav_bytes(&vec![1000; n])).unwrap();
+        std::fs::write(folder.join("them.wav"), wav_bytes(&vec![10; n])).unwrap();
+        std::fs::write(folder.join("mix.wav"), wav_bytes(&[1, 2, 3])).unwrap(); // an older build's mix, echo and all
+        let s = samples(m.audio(1).unwrap());
+        let at = |ms: usize| s[ms * RATE as usize / 1000];
+        assert_eq!(s.len(), n);
+        assert_eq!((at(0), at(1000), at(1850)), (1010, 10, 1010), "the echo line is the call alone; the user's own line keeps the mic");
+        assert_eq!((at(400), at(1600)), (10, 10), "with a margin, as the line's times are rough");
+        assert!(s.windows(2).all(|w| (w[0] - w[1]).abs() <= 100), "faded, not clicked off");
+    }
+
+    /// A tone of `hz` at `amp`, `secs` long at `rate`, as 16-bit samples.
+    fn tone(hz: f32, amp: f32, secs: f32, rate: u32) -> Vec<i16> {
+        (0..(secs * rate as f32) as usize).map(|i| ((i as f32 * hz * std::f32::consts::TAU / rate as f32).sin() * amp * i16::MAX as f32) as i16).collect()
+    }
+
+    /// How much of `hz` is in `s` (48 kHz) over the 20 ms at `ms`, as an amplitude.
+    fn level_of(s: &[f32], hz: f32, ms: usize) -> f32 {
+        let at = ms * 48;
+        let (mut c, mut q) = (0.0, 0.0);
+        for (i, v) in s[at..at + 960].iter().enumerate() {
+            let w = i as f32 * hz * std::f32::consts::TAU / 48_000.0;
+            (c, q) = (c + v * w.cos(), q + v * w.sin());
+        }
+        2.0 * (c * c + q * q).sqrt() / 960.0
+    }
+
+    fn decode(path: &std::path::Path) -> Vec<f32> {
+        let out = path.with_extension("decoded.wav");
+        assert!(std::process::Command::new("/usr/bin/afconvert").args(["-f", "WAVE", "-d", "LEI16"]).arg(path).arg(&out).status().unwrap().success());
+        let r = hound::WavReader::open(&out).unwrap();
+        assert_eq!(r.spec().sample_rate, 48_000);
+        r.into_samples::<i16>().map(|v| v.unwrap() as f32 / 32768.0).collect()
+    }
+
+    #[test]
+    fn playback_is_made_from_the_48k_copy_keeping_the_highs_and_muting_the_echo_and_survives_compacting() {
+        let tmp = tempfile::tempdir().unwrap();
+        let m = meetings(tmp.path(), Fake(0));
+        {
+            let db = m.db.lock().unwrap();
+            db.execute("INSERT INTO meeting(started, state) VALUES (0, 'done')", []).unwrap();
+            db.execute("INSERT INTO segment(meeting, start_ms, end_ms, speaker, text, echo) VALUES (1, 500, 1500, 'Me', 'their words again', 1)", []).unwrap();
+        }
+        let folder = tmp.path().join("meetings/1");
+        std::fs::create_dir_all(&folder).unwrap();
+        let put = |name: &str, s: Vec<i16>, rate: u32| {
+            let mut w = create_at(folder.join(name), rate).unwrap();
+            s.into_iter().for_each(|v| w.write_sample(v).unwrap());
+            w.finalize().unwrap();
+        };
+        put("mic.wav", tone(1_000.0, 0.3, 2.0, RATE), RATE);
+        put("them.wav", vec![0; 2 * RATE as usize], RATE);
+        put("mic.hq.wav", tone(1_000.0, 0.3, 2.0, HI), HI);
+        put("them.hq.wav", tone(12_000.0, 0.2, 2.0, HI), HI); // past what 16 kHz can hold
+        let check = |path: PathBuf| {
+            assert_eq!(path.file_name().unwrap(), "play.m4a");
+            let s = decode(&path);
+            assert!((s.len() as i64 - 96_000).abs() < 100, "{}", s.len());
+            assert!(level_of(&s, 12_000.0, 300) > 0.15, "the call's highs are kept");
+            assert!(level_of(&s, 1_000.0, 200) > 0.25, "the mic plays outside the echo line");
+            assert!(level_of(&s, 1_000.0, 1_000) < 0.01, "and is muted in it");
+        };
+        check(m.audio(1).unwrap());
+        m.compact(1).unwrap();
+        assert!(!folder.join("mic.hq.wav").exists() && folder.join("mic.m4a").exists() && folder.join("them.m4a").exists(), "the copies are kept small");
+        std::fs::remove_file(folder.join("play.m4a")).unwrap(); // as Transcribe again does
+        check(m.audio(1).unwrap());
+        assert!(std::fs::read_dir(&folder).unwrap().flatten().all(|e| !e.file_name().to_string_lossy().contains("part")), "no working files left");
     }
 
     #[test]

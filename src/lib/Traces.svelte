@@ -32,7 +32,7 @@
   });
 
   const ov = $derived(overview(traces, { ...f, now: Date.now(), words }));
-  const list = $derived(ov.traces.filter((t) => picks(t, f.pick)));
+  const list = $derived(ov.traces.filter((t) => !t.cleared && picks(t, f.pick))); // Keep history took the forgotten ones out; their numbers stay above
   const models = $derived([...new Set(traces.map((t) => t.model ?? ""))]);
   const apps = $derived([...new Set(traces.map((t) => t.app ?? ""))].sort((a, b) => a.localeCompare(b)));
   const onpick = (p: NonNullable<Pick>) => (f.pick = f.pick?.kind === p.kind && f.pick.v === p.v ? null : p);

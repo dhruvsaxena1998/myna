@@ -32,7 +32,7 @@ const stt = (t: Trace) => t.steps.find((s) => s.kind === "speech-to-text");
 const rules = (t: Trace) => t.steps.find((s) => s.kind === "rules");
 const cleanup = (t: Trace) => t.steps.find((s) => s.kind === "cleanup");
 /** Words speech to text heard, before cleanup. */
-export const words = (t: Trace) => (stt(t)?.text ?? "").split(/\s+/).filter(Boolean).length;
+export const words = (t: Trace) => t.words ?? (stt(t)?.text ?? "").split(/\s+/).filter(Boolean).length;
 /** An already-right word to remember isn't an edit. */
 const isEdit = (e: Edit) => !(e.kind === "word" && e.unchanged);
 export const edits = (t: Trace) => (rules(t)?.edits ?? []).filter(isEdit);
@@ -118,7 +118,7 @@ export function overview(traces: Trace[], o: Opts) {
   for (const t of ts) {
     const raw = Array.from(stt(t)?.text ?? "");
     for (const e of edits(t)) if (e.kind === "filler") {
-      const f = raw.slice(e.start, e.end).join("").toLowerCase().replace(/^[\s\p{P}]+|[\s\p{P}]+$/gu, "");
+      const f = (e.removed ?? raw.slice(e.start, e.end).join("")).toLowerCase().replace(/^[\s\p{P}]+|[\s\p{P}]+$/gu, "");
       if (f) fill.set(f, (fill.get(f) ?? 0) + 1);
     }
   }

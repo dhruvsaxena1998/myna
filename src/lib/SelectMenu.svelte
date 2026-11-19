@@ -2,7 +2,10 @@
   // Every <select class="select"> opens this menu instead of the native one (DESIGN.md › Menu / popover).
   // The <select> stays the source of truth: a pick sets its value and fires input + change, so bind:value,
   // onchange and Playwright's selectOption all keep working unchanged.
-  type Item = { kind: "head"; label: string } | { kind: "opt"; i: number; label: string; disabled: boolean };
+  import { fuzzy } from "$lib/fuzzy";
+
+  type Item = { kind: "head"; label: string } | { kind: "opt"; i: number; label: string; group: string; disabled: boolean };
+  const SEARCH_FROM = 12; // a list this long gets a search box (model lists run to hundreds)
 
   let menu = $state<HTMLDivElement>();
   let sel = $state<HTMLSelectElement | null>(null);
@@ -10,26 +13,40 @@
   let active = $state(-1); // index into sel.options
   let pos = $state({ left: 0, top: 0, minWidth: 0, maxHeight: 0 });
   let typed = "", typedAt = 0;
+  let q = $state("");
+  let search = $state<HTMLInputElement>();
 
-  const opts = () => items.filter((x): x is Extract<Item, { kind: "opt" }> => x.kind === "opt");
+  const all = $derived(items.filter((x): x is Extract<Item, { kind: "opt" }> => x.kind === "opt"));
+  const searchable = $derived(all.length >= SEARCH_FROM);
+  // A group's heading shows only while one of its options does.
+  const hit = (x: Item) => x.kind === "opt" && fuzzy(q, `${x.label} ${x.group}`);
+  const shown = $derived(q.trim() ? items.filter((x) => (x.kind === "opt" ? hit(x) : items.some((y) => y.kind === "opt" && y.group === x.label && hit(y)))) : items);
+  const opts = () => shown.filter((x): x is Extract<Item, { kind: "opt" }> => x.kind === "opt");
+
+  let home: ParentNode | null = null; // where the menu lives when no dialog holds it
 
   function open(s: HTMLSelectElement, byKey: boolean) {
+    home ??= menu!.parentNode;
     sel = s;
+    q = "";
     items = [];
     for (const child of s.children) {
       if (child instanceof HTMLOptGroupElement) {
         items.push({ kind: "head", label: child.label });
-        for (const o of child.querySelectorAll("option")) items.push({ kind: "opt", i: o.index, label: o.text, disabled: o.disabled || child.disabled });
-      } else if (child instanceof HTMLOptionElement) items.push({ kind: "opt", i: child.index, label: child.text, disabled: child.disabled });
+        for (const o of child.querySelectorAll("option")) items.push({ kind: "opt", i: o.index, label: o.text, group: child.label, disabled: o.disabled || child.disabled });
+      } else if (child instanceof HTMLOptionElement) items.push({ kind: "opt", i: child.index, label: child.text, group: "", disabled: child.disabled });
     }
     active = byKey ? s.selectedIndex : -1; // like a native menu: nothing lit until the pointer or a key picks a row
     const r = s.getBoundingClientRect();
     const below = innerHeight - r.bottom - 8, above = r.top - 8;
     const up = below < 160 && above > below;
     pos = { left: Math.min(r.left, innerWidth - 8 - Math.max(r.width, 160)), top: up ? 0 : r.bottom + 4, minWidth: r.width, maxHeight: Math.min(up ? above - 4 : below - 4, 360) };
+    // A modal dialog makes everything outside it inert, a popover too: the menu has to live inside the dialog.
+    (s.closest("dialog[open]") ?? home)!.appendChild(menu!);
     menu!.showPopover();
     if (up) pos.top = r.top - 4 - menu!.offsetHeight;
     menu!.focus();
+    if (searchable) queueMicrotask(() => search?.focus()); // the box renders on the next tick
     menu!.querySelector<HTMLElement>(`[data-i="${active}"]`)?.scrollIntoView({ block: "nearest" });
   }
 
@@ -58,6 +75,7 @@
   function keys(e: KeyboardEvent) {
     if (e.key === "ArrowDown") move(1);
     else if (e.key === "ArrowUp") move(-1);
+    else if (e.target === search && !["Enter", "Escape", "Tab"].includes(e.key)) return; // typing in the search box
     else if (e.key === "Home") move(-Infinity);
     else if (e.key === "End") move(Infinity);
     else if (e.key === "Enter" || e.key === " ") { if (active >= 0 && !sel!.options[active]?.disabled) pick(active); }
@@ -110,7 +128,11 @@
 <div bind:this={menu} popover="manual" class="menu" role="listbox" tabindex="-1" aria-activedescendant={active >= 0 ? `sm-${active}` : undefined} aria-label={sel?.getAttribute("aria-label") ?? sel?.labels?.[0]?.textContent ?? undefined}
   style:left="{pos.left}px" style:top="{pos.top}px" style:min-width="{pos.minWidth}px" style:max-height="{pos.maxHeight}px"
   onkeydown={keys} onpointerleave={() => (active = -1)} ontoggle={(e) => { if (e.newState === "closed") sel = null; }}>
-  {#each items as it}
+  {#if searchable}
+    <input bind:this={search} class="search" type="search" aria-label="Search" placeholder="Search" autocomplete="off" spellcheck="false" bind:value={q}
+      oninput={() => { active = opts().find((o) => !o.disabled)?.i ?? -1; }} />
+  {/if}
+  {#each shown as it}
     {#if it.kind === "head"}
       <div class="head" role="presentation">{it.label}</div>
     {:else}
@@ -131,6 +153,8 @@
   /* DESIGN.md › Motion: popovers enter with a short rise and a fade. */
   .menu:popover-open { animation: rise var(--dur) var(--ease-out); }
   @keyframes rise { from { opacity: 0; transform: translateY(4px); } }
+  .search { display: block; box-sizing: border-box; width: 100%; margin: 0 0 4px; padding: 4px 8px; border: 0; border-radius: var(--r-sm); background: var(--bg-inset); color: var(--text); font: inherit; outline: none; box-shadow: inset 0 0 0 .5px var(--line); }
+  .search:focus-visible { box-shadow: inset 0 0 0 1px var(--accent); }
   .head { padding: 6px 10px 2px 28px; font-size: var(--fs-caption); line-height: var(--lh-caption); font-weight: var(--fw-semibold); color: var(--text-3); }
   .opt { display: flex; align-items: center; gap: 4px; min-height: 26px; padding: 0 12px 0 6px; border-radius: var(--r-sm); white-space: nowrap; }
   .opt span { overflow: hidden; text-overflow: ellipsis; }

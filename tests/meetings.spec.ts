@@ -350,7 +350,11 @@ test("cleanup shows its progress, then the cleaned lines with changed words mark
   await expect(page.locator(".seg").first()).toContainText("So we ship on Friday.");
   const marks = page.locator("mark.chg");
   await expect(marks).toHaveText(["So", "Friday."]);
-  await expect(marks.first()).toHaveAttribute("title", "Heard “so um”");
+  // The app's WKWebView shows no title tooltips: pointing at a word shows Myna's own.
+  await marks.first().hover();
+  await expect(page.getByRole("tooltip")).toHaveText("Heard “so um”");
+  await page.getByRole("heading", { name: "Transcript" }).hover();
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
   await page.getByRole("button", { name: "Copy" }).click();
   await page.getByRole("button", { name: "Show original" }).click();
   await expect(page.getByRole("button", { name: "Show cleaned" })).toHaveAttribute("aria-pressed", "true");
@@ -641,4 +645,56 @@ test("the Summary model, not Main, is Regenerate's default; Not set says to set 
   await expect(page.getByText("Set a Summary model to summarize")).toBeVisible();
   await page.getByRole("button", { name: "Set up" }).click();
   expect(await calls(page, "settings_open")).toEqual([{ page: "meetings" }]);
+});
+
+test("Regenerate: the Template and Model dropdowns open the app's menu inside the dialog, and a click picks", async ({ page }) => {
+  await summary(page, [version(9, "Recap", "# Recap")]);
+  await page.getByRole("button", { name: "Regenerate" }).click();
+  const pop = page.getByRole("dialog", { name: "Regenerate the summary" });
+  await pop.getByRole("combobox", { name: "Template" }).click();
+  await page.getByRole("listbox", { name: "Template" }).getByRole("option", { name: "Action items" }).click();
+  await expect(pop.getByRole("combobox", { name: "Template" })).toHaveValue("actions");
+  await expect(pop.getByRole("textbox", { name: "Instructions" })).toHaveValue("List them.");
+  await pop.getByRole("combobox", { name: "Model" }).click();
+  await page.getByRole("listbox", { name: "Model" }).getByRole("option", { name: "small" }).click();
+  await expect(pop.getByRole("combobox", { name: "Model" })).toHaveValue("1|small");
+  // Esc shuts the menu, not the dialog.
+  await pop.getByRole("combobox", { name: "Model" }).click();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("listbox", { name: "Model" })).toBeHidden();
+  await expect(pop).toBeVisible();
+});
+
+test("Regenerate: a long Model list has a search box that finds a model by a loose match, and Enter picks it", async ({ page }) => {
+  const many = Array.from({ length: 20 }, (_, i) => `{ id: "vendor/model-${i}", input_per_m: null, output_per_m: null, context: null, images: null }`).join(",");
+  await summary(page, [version(9, "Recap", "# Recap")], `ai_models: () => [${many}, { id: "anthropic/claude-sonnet", input_per_m: null, output_per_m: null, context: null, images: null }],`);
+  await page.getByRole("button", { name: "Regenerate" }).click();
+  const pop = page.getByRole("dialog", { name: "Regenerate the summary" });
+  await pop.getByRole("combobox", { name: "Model" }).click();
+  const menu = page.getByRole("listbox", { name: "Model" });
+  await page.getByRole("searchbox", { name: "Search" }).fill("clade sonet");
+  await expect(menu.getByRole("option")).toHaveText(["anthropic/claude-sonnet"]);
+  await page.keyboard.press("Enter");
+  await expect(menu).toBeHidden();
+  await expect(pop.getByRole("combobox", { name: "Model" })).toHaveValue("1|anthropic/claude-sonnet");
+  await expect(pop).toBeVisible();
+});
+
+test("Transcribe again: from the saved audio, through the Local model or an Endpoint model picked for this meeting only", async ({ page }) => {
+  await open(page, `ai_get: () => (${AI}), meeting_stt_get: () => "local", meeting_again: () => {},
+    meeting_stt_models: () => [{ id: "openai/whisper-1", input_per_m: null, output_per_m: null, context: null, images: null }],`);
+  await page.getByRole("button", { name: "Untitled meeting" }).first().click();
+  await page.getByRole("button", { name: "Transcribe again" }).click();
+  const pop = page.getByRole("dialog", { name: "Transcribe again" });
+  await expect(pop.getByRole("combobox", { name: "Model" })).toHaveValue("local");
+  await pop.getByRole("button", { name: "Cancel" }).click();
+  await expect(pop).toBeHidden();
+  expect(await calls(page, "meeting_again")).toEqual([]);
+  await page.getByRole("button", { name: "Transcribe again" }).click();
+  await pop.getByRole("combobox", { name: "Model" }).click();
+  await page.getByRole("listbox", { name: "Model" }).getByRole("option", { name: "openai/whisper-1" }).click();
+  await expect(pop.getByText("Sends audio off this Mac")).toBeVisible();
+  await pop.getByRole("button", { name: "Transcribe", exact: true }).click();
+  expect(await calls(page, "meeting_again")).toEqual([{ id: 5, stt: "1|openai/whisper-1" }]);
+  await expect(pop).toBeHidden();
 });

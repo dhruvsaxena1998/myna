@@ -29,7 +29,6 @@
   let paused = $state(false); // the recording is paused (Pause on the pill)
   // A finished meeting's notes: being written up, saved, or failed. Shown in the same spot once the recording is over.
   let notes = $state<{ id: number; state: "transcribing" | "done" | "failed"; progress: number; error: string | null } | null>(null);
-  let notesEl = $state<HTMLElement>();
   let notesHide: ReturnType<typeof setTimeout> | undefined;
   // A detected call (calls.rs): the offer to record it, or the countdown to a stop after it ended.
   let call = $state<{ state: "offer"; title: string; label: string } | { state: "ending"; at: number } | null>(null);
@@ -45,10 +44,10 @@
     : { state: "notes-failed", reason: notes.error ?? "Something went wrong." },
   );
   const meeting = $derived(shown !== null && !on);
-  // Dragging the recording pill moves the whole pill window, until the next dictation or recording puts it back in its place.
+  // Dragging the recording pill (or the notes being written, a detected call) moves the whole pill window, until the next dictation or recording puts it back in its place.
   let press: { x: number; y: number } | null = null;
   function down(e: PointerEvent) {
-    if (shown?.state === "recording" && !(e.target as Element).closest("button")) press = { x: e.screenX, y: e.screenY };
+    if (meeting && !(e.target as Element).closest("button")) press = { x: e.screenX, y: e.screenY };
   }
   function drag(e: PointerEvent) {
     if (!press || e.buttons !== 1 || Math.hypot(e.screenX - press.x, e.screenY - press.y) < 4) return;
@@ -63,6 +62,15 @@
   function pause() {
     paused = !paused;
     invoke("meeting_pause", { paused }).catch(() => (paused = !paused));
+  }
+  // Stop asks once: a stray click on a floating pill would end the meeting, and a stopped recording can't be resumed.
+  let stopAsk = $state(false);
+  let stopTimer: ReturnType<typeof setTimeout> | undefined;
+  function stop() {
+    clearTimeout(stopTimer);
+    if (stopAsk) return void ((stopAsk = false), invoke("call_stop").catch(() => {}));
+    stopAsk = true;
+    stopTimer = setTimeout(() => (stopAsk = false), 3000);
   }
   const dismiss = () => (clearTimeout(notesHide), (notes = null));
   // The call's buttons: what the backend does, then the pill drops it at once.
@@ -81,17 +89,17 @@
   let ask = $state<{ trace: number; rated: "up" | "down" | null } | null>(null);
   let askEl = $state<HTMLElement>();
   const close = (after: number) => (clearTimeout(hide), (hide = setTimeout(() => ((on = false), (ask = null)), after)));
-  // The window takes the mouse only over these buttons, or the whole recording pill (to drag it); the rest stays click-through (pill.rs `pill_hit`).
+  // The window takes the mouse only over the 👍/👎 buttons, or the whole meeting pill (to drag it); the rest stays click-through (pill.rs `pill_hit`).
   // Measured again once the slide-in ends: measured mid-slide, the area sat 8px off the buttons and missed clicks on them.
   function hit() {
-    const el = ask ? askEl : meeting && shown?.state === "recording" ? meetSpot.querySelector<HTMLElement>(".hud") : notesEl;
+    const el = ask ? askEl : meeting ? meetSpot.querySelector<HTMLElement>(".hud") : null;
     if (!el) return void invoke("pill_hit", { rect: null });
     const r = el.getBoundingClientRect();
     invoke("pill_hit", { rect: [r.x, r.y, r.width, r.height] });
   }
   const slid = (e: TransitionEvent) => e.target === e.currentTarget && e.propertyName === "translate" && hit(); // not the level bars' transitions
   $effect(() => {
-    void [shown?.state, mini, meetWords]; // the buttons move when the pill's words change
+    void [shown?.state, mini, meetWords, stopAsk]; // the buttons move when the pill's words change
     hit();
   });
   async function rate(rating: "up" | "down") {
@@ -199,13 +207,15 @@
 </div>
 <!-- The recording isn't clickable yet (live notes will open from it); a detected call, its countdown and the written-up notes have buttons. -->
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions (dragging is pointer-only; the window never takes keyboard focus) -->
-<div class="spot {look.place}" class:on={meeting} class:drag={shown?.state === "recording"} role="status" bind:this={meetSpot} ontransitionend={slid} onpointerdown={down} onpointermove={drag} onpointerup={up}>
+<div class="spot {look.place}" class:on={meeting} class:drag={meeting} role="status" bind:this={meetSpot} ontransitionend={slid} onpointerdown={down} onpointermove={drag} onpointerup={up}>
   {#if shown}
     <Pill style="capsule" pill={shown} wave={[meetLevel]} secs={meetSecs}>
       {#snippet actions()}
-        <span class="acts" class:call={shown.state === "detected" || shown.state === "ending"} bind:this={notesEl}>
+        <span class="acts" class:call={shown.state === "detected" || shown.state === "ending"}>
           {#if shown.state === "recording"}<button class="act x" aria-label={paused ? "Resume recording" : "Pause recording"} title={paused ? "Resume" : "Pause"} onclick={pause}>
               <svg viewBox="0 0 24 24" aria-hidden="true">{#if paused}<path class="fill" d="M8 5.5v13l10.5-6.5z" />{:else}<path d="M9 6v12M15 6v12" />{/if}</svg></button>
+            {#if stopAsk}<button class="act stop" aria-label="Stop recording now" onclick={stop}>Stop?</button>
+            {:else}<button class="act x" aria-label="Stop recording" title="Stop" onclick={stop}><svg viewBox="0 0 24 24" aria-hidden="true"><rect class="fill" x="7" y="7" width="10" height="10" rx="1.5" /></svg></button>{/if}
             <button class="act x" aria-label="Hide recording pill" title="Hide (click it to bring it back)" onclick={() => (mini = true)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12" /></svg></button>
           {:else if shown.state === "detected"}<button class="act primary" onclick={() => callDo("call_start")}>Start notes</button>
           {:else if shown.state === "ending"}<button class="act primary" onclick={() => callDo("call_keep")}>Keep recording</button><button class="act quiet" onclick={() => callDo("call_stop")}>Stop now</button>
@@ -230,6 +240,7 @@
   .acts.call { gap: 6px; margin-left: 4px; padding-left: 12px; box-shadow: inset 0.5px 0 0 var(--hud-edge); }
   .act.primary { height: 28px; padding: 0 14px; border-radius: 14px; background: var(--hud-fg); color: #1c1c1e; font-weight: var(--fw-medium); }
   .act.primary:hover { background: color-mix(in srgb, var(--hud-fg) 88%, transparent); }
+  .act.stop { background: var(--rec); color: #fff; }
   .act.quiet { height: 28px; background: none; color: var(--hud-2); }
   .act.quiet:hover { background: var(--hud-fill); color: var(--hud-fg); }
   .act.x { width: 24px; padding: 0; display: grid; place-items: center; background: none; color: var(--hud-2); }

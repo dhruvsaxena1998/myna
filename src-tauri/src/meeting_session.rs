@@ -160,7 +160,7 @@ impl MeetingSession {
     pub fn stop(self: &Arc<Self>) {
         self.world.stop_tab();
         match self.meetings.stop() {
-            Ok(Some(id)) => self.write_up(id, false),
+            Ok(Some(id)) => self.write_up(id, How::Setting),
             Ok(None) => {}
             Err(e) => self.world.notify("Couldn’t save the recording", &e),
         }
@@ -174,7 +174,7 @@ impl MeetingSession {
         if !self.meetings.failed(id) {
             return Err("That meeting isn't waiting to be tried again.".into());
         }
-        self.write_up(id, false);
+        self.write_up(id, How::Setting);
         Ok(())
     }
 
@@ -183,7 +183,24 @@ impl MeetingSession {
         if !self.meetings.failed(id) {
             return Err("That meeting isn't waiting to be tried again.".into());
         }
-        self.write_up(id, true);
+        self.write_up(id, How::Rest);
+        Ok(())
+    }
+
+    /// Transcribe again, on a written-up meeting: through `stt` ("local" or "<provider id>|<model>") this once; the
+    /// setting for new meetings stays. The lines are replaced, so speaker names and cleanup are redone; Summary
+    /// versions are kept.
+    pub fn again(self: &Arc<Self>, id: i64, stt: &str) -> Result<(), String> {
+        self.meetings.settled(id)?;
+        let how = match stt.split_once('|') {
+            _ if stt == "local" => How::Local,
+            Some((p, m)) if !m.trim().is_empty() => {
+                let p = p.parse().map_err(|_| "That provider no longer exists".to_string())?;
+                How::Endpoint(crate::ai::stt_endpoint_for(&self.db.lock().unwrap(), self.world.keys(), p, m.trim())?)
+            }
+            _ => return Err("Pick a model to transcribe with.".into()),
+        };
+        self.write_up(id, how);
         Ok(())
     }
 
@@ -210,7 +227,7 @@ impl MeetingSession {
     /// written up before echo handling, newest first, one at a time (a write-up goes first).
     pub fn resume(self: &Arc<Self>) {
         for id in self.meetings.unfinished() {
-            self.write_up(id, false);
+            self.write_up(id, How::Setting);
         }
         let this = self.clone();
         std::thread::spawn(move || this.check_echo());
@@ -307,11 +324,16 @@ impl MeetingSession {
     /// Writes up meeting `id` on its own thread, saying how it goes with `meeting-notes`: "transcribing" with progress
     /// 0 to 1, then "done" or "failed" with the reason. Meeting speech-to-text's setting picks the Local model or an
     /// Endpoint; `rest` keeps what an Endpoint did and transcribes the rest locally.
-    fn write_up(self: &Arc<Self>, id: i64, rest: bool) {
+    fn write_up(self: &Arc<Self>, id: i64, how: How) {
         let this = self.clone();
         std::thread::spawn(move || {
             let w = &*this.world;
-            let endpoint = if rest { None } else { Some(crate::ai::stt_endpoint(&this.db.lock().unwrap(), w.keys())) };
+            let endpoint = match how {
+                How::Setting => Some(crate::ai::stt_endpoint(&this.db.lock().unwrap(), w.keys())),
+                How::Rest => None,
+                How::Local => Some(Ok(None)),
+                How::Endpoint(e) => Some(Ok(Some(e))),
+            };
             let via = match &endpoint {
                 None => Via::Rest,
                 Some(Ok(None)) => Via::Local,
@@ -339,8 +361,23 @@ impl MeetingSession {
                     w.recent();
                 }
             }
+            // Play made from the 48 kHz copy while it's still whole, then the copy kept as AAC.
+            if let Err(e) = this.meetings.audio(id).and_then(|_| this.meetings.compact(id)) {
+                eprintln!("meeting {id}: {e}");
+            }
         });
     }
+}
+
+/// Which speech-to-text a write-up uses.
+enum How {
+    /// Meeting speech-to-text, as set.
+    Setting,
+    /// Transcribe locally: what the Endpoint did is kept.
+    Rest,
+    /// Transcribe again, on the Local model or an Endpoint picked for this once.
+    Local,
+    Endpoint(crate::ai::SttEndpoint),
 }
 
 /// `mic`: "live" or "muted" while the add-on mirrors the mute button, else null.
@@ -1108,6 +1145,59 @@ mod tests {
         s.stop();
         until(saw_, |v| recents(v) >= 1);
         id
+    }
+
+    #[test]
+    fn transcribe_again_runs_a_written_up_meeting_through_the_picked_model_and_leaves_the_setting_alone() {
+        let (s, saw_, _, _tmp) = rig(true, Mic::Allowed, false, Call(vec![]), Duration::from_secs(3600));
+        let (p, bodies) = cloud(&s);
+        let id = one_meeting(&s, &saw_);
+        assert!(bodies.lock().unwrap().is_empty(), "written up on the Local model first");
+        saw_.lock().unwrap().clear();
+        let play = _tmp.path().join(format!("meetings/{id}/play.m4a"));
+        for _ in 0..400 {
+            if play.exists() {
+                break; // made after the first write-up
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        std::fs::write(&play, b"made from the old lines").unwrap();
+        s.again(id, &format!("{p}|whisper")).unwrap();
+        let up = write_up_of(&until(&saw_, |v| v.contains(&Saw::Summarize(id))));
+        assert_eq!(up[0], Saw::Notes(id, "transcribing".into(), 0.0, None));
+        assert_eq!(bodies.lock().unwrap().len(), 1);
+        let page = meeting::page(&s.db.lock().unwrap(), id).unwrap();
+        assert_eq!((page.stt.as_ref().unwrap()["model"].as_str(), page.segments.len()), (Some("whisper"), 1));
+        assert_eq!(crate::ai::stt_get(&s.db.lock().unwrap()).unwrap(), "local", "the setting for new meetings stays");
+        assert!(std::fs::read(&play).map_or(true, |b| b != b"made from the old lines"), "playback is made again from the new lines' echo");
+
+        saw_.lock().unwrap().clear();
+        s.again(id, "local").unwrap();
+        until(&saw_, |v| v.contains(&Saw::Summarize(id)));
+        assert!(meeting::page(&s.db.lock().unwrap(), id).unwrap().stt.is_none(), "says it's the Local model's now");
+
+        assert_eq!(s.again(99, "local"), Err("That meeting isn't there anymore.".into()));
+        assert!(s.again(id, &format!("{}|whisper", p + 1)).is_err(), "a provider that's gone");
+    }
+
+    #[test]
+    fn after_the_write_up_play_is_ready_and_the_listening_copy_is_kept_small() {
+        let (s, saw_, _, tmp) = rig(true, Mic::Allowed, false, Call(vec![]), Duration::from_secs(3600));
+        s.start();
+        let id = id_of(&s);
+        s.stop();
+        until(&saw_, |v| v.contains(&Saw::Summarize(id)));
+        let folder = tmp.path().join(format!("meetings/{id}"));
+        for _ in 0..400 {
+            if folder.join("them.m4a").exists() && !folder.join("them.hq.wav").exists() {
+                break; // compacting's last step
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let has = |f: &str| folder.join(f).exists();
+        assert_eq!((has("play.m4a"), has("mic.m4a"), has("them.m4a")), (true, true, true));
+        assert_eq!((has("mic.hq.wav"), has("them.hq.wav")), (false, false));
+        assert!(has("mic.wav") && has("them.wav"), "the 16 kHz tracks stay, for speech-to-text and older builds");
     }
 
     #[test]

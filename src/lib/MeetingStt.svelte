@@ -5,7 +5,11 @@
   import HostPill from "./HostPill.svelte";
   import type { Cost } from "./meetings";
 
-  let { ai }: { ai: Ai | null } = $props();
+  import type { Snippet } from "svelte";
+
+  // `local`: the Speech-to-text model row, shown only while the Local model transcribes. `localName`: that model, which
+  // still takes the possibly-muted stretches when an Endpoint does the rest.
+  let { ai, local, localName = "" }: { ai: Ai | null; local?: Snippet; localName?: string } = $props();
   type Check = { ms: number; segments: number; cost: Cost };
   let value = $state("local"); // "local", "none" (Not set: its provider was removed) or "<provider id>|<model>"
   let endpoint = $state(false); // the Endpoint row shows: saved, Not set, or picked here and not tested yet
@@ -24,7 +28,7 @@
   const price = (c: Cost) => (c.kind === "usd" ? usd(c.usd) : c.kind === "free" ? "Free" : "Cost unknown");
   const desc = $derived(
     value === "none" ? "Not set: its provider was removed. New meetings wait until you pick a model again or choose Local model."
-      : saved ? `${saved[1]} · ${savedProv?.name ?? "Unknown provider"}, after the meeting. What you say while muted stays on this Mac.`
+      : saved ? `${saved[1]} · ${savedProv?.name ?? "Unknown provider"}, after the meeting. What you say while muted stays on this Mac${localName ? `, with ${localName}` : ""}.`
       : endpoint ? "Still the Local model until a model passes Test."
       : "The Local model, after the meeting. Nothing leaves this Mac.",
   );
@@ -87,6 +91,7 @@
     </select>
   </span>
 </li>
+{#if !endpoint}{@render local?.()}{/if}
 {#if endpoint}
   {@const msg = test?.st === "err" ? test.msg : ""}
   <li class="row wide ep">
