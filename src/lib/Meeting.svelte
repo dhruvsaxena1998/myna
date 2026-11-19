@@ -38,7 +38,7 @@
   let panel = $state(false);
   let orig = $state(false); // Show original: the transcript as Myna heard it, before cleanup
   let hit = $state<number | null>(null);
-  let pop = $state<"" | "vers" | "regen">("");
+  let pop = $state<"" | "vers" | "regen" | "redo">("");
   let deleting = $state(false); // Delete was pressed: asking before the meeting goes
   let doomed = $state<number | null>(null); // the version whose × was pressed, asking before it goes
   let draft = $state<string | null>(null); // the Markdown being edited
@@ -186,6 +186,35 @@
     if (pop === "regen") dlg?.showModal();
     else dlg?.close();
   });
+
+  // Transcribe again: the saved audio through the Local model or an Endpoint model, for this meeting only.
+  let redo = $state({ pick: "local", saved: "local", err: "" });
+  let sttModels = $state<Record<number, string[]>>({});
+  let redoDlg = $state<HTMLDialogElement>();
+  $effect(() => {
+    if (pop === "redo") redoDlg?.showModal();
+    else redoDlg?.close();
+  });
+  // OpenRouter lists its transcription models; another provider offers the one typed into Settings, if it's that one.
+  const sttIds = (p: Ai["providers"][number]) => [...new Set([...(sttModels[p.id] ?? []), ...(split(redo.saved)[0] === p.id ? [split(redo.saved)[1]] : [])])];
+  const redoProv = $derived(redo.pick === "local" ? null : ai?.providers.find((p) => p.id === split(redo.pick)[0]));
+  async function openRedo() {
+    await loadAi();
+    const saved = await invoke<string>("meeting_stt_get").catch(() => "local");
+    redo = { pick: saved.includes("|") ? saved : "local", saved, err: "" };
+    pop = "redo";
+    for (const p of ai?.providers ?? []) if (p.kind === "openrouter") invoke<Model[]>("meeting_stt_models", { id: p.id }).then((l) => { sttModels[p.id] = l.map((m) => m.id); }, () => {});
+  }
+  async function transcribe(e: SubmitEvent) {
+    e.preventDefault();
+    redo.err = "";
+    try {
+      await invoke("meeting_again", { id: page.id, stt: redo.pick });
+      pop = "";
+    } catch (err) {
+      redo.err = String(err);
+    }
+  }
   // The estimate shows only above $1; a price that isn't known shows nothing.
   $effect(() => {
     const pick = form.pick;
@@ -248,11 +277,19 @@
     }
   }
 
+  // What Myna heard, under a cleaned-up word. WKWebView never shows a title tooltip, so this is Myna's own.
+  let tip = $state<{ text: string; x: number; y: number } | null>(null);
+  function heard(e: PointerEvent) {
+    const m = (e.target as Element).closest<HTMLElement>("mark.chg");
+    const r = m?.getBoundingClientRect();
+    tip = m && r ? { text: m.dataset.heard!, x: r.left, y: r.bottom + 6 } : null;
+  }
+
   function outside(e: PointerEvent) {
     if ((pop || spk) && !(e.target as Element).closest("[data-pop], [popover]")) (pop = ""), (spk = null);
   }
   function keys(e: KeyboardEvent) {
-    if (e.key === "Escape" && (pop || spk || deleting)) return void (e.preventDefault(), (pop = ""), (spk = null), (deleting = false));
+    if (e.key === "Escape" && !e.defaultPrevented && (pop || spk || deleting)) return void (e.preventDefault(), (pop = ""), (spk = null), (deleting = false));
     // Esc goes back and Space plays, unless something else wants the key: a field, an open menu, a modifier.
     const t = e.target as Element;
     if (e.defaultPrevented || pop || e.metaKey || e.ctrlKey || e.altKey || t.closest("input, textarea, select, [contenteditable]") || document.querySelector(":popover-open")) return;
@@ -326,6 +363,24 @@
         <button type="button" class="btn" onclick={() => (pop = "")}>Cancel</button>
         <button class="btn primary" autofocus disabled={!form.pick || !form.prompt.trim()}>{shown ? "Regenerate" : "Summarize"}</button></div>
     {/if}
+  </form></dialog>
+
+{#if tip}<div class="tip" role="tooltip" style:left="{tip.x}px" style:top="{tip.y}px">{tip.text}</div>{/if}
+
+<!-- svelte-ignore a11y_autofocus -->
+<dialog class="regen" data-pop aria-labelledby="ta-h" aria-describedby="ta-d" bind:this={redoDlg} onclose={() => pop === "redo" && (pop = "")}><form onsubmit={transcribe}>
+    <h3 id="ta-h">Transcribe again</h3>
+    <p class="help" id="ta-d">Writes the transcript again from the saved audio. Speaker names and cleanup are redone; summaries are kept.</p>
+    <label class="field"><span class="label">Model</span>
+      <select class="select" bind:value={redo.pick} aria-describedby="ta-mh">
+        <optgroup label="On this Mac"><option value="local">Local model</option></optgroup>
+        {#each ai?.providers ?? [] as p (p.id)}{@const l = sttIds(p)}{#if l.length}<optgroup label={p.name}>{#each l as m (m)}<option value="{p.id}|{m}">{m}</option>{/each}</optgroup>{/if}{/each}
+      </select>
+      <span class="help" id="ta-mh">For this meeting only. New meetings keep the model in Settings.</span></label>
+    {#if redo.err}<p class="help fail" role="status">{redo.err}</p>{/if}
+    <div class="end"><HostPill off={redoProv?.off_device ?? false} what="audio" /><span class="grow"></span>
+      <button type="button" class="btn" onclick={() => (pop = "")}>Cancel</button>
+      <button class="btn primary" autofocus>Transcribe</button></div>
   </form></dialog>
 
 <header data-tauri-drag-region>
@@ -447,10 +502,11 @@
     </article>
   </div>
   {#if panel}
-    <aside class="panel" aria-labelledby="tp-h">
+    <aside class="panel" aria-labelledby="tp-h" onpointerover={heard} onpointerleave={() => (tip = null)} onscroll={() => (tip = null)}>
       <div class="panel-head">
         <h2 id="tp-h">Transcript</h2><span class="grow"></span>
         {#if cleaned}<button class="btn" aria-pressed={orig} onclick={() => (orig = !orig)}>{orig ? "Show cleaned" : "Show original"}</button>{/if}
+        <button class="btn" aria-haspopup="dialog" disabled={writing(page)} onclick={openRedo}>Transcribe again</button>
         <button class="btn" onclick={() => copy("panel")}>{@render copyIcon(copied === "panel")}{copied === "panel" ? "Copied" : "Copy"}</button>
         <button class="btn icon plain" aria-label="Close transcript" onclick={() => (panel = false)}>{@render icon('<path d="M7 7l10 10M17 7L7 17"/>')}</button>
       </div>
@@ -466,7 +522,7 @@
           {:else}
             {@const l = g.lines[0]}
             <div class="seg" class:hit={hit === l.id} class:playing={playing === l.id} id="seg-{l.id}" tabindex="-1"><div class="who">{@render who(l)}<button class="at" aria-label="Play from {clock(l.start_ms)}" onclick={() => play(l.start_ms)}><time>{clock(l.start_ms)}</time></button></div>
-              <p>{#each g.lines as line, n}{n ? " " : ""}{#if line.clean && !orig}{#each changes(line.text, line.clean) as c, i}{i ? " " : ""}{#if c.heard === undefined}{c.text}{:else}<mark class="chg" title={c.heard ? `Heard “${c.heard}”` : "Added in cleanup"}>{c.text}</mark>{/if}{/each}{:else}{line.text}{/if}{/each}{#if l.included && l.muted}<span class="mark">Said while muted</span>{/if}</p></div>
+              <p>{#each g.lines as line, n}{n ? " " : ""}{#if line.clean && !orig}{#each changes(line.text, line.clean) as c, i}{i ? " " : ""}{#if c.heard === undefined}{c.text}{:else}<mark class="chg" data-heard={c.heard ? `Heard “${c.heard}”` : "Added in cleanup"}>{c.text}</mark>{/if}{/each}{:else}{line.text}{/if}{/each}{#if l.included && l.muted}<span class="mark">Said while muted</span>{/if}</p></div>
           {/if}
         {/each}
       </div>
@@ -549,6 +605,8 @@
   .pop-wrap { position: relative; }
   .pop { position: absolute; z-index: 10; right: 0; top: calc(100% + var(--sp-1)); box-sizing: border-box; padding: 5px; border-radius: var(--r-lg); background: var(--mat-menu);
     -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); box-shadow: inset 0 0 0 .5px var(--edge), var(--shadow-menu); animation: rise var(--dur) var(--ease-out); user-select: none; }
+  .tip { position: fixed; z-index: 20; max-width: 280px; padding: 4px 8px; border-radius: var(--r-sm); background: var(--mat-menu); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
+    box-shadow: inset 0 0 0 .5px var(--edge), var(--shadow-menu); color: var(--text); font-size: var(--fs-caption); line-height: var(--lh-caption); pointer-events: none; }
   .pop.left { left: 0; right: auto; }
   /* DESIGN.md › Motion: popovers enter with an 8px rise and a fade. */
   @keyframes rise { from { opacity: 0; transform: translateY(8px); } }

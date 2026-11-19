@@ -89,6 +89,8 @@ pub fn to_16k_mono(input: &[f32], rate: u32, channels: u16) -> Vec<f32> {
 /// One per stream: it carries state from chunk to chunk, and its delay is trimmed so the output lines up with the input.
 pub struct To16k {
     rate: u32,
+    /// The rate out: 16 kHz for speech-to-text, or 48 kHz for a meeting's listening copy.
+    to: u32,
     channels: usize,
     fft: Option<Fft<f32>>,
     input: Vec<f32>,
@@ -101,11 +103,16 @@ const CHUNK: usize = 1024;
 
 impl To16k {
     pub fn new(rate: u32, channels: u16) -> Self {
-        let fft = (rate != RATE)
-            .then(|| Fft::new_custom(rate as usize, RATE as usize, CHUNK, 1, 1, WindowFunction::BlackmanHarris2, FixedSync::Input).ok())
+        Self::to(rate, channels, RATE)
+    }
+
+    /// The same, out at `to` Hz.
+    pub fn to(rate: u32, channels: u16, to: u32) -> Self {
+        let fft = (rate != to)
+            .then(|| Fft::new_custom(rate as usize, to as usize, CHUNK, 1, 1, WindowFunction::BlackmanHarris2, FixedSync::Input).ok())
             .flatten();
         let delay = fft.as_ref().map_or(0, |f| f.output_delay());
-        To16k { rate, channels: channels.max(1) as usize, fft, input: Vec::with_capacity(CHUNK), delay, seen: 0, made: 0 }
+        To16k { rate, to, channels: channels.max(1) as usize, fft, input: Vec::with_capacity(CHUNK), delay, seen: 0, made: 0 }
     }
 
     /// More interleaved samples in; what's ready comes out (a little lags until `finish`).
@@ -113,14 +120,14 @@ impl To16k {
         let ch = self.channels;
         let mono = interleaved.chunks_exact(ch).map(|f| f.iter().sum::<f32>() / ch as f32);
         let Some(fft) = &mut self.fft else {
-            if self.rate == RATE {
+            if self.rate == self.to {
                 let out: Vec<f32> = mono.collect();
                 self.made += out.len();
                 return out;
             }
             // shortcut: a rate rubato refused (none seen) falls back to averaging; it's never been hit.
             let m: Vec<f32> = mono.collect();
-            let step = self.rate as f64 / RATE as f64;
+            let step = self.rate as f64 / self.to as f64;
             return (0..(m.len() as f64 / step) as usize)
                 .map(|i| {
                     let a = (i as f64 * step) as usize;
@@ -141,10 +148,10 @@ impl To16k {
         self.trim(out)
     }
 
-    /// The rest, flushed, so the whole output is `seen × 16000 / rate` samples long.
+    /// The rest, flushed, so the whole output is `seen × to / rate` samples long.
     pub fn finish(mut self) -> Vec<f32> {
         let Some(mut fft) = self.fft.take() else { return vec![] };
-        let want = self.seen * RATE as usize / self.rate as usize;
+        let want = self.seen * self.to as usize / self.rate as usize;
         let mut out = vec![];
         if !self.input.is_empty() {
             let rest = chunk(&mut fft, &self.input, true);
@@ -357,6 +364,22 @@ mod tests {
         pieces.extend(r.finish());
         assert_eq!(pieces.len(), whole.len());
         assert!(pieces.iter().zip(&whole).all(|(a, b)| (a - b).abs() < 1e-5));
+    }
+
+    #[test]
+    fn a_listening_copy_at_48k_keeps_the_highs_and_lines_up_with_the_input() {
+        // A second of 44.1 kHz stereo: a 12 kHz tone the 16 kHz copy can't hold, and a click at half a second.
+        let mut input: Vec<f32> = (0..44_100).flat_map(|i| { let v = (i as f32 * 12_000.0 * std::f32::consts::TAU / 44_100.0).sin() * 0.3; [v, v] }).collect();
+        input[2 * 22_050] = 1.0;
+        input[2 * 22_050 + 1] = 1.0;
+        let mut r = To16k::to(44_100, 2, 48_000);
+        let mut out: Vec<f32> = input.chunks(8_820).flat_map(|c| r.push(c)).collect();
+        out.extend(r.finish());
+        assert_eq!(out.len(), 48_000);
+        let rms = |x: &[f32]| (x.iter().map(|v| v * v).sum::<f32>() / x.len() as f32).sqrt();
+        assert!(rms(&out[1_000..20_000]) > 0.18, "12 kHz passes at 48 kHz");
+        let peak = (20_000..28_000).max_by(|&a, &b| (out[a] - out[a - 1]).abs().total_cmp(&(out[b] - out[b - 1]).abs())).unwrap();
+        assert!((peak as i64 - 24_000).abs() < 8, "the click is where it was: {peak}");
     }
 
     #[test]

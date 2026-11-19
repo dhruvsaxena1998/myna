@@ -465,6 +465,12 @@ pub fn stt_endpoint(db: &Connection, keys: &dyn Keys) -> Result<Option<SttEndpoi
     Ok(Some(SttEndpoint { provider: r.name, model, off: off_device(&r.url), api: adapter(db, keys, r.id)? }))
 }
 
+/// Provider `provider`'s `model`, for one Transcribe again; the setting for new meetings stays as it is.
+pub fn stt_endpoint_for(db: &Connection, keys: &dyn Keys, provider: i64, model: &str) -> Result<SttEndpoint, String> {
+    let r = find(db, provider)?;
+    Ok(SttEndpoint { provider: r.name, model: model.into(), off: off_device(&r.url), api: adapter(db, keys, r.id)? })
+}
+
 /// Meeting speech-to-text, in `feature_get`'s form: "local", "none" or "<provider id>|<model>".
 pub fn stt_get(db: &Connection) -> Result<String, String> {
     Ok(feature_get(db, STT)?.0)
