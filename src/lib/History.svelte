@@ -23,6 +23,21 @@
   });
   const thumbs: Record<number, Thumbs> = $state({});
 
+  // Keep history: older dictations lose their text and leave this list; Stats for nerds keeps their numbers (trace.rs `forget`).
+  const KEEP = [["forever", "Forever"], ["1", "24 hours"], ["3", "3 days"], ["7", "7 days"], ["30", "1 month"]];
+  let keep = $state("forever");
+  invoke<string>("history_keep_get").then((k) => (keep = k), () => {});
+  async function setKeep(k: string) {
+    const was = keep;
+    (keep = k), (error = "");
+    try {
+      await invoke("history_keep_set", { keep: k });
+      rows = await invoke("traces_list");
+    } catch (err) {
+      (keep = was), (error = String(err));
+    }
+  }
+
   const shown = $derived.by(() => {
     const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
     return said.filter((r) => words.every((w) => `${r.text} ${r.app ?? ""}`.toLowerCase().includes(w)));
@@ -97,7 +112,8 @@
   <ClearAll count={rows.length} onclear={() => { rows = []; onclear(); }} />
 </header>
 <div class="content">
-  <p class="note">Kept on this Mac, newest first.</p>
+  <p class="note">Kept on this Mac, newest first, for
+    <select class="select keep" aria-label="Keep history" value={keep} onchange={(e) => setKeep(e.currentTarget.value)}>{#each KEEP as [v, l] (v)}<option value={v}>{l}</option>{/each}</select></p>
   <p class="err" role="status">{error}</p>
   {#if shown.length}
     <ul aria-label="Voice typing history">
@@ -135,6 +151,7 @@
   .search { flex: 0 1 220px; min-width: 120px; }
   .search kbd { position: absolute; right: 8px; padding: 1px 6px; border-radius: 5px; font: 500 11px/1.4 var(--font); color: var(--text-3); box-shadow: inset 0 0 0 .5px var(--line-strong); pointer-events: none; }
   .search input:focus + kbd, .search input:not(:placeholder-shown) + kbd { display: none; }
+  .keep { width: auto; margin-left: 2px; }
   .note { margin: 0; color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
   .err { margin: 0 0 var(--sp-2); min-height: var(--lh-footnote); color: var(--danger-text); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
   /* Same list as Stats for nerds (Traces.svelte `.list`). */

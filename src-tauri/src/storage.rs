@@ -61,6 +61,10 @@ const MIGRATIONS: &[&str] = &[
     // `meeting.echo`: that check's `echo::Summary` as JSON; NULL is never checked.
     "ALTER TABLE segment ADD COLUMN echo INTEGER NOT NULL DEFAULT 0;
      ALTER TABLE meeting ADD COLUMN echo TEXT;",
+    // `trace.cleared`: when Keep history forgot its text (unix ms); NULL is kept. `trace.words`: the words speech-to-text
+    // heard, counted before the text went, so Stats for nerds still counts them.
+    "ALTER TABLE trace ADD COLUMN words INTEGER;
+     ALTER TABLE trace ADD COLUMN cleared INTEGER;",
 ];
 const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
 

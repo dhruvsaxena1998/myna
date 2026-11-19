@@ -346,9 +346,13 @@ impl Session {
             let mut saved = None;
             if let Some(mut t) = trace {
                 t.reason = result.as_ref().err().cloned();
-                match trace::save(&s.db.lock().unwrap(), &t) {
+                let db = s.db.lock().unwrap();
+                match trace::save(&db, &t) {
                     Ok(id) => saved = Some(id),
                     Err(e) => eprintln!("{e}"),
+                }
+                if let Err(e) = trace::sweep(&db, t.started) {
+                    eprintln!("{e}");
                 }
             }
             let pasted = matches!(result, Ok(Pill::Added | Pill::Fallback { .. }));

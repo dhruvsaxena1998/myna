@@ -75,6 +75,13 @@ test("fillers group by what was removed, lowercased and trimmed", () => {
   expect(overview([T({ heard: raw, edits: [f("Um, "), f(", uh"), f("Um ")] })], O()).fillers).toEqual([["um", 2], ["uh", 1]]);
 });
 
+test("a dictation Keep history forgot still counts its words and fillers, from what was kept", () => {
+  const forgot = T({ heard: "", edits: [{ kind: "filler", start: 0, end: 3, to: "", removed: "Um " } as Edit], words: 5, cleared: true });
+  const ov = overview([forgot, T({ heard: "Um yes" })], O());
+  expect(ov.words).toBe(7);
+  expect(ov.fillers).toEqual([["um", 1]]);
+});
+
 test("rates, medians and shares wait for 10 dictations behind them; counts don't", () => {
   const nine = overview([...many(9), T({ outcome: "failed" })], O());
   expect(nine.n).toBe(10);
@@ -159,6 +166,13 @@ test("the tiles, chart and tables for the last 7 days", async ({ page }) => {
   await expect(list(page)).toHaveCount(30);
   await expect(list(page).first()).toContainText("420 ms · 3 edits");
   await expect(list(page).first()).toContainText("Hold");
+});
+
+test("a dictation Keep history forgot leaves the Dictations list, but still counts in the numbers", async ({ page }) => {
+  await open(page, TRACES.replace("return out;", `out[1] = { ...out[1], steps: out[1].steps.map((s) => ({ ...s, text: "" })), words: 6, cleared: true }; return out;`));
+  await expect(tile(page, "Dictations")).toContainText("30");
+  await expect(tile(page, "Edits per 100 words")).toContainText("180 words heard, before cleanup");
+  await expect(list(page)).toHaveCount(29);
 });
 
 test("switching period changes every number, the chart and the list, without moving the page", async ({ page }) => {

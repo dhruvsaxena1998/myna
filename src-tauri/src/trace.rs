@@ -1,7 +1,7 @@
 //! A trace: the record of one dictation that reached speech-to-text, saved by the Dictation session when it ends.
 //! Voice typing history and Stats for nerds read it. No audio is kept.
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 #[derive(Debug, Default)]
 pub struct Trace {
@@ -78,7 +78,7 @@ pub fn list(conn: &Connection) -> Result<Vec<Row>, String> {
         .prepare(
             "SELECT id, started, app, outcome, (SELECT text FROM step WHERE trace = trace.id AND kind = 'speech-to-text'),
                 (SELECT text FROM step WHERE trace = trace.id ORDER BY rowid DESC LIMIT 1),
-                (SELECT rating FROM feedback WHERE trace = trace.id) FROM trace ORDER BY started DESC, id DESC",
+                (SELECT rating FROM feedback WHERE trace = trace.id) FROM trace WHERE cleared IS NULL ORDER BY started DESC, id DESC",
         )
         .map_err(err)?;
     let rows = q
@@ -107,7 +107,52 @@ pub fn clear(conn: &Connection) -> Result<(), String> {
     tx.commit().map_err(err)
 }
 
-const COLS: &str = "id, started, mode, app, model, audio_ms, outcome, reason, load_ms, paste_ms, (SELECT rating FROM feedback WHERE trace = trace.id)";
+/// Keep history (Voice typing history's setting): dictations older than this many days lose their text. Missing keeps it forever.
+pub const KEEP: &[&str] = &["forever", "1", "3", "7", "30"];
+
+/// Forgets the text of every dictation older than Keep history allows. Runs on launch and after each dictation.
+pub fn sweep(conn: &Connection, now: i64) -> Result<(), String> {
+    let keep = crate::storage::read_choice(conn, "history_keep", KEEP, "forever").map_err(|e| format!("Couldn't read Keep history: {e}"))?;
+    match keep.parse::<i64>() {
+        Ok(days) => forget(conn, now - days * 86_400_000, now),
+        Err(_) => Ok(()),
+    }
+}
+
+/// The dictation leaves Voice typing history, but not Stats for nerds: the trace, its timings and edits stay. Its word
+/// count is kept, and each filler edit keeps the words it removed, so the Overview reads the same without the text.
+fn forget(conn: &Connection, before: i64, now: i64) -> Result<(), String> {
+    let err = |e: rusqlite::Error| format!("Couldn't clear old history: {e}");
+    let tx = conn.unchecked_transaction().map_err(err)?;
+    let ids = tx.prepare("SELECT id FROM trace WHERE started < ?1 AND cleared IS NULL").map_err(err)?.query_map([before], |r| r.get::<_, i64>(0)).map_err(err)?.collect::<Result<Vec<_>, _>>().map_err(err)?;
+    for id in ids {
+        let heard: Vec<char> = tx
+            .query_row("SELECT text FROM step WHERE trace = ?1 AND kind = 'speech-to-text'", [id], |r| r.get::<_, String>(0))
+            .optional()
+            .map_err(err)?
+            .unwrap_or_default()
+            .chars()
+            .collect();
+        let edited = tx.prepare("SELECT rowid, edits FROM step WHERE trace = ?1 AND edits IS NOT NULL").map_err(err)?.query_map([id], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))).map_err(err)?.collect::<Result<Vec<_>, _>>().map_err(err)?;
+        for (row, edits) in edited {
+            let Ok(serde_json::Value::Array(mut edits)) = serde_json::from_str(&edits) else { continue };
+            for e in &mut edits {
+                let span = (e["start"].as_u64(), e["end"].as_u64());
+                if let ("filler", (Some(a), Some(b))) = (e["kind"].as_str().unwrap_or(""), span) {
+                    e["removed"] = heard.get(a as usize..b as usize).map(|c| c.iter().collect::<String>()).unwrap_or_default().into();
+                }
+            }
+            tx.execute("UPDATE step SET edits = ?1 WHERE rowid = ?2", (serde_json::Value::Array(edits).to_string(), row)).map_err(err)?;
+        }
+        let words = heard.iter().collect::<String>().split_whitespace().count() as i64;
+        tx.execute("UPDATE trace SET words = ?1, cleared = ?2 WHERE id = ?3", (words, now, id)).map_err(err)?;
+        tx.execute("UPDATE step SET text = '' WHERE trace = ?1", [id]).map_err(err)?;
+        tx.execute("UPDATE feedback SET corrected = NULL WHERE trace = ?1", [id]).map_err(err)?;
+    }
+    tx.commit().map_err(err)
+}
+
+const COLS: &str = "id, started, mode, app, model, audio_ms, outcome, reason, load_ms, paste_ms, (SELECT rating FROM feedback WHERE trace = trace.id), words, cleared";
 
 /// A trace's columns as JSON, the model still as its id.
 fn trace_json(r: &rusqlite::Row) -> rusqlite::Result<serde_json::Value> {
@@ -115,6 +160,7 @@ fn trace_json(r: &rusqlite::Row) -> rusqlite::Result<serde_json::Value> {
         "id": r.get::<_, i64>(0)?, "started": r.get::<_, i64>(1)?, "mode": r.get::<_, String>(2)?, "app": r.get::<_, Option<String>>(3)?,
         "model": r.get::<_, Option<String>>(4)?, "audio_ms": r.get::<_, i64>(5)?, "outcome": r.get::<_, String>(6)?,
         "reason": r.get::<_, Option<String>>(7)?, "load_ms": r.get::<_, Option<f64>>(8)?, "paste_ms": r.get::<_, Option<f64>>(9)?, "rating": r.get::<_, Option<String>>(10)?,
+        "words": r.get::<_, Option<i64>>(11)?, "cleared": r.get::<_, Option<i64>>(12)?.is_some(),
     }))
 }
 
@@ -189,6 +235,40 @@ mod tests {
         assert_eq!(rows[0].text.as_deref(), Some("hello"));
         assert_eq!((rows[0].rating.as_deref(), t["rating"].is_null()), (None, true));
         assert!(get(&conn, 99).is_err());
+    }
+
+    #[test]
+    fn history_kept_for_a_day_forgets_older_text_but_keeps_its_numbers() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = crate::storage::open(tmp.path()).unwrap();
+        const DAY: i64 = 86_400_000;
+        let now = 10 * DAY;
+        for started in [now - 2 * DAY, now - 1000] {
+            let steps = vec![
+                Step { kind: "speech-to-text", text: "Um hello there".into(), ms: 40.0, settings: None, edits: None },
+                Step { kind: "rules", text: "Hello there".into(), ms: 1.0, settings: None, edits: Some(r#"[{"kind":"filler","start":0,"end":3,"to":""}]"#.into()) },
+            ];
+            let id = save(&conn, &Trace { started, mode: "hold", outcome: "pasted", audio_ms: 900, steps, ..Default::default() }).unwrap();
+            conn.execute("INSERT INTO feedback(trace, rating, corrected, created) VALUES (?1, 'down', 'Hello their', 0)", [id]).unwrap();
+        }
+        sweep(&conn, now).unwrap(); // kept forever by default
+        assert_eq!(list(&conn).unwrap().len(), 2);
+
+        crate::storage::write_text(&conn, "history_keep", "1").unwrap();
+        sweep(&conn, now).unwrap();
+        sweep(&conn, now).unwrap(); // again: nothing more to forget, and the numbers stay
+        // Voice typing history and the Dictations list lose it.
+        assert_eq!(list(&conn).unwrap().iter().map(|r| r.started).collect::<Vec<_>>(), [now - 1000]);
+        // Stats for nerds keeps its numbers: the word count, the filler it removed, timings, the rating.
+        let all = all(&conn).unwrap();
+        let old = &all[1];
+        assert_eq!((old["cleared"].as_bool(), old["words"].as_i64(), old["audio_ms"].as_i64()), (Some(true), Some(3), Some(900)));
+        assert_eq!((old["steps"][0]["text"].as_str(), old["steps"][0]["ms"].as_f64()), (Some(""), Some(40.0)));
+        assert_eq!(old["steps"][1]["edits"][0]["removed"], "Um ");
+        assert_eq!(old["rating"], "down");
+        let corrected: Option<String> = conn.query_row("SELECT corrected FROM feedback WHERE trace = ?1", [old["id"].as_i64().unwrap()], |r| r.get(0)).unwrap();
+        assert_eq!(corrected, None);
+        assert_eq!((all[0]["cleared"].as_bool(), all[0]["steps"][0]["text"].as_str()), (Some(false), Some("Um hello there")));
     }
 
     #[test]

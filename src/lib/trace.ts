@@ -1,7 +1,8 @@
 import type { Rating } from "./feedback";
 /** What a stored dictation trace looks like to Stats for nerds (see src-tauri/src/trace.rs and rules.rs `Edit`). */
 export type Edit =
-  | { kind: "filler" | "repeat" | "cutoff" | "number"; start: number; end: number; to: string }
+  // `removed`: a filler's words, kept when Keep history forgot the text they were cut from.
+  | { kind: "filler" | "repeat" | "cutoff" | "number"; start: number; end: number; to: string; removed?: string }
   | { kind: "word"; start: number; end: number; to: string; matched: "spelling" | "heard"; spelling: string; heard: string | null; unchanged: boolean };
 /** The cleanup step's settings: the Fast model (none if it wasn't set), what the call cost, and why the rules text was pasted instead. */
 export type Cleanup = { model: string | null; cost: { kind: "usd"; usd: number } | { kind: "free" | "unknown" } | null; fallback: string | null; detail: string | null };
@@ -9,6 +10,8 @@ export type Step = { kind: "speech-to-text" | "rules" | "cleanup"; text: string;
 export type Trace = {
   id: number; started: number; mode: "hold" | "tap"; app: string | null; model: string | null; audio_ms: number;
   outcome: string; rating: Rating; reason: string | null; load_ms: number | null; paste_ms: number | null; steps: Step[];
+  /** Set once Keep history forgot the text: `words` is what speech-to-text heard, counted before it went. */
+  words?: number | null; cleared?: boolean;
 };
 /** `heard`: what speech-to-text wrote. `text`: what the last step left, which is what was pasted. */
 export type Row = { id: number; started: number; app: string | null; outcome: string; rating: Rating; heard: string | null; text: string | null };
