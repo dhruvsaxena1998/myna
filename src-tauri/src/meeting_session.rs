@@ -13,6 +13,8 @@ use tauri::{AppHandle, Emitter, Manager};
 
 /// Everything the session needs from the Mac. It is also meeting notes' speech and voices.
 pub trait World: Stt + Voices + 'static {
+    /// A chunk through local model `model`, for Transcribe again.
+    fn transcribe_on(&self, audio: &[f32], model: &str) -> Result<Vec<crate::runtime::Segment>, String>;
     fn mic(&self) -> Mic;
     /// Shows macOS's mic pop-up and waits for the answer.
     fn ask_mic(&self);
@@ -187,13 +189,14 @@ impl MeetingSession {
         Ok(())
     }
 
-    /// Transcribe again, on a written-up meeting: through `stt` ("local" or "<provider id>|<model>") this once; the
+    /// Transcribe again, on a written-up meeting: through `stt` ("local", "local|<model id>" or "<provider id>|<model>") this once; the
     /// setting for new meetings stays. The lines are replaced, so speaker names and cleanup are redone; Summary
     /// versions are kept.
     pub fn again(self: &Arc<Self>, id: i64, stt: &str) -> Result<(), String> {
         self.meetings.settled(id)?;
         let how = match stt.split_once('|') {
-            _ if stt == "local" => How::Local,
+            _ if stt == "local" => How::Local(None),
+            Some(("local", m)) if !m.trim().is_empty() => How::Local(Some(m.trim().into())),
             Some((p, m)) if !m.trim().is_empty() => {
                 let p = p.parse().map_err(|_| "That provider no longer exists".to_string())?;
                 How::Endpoint(crate::ai::stt_endpoint_for(&self.db.lock().unwrap(), self.world.keys(), p, m.trim())?)
@@ -328,10 +331,11 @@ impl MeetingSession {
         let this = self.clone();
         std::thread::spawn(move || {
             let w = &*this.world;
+            let model = if let How::Local(Some(m)) = &how { Some(m.clone()) } else { None };
             let endpoint = match how {
                 How::Setting => Some(crate::ai::stt_endpoint(&this.db.lock().unwrap(), w.keys())),
                 How::Rest => None,
-                How::Local => Some(Ok(None)),
+                How::Local(_) => Some(Ok(None)),
                 How::Endpoint(e) => Some(Ok(Some(e))),
             };
             let via = match &endpoint {
@@ -346,7 +350,9 @@ impl MeetingSession {
                 let _ = this.db.lock().unwrap().execute("UPDATE meeting SET stt = ?1 WHERE id = ?2", (json, id));
             }
             w.notes(id, "transcribing", 0.0, None);
-            let done = this.meetings.transcribe(id, w, w, via, &mut |p| w.notes(id, "transcribing", p, None));
+            let on = model.as_deref().map(|m| On(w, m));
+            let stt: &dyn Stt = match &on { Some(o) => o, None => w };
+            let done = this.meetings.transcribe(id, stt, w, via, &mut |p| w.notes(id, "transcribing", p, None));
             w.idle(); // the model idles out like after a dictation
             match done {
                 Ok(()) => {
@@ -375,8 +381,8 @@ enum How {
     Setting,
     /// Transcribe locally: what the Endpoint did is kept.
     Rest,
-    /// Transcribe again, on the Local model or an Endpoint picked for this once.
-    Local,
+    /// Transcribe again, on the Local model (meeting notes' pick, or another downloaded one) or an Endpoint picked for this once.
+    Local(Option<String>),
     Endpoint(crate::ai::SttEndpoint),
 }
 
@@ -407,6 +413,15 @@ fn menu_bar_dark(item: Option<objc2::rc::Retained<objc2_app_kit::NSStatusItem>>)
     item.and_then(|i| i.button(mtm)).is_some_and(|b| b.effectiveAppearance().name().to_string().contains("Dark"))
 }
 
+/// Transcribe again's pick of local model, in place of meeting notes' own.
+struct On<'a>(&'a dyn World, &'a str);
+
+impl Stt for On<'_> {
+    fn transcribe(&self, audio: &[f32]) -> Result<Vec<crate::runtime::Segment>, String> {
+        self.0.transcribe_on(audio, self.1)
+    }
+}
+
 impl Stt for Mac {
     fn transcribe(&self, audio: &[f32]) -> Result<Vec<crate::runtime::Segment>, String> {
         self.0.state::<Arc<crate::session::Session>>().transcribe(audio)
@@ -420,6 +435,9 @@ impl Voices for Mac {
 }
 
 impl World for Mac {
+    fn transcribe_on(&self, audio: &[f32], model: &str) -> Result<Vec<crate::runtime::Segment>, String> {
+        self.0.state::<Arc<crate::session::Session>>().transcribe_on(audio, model)
+    }
     fn mic(&self) -> Mic {
         permissions::mic()
     }
@@ -556,6 +574,7 @@ mod tests {
         Clean(i64),
         Summarize(i64),
         Echo(i64),
+        On(String),
     }
 
     struct Scripted {
@@ -586,6 +605,10 @@ mod tests {
         }
     }
     impl World for Scripted {
+        fn transcribe_on(&self, audio: &[f32], model: &str) -> Result<Vec<Segment>, String> {
+            self.log(Saw::On(model.into()));
+            self.transcribe(audio)
+        }
         fn mic(&self) -> Mic {
             *self.mic.lock().unwrap()
         }
@@ -1175,6 +1198,12 @@ mod tests {
         s.again(id, "local").unwrap();
         until(&saw_, |v| v.contains(&Saw::Summarize(id)));
         assert!(meeting::page(&s.db.lock().unwrap(), id).unwrap().stt.is_none(), "says it's the Local model's now");
+        assert!(!saw_.lock().unwrap().iter().any(|v| matches!(v, Saw::On(_))), "plain local is meeting notes' own model");
+
+        saw_.lock().unwrap().clear();
+        s.again(id, "local|whisper-turbo").unwrap();
+        until(&saw_, |v| v.contains(&Saw::Summarize(id)));
+        assert!(saw_.lock().unwrap().contains(&Saw::On("whisper-turbo".into())), "another downloaded model, picked for this once");
 
         assert_eq!(s.again(99, "local"), Err("That meeting isn't there anymore.".into()));
         assert!(s.again(id, &format!("{}|whisper", p + 1)).is_err(), "a provider that's gone");

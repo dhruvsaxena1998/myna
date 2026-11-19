@@ -22,6 +22,7 @@
   import { tick, untrack } from "svelte";
   import type { Ai, Model } from "./AiProviders.svelte";
   import HostPill from "./HostPill.svelte";
+  import type { Model as LocalModel, Task } from "./models";
   import { changes, clips, clock, dayHead, groups, hm, meta, writing, type CleanupRun, type Cost, type Page, type Progress, type SummaryRun, type Version } from "./meetings";
 
   // `onreload`: the page's lines changed in the backend (a speaker renamed), so it reads them again.
@@ -190,6 +191,7 @@
   // Transcribe again: the saved audio through the Local model or an Endpoint model, for this meeting only.
   let redo = $state({ pick: "local", saved: "local", err: "" });
   let sttModels = $state<Record<number, string[]>>({});
+  let localModels = $state<LocalModel[]>([]); // downloaded speech models besides meeting notes' own
   let redoDlg = $state<HTMLDialogElement>();
   $effect(() => {
     if (pop === "redo") redoDlg?.showModal();
@@ -197,12 +199,16 @@
   });
   // OpenRouter lists its transcription models; another provider offers the one typed into Settings, if it's that one.
   const sttIds = (p: Ai["providers"][number]) => [...new Set([...(sttModels[p.id] ?? []), ...(split(redo.saved)[0] === p.id ? [split(redo.saved)[1]] : [])])];
-  const redoProv = $derived(redo.pick === "local" ? null : ai?.providers.find((p) => p.id === split(redo.pick)[0]));
+  const redoProv = $derived(redo.pick.startsWith("local") ? null : ai?.providers.find((p) => p.id === split(redo.pick)[0]));
   async function openRedo() {
     await loadAi();
     const saved = await invoke<string>("meeting_stt_get").catch(() => "local");
     redo = { pick: saved.includes("|") ? saved : "local", saved, err: "" };
     pop = "redo";
+    invoke<Task[]>("models_list").then((ts) => {
+      const t = ts.find((t) => t.id === "meeting_stt");
+      localModels = t?.models.filter((m) => m.installed && m.id !== t.active) ?? [];
+    }, () => {});
     for (const p of ai?.providers ?? []) if (p.kind === "openrouter") invoke<Model[]>("meeting_stt_models", { id: p.id }).then((l) => { sttModels[p.id] = l.map((m) => m.id); }, () => {});
   }
   async function transcribe(e: SubmitEvent) {
@@ -271,7 +277,7 @@
     try {
       await invoke("speaker_rename", { id: page.id, from: spk.from, to });
       spk = null;
-      await onreload();
+      await Promise.all([onreload(), load()]); // the backend renamed them in the Summary too
     } catch (err) {
       if (spk) spk.err = String(err);
     }
@@ -373,7 +379,7 @@
     <p class="help" id="ta-d">Writes the transcript again from the saved audio. Speaker names and cleanup are redone; summaries are kept.</p>
     <label class="field"><span class="label">Model</span>
       <select class="select" bind:value={redo.pick} aria-describedby="ta-mh">
-        <optgroup label="On this Mac"><option value="local">Local model</option></optgroup>
+        <optgroup label="On this Mac"><option value="local">Local model</option>{#each localModels as m (m.id)}<option value="local|{m.id}">{m.name}</option>{/each}</optgroup>
         {#each ai?.providers ?? [] as p (p.id)}{@const l = sttIds(p)}{#if l.length}<optgroup label={p.name}>{#each l as m (m)}<option value="{p.id}|{m}">{m}</option>{/each}</optgroup>{/if}{/each}
       </select>
       <span class="help" id="ta-mh">For this meeting only. New meetings keep the model in Settings.</span></label>
@@ -548,8 +554,8 @@
   /* The transcript beside the document: each scrolls on its own. */
   .content.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 400px); grid-template-rows: minmax(0, 1fr); gap: var(--sp-4); overflow: hidden; }
   .split .doc { min-height: 0; overflow: auto; scrollbar-width: thin; }
-  .panel { min-height: 0; overflow: auto; scrollbar-width: thin; padding: 0 var(--sp-4) var(--sp-4); border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); user-select: text; }
-  .panel-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-3) 0 var(--sp-2); background: var(--bg-inset); }
+  .panel { min-height: 0; overflow: hidden auto; scrollbar-width: thin; padding: 0 var(--sp-4) var(--sp-4); border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); user-select: text; }
+  .panel-head { position: sticky; top: 0; z-index: 1; display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); padding: var(--sp-3) 0 var(--sp-2); background: var(--bg-inset); }
   .panel-head h2 { margin: 0; font-size: var(--fs-body); font-weight: var(--fw-semibold); }
   article { max-width: var(--w-doc, 720px); margin: 0 auto; user-select: text; }
   h1 { margin: 0; font-size: var(--fs-title1); line-height: 1.2; font-weight: var(--fw-bold, 700); }

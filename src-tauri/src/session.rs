@@ -375,8 +375,15 @@ impl Session {
 /// progress. A different model has its own slot, so neither swaps the other out.
 impl crate::meeting::Stt for Session {
     fn transcribe(&self, audio: &[f32]) -> Result<Vec<runtime::Segment>, String> {
+        self.transcribe_on(audio, &self.active_for(models::MEETING_STT)?)
+    }
+}
+
+impl Session {
+    /// A meeting's chunk through local model `id`: meeting notes' pick, or the one Transcribe again picked.
+    pub fn transcribe_on(&self, audio: &[f32], id: &str) -> Result<Vec<runtime::Segment>, String> {
         self.unload_gen.fetch_add(1, Ordering::SeqCst); // a pending unload must not fire between chunks
-        let id = self.active_for(models::MEETING_STT)?;
+        let id = id.to_string();
         let shared = self.active_stt().is_ok_and(|v| v == id);
         let mut slot = if shared {
             *self.meeting_transcriber.lock().unwrap() = None; // the picks became the same: one copy is enough

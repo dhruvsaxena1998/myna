@@ -654,7 +654,7 @@ fn meeting_local(s: tauri::State<Arc<MeetingSession>>, id: i64) -> Result<(), St
     s.retry_local(id)
 }
 
-/// Transcribe again, on a meeting's page: `stt` is "local" or "<provider id>|<model>", for this meeting only.
+/// Transcribe again, on a meeting's page: `stt` is "local", "local|<model id>" or "<provider id>|<model>", for this meeting only.
 #[tauri::command]
 fn meeting_again(s: tauri::State<Arc<MeetingSession>>, id: i64, stt: String) -> Result<(), String> {
     s.again(id, &stt)

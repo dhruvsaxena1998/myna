@@ -1438,9 +1438,36 @@ pub fn rename_speaker(db: &Connection, id: i64, from: &str, to: &str) -> Result<
     if to.eq_ignore_ascii_case("me") {
         return Err("Me is you. Pick another name.".into());
     }
-    db.execute("UPDATE segment SET label = ?3 WHERE meeting = ?1 AND speaker <> 'Me' AND COALESCE(label, speaker) = ?2", (id, from, to))
-        .map(drop)
-        .map_err(|e| format!("Couldn't rename the speaker: {e}"))
+    let err = |e: rusqlite::Error| format!("Couldn't rename the speaker: {e}");
+    db.execute("UPDATE segment SET label = ?3 WHERE meeting = ?1 AND speaker <> 'Me' AND COALESCE(label, speaker) = ?2", (id, from, to)).map_err(err)?;
+    // "Them" is also an ordinary word, so a summary written about "Them" keeps it.
+    if from != "Them" {
+        let texts: Vec<(i64, String)> = db
+            .prepare("SELECT id, text FROM summary WHERE meeting = ?1")
+            .and_then(|mut q| q.query_map([id], |r| Ok((r.get(0)?, r.get(1)?)))?.collect())
+            .map_err(err)?;
+        for (sid, text) in texts {
+            let renamed = replace_name(&text, from, to);
+            if renamed != text {
+                db.execute("UPDATE summary SET text = ?2 WHERE id = ?1", (sid, renamed)).map_err(err)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `from` replaced by `to` where it stands as a whole name: "Speaker 2" but not "Speaker 20" or "Speaker 2s".
+fn replace_name(text: &str, from: &str, to: &str) -> String {
+    let word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+    let (mut out, mut rest) = (String::with_capacity(text.len()), text);
+    while let Some(i) = rest.find(from) {
+        out.push_str(&rest[..i]);
+        let whole = !word(out.chars().last()) && !word(rest[i + from.len()..].chars().next());
+        out.push_str(if whole { to } else { from });
+        rest = &rest[i + from.len()..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// "Today 14:05", "Yesterday 09:00" or "3 Nov 14:05", on this Mac's clock: the menubar's Recent items.
@@ -2006,6 +2033,24 @@ pub(crate) mod tests {
         assert_eq!(find("50%"), [2]);
         assert_eq!(find("5_%"), Vec::<i64>::new(), "% and _ are literal");
         assert_eq!(find("  launch "), [1], "spaces around it are ignored");
+    }
+
+    #[test]
+    fn a_rename_reaches_the_summary_by_whole_name_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let m = meetings(tmp.path(), Fake(0));
+        let db = m.db.lock().unwrap();
+        db.execute_batch("INSERT INTO meeting(started, state) VALUES (1, 'done'), (2, 'done');
+            INSERT INTO segment(meeting, start_ms, end_ms, speaker, text, label) VALUES (1, 0, 0, 'Them', 'a', 'Speaker 2'), (1, 0, 0, 'Them', 'b', NULL);
+            INSERT INTO summary(meeting, template, prompt, provider, model, created, parts, cost, text) VALUES
+              (1, 'Recap', 'p', 'x', 'm', 0, 1, '{}', '| Speaker 2 | Speaker 20 | (Speaker 2) | Speaker 2s | tell them |'),
+              (2, 'Recap', 'p', 'x', 'm', 0, 1, '{}', 'Speaker 2');").unwrap();
+        let text = |m: i64| db.query_row("SELECT text FROM summary WHERE meeting = ?1", [m], |r| r.get::<_, String>(0)).unwrap();
+        rename_speaker(&db, 1, "Speaker 2", "Ana").unwrap();
+        assert_eq!(text(1), "| Ana | Speaker 20 | (Ana) | Speaker 2s | tell them |");
+        assert_eq!(text(2), "Speaker 2", "another meeting's summary is left alone");
+        rename_speaker(&db, 1, "Them", "Bo").unwrap();
+        assert!(text(1).ends_with("tell them |"), "Them is a word too, so summaries keep it");
     }
 
     #[test]
