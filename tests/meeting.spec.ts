@@ -219,6 +219,40 @@ test("the recording pill hides down to the Myna glyph, a click on it brings it b
   expect(await calls(page, "plugin:window|start_dragging")).toHaveLength(1);
 });
 
+test("while the notes are being written the pill takes the mouse and a drag moves it", async ({ page }) => {
+  await fakeTauri(page, `{}`);
+  await page.goto("/pill");
+  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(12);
+  const pill = page.getByRole("status");
+  await emit(page, "meeting-notes", { id: 7, state: "transcribing", progress: 0.3, error: null });
+  await expect(pill).toContainText("Writing up your notes…");
+  // pill.rs makes the window click-through outside this rect: null would let every press fall through to the app below.
+  await expect.poll(async () => (await calls(page, "pill_hit")).at(-1)?.rect).not.toBeNull();
+  const box = (await pill.locator(".hud").boundingBox())!;
+  await page.mouse.move(box.x + 20, box.y + 10);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 60, box.y + 10);
+  await page.mouse.up();
+  expect(await calls(page, "plugin:window|start_dragging")).toHaveLength(1);
+});
+
+test("Stop on the recording pill asks once, so a stray click can't end the meeting, then stops it", async ({ page }) => {
+  await fakeTauri(page, `{ call_stop: () => {} }`);
+  await page.clock.install({ time: 100_000 });
+  await page.goto("/pill");
+  await expect.poll(() => page.evaluate(() => (window as any).__calls.filter((c: any) => c[0] === "plugin:event|listen").length)).toBe(12);
+  const pill = page.getByRole("status");
+  await emit(page, "meeting", { started: 100_000, mic: null, words: "Mic live" });
+  await pill.getByRole("button", { name: "Stop recording" }).click();
+  expect(await calls(page, "call_stop")).toEqual([]);
+  await expect(pill.getByRole("button", { name: "Stop recording now" })).toHaveText("Stop?");
+  await page.clock.runFor(3500); // not confirmed: it goes back
+  await expect(pill.getByRole("button", { name: "Stop recording", exact: true })).toBeVisible();
+  await pill.getByRole("button", { name: "Stop recording", exact: true }).click();
+  await pill.getByRole("button", { name: "Stop recording now" }).click();
+  expect(await calls(page, "call_stop")).toHaveLength(1);
+});
+
 test("Pause on the recording pill pauses it, says Paused, and Resume picks it back up", async ({ page }) => {
   await fakeTauri(page, `{ meeting_pause: () => {} }`);
   await page.goto("/pill");
