@@ -2,7 +2,8 @@
 //! It owns the app's `Meetings` and reaches the Mac only through `World`, so tests drive it with a fake.
 
 use crate::addon::{AddonEvent, MuteState, Site};
-use crate::meeting::{self, Meetings, Stt, Via, Voices};
+use crate::meeting::{self, Meetings, Stt, Voices};
+use crate::stt::{self, Transcriber};
 use crate::permissions::Mic;
 use crate::{notify, now_ms, permissions, pill};
 use rusqlite::Connection;
@@ -13,8 +14,6 @@ use tauri::{AppHandle, Emitter, Manager};
 
 /// Everything the session needs from the Mac. It is also meeting notes' speech and voices.
 pub trait World: Stt + Voices + 'static {
-    /// A chunk through local model `model`, for Transcribe again.
-    fn transcribe_on(&self, audio: &[f32], model: &str) -> Result<Vec<crate::runtime::Segment>, String>;
     fn mic(&self) -> Mic;
     /// Shows macOS's mic pop-up and waits for the answer.
     fn ask_mic(&self);
@@ -43,12 +42,8 @@ pub trait World: Stt + Voices + 'static {
     fn recent(&self);
     /// The speech model is idle now: it may be freed after the idle time.
     fn idle(&self);
-    /// Meeting `id` is transcribed: transcript cleanup runs now if it's on, and returns when it's done or failed.
-    fn clean(&self, id: i64);
-    /// Meeting `id` is written up: its Summary may run now (story 16), in the background.
-    fn summarize(&self, id: i64);
-    /// Meeting `id` is written up: the Title model names it if it's still untitled. Returns when done or failed.
-    fn name(&self, _id: i64) {}
+    /// Meeting `id` is transcribed: its follow-up (cleanup, title, Summary) runs now, in the background.
+    fn follow_up(&self, id: i64);
     /// `meeting-echo`: checking meeting `id`, recorded before echo handling, left lines out.
     fn echo_checked(&self, id: i64);
     /// Where AI providers' keys are, for meeting speech-to-text on an Endpoint.
@@ -162,7 +157,7 @@ impl MeetingSession {
     pub fn stop(self: &Arc<Self>) {
         self.world.stop_tab();
         match self.meetings.stop() {
-            Ok(Some(id)) => self.write_up(id, How::Setting),
+            Ok(Some(id)) => self.write_up(id, None, true),
             Ok(None) => {}
             Err(e) => self.world.notify("Couldn’t save the recording", &e),
         }
@@ -176,7 +171,7 @@ impl MeetingSession {
         if !self.meetings.failed(id) {
             return Err("That meeting isn't waiting to be tried again.".into());
         }
-        self.write_up(id, How::Setting);
+        self.write_up(id, None, true);
         Ok(())
     }
 
@@ -185,25 +180,16 @@ impl MeetingSession {
         if !self.meetings.failed(id) {
             return Err("That meeting isn't waiting to be tried again.".into());
         }
-        self.write_up(id, How::Rest);
+        self.write_up(id, Some(Transcriber::Local(None)), true);
         Ok(())
     }
 
-    /// Transcribe again, on a written-up meeting: through `stt` ("local", "local|<model id>" or "<provider id>|<model>") this once; the
-    /// setting for new meetings stays. The lines are replaced, so speaker names and cleanup are redone; Summary
-    /// versions are kept.
-    pub fn again(self: &Arc<Self>, id: i64, stt: &str) -> Result<(), String> {
+    /// Transcribe again, on a written-up meeting: through `pick` this once, from scratch; the setting for new meetings
+    /// stays. The lines are replaced, so speaker names and cleanup are redone; Summary versions are kept.
+    pub fn again(self: &Arc<Self>, id: i64, pick: &stt::Pick) -> Result<(), String> {
         self.meetings.settled(id)?;
-        let how = match stt.split_once('|') {
-            _ if stt == "local" => How::Local(None),
-            Some(("local", m)) if !m.trim().is_empty() => How::Local(Some(m.trim().into())),
-            Some((p, m)) if !m.trim().is_empty() => {
-                let p = p.parse().map_err(|_| "That provider no longer exists".to_string())?;
-                How::Endpoint(crate::ai::stt_endpoint_for(&self.db.lock().unwrap(), self.world.keys(), p, m.trim())?)
-            }
-            _ => return Err("Pick a model to transcribe with.".into()),
-        };
-        self.write_up(id, how);
+        let t = stt::resolve(&self.db.lock().unwrap(), self.world.keys(), Some(pick))?;
+        self.write_up(id, Some(t), false);
         Ok(())
     }
 
@@ -230,7 +216,7 @@ impl MeetingSession {
     /// written up before echo handling, newest first, one at a time (a write-up goes first).
     pub fn resume(self: &Arc<Self>) {
         for id in self.meetings.unfinished() {
-            self.write_up(id, How::Setting);
+            self.write_up(id, None, true);
         }
         let this = self.clone();
         std::thread::spawn(move || this.check_echo());
@@ -325,42 +311,26 @@ impl MeetingSession {
     }
 
     /// Writes up meeting `id` on its own thread, saying how it goes with `meeting-notes`: "transcribing" with progress
-    /// 0 to 1, then "done" or "failed" with the reason. Meeting speech-to-text's setting picks the Local model or an
-    /// Endpoint; `rest` keeps what an Endpoint did and transcribes the rest locally.
-    fn write_up(self: &Arc<Self>, id: i64, how: How) {
+    /// 0 to 1, then "done" or "failed" with the reason. `with` none is meeting speech-to-text's setting, resolved on
+    /// that thread (it reads the Keychain). `keep_done`: chunks an Endpoint already did are kept, not redone.
+    fn write_up(self: &Arc<Self>, id: i64, with: Option<Transcriber>, keep_done: bool) {
         let this = self.clone();
         std::thread::spawn(move || {
             let w = &*this.world;
-            let model = if let How::Local(Some(m)) = &how { Some(m.clone()) } else { None };
-            let endpoint = match how {
-                How::Setting => Some(crate::ai::stt_endpoint(&this.db.lock().unwrap(), w.keys())),
-                How::Rest => None,
-                How::Local(_) => Some(Ok(None)),
-                How::Endpoint(e) => Some(Ok(Some(e))),
-            };
-            let via = match &endpoint {
-                None => Via::Rest,
-                Some(Ok(None)) => Via::Local,
-                Some(Ok(Some(e))) => Via::Endpoint(Ok(e)),
-                Some(Err(e)) => Via::Endpoint(Err(e.clone())),
-            };
-            if let Via::Endpoint(Ok(e)) = &via {
+            let with = with.unwrap_or_else(|| stt::resolve(&this.db.lock().unwrap(), w.keys(), None).unwrap_or_else(Transcriber::Unavailable));
+            if let Transcriber::Endpoint(e) = &with {
                 // Before "transcribing" is said, so the meeting page shows where its audio goes while it runs.
                 let json = serde_json::json!({ "provider": e.provider, "model": e.model, "off": e.off }).to_string();
                 let _ = this.db.lock().unwrap().execute("UPDATE meeting SET stt = ?1 WHERE id = ?2", (json, id));
             }
             w.notes(id, "transcribing", 0.0, None);
-            let on = model.as_deref().map(|m| On(w, m));
-            let stt: &dyn Stt = match &on { Some(o) => o, None => w };
-            let done = this.meetings.transcribe(id, stt, w, via, &mut |p| w.notes(id, "transcribing", p, None));
+            let done = this.meetings.transcribe(id, w, w, &with, keep_done, &mut |p| w.notes(id, "transcribing", p, None));
             w.idle(); // the model idles out like after a dictation
             match done {
                 Ok(()) => {
                     w.notes(id, "done", 1.0, None);
                     w.recent(); // before cleanup, which can take minutes on a local model
-                    w.clean(id); // a failed cleanup keeps the text as heard, and the Summary runs on that
-                    w.name(id); // on the cleaned lines, before the Summary, so the list shows a name soon
-                    w.summarize(id);
+                    w.follow_up(id);
                 }
                 Err(e) => {
                     w.notes(id, "failed", 0.0, Some(&e));
@@ -373,17 +343,6 @@ impl MeetingSession {
             }
         });
     }
-}
-
-/// Which speech-to-text a write-up uses.
-enum How {
-    /// Meeting speech-to-text, as set.
-    Setting,
-    /// Transcribe locally: what the Endpoint did is kept.
-    Rest,
-    /// Transcribe again, on the Local model (meeting notes' pick, or another downloaded one) or an Endpoint picked for this once.
-    Local(Option<String>),
-    Endpoint(crate::ai::SttEndpoint),
 }
 
 /// `mic`: "live" or "muted" while the add-on mirrors the mute button, else null.
@@ -413,18 +372,9 @@ fn menu_bar_dark(item: Option<objc2::rc::Retained<objc2_app_kit::NSStatusItem>>)
     item.and_then(|i| i.button(mtm)).is_some_and(|b| b.effectiveAppearance().name().to_string().contains("Dark"))
 }
 
-/// Transcribe again's pick of local model, in place of meeting notes' own.
-struct On<'a>(&'a dyn World, &'a str);
-
-impl Stt for On<'_> {
-    fn transcribe(&self, audio: &[f32]) -> Result<Vec<crate::runtime::Segment>, String> {
-        self.0.transcribe_on(audio, self.1)
-    }
-}
-
 impl Stt for Mac {
-    fn transcribe(&self, audio: &[f32]) -> Result<Vec<crate::runtime::Segment>, String> {
-        self.0.state::<Arc<crate::session::Session>>().transcribe(audio)
+    fn transcribe(&self, audio: &[f32], model: Option<&str>) -> Result<Vec<crate::runtime::Segment>, String> {
+        self.0.state::<Arc<crate::session::Session>>().transcribe(audio, model)
     }
 }
 
@@ -435,9 +385,6 @@ impl Voices for Mac {
 }
 
 impl World for Mac {
-    fn transcribe_on(&self, audio: &[f32], model: &str) -> Result<Vec<crate::runtime::Segment>, String> {
-        self.0.state::<Arc<crate::session::Session>>().transcribe_on(audio, model)
-    }
     fn mic(&self) -> Mic {
         permissions::mic()
     }
@@ -533,14 +480,9 @@ impl World for Mac {
     fn idle(&self) {
         self.0.state::<Arc<crate::session::Session>>().schedule_unload()
     }
-    fn clean(&self, id: i64) {
-        crate::clean(&self.0, id);
-    }
-    fn summarize(&self, id: i64) {
-        crate::summarize(&self.0, id);
-    }
-    fn name(&self, id: i64) {
-        crate::name_meeting(&self.0, id);
+    fn follow_up(&self, id: i64) {
+        let app = self.0.clone();
+        std::thread::spawn(move || app.state::<crate::follow_up::FollowUp>().run(id));
     }
     fn echo_checked(&self, id: i64) {
         let _ = self.0.emit("meeting-echo", id);
@@ -571,10 +513,9 @@ mod tests {
         StopTab,
         Recent,
         Idle,
-        Clean(i64),
-        Summarize(i64),
+        FollowUp(i64),
         Echo(i64),
-        On(String),
+        Model(String),
     }
 
     struct Scripted {
@@ -595,7 +536,10 @@ mod tests {
     }
 
     impl Stt for Scripted {
-        fn transcribe(&self, _: &[f32]) -> Result<Vec<Segment>, String> {
+        fn transcribe(&self, _: &[f32], model: Option<&str>) -> Result<Vec<Segment>, String> {
+            if let Some(m) = model {
+                self.log(Saw::Model(m.into()));
+            }
             if self.fail.load(std::sync::atomic::Ordering::SeqCst) { Err("The model fell over.".into()) } else { Ok(vec![]) }
         }
     }
@@ -605,10 +549,6 @@ mod tests {
         }
     }
     impl World for Scripted {
-        fn transcribe_on(&self, audio: &[f32], model: &str) -> Result<Vec<Segment>, String> {
-            self.log(Saw::On(model.into()));
-            self.transcribe(audio)
-        }
         fn mic(&self) -> Mic {
             *self.mic.lock().unwrap()
         }
@@ -653,11 +593,8 @@ mod tests {
         fn idle(&self) {
             self.log(Saw::Idle)
         }
-        fn clean(&self, id: i64) {
-            self.log(Saw::Clean(id))
-        }
-        fn summarize(&self, id: i64) {
-            self.log(Saw::Summarize(id))
+        fn follow_up(&self, id: i64) {
+            self.log(Saw::FollowUp(id))
         }
         fn echo_checked(&self, id: i64) {
             self.log(Saw::Echo(id))
@@ -703,7 +640,7 @@ mod tests {
 
     /// What the write-up thread said and the menu clock, left out: they land whenever.
     fn without_write_up(v: Vec<Saw>) -> Vec<Saw> {
-        v.into_iter().filter(|s| !matches!(s, Saw::Notes(..) | Saw::Recent | Saw::Idle | Saw::MenuRunning(_) | Saw::Clean(_) | Saw::Summarize(_))).collect()
+        v.into_iter().filter(|s| !matches!(s, Saw::Notes(..) | Saw::Recent | Saw::Idle | Saw::MenuRunning(_) | Saw::FollowUp(_))).collect()
     }
 
     #[test]
@@ -814,7 +751,7 @@ mod tests {
 
     /// What the write-up said, in order.
     fn write_up_of(v: &[Saw]) -> Vec<Saw> {
-        v.iter().filter(|s| matches!(s, Saw::Notes(..) | Saw::Idle | Saw::Recent | Saw::Clean(_) | Saw::Summarize(_))).cloned().collect()
+        v.iter().filter(|s| matches!(s, Saw::Notes(..) | Saw::Idle | Saw::Recent | Saw::FollowUp(_))).cloned().collect()
     }
 
     /// A call whose listening fails when the test says so.
@@ -904,10 +841,10 @@ mod tests {
         s.start();
         let id = id_of(&s);
         s.stop();
-        let up = write_up_of(&until(&saw_, |v| v.contains(&Saw::Summarize(id))));
+        let up = write_up_of(&until(&saw_, |v| v.contains(&Saw::FollowUp(id))));
         assert_eq!(up[0], Saw::Notes(id, "transcribing".into(), 0.0, None));
         assert!(up[1..up.len() - 5].iter().all(|s| matches!(s, Saw::Notes(i, st, p, None) if *i == id && st == "transcribing" && (0.0..1.0).contains(p))), "{up:?}");
-        assert_eq!(up[up.len() - 5..], [Saw::Idle, Saw::Notes(id, "done".into(), 1.0, None), Saw::Recent, Saw::Clean(id), Saw::Summarize(id)]);
+        assert_eq!(up[up.len() - 4..], [Saw::Idle, Saw::Notes(id, "done".into(), 1.0, None), Saw::Recent, Saw::FollowUp(id)]);
     }
 
     #[test]
@@ -921,8 +858,8 @@ mod tests {
         assert_eq!(up[up.len() - 3..], [Saw::Idle, Saw::Notes(id, "failed".into(), 0.0, Some("The model fell over.".into())), Saw::Recent], "no Summary of a failed write-up");
         fail.store(false, std::sync::atomic::Ordering::SeqCst);
         s.retry(id).unwrap();
-        let up = write_up_of(&until(&saw_, |v| v.contains(&Saw::Summarize(id))));
-        assert_eq!(up[up.len() - 5..], [Saw::Idle, Saw::Notes(id, "done".into(), 1.0, None), Saw::Recent, Saw::Clean(id), Saw::Summarize(id)]);
+        let up = write_up_of(&until(&saw_, |v| v.contains(&Saw::FollowUp(id))));
+        assert_eq!(up[up.len() - 4..], [Saw::Idle, Saw::Notes(id, "done".into(), 1.0, None), Saw::Recent, Saw::FollowUp(id)]);
         let again = up.iter().rposition(|s| *s == Saw::Notes(id, "transcribing".into(), 0.0, None)).unwrap();
         assert!(again > 3, "the retry starts from transcribing at 0: {up:?}");
     }
@@ -935,7 +872,7 @@ mod tests {
         s.start();
         let id = id_of(&s);
         s.stop();
-        let n = until(&saw_, |v| v.contains(&Saw::Summarize(id))).len();
+        let n = until(&saw_, |v| v.contains(&Saw::FollowUp(id))).len();
         assert_eq!(s.retry(id), no);
         std::thread::sleep(TICK * 3);
         assert_eq!(saw(&saw_).len(), n);
@@ -1185,28 +1122,29 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         std::fs::write(&play, b"made from the old lines").unwrap();
-        s.again(id, &format!("{p}|whisper")).unwrap();
-        let up = write_up_of(&until(&saw_, |v| v.contains(&Saw::Summarize(id))));
+        s.again(id, &stt::Pick::Endpoint { provider: p, model: "whisper".into() }).unwrap();
+        let up = write_up_of(&until(&saw_, |v| v.contains(&Saw::FollowUp(id))));
         assert_eq!(up[0], Saw::Notes(id, "transcribing".into(), 0.0, None));
         assert_eq!(bodies.lock().unwrap().len(), 1);
         let page = meeting::page(&s.db.lock().unwrap(), id).unwrap();
         assert_eq!((page.stt.as_ref().unwrap()["model"].as_str(), page.segments.len()), (Some("whisper"), 1));
-        assert_eq!(crate::ai::stt_get(&s.db.lock().unwrap()).unwrap(), "local", "the setting for new meetings stays");
+        assert_eq!(stt::saved(&s.db.lock().unwrap()).unwrap(), stt::Pick::Local { model: None }, "the setting for new meetings stays");
         assert!(std::fs::read(&play).map_or(true, |b| b != b"made from the old lines"), "playback is made again from the new lines' echo");
 
         saw_.lock().unwrap().clear();
-        s.again(id, "local").unwrap();
-        until(&saw_, |v| v.contains(&Saw::Summarize(id)));
+        s.again(id, &stt::Pick::Local { model: None }).unwrap();
+        until(&saw_, |v| v.contains(&Saw::FollowUp(id)));
         assert!(meeting::page(&s.db.lock().unwrap(), id).unwrap().stt.is_none(), "says it's the Local model's now");
-        assert!(!saw_.lock().unwrap().iter().any(|v| matches!(v, Saw::On(_))), "plain local is meeting notes' own model");
+        assert!(!saw_.lock().unwrap().iter().any(|v| matches!(v, Saw::Model(_))), "plain local is meeting notes' own model");
 
         saw_.lock().unwrap().clear();
-        s.again(id, "local|whisper-turbo").unwrap();
-        until(&saw_, |v| v.contains(&Saw::Summarize(id)));
-        assert!(saw_.lock().unwrap().contains(&Saw::On("whisper-turbo".into())), "another downloaded model, picked for this once");
+        s.again(id, &stt::Pick::Local { model: Some("whisper-turbo".into()) }).unwrap();
+        until(&saw_, |v| v.contains(&Saw::FollowUp(id)));
+        assert!(saw_.lock().unwrap().contains(&Saw::Model("whisper-turbo".into())), "another downloaded model, picked for this once");
 
-        assert_eq!(s.again(99, "local"), Err("That meeting isn't there anymore.".into()));
-        assert!(s.again(id, &format!("{}|whisper", p + 1)).is_err(), "a provider that's gone");
+        assert_eq!(s.again(99, &stt::Pick::Local { model: None }), Err("That meeting isn't there anymore.".into()));
+        // The resolving itself (gone provider, blank model) is stt.rs's to test.
+        assert!(s.again(id, &stt::Pick::NotSet).is_err(), "a pick that can't run writes nothing up");
     }
 
     #[test]
@@ -1215,7 +1153,7 @@ mod tests {
         s.start();
         let id = id_of(&s);
         s.stop();
-        until(&saw_, |v| v.contains(&Saw::Summarize(id)));
+        until(&saw_, |v| v.contains(&Saw::FollowUp(id)));
         let folder = tmp.path().join(format!("meetings/{id}"));
         for _ in 0..400 {
             if folder.join("them.m4a").exists() && !folder.join("them.hq.wav").exists() {

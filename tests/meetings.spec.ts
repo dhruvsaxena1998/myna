@@ -680,21 +680,31 @@ test("Regenerate: a long Model list has a search box that finds a model by a loo
   await expect(pop).toBeVisible();
 });
 
-test("Transcribe again: from the saved audio, through the Local model or an Endpoint model picked for this meeting only", async ({ page }) => {
-  await open(page, `ai_get: () => (${AI}), meeting_stt_get: () => "local", meeting_again: () => {},
+test("Transcribe again: from the saved audio, through the Local model, another downloaded one or an Endpoint model, for this meeting only", async ({ page }) => {
+  const model = (id: string, name: string, installed: boolean) => ({ id, name, installed });
+  await open(page, `ai_get: () => (${AI}), meeting_stt_get: () => ({ kind: "local" }), meeting_again: () => {},
+    models_list: () => [{ id: "meeting_stt", active: "a", models: ${JSON.stringify([model("a", "Parakeet", true), model("b", "Whisper turbo", true), model("c", "Not here", false)])} }],
     meeting_stt_models: () => [{ id: "openai/whisper-1", input_per_m: null, output_per_m: null, context: null, images: null }],`);
   await page.getByRole("button", { name: "Untitled meeting" }).first().click();
   await page.getByRole("button", { name: "Transcribe again" }).click();
   const pop = page.getByRole("dialog", { name: "Transcribe again" });
-  await expect(pop.getByRole("combobox", { name: "Model" })).toHaveValue("local");
+  await expect(pop.getByRole("combobox", { name: "Model" })).toHaveValue("l:");
+  await pop.getByRole("combobox", { name: "Model" }).click();
+  const list = page.getByRole("listbox", { name: "Model" });
+  await expect(list.getByRole("option")).toHaveText(["Local model", "Whisper turbo", "openai/whisper-1"]); // meeting notes' own and what isn't downloaded aren't listed twice
+  await list.getByRole("option", { name: "Whisper turbo" }).click();
+  await pop.getByRole("button", { name: "Transcribe", exact: true }).click();
+  expect(await calls(page, "meeting_again")).toEqual([{ id: 5, stt: { kind: "local", model: "b" } }]);
+  await expect(pop).toBeHidden();
+  await page.getByRole("button", { name: "Transcribe again" }).click();
+  await expect(pop.getByRole("combobox", { name: "Model" })).toHaveValue("l:");
   await pop.getByRole("button", { name: "Cancel" }).click();
   await expect(pop).toBeHidden();
-  expect(await calls(page, "meeting_again")).toEqual([]);
   await page.getByRole("button", { name: "Transcribe again" }).click();
   await pop.getByRole("combobox", { name: "Model" }).click();
   await page.getByRole("listbox", { name: "Model" }).getByRole("option", { name: "openai/whisper-1" }).click();
   await expect(pop.getByText("Sends audio off this Mac")).toBeVisible();
   await pop.getByRole("button", { name: "Transcribe", exact: true }).click();
-  expect(await calls(page, "meeting_again")).toEqual([{ id: 5, stt: "1|openai/whisper-1" }]);
+  expect((await calls(page, "meeting_again"))[1]).toEqual({ id: 5, stt: { kind: "endpoint", provider: 1, model: "openai/whisper-1" } });
   await expect(pop).toBeHidden();
 });

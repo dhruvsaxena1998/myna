@@ -41,7 +41,7 @@ pub struct Record {
 
 #[derive(Debug, Serialize, PartialEq)]
 pub struct Provider {
-    id: i64,
+    pub(crate) id: i64,
     kind: String,
     name: String,
     url: String,
@@ -471,16 +471,6 @@ pub fn stt_endpoint_for(db: &Connection, keys: &dyn Keys, provider: i64, model: 
     Ok(SttEndpoint { provider: r.name, model: model.into(), off: off_device(&r.url), api: adapter(db, keys, r.id)? })
 }
 
-/// Meeting speech-to-text, in `feature_get`'s form: "local", "none" or "<provider id>|<model>".
-pub fn stt_get(db: &Connection) -> Result<String, String> {
-    Ok(feature_get(db, STT)?.0)
-}
-
-/// Back to the Local model. An Endpoint is only picked through `stt_test`.
-pub fn stt_local(db: &Connection) -> Result<(), String> {
-    feature_set(db, STT, "local")
-}
-
 /// OpenRouter's transcription models; other providers have their model id typed in, so none.
 pub fn stt_models(db: &Mutex<Connection>, keys: &dyn Keys, id: i64) -> Result<Vec<Model>, String> {
     let a = adapter(&db.lock().unwrap(), keys, id)?; // the lock is not held while waiting on the network
@@ -632,7 +622,7 @@ pub fn route(db: &Connection, slot: &str) -> Result<(Record, String), String> {
 }
 
 /// A feature's own model as saved (`OWN`): missing uses its slot's, "none" is Not set, else {"provider": id, "model": "…"}.
-enum Own {
+pub(crate) enum Own {
     Slot,
     NotSet,
     Pick(i64, String),
@@ -644,7 +634,7 @@ struct Pick {
     model: String,
 }
 
-fn own(db: &Connection, key: &str) -> Result<Own, String> {
+pub(crate) fn own(db: &Connection, key: &str) -> Result<Own, String> {
     Ok(match crate::storage::read_text(db, key).map_err(|e| e.to_string())? {
         None => Own::Slot,
         Some(v) => serde_json::from_str::<Pick>(&v).map_or(Own::NotSet, |p| Own::Pick(p.provider, p.model)),
@@ -820,13 +810,13 @@ pub(crate) mod tests {
         }
     }
 
-    fn db() -> (tempfile::TempDir, Connection) {
+    pub(crate) fn db() -> (tempfile::TempDir, Connection) {
         let tmp = tempfile::tempdir().unwrap();
         let c = crate::storage::open(tmp.path()).unwrap();
         (tmp, c)
     }
 
-    fn add_ok(db: &Connection, keys: &Memory, kind: &str, name: &str, url: &str, key: &str) -> Provider {
+    pub(crate) fn add_ok(db: &Connection, keys: &Memory, kind: &str, name: &str, url: &str, key: &str) -> Provider {
         add(db, keys, kind, name, url, key).unwrap()
     }
 
@@ -1222,17 +1212,17 @@ pub(crate) mod tests {
         let refuses = add_ok(&c, &keys, "openai", "Refuses", &stub(vec![("/audio/transcriptions", 400, r#"{"error":{"message":"response_format 'verbose_json' is not compatible with this model"}}"#)]), "").id;
         let good = add_ok(&c, &keys, "openai", "Good", &replies(HEARD), "").id;
         let db = Mutex::new(c);
-        assert_eq!(stt_get(&db.lock().unwrap()).unwrap(), "local", "the Local model until one passes");
+        assert_eq!(crate::stt::saved(&db.lock().unwrap()).unwrap(), crate::stt::Pick::Local { model: None }, "the Local model until one passes");
         assert_eq!(stt_test(&db, &keys, untimed, "whisper-1").unwrap_err(), "whisper-1 can't transcribe meetings: it sent no segment timestamps");
         assert!(stt_test(&db, &keys, refuses, "openai/gpt-4o-transcribe").unwrap_err().ends_with("verbose_json' is not compatible with this model"));
         assert!(stt_test(&db, &keys, good, "  ").is_err());
-        assert_eq!(stt_get(&db.lock().unwrap()).unwrap(), "local", "a failed Test picks nothing");
+        assert_eq!(crate::stt::saved(&db.lock().unwrap()).unwrap(), crate::stt::Pick::Local { model: None }, "a failed Test picks nothing");
         let c = stt_test(&db, &keys, good, "whisper-1").unwrap();
         assert_eq!((c.segments, c.cost), (2, Cost::Usd { usd: 0.0002 }));
-        assert_eq!(stt_get(&db.lock().unwrap()).unwrap(), format!("{good}|whisper-1"));
+        assert_eq!(crate::stt::saved(&db.lock().unwrap()).unwrap(), crate::stt::Pick::Endpoint { provider: good, model: "whisper-1".into() });
         let e = stt_endpoint(&db.lock().unwrap(), &keys).unwrap().unwrap();
         assert_eq!((e.provider.as_str(), e.model.as_str(), e.off), ("Good", "whisper-1", false));
-        stt_local(&db.lock().unwrap()).unwrap();
+        crate::stt::use_local(&db.lock().unwrap()).unwrap();
         assert!(stt_endpoint(&db.lock().unwrap(), &keys).unwrap().is_none());
     }
 
@@ -1255,7 +1245,7 @@ pub(crate) mod tests {
         store(&c, a.id, &[Model { id: "a/chat".into(), ..Default::default() }]).unwrap();
         assert!(stt_endpoint(&c, &keys).unwrap().is_some(), "a transcription model isn't gone for missing from the chat list");
         assert_eq!(remove(&mut c, &keys, a.id).unwrap(), ["Meeting speech-to-text"]);
-        assert_eq!(stt_get(&c).unwrap(), "none");
+        assert_eq!(crate::stt::saved(&c).unwrap(), crate::stt::Pick::NotSet);
         assert_eq!(stt_endpoint(&c, &keys).err().unwrap(), "Meeting speech-to-text: Not set");
     }
 

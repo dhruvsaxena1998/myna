@@ -23,7 +23,7 @@
   import type { Ai, Model } from "./AiProviders.svelte";
   import HostPill from "./HostPill.svelte";
   import type { Model as LocalModel, Task } from "./models";
-  import { changes, clips, clock, dayHead, groups, hm, meta, writing, type CleanupRun, type Cost, type Page, type Progress, type SummaryRun, type Version } from "./meetings";
+  import { changes, clips, clock, dayHead, groups, hm, meta, writing, type CleanupRun, type Cost, type Page, type Progress, type SttPick, type SummaryRun, type Version } from "./meetings";
 
   // `onreload`: the page's lines changed in the backend (a speaker renamed), so it reads them again.
   // `error`: why something the main window did for this page (Include, Try again, a reload) failed.
@@ -189,7 +189,7 @@
   });
 
   // Transcribe again: the saved audio through the Local model or an Endpoint model, for this meeting only.
-  let redo = $state({ pick: "local", saved: "local", err: "" });
+  let redo = $state<{ key: string; saved: SttPick; err: string }>({ key: "l:", saved: { kind: "local" }, err: "" });
   let sttModels = $state<Record<number, string[]>>({});
   let localModels = $state<LocalModel[]>([]); // downloaded speech models besides meeting notes' own
   let redoDlg = $state<HTMLDialogElement>();
@@ -198,12 +198,17 @@
     else redoDlg?.close();
   });
   // OpenRouter lists its transcription models; another provider offers the one typed into Settings, if it's that one.
-  const sttIds = (p: Ai["providers"][number]) => [...new Set([...(sttModels[p.id] ?? []), ...(split(redo.saved)[0] === p.id ? [split(redo.saved)[1]] : [])])];
-  const redoProv = $derived(redo.pick.startsWith("local") ? null : ai?.providers.find((p) => p.id === split(redo.pick)[0]));
+  const sttIds = (p: Ai["providers"][number]) => [...new Set([...(sttModels[p.id] ?? []), ...(redo.saved.kind === "endpoint" && redo.saved.provider === p.id ? [redo.saved.model] : [])])];
+  // The select's option values are only keys; the backend gets the pick.
+  const sttKey = (s: SttPick) => (s.kind === "endpoint" ? `e${s.provider}:${s.model}` : s.kind === "local" ? `l:${s.model ?? ""}` : "");
+  const redoPicks = $derived(new Map<string, SttPick>([{ kind: "local" } as SttPick, ...localModels.map((m): SttPick => ({ kind: "local", model: m.id })),
+    ...(ai?.providers ?? []).flatMap((p) => sttIds(p).map((model): SttPick => ({ kind: "endpoint", provider: p.id, model })))].map((s) => [sttKey(s), s])));
+  const redoPick = $derived(redoPicks.get(redo.key));
+  const redoProv = $derived(redoPick?.kind === "endpoint" ? ai?.providers.find((p) => p.id === redoPick.provider) : null);
   async function openRedo() {
     await loadAi();
-    const saved = await invoke<string>("meeting_stt_get").catch(() => "local");
-    redo = { pick: saved.includes("|") ? saved : "local", saved, err: "" };
+    const saved = await invoke<SttPick>("meeting_stt_get").catch((): SttPick => ({ kind: "local" }));
+    redo = { key: sttKey(saved.kind === "endpoint" ? saved : { kind: "local" }), saved, err: "" };
     pop = "redo";
     invoke<Task[]>("models_list").then((ts) => {
       const t = ts.find((t) => t.id === "meeting_stt");
@@ -215,7 +220,7 @@
     e.preventDefault();
     redo.err = "";
     try {
-      await invoke("meeting_again", { id: page.id, stt: redo.pick });
+      await invoke("meeting_again", { id: page.id, stt: redoPick });
       pop = "";
     } catch (err) {
       redo.err = String(err);
@@ -378,9 +383,9 @@
     <h3 id="ta-h">Transcribe again</h3>
     <p class="help" id="ta-d">Writes the transcript again from the saved audio. Speaker names and cleanup are redone; summaries are kept.</p>
     <label class="field"><span class="label">Model</span>
-      <select class="select" bind:value={redo.pick} aria-describedby="ta-mh">
-        <optgroup label="On this Mac"><option value="local">Local model</option>{#each localModels as m (m.id)}<option value="local|{m.id}">{m.name}</option>{/each}</optgroup>
-        {#each ai?.providers ?? [] as p (p.id)}{@const l = sttIds(p)}{#if l.length}<optgroup label={p.name}>{#each l as m (m)}<option value="{p.id}|{m}">{m}</option>{/each}</optgroup>{/if}{/each}
+      <select class="select" bind:value={redo.key} aria-describedby="ta-mh">
+        <optgroup label="On this Mac"><option value={sttKey({ kind: "local" })}>Local model</option>{#each localModels as m (m.id)}<option value={sttKey({ kind: "local", model: m.id })}>{m.name}</option>{/each}</optgroup>
+        {#each ai?.providers ?? [] as p (p.id)}{@const l = sttIds(p)}{#if l.length}<optgroup label={p.name}>{#each l as m (m)}<option value={sttKey({ kind: "endpoint", provider: p.id, model: m })}>{m}</option>{/each}</optgroup>{/if}{/each}
       </select>
       <span class="help" id="ta-mh">For this meeting only. New meetings keep the model in Settings.</span></label>
     {#if redo.err}<p class="help fail" role="status">{redo.err}</p>{/if}

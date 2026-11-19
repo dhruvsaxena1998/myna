@@ -374,16 +374,12 @@ impl Session {
 /// shares the dictation's slot: the lock is let go between chunks, so a dictation waits for at most the chunk in
 /// progress. A different model has its own slot, so neither swaps the other out.
 impl crate::meeting::Stt for Session {
-    fn transcribe(&self, audio: &[f32]) -> Result<Vec<runtime::Segment>, String> {
-        self.transcribe_on(audio, &self.active_for(models::MEETING_STT)?)
-    }
-}
-
-impl Session {
-    /// A meeting's chunk through local model `id`: meeting notes' pick, or the one Transcribe again picked.
-    pub fn transcribe_on(&self, audio: &[f32], id: &str) -> Result<Vec<runtime::Segment>, String> {
+    fn transcribe(&self, audio: &[f32], model: Option<&str>) -> Result<Vec<runtime::Segment>, String> {
         self.unload_gen.fetch_add(1, Ordering::SeqCst); // a pending unload must not fire between chunks
-        let id = id.to_string();
+        let id = match model {
+            Some(m) => m.to_string(),
+            None => self.active_for(models::MEETING_STT)?,
+        };
         let shared = self.active_stt().is_ok_and(|v| v == id);
         let mut slot = if shared {
             *self.meeting_transcriber.lock().unwrap() = None; // the picks became the same: one copy is enough
@@ -1205,9 +1201,9 @@ mod tests {
     #[test]
     fn meetings_and_dictation_share_one_loaded_model_while_they_pick_the_same() {
         let (s, mac, _tmp) = session("hold");
-        crate::meeting::Stt::transcribe(&*s, &[0.1; 16_000]).unwrap();
+        crate::meeting::Stt::transcribe(&*s, &[0.1; 16_000], None).unwrap();
         assert_eq!(dictate(&s, &mac, false), [Pill::Writing, Pill::Added]);
-        crate::meeting::Stt::transcribe(&*s, &[0.1; 16_000]).unwrap();
+        crate::meeting::Stt::transcribe(&*s, &[0.1; 16_000], None).unwrap();
         assert_eq!(mac.0.lock().unwrap().loaded, ["apple-speech"], "loaded once, for both");
     }
 
@@ -1217,9 +1213,9 @@ mod tests {
         whisper(&tmp);
         models::select(&s.db.lock().unwrap(), models::MEETING_STT, "whisper-large-v3-turbo", 26, &mac.speech()).unwrap();
         unload_after(&s, 60);
-        crate::meeting::Stt::transcribe(&*s, &[0.1; 16_000]).unwrap();
+        crate::meeting::Stt::transcribe(&*s, &[0.1; 16_000], None).unwrap();
         assert_eq!(dictate(&s, &mac, false), [Pill::Writing, Pill::Added]);
-        crate::meeting::Stt::transcribe(&*s, &[0.1; 16_000]).unwrap();
+        crate::meeting::Stt::transcribe(&*s, &[0.1; 16_000], None).unwrap();
         assert_eq!(mac.0.lock().unwrap().loaded, ["whisper-large-v3-turbo", "apple-speech"], "each loaded once, neither swapped out");
         assert_eq!(freed(&mac), 0);
         s.schedule_unload(); // as after a meeting is written up
@@ -1227,17 +1223,27 @@ mod tests {
     }
 
     #[test]
+    fn transcribe_again_on_another_downloaded_model_loads_that_one_and_shares_dictations_when_its_the_same() {
+        let (s, mac, tmp) = session("hold");
+        whisper(&tmp);
+        crate::meeting::Stt::transcribe(&*s, &[0.1; 16_000], Some("whisper-large-v3-turbo")).unwrap();
+        crate::meeting::Stt::transcribe(&*s, &[0.1; 16_000], Some("apple-speech")).unwrap();
+        assert_eq!(dictate(&s, &mac, false), [Pill::Writing, Pill::Added]);
+        assert_eq!(mac.0.lock().unwrap().loaded, ["whisper-large-v3-turbo", "apple-speech"], "the pick, then dictation's own once");
+    }
+
+    #[test]
     fn a_meeting_model_not_downloaded_says_where_to_get_it() {
         let (s, mac, _tmp) = session("hold");
         models::select(&s.db.lock().unwrap(), models::MEETING_STT, "whisper-large-v3-turbo", 26, &mac.speech()).unwrap();
-        let err = crate::meeting::Stt::transcribe(&*s, &[0.1; 16_000]).unwrap_err();
+        let err = crate::meeting::Stt::transcribe(&*s, &[0.1; 16_000], None).unwrap_err();
         assert_eq!(err, "Download Whisper large-v3-turbo in Settings › Meeting notes");
     }
 
     #[test]
     fn meeting_notes_play_no_sounds() {
         let (s, mac, _tmp) = session("hold");
-        crate::meeting::Stt::transcribe(&*s, &[0.1; 16_000]).unwrap();
+        crate::meeting::Stt::transcribe(&*s, &[0.1; 16_000], None).unwrap();
         assert!(sounds(&mac).is_empty());
     }
 }

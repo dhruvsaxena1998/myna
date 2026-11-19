@@ -8,6 +8,7 @@ mod download;
 mod echo;
 mod feedback;
 mod fnkey;
+mod follow_up;
 mod look;
 mod meeting;
 mod meeting_session;
@@ -21,6 +22,7 @@ mod session;
 mod shortcuts;
 mod speakers;
 mod storage;
+mod stt;
 mod summary;
 mod title;
 mod trace;
@@ -285,15 +287,15 @@ async fn ai_decide(d: tauri::State<'_, Data>, question: String, options: Vec<Str
         .map_err(|e| e.to_string())?
 }
 
-/// Meeting speech-to-text (#45): "local", "none" (Not set) or "<provider id>|<model>".
+/// Meeting speech-to-text (#45), the setting for new meetings.
 #[tauri::command]
-fn meeting_stt_get(d: tauri::State<Data>) -> Result<String, String> {
-    ai::stt_get(&d.db.lock().unwrap())
+fn meeting_stt_get(d: tauri::State<Data>) -> Result<stt::Pick, String> {
+    stt::saved(&d.db.lock().unwrap())
 }
 
 #[tauri::command]
 fn meeting_stt_local(d: tauri::State<Data>) -> Result<(), String> {
-    ai::stt_local(&d.db.lock().unwrap())
+    stt::use_local(&d.db.lock().unwrap())
 }
 
 #[tauri::command]
@@ -654,9 +656,9 @@ fn meeting_local(s: tauri::State<Arc<MeetingSession>>, id: i64) -> Result<(), St
     s.retry_local(id)
 }
 
-/// Transcribe again, on a meeting's page: `stt` is "local", "local|<model id>" or "<provider id>|<model>", for this meeting only.
+/// Transcribe again, on a meeting's page, with `stt` for this meeting only.
 #[tauri::command]
-fn meeting_again(s: tauri::State<Arc<MeetingSession>>, id: i64, stt: String) -> Result<(), String> {
+fn meeting_again(s: tauri::State<Arc<MeetingSession>>, id: i64, stt: stt::Pick) -> Result<(), String> {
     s.again(id, &stt)
 }
 
@@ -800,34 +802,6 @@ fn call_stop(app: AppHandle) {
     std::thread::spawn(move || app.state::<Arc<MeetingSession>>().stop());
 }
 
-/// Cleans meeting `id`'s transcript when it should (transcript::auto), on the caller's thread, saying how it goes
-/// with `meeting-cleanup`: "reading" part `n` of `of`, then "done" with the cost or "failed" with why. Nothing is
-/// said when it's off or its model is Not set.
-fn clean(app: &AppHandle, id: i64) {
-    let d = app.state::<Data>();
-    let say = |v: serde_json::Value| drop(app.emit("meeting-cleanup", v));
-    let open = |provider: i64| ai::provider(&d.db.lock().unwrap(), &*d.keys, provider);
-    match transcript::auto(&d.db, &open, id, &mut |n, of| say(serde_json::json!({ "id": id, "state": "reading", "n": n, "of": of }))) {
-        Ok(Some(cost)) => say(serde_json::json!({ "id": id, "state": "done", "cost": cost })),
-        Ok(None) => {}
-        Err(e) => say(serde_json::json!({ "id": id, "state": "failed", "error": e })),
-    }
-}
-
-/// Names meeting `id` with the Title model when it's still untitled (title.rs), then tells the windows and the menu.
-fn name_meeting(app: &AppHandle, id: i64) {
-    let d = app.state::<Data>();
-    let open = |provider: i64| ai::provider(&d.db.lock().unwrap(), &*d.keys, provider);
-    match title::auto(&d.db, &open, id) {
-        Ok(Some(_)) => {
-            let _ = app.emit("meeting-title", id);
-            sync_recent(app);
-        }
-        Ok(None) => {}
-        Err(e) => eprintln!("meeting {id}: couldn't name it: {e}"), // it stays Untitled; the user can rename it
-    }
-}
-
 #[tauri::command]
 fn title_prefs_get(d: tauri::State<Data>) -> Result<title::Prefs, String> {
     title::prefs(&d.db.lock().unwrap())
@@ -846,28 +820,6 @@ fn transcript_prefs_get(d: tauri::State<Data>) -> Result<transcript::Prefs, Stri
 #[tauri::command]
 fn transcript_prefs_set(d: tauri::State<Data>, prefs: transcript::Prefs) -> Result<(), String> {
     transcript::set_prefs(&d.db.lock().unwrap(), &prefs)
-}
-
-/// Runs meeting `id`'s Summary on its own thread when it should (summary::auto), saying how it goes with
-/// `meeting-summary`: "reading" part `n` of `of`, "merging", "writing" with the text so far, then "done" with the version, "failed" with why,
-/// or "skipped" (Summarize when a meeting finishes is off, or Main is Not set).
-fn summarize(app: &AppHandle, id: i64) {
-    let app = app.clone();
-    std::thread::spawn(move || {
-        let d = app.state::<Data>();
-        let say = |v: serde_json::Value| drop(app.emit("meeting-summary", v));
-        let open = |provider: i64| ai::provider(&d.db.lock().unwrap(), &*d.keys, provider);
-        let mut progress = |p: summary::Progress| match p {
-            summary::Progress::Part(n, of) => say(serde_json::json!({ "id": id, "state": "reading", "n": n, "of": of })),
-            summary::Progress::Merging => say(serde_json::json!({ "id": id, "state": "merging" })),
-            summary::Progress::Writing(text) => say(serde_json::json!({ "id": id, "state": "writing", "text": text })),
-        };
-        say(match summary::auto(&d.db, &open, id, &mut progress) {
-            Ok(Some(v)) => serde_json::json!({ "id": id, "state": "done", "version": v }),
-            Ok(None) => serde_json::json!({ "id": id, "state": "skipped" }),
-            Err(e) => serde_json::json!({ "id": id, "state": "failed", "error": e }),
-        });
-    });
 }
 
 /// The meeting page's Summary: every version, newest first, and the one showing.
@@ -897,30 +849,9 @@ fn summary_edit(d: tauri::State<Data>, id: i64, text: String) -> Result<summary:
 /// "done" or "failed", comes as `meeting-summary`, like the automatic run; the answer is the new version.
 #[tauri::command]
 async fn summary_run(app: AppHandle, id: i64, template: String, prompt: String, provider: i64, model: String) -> Result<summary::Version, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let d = app.state::<Data>();
-        let say = |v: serde_json::Value| drop(app.emit("meeting-summary", v));
-        let run = || {
-            let (backend, ask) = {
-                let db = d.db.lock().unwrap();
-                let name: String = db.query_row("SELECT name FROM provider WHERE id = ?1", [provider], |r| r.get(0)).map_err(|_| "That provider isn't there anymore.".to_string())?;
-                (ai::provider(&db, &*d.keys, provider)?, summary::Ask { template, prompt, provider: name, context: ai::context(&db, provider, &model), model })
-            };
-            summary::run(&d.db, &*backend, id, &ask, &mut |p| match p {
-                summary::Progress::Part(n, of) => say(serde_json::json!({ "id": id, "state": "reading", "n": n, "of": of })),
-                summary::Progress::Merging => say(serde_json::json!({ "id": id, "state": "merging" })),
-            summary::Progress::Writing(text) => say(serde_json::json!({ "id": id, "state": "writing", "text": text })),
-            })
-        };
-        let r = run();
-        say(match &r {
-            Ok(v) => serde_json::json!({ "id": id, "state": "done", "version": v }),
-            Err(e) => serde_json::json!({ "id": id, "state": "failed", "error": e }),
-        });
-        r
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || app.state::<follow_up::FollowUp>().regenerate(id, template, prompt, provider, model))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// Regenerate's estimate in USD for `provider`'s `model`; None when its price isn't known.
@@ -1139,6 +1070,18 @@ fn segments_include(d: tauri::State<Data>, ids: Vec<i64>) -> Result<(), String> 
 }
 
 /// Puts the last 3 meetings in the menu under "Recent", or takes the section out when there are none.
+/// Follow-up's way to the windows and the menu.
+struct Tauri(AppHandle);
+
+impl follow_up::App for Tauri {
+    fn emit(&self, event: &str, payload: serde_json::Value) {
+        let _ = self.0.emit(event, payload);
+    }
+    fn recent(&self) {
+        sync_recent(&self.0);
+    }
+}
+
 fn sync_recent(app: &AppHandle) {
     let (Some(r), Some(d)) = (app.try_state::<Recent>(), app.try_state::<Data>()) else { return };
     // Read first: the menu calls wait on the main thread, which mustn't wait on this lock.
@@ -1263,6 +1206,7 @@ pub fn run() {
                     }
                     app.manage(Session::new(world, db.clone(), keys.clone(), models.clone(), models::macos_major(), tap_limit, second));
                     let meetings = meeting::Meetings::new(db.clone(), dir.clone(), Box::new(meeting::Cpal), Box::new(meeting::Tap));
+                    app.manage(follow_up::FollowUp::new(db.clone(), keys.clone(), Box::new(Tauri(app.handle().clone()))));
                     app.manage(MeetingSession::new(Box::new(meeting_session::Mac(app.handle().clone())), db.clone(), meetings, second));
                     let handle = app.handle().clone();
                     app.manage(Calls(Mutex::new(calls::Watcher::default())));
