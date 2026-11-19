@@ -332,14 +332,15 @@
                   <section aria-labelledby="mstt-h">
                     <h2 id="mstt-h">Models</h2>
                     <ul class="list">
-                      {#if meet}
-                        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions (the button inside takes the keys) -->
-                        <li class="row go" onclick={() => open("mmodels")}>
-                          <span><span class="name">Speech-to-text model</span><span class="desc" title={state}>{state}</span></span>
-                          <span class="end"><button class="btn" onclick={(e) => { e.stopPropagation(); open("mmodels"); }}>All models</button></span>
-                        </li>
-                      {/if}
-                      <MeetingStt {ai} />
+                      <MeetingStt {ai} localName={pick?.name ?? ""}>
+                        {#snippet local()}{#if meet}
+                          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions (the button inside takes the keys) -->
+                          <li class="row go" onclick={() => open("mmodels")}>
+                            <span><span class="name">Speech-to-text model</span><span class="desc" title={state}>{state}</span></span>
+                            <span class="end"><button class="btn" onclick={(e) => { e.stopPropagation(); open("mmodels"); }}>All models</button></span>
+                          </li>
+                        {/if}{/snippet}
+                      </MeetingStt>
                       {#if diar}
                         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions (the button inside takes the keys) -->
                         <li class="row go" onclick={() => open("diar")}>
