@@ -21,6 +21,7 @@ mod session;
 mod shortcuts;
 mod speakers;
 mod storage;
+mod stt;
 mod summary;
 mod title;
 mod trace;
@@ -285,15 +286,15 @@ async fn ai_decide(d: tauri::State<'_, Data>, question: String, options: Vec<Str
         .map_err(|e| e.to_string())?
 }
 
-/// Meeting speech-to-text (#45): "local", "none" (Not set) or "<provider id>|<model>".
+/// Meeting speech-to-text (#45), the setting for new meetings.
 #[tauri::command]
-fn meeting_stt_get(d: tauri::State<Data>) -> Result<String, String> {
-    ai::stt_get(&d.db.lock().unwrap())
+fn meeting_stt_get(d: tauri::State<Data>) -> Result<stt::Pick, String> {
+    stt::saved(&d.db.lock().unwrap())
 }
 
 #[tauri::command]
 fn meeting_stt_local(d: tauri::State<Data>) -> Result<(), String> {
-    ai::stt_local(&d.db.lock().unwrap())
+    stt::use_local(&d.db.lock().unwrap())
 }
 
 #[tauri::command]
@@ -654,9 +655,9 @@ fn meeting_local(s: tauri::State<Arc<MeetingSession>>, id: i64) -> Result<(), St
     s.retry_local(id)
 }
 
-/// Transcribe again, on a meeting's page: `stt` is "local", "local|<model id>" or "<provider id>|<model>", for this meeting only.
+/// Transcribe again, on a meeting's page, with `stt` for this meeting only.
 #[tauri::command]
-fn meeting_again(s: tauri::State<Arc<MeetingSession>>, id: i64, stt: String) -> Result<(), String> {
+fn meeting_again(s: tauri::State<Arc<MeetingSession>>, id: i64, stt: stt::Pick) -> Result<(), String> {
     s.again(id, &stt)
 }
 

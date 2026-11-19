@@ -6,7 +6,7 @@ const m = { id: "a", name: "Model a", vendor: "V", desc: "d", acc: 4, spd: 4, de
 const OR = { id: 1, kind: "openrouter", name: "OpenRouter", url: "https://openrouter.ai/api/v1", has_key: true, off_device: true };
 const LOCAL = { id: 2, kind: "openai", name: "Whisper server", url: "http://localhost:8000/v1", has_key: false, off_device: false };
 
-async function open(page: Page, stt = "local", providers: unknown[] = [OR, LOCAL]) {
+async function open(page: Page, stt: unknown = { kind: "local" }, providers: unknown[] = [OR, LOCAL]) {
   await fakeTauri(page, `{
     storage_status: () => "/tmp/Myna",
     meeting_get: () => ({ on: true, key: "Ctrl+Alt+KeyM", keep_teams: false }),
@@ -14,11 +14,11 @@ async function open(page: Page, stt = "local", providers: unknown[] = [OR, LOCAL
     ai_get: () => ({ providers: ${JSON.stringify(providers)}, main: null, fast: null }),
     ai_models: () => [],
     meeting_stt_get: () => (window.__stt ??= ${JSON.stringify(stt)}),
-    meeting_stt_local: () => { window.__stt = "local"; },
+    meeting_stt_local: () => { window.__stt = { kind: "local" }; },
     meeting_stt_models: ({ id }) => id === 1 ? [{ id: "openai/whisper-large-v3" }, { id: "openai/gpt-4o-transcribe" }] : [],
     meeting_stt_test: ({ provider, model }) => {
       if (model === "openai/gpt-4o-transcribe") throw "openai/gpt-4o-transcribe can't transcribe meetings: Couldn't reach https://openrouter.ai/api/v1: response_format 'verbose_json' is not compatible with this model";
-      window.__stt = provider + "|" + model;
+      window.__stt = { kind: "endpoint", provider, model };
       return { ms: 1234, segments: 2, cost: { kind: "usd", usd: 0.0002 } };
     },
   }`);
@@ -66,7 +66,7 @@ test("another provider's model id is typed in", async ({ page }) => {
 });
 
 test("back to Local model saves at once", async ({ page }) => {
-  await open(page, "1|openai/whisper-large-v3");
+  await open(page, { kind: "endpoint", provider: 1, model: "openai/whisper-large-v3" });
   await expect(via(page)).toHaveValue("endpoint");
   await via(page).selectOption("local");
   await expect(row(page)).toContainText("Nothing leaves this Mac.");
@@ -74,7 +74,7 @@ test("back to Local model saves at once", async ({ page }) => {
 });
 
 test("a removed provider shows Not set", async ({ page }) => {
-  await open(page, "none", [LOCAL]);
+  await open(page, { kind: "not_set" }, [LOCAL]);
   await expect(row(page)).toContainText("Not set: its provider was removed. New meetings wait");
 });
 
@@ -87,6 +87,6 @@ test("Models: Transcribe with comes first, then the Local model or the Endpoint,
 });
 
 test("a saved Endpoint names the Local model that keeps muted stretches on this Mac", async ({ page }) => {
-  await open(page, "1|openai/whisper-large-v3");
+  await open(page, { kind: "endpoint", provider: 1, model: "openai/whisper-large-v3" });
   await expect(row(page)).toContainText("What you say while muted stays on this Mac, with Model a.");
 });

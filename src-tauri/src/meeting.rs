@@ -5,6 +5,7 @@ use crate::addon::{MuteState, Site};
 use crate::runtime::{RATE, Segment};
 use crate::{echo, speakers};
 use crate::storage::{read_switch, read_text, write_switch, write_text};
+use crate::stt::Transcriber;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rusqlite::{Connection, OptionalExtension};
 use std::ffi::{CStr, c_char, c_void};
@@ -450,7 +451,8 @@ struct Active {
 /// Speech-to-text for a stretch of 16 kHz mono audio, times in seconds from its start. The app's is the
 /// dictation model (`Session`), so a meeting never loads a second copy.
 pub trait Stt: Send + Sync {
-    fn transcribe(&self, audio: &[f32]) -> Result<Vec<Segment>, String>;
+    /// `model`: a downloaded local model's id; none is meeting notes' own.
+    fn transcribe(&self, audio: &[f32], model: Option<&str>) -> Result<Vec<Segment>, String>;
 }
 
 /// Tells the voices apart in the Them track, as turns in seconds from its start. The app's picks the active diarization
@@ -475,17 +477,6 @@ const PARALLEL: usize = 3;
 const RETRIES: u32 = 3;
 /// How a failed meeting's failure starts when an Endpoint left chunks undone; the meeting offers Transcribe locally.
 pub const INCOMPLETE: &str = "Transcription incomplete";
-
-/// How a write-up turns speech into text (#45).
-pub enum Via<'a> {
-    /// The Local model, everything on this Mac: the default.
-    Local,
-    /// Meeting speech-to-text's Endpoint, or why there is none ("Not set"), so nothing is sent and the chunks it would
-    /// take are left undone. Possibly-muted mic stretches stay on the Local model either way.
-    Endpoint(Result<&'a crate::ai::SttEndpoint, String>),
-    /// Transcribe locally: what the Endpoint already did is kept, the rest goes to the Local model.
-    Rest,
-}
 
 /// What an Endpoint sent back for a meeting's chunks, kept in its folder so Retry and Transcribe locally never resend one.
 #[derive(serde::Serialize, serde::Deserialize, Default)]
@@ -987,13 +978,16 @@ impl Meetings {
         Ok(())
     }
 
-    /// Writes up meeting `id` from its two tracks: Me from the mic, Them from the call, merged by time. `progress`
-    /// gets 0 to 1 as chunks finish, the last step being telling the voices on Them apart. Fails, with the reason kept in the meeting, without touching the audio.
-    pub fn transcribe(&self, id: i64, stt: &dyn Stt, who: &dyn Voices, via: Via, progress: &mut dyn FnMut(f32)) -> Result<(), String> {
+    /// Writes up meeting `id` from its two tracks: Me from the mic, Them from the call, merged by time, `with` the
+    /// Local model or an Endpoint (#45). An Endpoint never gets possibly-muted mic stretches: they go to the Local model.
+    /// An Unavailable one sends nothing and leaves its chunks undone. `keep_done`: chunks an Endpoint already did for
+    /// this meeting are kept (Retry, Transcribe locally), not redone. `progress` gets 0 to 1 as chunks finish, the last
+    /// step being telling the voices on Them apart. Fails, with the reason kept in the meeting, without touching the audio.
+    pub fn transcribe(&self, id: i64, stt: &dyn Stt, who: &dyn Voices, with: &Transcriber, keep_done: bool, progress: &mut dyn FnMut(f32)) -> Result<(), String> {
         let _one = self.job.lock().unwrap();
         let set = |sql: &str, p: &[&dyn rusqlite::ToSql]| self.db.lock().unwrap().execute(sql, p).map(drop).map_err(|e| format!("Couldn't save the meeting: {e}"));
         set("UPDATE meeting SET state = 'transcribing', failure = NULL WHERE id = ?1", &[&id])?;
-        let done = self.write_up(id, stt, who, via, progress);
+        let done = self.write_up(id, stt, who, with, keep_done, progress);
         if let Err(e) = &done {
             let _ = set("UPDATE meeting SET state = 'failed', failure = ?1 WHERE id = ?2", &[e, &id]);
         }
@@ -1074,14 +1068,20 @@ impl Meetings {
         c.is_some()
     }
 
-    fn write_up(&self, id: i64, stt: &dyn Stt, who: &dyn Voices, via: Via, progress: &mut dyn FnMut(f32)) -> Result<(), String> {
+    fn write_up(&self, id: i64, stt: &dyn Stt, who: &dyn Voices, with: &Transcriber, keep_done: bool, progress: &mut dyn FnMut(f32)) -> Result<(), String> {
         let folder = self.dir.join("meetings").join(id.to_string());
         let mic = wav_samples(&folder.join("mic.wav"))?;
         // The call's track may never have been made (the meeting ended as it started).
         let them = if folder.join("them.wav").exists() { wav_samples(&folder.join("them.wav"))? } else { vec![] };
         let rate = RATE as f64;
         let events = self.timeline(id)?;
-        let local = matches!(via, Via::Local);
+        // Everything on this Mac, with nothing an Endpoint did to line up with.
+        let local = matches!(with, Transcriber::Local(_)) && !keep_done;
+        let (model, endpoint) = match with {
+            Transcriber::Local(m) => (m.as_deref(), None),
+            Transcriber::Endpoint(e) => (None, Some(Ok(e))),
+            Transcriber::Unavailable(e) => (None, Some(Err(e))),
+        };
         // With an Endpoint in play the mic is cut at its possibly-muted stretches too, so they stay on this Mac. The
         // timeline counts wall-clock ms, the mic samples: if they drifted apart, or a build before `ended` recorded it, all of the mic stays here.
         let hidden = if local { vec![] } else if !events.is_empty() && self.drifted(id, mic.len())? { vec![(0, mic.len())] } else { private(&events, mic.len()) };
@@ -1094,9 +1094,9 @@ impl Meetings {
         }
         let kept_path = folder.join("endpoint.json");
         let mut kept: Kept = std::fs::read(&kept_path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
-        match &via {
-            Via::Endpoint(Ok(e)) if (kept.provider.as_str(), kept.model.as_str()) != (e.provider.as_str(), e.model.as_str()) => kept = Kept { provider: e.provider.clone(), model: e.model.clone(), off: e.off, chunks: vec![] },
-            Via::Local => kept.chunks.clear(),
+        match endpoint {
+            Some(Ok(e)) if !keep_done || (kept.provider.as_str(), kept.model.as_str()) != (e.provider.as_str(), e.model.as_str()) => kept = Kept { provider: e.provider.clone(), model: e.model.clone(), off: e.off, chunks: vec![] },
+            _ if !keep_done => kept.chunks.clear(),
             _ => {}
         }
         // shortcut: both tracks sit in memory as 16-bit samples (115 MB an hour each); stream from disk past a few hours.
@@ -1120,7 +1120,7 @@ impl Meetings {
                     tick(progress);
                     continue;
                 }
-                if let Via::Endpoint(_) = via {
+                if endpoint.is_some() {
                     todo.push((who, a, b));
                     continue;
                 }
@@ -1130,9 +1130,9 @@ impl Meetings {
                 continue;
             }
             let audio: Vec<f32> = audio.iter().map(|s| *s as f32 / 32768.0).collect();
-            add(&mut said, who, a, stt.transcribe(&audio)?.into_iter().map(|s| (s.start, s.end, s.text)).collect());
+            add(&mut said, who, a, stt.transcribe(&audio, model)?.into_iter().map(|s| (s.start, s.end, s.text)).collect());
         }
-        if let Via::Endpoint(e) = &via && !todo.is_empty() {
+        if let Some(e) = endpoint && !todo.is_empty() {
             let (m, mut why) = (todo.len() + used.len(), String::new());
             let sent = match e {
                 Ok(e) => self.upload(e, &todo.iter().map(|&(who, a, b)| &track(who)[a..b]).collect::<Vec<_>>(), &mut || tick(progress)),
@@ -1781,7 +1781,7 @@ pub(crate) mod tests {
     #[derive(Default)]
     struct Count(Mutex<Vec<usize>>, Option<usize>);
     impl Stt for Count {
-        fn transcribe(&self, audio: &[f32]) -> Result<Vec<Segment>, String> {
+        fn transcribe(&self, audio: &[f32], _: Option<&str>) -> Result<Vec<Segment>, String> {
             let mut calls = self.0.lock().unwrap();
             calls.push(audio.len());
             if self.1 == Some(calls.len()) {
@@ -1802,7 +1802,7 @@ pub(crate) mod tests {
     /// Hands out one script of segments per call: Me's chunk first, then Them's.
     struct Script(Mutex<Vec<Vec<Segment>>>);
     impl Stt for Script {
-        fn transcribe(&self, _: &[f32]) -> Result<Vec<Segment>, String> {
+        fn transcribe(&self, _: &[f32], _: Option<&str>) -> Result<Vec<Segment>, String> {
             Ok(self.0.lock().unwrap().remove(0))
         }
     }
@@ -1867,7 +1867,7 @@ pub(crate) mod tests {
     fn a_meeting_on_speakers_leaves_the_echo_out_and_include_brings_it_back() {
         let tmp = tempfile::tempdir().unwrap();
         let (m, id, stt) = on_speakers(tmp.path());
-        m.transcribe(id, &stt, &Voiced(Ok(vec![])), Via::Local, &mut |_| {}).unwrap();
+        m.transcribe(id, &stt, &Voiced(Ok(vec![])), &Transcriber::Local(None), false, &mut |_| {}).unwrap();
         let db = m.db.lock().unwrap();
         let all = lines(&db, id).unwrap();
         let me: Vec<&Line> = all.iter().filter(|l| l.speaker == "Me").collect();
@@ -1892,7 +1892,7 @@ pub(crate) mod tests {
     fn a_meeting_written_up_before_echo_is_checked_once_from_its_stored_lines() {
         let tmp = tempfile::tempdir().unwrap();
         let (m, id, stt) = on_speakers(tmp.path());
-        m.transcribe(id, &stt, &Voiced(Ok(vec![])), Via::Local, &mut |_| {}).unwrap();
+        m.transcribe(id, &stt, &Voiced(Ok(vec![])), &Transcriber::Local(None), false, &mut |_| {}).unwrap();
         let count = |m: &Meetings| m.db.lock().unwrap().query_row("SELECT SUM(echo) FROM segment WHERE meeting = ?1", [id], |r| r.get::<_, i64>(0)).unwrap();
         let n = count(&m);
         // As an older build left it: no echo marks, never checked.
@@ -1930,7 +1930,7 @@ pub(crate) mod tests {
         let (m, id, stt, who) = call(tmp.path());
         caption_at(&m, id, "Ana", &[4000, 4300, 4600]);
         caption_at(&m, id, "Bo", &[8000, 8300, 8600]);
-        m.transcribe(id, &stt, &who, Via::Local, &mut |_| {}).unwrap();
+        m.transcribe(id, &stt, &who, &Transcriber::Local(None), false, &mut |_| {}).unwrap();
         assert_eq!(lines_of(&m, id), ["Me", "Ana", "Bo"]);
         assert_eq!(said(&m, id).iter().map(|s| s.1.as_str()).collect::<Vec<_>>(), ["Me", "Them", "Them"], "an older build still reads Me and Them");
         assert_eq!(note(&m, id), None);
@@ -1940,11 +1940,11 @@ pub(crate) mod tests {
     fn without_captions_voices_are_numbered_and_unavailable_captions_say_so() {
         let tmp = tempfile::tempdir().unwrap();
         let (m, id, stt, who) = call(tmp.path());
-        m.transcribe(id, &stt, &who, Via::Local, &mut |_| {}).unwrap();
+        m.transcribe(id, &stt, &who, &Transcriber::Local(None), false, &mut |_| {}).unwrap();
         assert_eq!((lines_of(&m, id), note(&m, id)), (["Me", "Speaker 2", "Speaker 3"].map(String::from).to_vec(), None));
         let (m, id, stt, who) = call(tmp.path());
         m.db.lock().unwrap().execute("UPDATE meeting SET captions = 'unavailable'", []).unwrap();
-        m.transcribe(id, &stt, &who, Via::Local, &mut |_| {}).unwrap();
+        m.transcribe(id, &stt, &who, &Transcriber::Local(None), false, &mut |_| {}).unwrap();
         assert_eq!(note(&m, id).unwrap(), "Teams captions weren't available, so voices are numbered.");
     }
 
@@ -1952,7 +1952,7 @@ pub(crate) mod tests {
     fn a_diarizer_that_fails_keeps_the_me_them_transcript_and_says_why() {
         let tmp = tempfile::tempdir().unwrap();
         let (m, id, stt, _) = call(tmp.path());
-        m.transcribe(id, &stt, &Voiced(Err("Download Sortformer in Settings › Meeting notes".into())), Via::Local, &mut |_| {}).unwrap();
+        m.transcribe(id, &stt, &Voiced(Err("Download Sortformer in Settings › Meeting notes".into())), &Transcriber::Local(None), false, &mut |_| {}).unwrap();
         assert_eq!(lines_of(&m, id), ["Me", "Them", "Them"]);
         assert_eq!(state(&m, id), ("done".into(), None));
         assert_eq!(note(&m, id).unwrap(), "Couldn't tell voices apart: Download Sortformer in Settings › Meeting notes");
@@ -2092,7 +2092,7 @@ pub(crate) mod tests {
         let (m, id) = two_tracks(tmp.path());
         let stt = Count::default();
         let mut seen = vec![];
-        m.transcribe(id, &stt, &Voiced(Err("x".into())), Via::Local, &mut |p| seen.push(p)).unwrap();
+        m.transcribe(id, &stt, &Voiced(Err("x".into())), &Transcriber::Local(None), false, &mut |p| seen.push(p)).unwrap();
         assert_eq!(stt.0.lock().unwrap().len(), 6, "four chunks of Me and two of Them; two silent ones never reached the model");
         let line = |ms: i64, who: &str, n: &str| (ms, who.to_string(), n.to_string());
         assert_eq!(said(&m, id), [line(100, "Me", "1"), line(1650, "Them", "5"), line(1950, "Me", "2"), line(3200, "Them", "6"), line(3500, "Me", "3"), line(5050, "Me", "4")]);
@@ -2111,12 +2111,12 @@ pub(crate) mod tests {
             let mut q = db.prepare("SELECT speaker, mute FROM segment WHERE meeting = ?1 ORDER BY start_ms").unwrap();
             q.query_map([id], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect()
         };
-        m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), Via::Local, &mut |_| {}).unwrap();
+        m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), &Transcriber::Local(None), false, &mut |_| {}).unwrap();
         assert!(marks(&m).iter().all(|(_, s)| s.is_none()), "no add-on, no marks");
         for (at, s) in [(0, "unmuted"), (1900, "muted"), (3000, "unmuted"), (5000, "unknown")] {
             m.db.lock().unwrap().execute("INSERT INTO mute_event(meeting, at_ms, state, source) VALUES (?1, ?2, ?3, 'teams')", (id, at, s)).unwrap();
         }
-        m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), Via::Local, &mut |_| {}).unwrap(); // Me lines at 100, 1950, 3500 and 5050 ms
+        m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), &Transcriber::Local(None), false, &mut |_| {}).unwrap(); // Me lines at 100, 1950, 3500 and 5050 ms
         let me: Vec<_> = marks(&m).into_iter().map(|(who, s)| (who, s.unwrap_or_default())).collect();
         let want = |who: &str, s: &str| (who.to_string(), s.to_string());
         assert_eq!(me, [want("Me", "unmuted"), want("Them", ""), want("Me", "muted"), want("Them", ""), want("Me", "unmuted"), want("Me", "unknown")]);
@@ -2193,14 +2193,14 @@ pub(crate) mod tests {
     fn a_failure_keeps_the_audio_and_the_reason_and_try_again_finishes() {
         let tmp = tempfile::tempdir().unwrap();
         let (m, id) = two_tracks(tmp.path());
-        assert_eq!(m.transcribe(id, &Count(Default::default(), Some(2)), &Voiced(Err("x".into())), Via::Local, &mut |_| {}), Err("The model fell over.".into()));
+        assert_eq!(m.transcribe(id, &Count(Default::default(), Some(2)), &Voiced(Err("x".into())), &Transcriber::Local(None), false, &mut |_| {}), Err("The model fell over.".into()));
         assert_eq!(state(&m, id), ("failed".into(), Some("The model fell over.".into())));
         assert!(said(&m, id).is_empty() && m.failed(id));
         assert!(tmp.path().join(format!("meetings/{id}/mic.wav")).exists() && tmp.path().join(format!("meetings/{id}/them.wav")).exists());
         assert!(m.unfinished().is_empty(), "a failed one waits for Try again, not for the next launch");
-        m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), Via::Local, &mut |_| {}).unwrap();
+        m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), &Transcriber::Local(None), false, &mut |_| {}).unwrap();
         assert_eq!((state(&m, id), said(&m, id).len(), m.failed(id)), (("done".into(), None), 6, false));
-        m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), Via::Local, &mut |_| {}).unwrap();
+        m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), &Transcriber::Local(None), false, &mut |_| {}).unwrap();
         assert_eq!(said(&m, id).len(), 6, "writing up again replaces the notes");
     }
 
@@ -2213,7 +2213,7 @@ pub(crate) mod tests {
         let next = meetings(tmp.path(), Fake(0));
         assert_eq!(next.unfinished(), [id]);
         let stt = Count::default();
-        next.transcribe(id, &stt, &Voiced(Err("x".into())), Via::Local, &mut |_| {}).unwrap();
+        next.transcribe(id, &stt, &Voiced(Err("x".into())), &Transcriber::Local(None), false, &mut |_| {}).unwrap();
         assert_eq!(*stt.0.lock().unwrap(), [RATE as usize * 3], "the flushed mic audio; the call was silent");
         assert_eq!((said(&next, id).len(), state(&next, id)), (1, ("done".into(), None)));
         assert!(next.unfinished().is_empty());
@@ -2527,7 +2527,7 @@ pub(crate) mod tests {
     /// A recorded meeting with chunks of 2 s, an OpenRouter-style Endpoint on a local server picked for it, and the
     /// server's bodies. The server says, 0.1 s into each chunk, how many samples it got, for $0.001; while `broken`, an
     /// upload carrying `MARK` fails.
-    fn endpoint_meeting(tmp: &std::path::Path, broken: Arc<std::sync::atomic::AtomicBool>) -> (Meetings, i64, crate::ai::SttEndpoint, Bodies) {
+    fn endpoint_meeting(tmp: &std::path::Path, broken: Arc<std::sync::atomic::AtomicBool>) -> (Meetings, i64, Transcriber, Bodies) {
         let (base, bodies) = crate::ai::tests::server(move |path, _, body| {
             assert_eq!(path, "/audio/transcriptions");
             if broken.load(std::sync::atomic::Ordering::SeqCst) && has_mark(body) {
@@ -2541,7 +2541,7 @@ pub(crate) mod tests {
         let db = m.db.lock().unwrap();
         let p = crate::ai::add(&db, &keys, "openai", "Cloud", &base, "").unwrap();
         crate::ai::feature_set(&db, crate::ai::STT, &format!("{}|whisper", serde_json::to_value(&p).unwrap()["id"])).unwrap();
-        let e = crate::ai::stt_endpoint(&db, &keys).unwrap().unwrap();
+        let e = Transcriber::Endpoint(crate::ai::stt_endpoint(&db, &keys).unwrap().unwrap());
         let id = db.query_row("INSERT INTO meeting(started, state) VALUES (1, 'recorded') RETURNING id", [], |r| r.get(0)).unwrap();
         drop(db);
         (m, id, e, bodies)
@@ -2558,7 +2558,7 @@ pub(crate) mod tests {
         write_track(tmp.path(), id, "mic.wav", &[(false, 5.0)]);
         write_track(tmp.path(), id, "them.wav", &[(true, 5.0)]);
         let local = Count::default();
-        m.transcribe(id, &local, &Voiced(Err("x".into())), Via::Endpoint(Ok(&e)), &mut |_| {}).unwrap();
+        m.transcribe(id, &local, &Voiced(Err("x".into())), &e, true, &mut |_| {}).unwrap();
         // Loud all through, so each cut falls where a window first ties: 1.55 s, then 3.1 s.
         let line = |ms: i64, n: usize| (ms, "Them".to_string(), n.to_string());
         assert_eq!(said(&m, id), [line(100, 24_800), line(1650, 24_800), line(3200, 30_400)]);
@@ -2584,7 +2584,7 @@ pub(crate) mod tests {
             m.db.lock().unwrap().execute("INSERT INTO mute_event(meeting, at_ms, state, source) VALUES (?1, ?2, ?3, 'teams')", (id, at, s)).unwrap();
         }
         let local = Count::default();
-        m.transcribe(id, &local, &Voiced(Err("x".into())), Via::Endpoint(Ok(&e)), &mut |_| {}).unwrap();
+        m.transcribe(id, &local, &Voiced(Err("x".into())), &e, true, &mut |_| {}).unwrap();
         assert_eq!(local.0.lock().unwrap().iter().sum::<usize>(), 6 * r, "3 to 7 s, a second wider each way, on this Mac");
         let sent = bodies.lock().unwrap().clone();
         assert_eq!(sent.len(), 2, "0 to 2 s and 8 to 10 s");
@@ -2594,7 +2594,7 @@ pub(crate) mod tests {
         include(&m.db.lock().unwrap(), &[muted.id]).unwrap();
         assert_eq!(bodies.lock().unwrap().len(), 2, "including it sends nothing");
         // Try again on the same meeting: the muted stretch stays local.
-        m.transcribe(id, &local, &Voiced(Err("x".into())), Via::Endpoint(Ok(&e)), &mut |_| {}).unwrap();
+        m.transcribe(id, &local, &Voiced(Err("x".into())), &e, true, &mut |_| {}).unwrap();
         assert!(bodies.lock().unwrap().iter().all(|b| !has_mark(b)));
     }
 
@@ -2612,16 +2612,16 @@ pub(crate) mod tests {
         let local = Count::default();
         let none = || bodies.lock().unwrap().iter().all(|b| !has_mark(b)) && !bodies.lock().unwrap().is_empty();
         // No `ended`: recorded by an older build.
-        m.transcribe(id, &local, &Voiced(Err("x".into())), Via::Endpoint(Ok(&e)), &mut |_| {}).unwrap();
+        m.transcribe(id, &local, &Voiced(Err("x".into())), &e, true, &mut |_| {}).unwrap();
         assert!(none(), "the mic went to the Endpoint, or the call didn't");
         assert_eq!(local.0.lock().unwrap().iter().sum::<usize>(), 8 * r, "the whole mic, on this Mac");
         m.db.lock().unwrap().execute("UPDATE meeting SET ended = started + 10000 WHERE id = ?1", [id]).unwrap();
-        m.transcribe(id, &local, &Voiced(Err("x".into())), Via::Endpoint(Ok(&e)), &mut |_| {}).unwrap();
-        m.transcribe(id, &local, &Voiced(Err("x".into())), Via::Rest, &mut |_| {}).unwrap();
+        m.transcribe(id, &local, &Voiced(Err("x".into())), &e, true, &mut |_| {}).unwrap();
+        m.transcribe(id, &local, &Voiced(Err("x".into())), &Transcriber::Local(None), true, &mut |_| {}).unwrap();
         assert!(none(), "2 s of drift: the mic stays here on retry and Transcribe locally");
         // Within half a second, the timeline is trusted and the unmuted mic goes.
         m.db.lock().unwrap().execute("UPDATE meeting SET ended = started + 8400 WHERE id = ?1", [id]).unwrap();
-        m.transcribe(id, &local, &Voiced(Err("x".into())), Via::Endpoint(Ok(&e)), &mut |_| {}).unwrap();
+        m.transcribe(id, &local, &Voiced(Err("x".into())), &e, true, &mut |_| {}).unwrap();
         assert!(bodies.lock().unwrap().iter().any(|b| has_mark(b)));
     }
 
@@ -2632,16 +2632,18 @@ pub(crate) mod tests {
         let (m, id, e, bodies) = endpoint_meeting(tmp.path(), broken.clone());
         write_track(tmp.path(), id, "mic.wav", &[(true, 1.0)]);
         write_samples(tmp.path(), id, "them.wav", &[MARK; RATE as usize]);
-        let err = m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), Via::Endpoint(Ok(&e)), &mut |_| {}).unwrap_err();
+        let err = m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), &e, true, &mut |_| {}).unwrap_err();
         assert!(err.starts_with("Transcription incomplete (1 of 2): ") && err.ends_with("HTTP 500"), "{err}");
         assert_eq!(bodies.lock().unwrap().len(), 5, "the mic once, the call once and 3 retries");
         let row = list(&m.db.lock().unwrap()).unwrap().into_iter().find(|r| r.id == id).unwrap();
         assert!(row.state == "failed" && row.incomplete && row.failure.as_deref() == Some(err.as_str()));
         broken.store(false, std::sync::atomic::Ordering::SeqCst);
-        m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), Via::Endpoint(Ok(&e)), &mut |_| {}).unwrap();
+        m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), &e, true, &mut |_| {}).unwrap();
         assert_eq!(bodies.lock().unwrap().len(), 6, "only the chunk that failed went again");
         assert_eq!((said(&m, id).len(), state(&m, id)), (2, ("done".into(), None)));
         assert!((stt_of(&m, id)["cost"]["usd"].as_f64().unwrap() - 0.002).abs() < 1e-9);
+        m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), &e, false, &mut |_| {}).unwrap();
+        assert_eq!(bodies.lock().unwrap().len(), 8, "Transcribe again on the same model sends both chunks again");
     }
 
     #[test]
@@ -2650,10 +2652,10 @@ pub(crate) mod tests {
         let (m, id, e, bodies) = endpoint_meeting(tmp.path(), Arc::new(std::sync::atomic::AtomicBool::new(true)));
         write_track(tmp.path(), id, "mic.wav", &[(true, 1.0)]);
         write_samples(tmp.path(), id, "them.wav", &[MARK; RATE as usize]);
-        assert!(m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), Via::Endpoint(Ok(&e)), &mut |_| {}).is_err());
+        assert!(m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), &e, true, &mut |_| {}).is_err());
         let n = bodies.lock().unwrap().len();
         let local = Count::default();
-        m.transcribe(id, &local, &Voiced(Err("x".into())), Via::Rest, &mut |_| {}).unwrap();
+        m.transcribe(id, &local, &Voiced(Err("x".into())), &Transcriber::Local(None), true, &mut |_| {}).unwrap();
         assert_eq!((bodies.lock().unwrap().len(), local.0.lock().unwrap().clone()), (n, vec![RATE as usize]), "the call's chunk only, locally");
         let line = |ms: i64, who: &str, t: &str| (ms, who.to_string(), t.to_string());
         assert_eq!(said(&m, id), [line(100, "Me", "16000"), line(100, "Them", "1")]);
@@ -2667,7 +2669,7 @@ pub(crate) mod tests {
         let (m, id, _, bodies) = endpoint_meeting(tmp.path(), Default::default());
         write_track(tmp.path(), id, "mic.wav", &[(true, 1.0)]);
         write_track(tmp.path(), id, "them.wav", &[(true, 1.0)]);
-        let err = m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), Via::Endpoint(Err("Meeting speech-to-text: Not set".into())), &mut |_| {}).unwrap_err();
+        let err = m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), &Transcriber::Unavailable("Meeting speech-to-text: Not set".into()), true, &mut |_| {}).unwrap_err();
         assert_eq!(err, "Transcription incomplete (0 of 2): Meeting speech-to-text: Not set");
         assert!(bodies.lock().unwrap().is_empty());
     }
@@ -2678,7 +2680,7 @@ pub(crate) mod tests {
         let (m, id, _, bodies) = endpoint_meeting(tmp.path(), Default::default());
         write_track(tmp.path(), id, "mic.wav", &[(true, 1.0)]);
         write_track(tmp.path(), id, "them.wav", &[(true, 1.0)]);
-        m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), Via::Local, &mut |_| {}).unwrap();
+        m.transcribe(id, &Count::default(), &Voiced(Err("x".into())), &Transcriber::Local(None), false, &mut |_| {}).unwrap();
         assert!(bodies.lock().unwrap().is_empty() && page(&m.db.lock().unwrap(), id).unwrap().stt.is_none());
     }
 

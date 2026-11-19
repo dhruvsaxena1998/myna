@@ -116,6 +116,8 @@ export function length(ms: number) {
 export const meta = (m: Meeting) => [hm(m.started), m.duration_ms === null ? "" : length(m.duration_ms), m.source_app ?? ""].filter(Boolean).join(" · ");
 
 export type Cost = { kind: "usd"; usd: number } | { kind: "free" } | { kind: "unknown" };
+/** Meeting speech-to-text (stt.rs): a local model (none: meeting notes' own), an Endpoint's model, or Not set (its provider was removed). */
+export type SttPick = { kind: "local"; model?: string | null } | { kind: "endpoint"; provider: number; model: string } | { kind: "not_set" };
 /** A kept Summary version (`summary_get`). */
 export type Version = { id: number; template: string; prompt: string; provider: string; model: string; created: number; parts: number; cost: Cost; text: string; edited: boolean };
 /** `meeting-summary`: how a Summary run is going. `writing`: the Summary so far, as the model writes it. */

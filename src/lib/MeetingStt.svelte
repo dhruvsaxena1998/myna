@@ -3,7 +3,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import type { Ai, Model } from "./AiProviders.svelte";
   import HostPill from "./HostPill.svelte";
-  import type { Cost } from "./meetings";
+  import type { Cost, SttPick } from "./meetings";
 
   import type { Snippet } from "svelte";
 
@@ -11,7 +11,7 @@
   // still takes the possibly-muted stretches when an Endpoint does the rest.
   let { ai, local, localName = "" }: { ai: Ai | null; local?: Snippet; localName?: string } = $props();
   type Check = { ms: number; segments: number; cost: Cost };
-  let value = $state("local"); // "local", "none" (Not set: its provider was removed) or "<provider id>|<model>"
+  let value = $state<SttPick>({ kind: "local" });
   let endpoint = $state(false); // the Endpoint row shows: saved, Not set, or picked here and not tested yet
   let pid = $state<number | null>(null);
   let model = $state("");
@@ -20,15 +20,14 @@
   let error = $state("");
 
   const providers = $derived(ai?.providers ?? []);
-  const pick = (v: string) => (v.includes("|") ? ([+v.slice(0, v.indexOf("|")), v.slice(v.indexOf("|") + 1)] as const) : null);
-  const saved = $derived(pick(value));
-  const savedProv = $derived(saved ? providers.find((p) => p.id === saved[0]) : undefined);
+  const saved = $derived(value.kind === "endpoint" ? value : null);
+  const savedProv = $derived(saved ? providers.find((p) => p.id === saved.provider) : undefined);
   const prov = $derived(providers.find((p) => p.id === pid));
   const usd = (n: number) => "$" + (n >= 0.01 ? n.toFixed(2) : n.toPrecision(2));
   const price = (c: Cost) => (c.kind === "usd" ? usd(c.usd) : c.kind === "free" ? "Free" : "Cost unknown");
   const desc = $derived(
-    value === "none" ? "Not set: its provider was removed. New meetings wait until you pick a model again or choose Local model."
-      : saved ? `${saved[1]} · ${savedProv?.name ?? "Unknown provider"}, after the meeting. What you say while muted stays on this Mac${localName ? `, with ${localName}` : ""}.`
+    value.kind === "not_set" ? "Not set: its provider was removed. New meetings wait until you pick a model again or choose Local model."
+      : saved ? `${saved.model} · ${savedProv?.name ?? "Unknown provider"}, after the meeting. What you say while muted stays on this Mac${localName ? `, with ${localName}` : ""}.`
       : endpoint ? "Still the Local model until a model passes Test."
       : "The Local model, after the meeting. Nothing leaves this Mac.",
   );
@@ -36,11 +35,10 @@
   // Read again whenever the providers change: removing one makes it Not set.
   $effect(() => {
     void ai;
-    invoke<string>("meeting_stt_get").then((v) => {
+    invoke<SttPick>("meeting_stt_get").then((v) => {
       value = v;
-      endpoint = v !== "local";
-      const p = pick(v);
-      if (p) [pid, model] = p;
+      endpoint = v.kind !== "local";
+      if (v.kind === "endpoint") [pid, model] = [v.provider, v.model];
     }, (e) => (error = String(e)));
   });
   // OpenRouter lists its transcription models; any other provider's model id is typed in.
@@ -60,7 +58,7 @@
     }
     try {
       await invoke("meeting_stt_local");
-      (value = "local"), (endpoint = false);
+      (value = { kind: "local" }), (endpoint = false);
     } catch (e) {
       error = String(e);
     }
@@ -71,7 +69,7 @@
     try {
       const c = await invoke<Check>("meeting_stt_test", { provider: prov.id, model: model.trim() });
       test = { st: "ok", c };
-      value = `${prov.id}|${model.trim()}`;
+      value = { kind: "endpoint", provider: prov.id, model: model.trim() };
     } catch (e) {
       test = { st: "err", msg: String(e) };
     }
