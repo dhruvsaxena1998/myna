@@ -288,7 +288,7 @@ test("lines said while muted collapse into one row, Include keeps them with a ma
   expect(await calls(page, "meeting_text")).toEqual([{ id: 5, original: false }]);
 });
 
-test("echo lines collapse into their own row, apart from muted ones, and Include brings them back without a muted marker", async ({ page }) => {
+test("echo lines leave the transcript for one Include line at its top, apart from muted ones, and Include brings them back without a muted marker", async ({ page }) => {
   const lines = JSON.stringify([
     line(1, "Me", 12000, "Okay, let's start."),
     line(2, "Me", 20000, "", { muted: true, hidden: true }),
@@ -299,8 +299,8 @@ test("echo lines collapse into their own row, apart from muted ones, and Include
     segments_include: ({ ids }) => { window.__lines = ${lines}.map((l) => ids.includes(l.id) ? { ...l, hidden: false, included: true, text: "Go on, heard again." } : l); }`);
   await page.getByRole("button", { name: "Untitled meeting" }).first().click();
   await expect(page.locator(".note")).toHaveText("Your speakers played the call into the mic: 2 lines that repeated it are left out.");
-  await expect(page.locator(".seg")).toHaveCount(4); // the muted line and the two echo lines are two rows
-  const echo = page.locator(".seg").filter({ hasText: "Heard from your speakers · left out" });
+  await expect(page.locator(".seg")).toHaveCount(3); // the muted line is a row; the echo lines are not
+  const echo = page.locator(".tmeta").filter({ hasText: "2 lines heard from your speakers left out" });
   await expect(echo).toHaveCount(1);
   await expect(page.locator(".seg").filter({ hasText: "Said while muted · left out" })).toHaveCount(1);
   await echo.getByRole("button", { name: "Include" }).click();
@@ -521,6 +521,7 @@ test("a Summary is the document: Markdown with links as text, a cost line, its t
 test("versions: pick one, delete never the last, and Edit › Save adds an Edited version", async ({ page }) => {
   await summary(page, [version(9, "Action items", "# Actions"), version(8, "Recap", "# Recap")]);
   await page.getByRole("button", { name: "2 versions" }).click();
+  await expect(page.getByRole("menu", { name: "Versions" })).not.toHaveCSS("display", "flex"); // the versions stack, one per row
   await page.getByRole("menuitemradio", { name: /Recap · big/ }).click();
   expect(await calls(page, "summary_pick")).toEqual([{ id: 5, version: 8 }]);
   await expect(page.getByRole("heading", { name: "Recap", level: 1 })).toBeVisible();

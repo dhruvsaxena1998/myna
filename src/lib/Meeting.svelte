@@ -43,6 +43,8 @@
   let deleting = $state(false); // Delete was pressed: asking before the meeting goes
   let doomed = $state<number | null>(null); // the version whose × was pressed, asking before it goes
   let draft = $state<string | null>(null); // the Markdown being edited
+  let sumEl = $state<HTMLElement>();
+  let editH = $state(0); // the Summary's height when Edit was pressed
   let templates = $state<Template[]>([]);
   let models = $state<Record<number, Model[]>>({});
   let form = $state({ tpl: "", prompt: "", pick: "" }); // pick: "provider id|model"
@@ -83,7 +85,8 @@
   });
 
   const date = $derived(dayHead(page.started));
-  const rows = $derived(groups(page.segments));
+  const echoed = $derived(page.segments.filter((l) => l.hidden && l.echo)); // heard from the speakers: one Include for all, not a row each
+  const rows = $derived(groups(page.segments.filter((l) => !(l.hidden && l.echo))));
   const cleaned = $derived(page.segments.some((l) => l.clean));
   const shown = $derived(sum?.versions.find((v) => v.id === sum!.showing));
   const busy = $derived(summary?.state === "reading" || summary?.state === "merging" || summary?.state === "writing");
@@ -400,9 +403,6 @@
   {#if page.segments.length}
     <button class="btn" aria-pressed={panel} onclick={() => (panel = !panel)}>{@render icon('<path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/>')}Transcript</button>
   {/if}
-  {#if shown}
-    <button class="btn" onclick={() => copy("doc")}>{@render copyIcon(copied === "doc")}{copied === "doc" ? "Copied" : "Copy"}</button>
-  {/if}
   {#if deleting}
     <span class="del-ask">Delete this meeting and its audio?</span>
     <button class="btn" use:focusOn onclick={() => (deleting = false)}>Cancel</button>
@@ -463,7 +463,8 @@
                 </div>
               {/if}
               <span class="grow"></span>
-              <button class="btn" disabled={busy || draft !== null} onclick={() => (draft = shown?.text ?? "")}>Edit</button>
+              {#if shown}<button class="btn" onclick={() => copy("doc")}>{@render copyIcon(copied === "doc")}{copied === "doc" ? "Copied" : "Copy"}</button>{/if}
+              <button class="btn" disabled={busy || draft !== null} onclick={() => ((editH = sumEl?.offsetHeight ?? 0), (draft = shown?.text ?? ""))}>Edit</button>
               <button class="btn" aria-haspopup="dialog" disabled={busy || draft !== null} onclick={openRegen}>Regenerate</button>
             </div>
           {/if}
@@ -477,14 +478,14 @@
           {/if}
           {#if draft !== null}
             <form class="sum-edit" onsubmit={save}>
-              <textarea class="input" aria-label="Summary text, in Markdown" aria-describedby="se-h" bind:value={draft}
+              <textarea class="input" style:height="{Math.max(300, editH)}px" aria-label="Summary text, in Markdown" aria-describedby="se-h" bind:value={draft}
                 onkeydown={(e) => { if (e.key === "Enter" && e.metaKey) (e.preventDefault(), e.currentTarget.form?.requestSubmit()); else if (e.key === "Escape") (e.preventDefault(), (draft = null)); }}></textarea>
               <div class="end"><span class="help grow" id="se-h">Saving adds an Edited version. Regenerate never overwrites it. ⌘↩ saves, esc cancels.</span>
                 <button type="button" class="btn" onclick={() => (draft = null)}>Cancel</button><button class="btn primary">Save</button></div>
             </form>
           {:else if shown && summary?.state !== "writing"}
             <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (the timestamps are buttons; this only hears their clicks) -->
-            <div class="sum" onclick={jump}>{@html render(shown.text)}</div>
+            <div class="sum" bind:this={sumEl} onclick={jump}>{@html render(shown.text)}</div>
             <p class="sum-cost">{[cost(shown), shown.template, shown.model, `Summarized in ${shown.parts} part${shown.parts === 1 ? "" : "s"}`].join(" · ")}</p>
           {:else if aiErr && !ai && !busy}
             <p class="sum-prog fail" role="status">Couldn’t read your AI providers: {aiErr}</p>
@@ -525,11 +526,12 @@
         {#if cleanup?.state === "reading"}<p class="tmeta" role="status">Cleaning up the transcript: part {cleanup.n} of {cleanup.of}…</p>
         {:else if cleanup?.state === "failed"}<p class="tmeta fail" role="status">Couldn’t clean up the transcript: {cleanup.error}</p>{/if}
         {#if page.stt?.cost}<p class="tmeta">Transcribed by {page.stt.model} · {page.stt.provider} · {price(page.stt.cost)}</p>{/if}
+        {#if echoed.length}<p class="tmeta left"><span>{echoed.length} line{echoed.length === 1 ? "" : "s"} heard from your speakers left out</span><button class="btn small" onclick={() => oninclude(echoed.map((l) => l.id))}>Include</button></p>{/if}
         {#if cleaned}<p class="tmeta">{orig ? "What Myna heard, before cleanup." : `Cleaned up by ${page.cleanup?.model ?? "AI"}${page.cleanup ? ` · ${price(page.cleanup.cost)}` : ""}. Point at an underlined word to see what Myna heard.`}</p>{/if}
         {#each rows as g}
           {#if "left" in g}
             <div class="seg" class:hit={hit === g.left[0].id} class:playing={playing === g.left[0].id} id="seg-{g.left[0].id}" tabindex="-1"><div class="who"><b>Me</b><button class="at" aria-label="Play from {clock(g.left[0].start_ms)}" onclick={() => play(g.left[0].start_ms)}><time>{clock(g.left[0].start_ms)}</time></button></div>
-              <p class="left"><span>{g.left[0].echo ? "Heard from your speakers · left out" : "Said while muted · left out"}</span><button class="btn small" onclick={() => oninclude(g.left.map((l) => l.id))}>Include</button></p></div>
+              <p class="left"><span>Said while muted · left out</span><button class="btn small" onclick={() => oninclude(g.left.map((l) => l.id))}>Include</button></p></div>
           {:else}
             {@const l = g.lines[0]}
             <div class="seg" class:hit={hit === l.id} class:playing={playing === l.id} id="seg-{l.id}" tabindex="-1"><div class="who">{@render who(l)}<button class="at" aria-label="Play from {clock(l.start_ms)}" onclick={() => play(l.start_ms)}><time>{clock(l.start_ms)}</time></button></div>
@@ -592,7 +594,7 @@
   .player input { flex: 1; min-width: 0; accent-color: var(--accent); }
   .ptime { color: var(--text-3); font-size: var(--fs-footnote); font-variant-numeric: tabular-nums; }
   .seg p { margin: 0; font-size: var(--fs-reading); line-height: var(--lh-reading); overflow-wrap: anywhere; }
-  .left { display: flex; align-items: center; gap: var(--sp-2); color: var(--text-3); font-size: var(--fs-footnote); }
+  p.left { display: flex; align-items: center; gap: var(--sp-2); color: var(--text-3); font-size: var(--fs-footnote); }
   .btn.small { height: 24px; padding: 0 10px; font-size: var(--fs-footnote); }
   .tmeta { margin: 0 0 var(--sp-2); color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
   .chg { background: none; color: inherit; text-decoration: underline dotted var(--accent-text); text-decoration-thickness: 1.5px; text-underline-offset: 3px; cursor: help; }
