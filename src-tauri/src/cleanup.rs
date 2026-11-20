@@ -13,6 +13,8 @@ use std::time::Duration;
 pub const DEFAULT: &str = "Fix punctuation, capitals and grammar slips. Take out filler words and repeats. When I correct myself, keep only the correction. Write dates, times, phone numbers, versions and decades in digits. Keep my words: don’t rephrase, shorten, add to or answer what I said.";
 /// Its own budget, counted from when the step starts, apart from speech-to-text and rules.
 pub const BUDGET: Duration = Duration::from_secs(3);
+/// On an Agent, which takes seconds just to start: the user picked it knowing their text pastes later.
+pub const AGENT_BUDGET: Duration = Duration::from_secs(15);
 
 /// Why the rules output was pasted instead: `reason` is the short line the pill shows, `detail` the error behind it.
 #[derive(Debug, PartialEq)]
@@ -217,7 +219,7 @@ pub fn run(backend: Box<dyn Backend>, model: &str, instruction: &str, text: &str
     let (tx, rx) = mpsc::channel();
     let (model, system, user) = (model.to_string(), system(instruction, words), user(text));
     std::thread::spawn(move || {
-        let _ = tx.send(backend.chat(&model, Some(&system), &user, BUDGET.as_secs()));
+        let _ = tx.send(backend.chat(&model, Some(&system), &user, budget.as_secs().max(1)));
     });
     let reply = match rx.recv_timeout(budget) {
         Ok(Ok(r)) => r,
