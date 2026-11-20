@@ -1,4 +1,5 @@
 mod addon;
+mod agent;
 mod ai;
 mod apple;
 mod calls;

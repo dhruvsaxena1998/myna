@@ -120,6 +120,10 @@ pub trait Backend: Send {
         on(&r.text);
         Ok(r)
     }
+    /// Test's own check before the usual one: an Agent runs once, to see it's installed and signed in.
+    fn check(&self) -> Result<(), String> {
+        Ok(())
+    }
     /// The service's decision models (OpenRouter); none elsewhere.
     fn decision_models(&self) -> Result<Vec<Model>, String> {
         Ok(vec![])
@@ -548,9 +552,15 @@ pub fn get(db: &Connection, keys: &dyn Keys) -> Result<State, String> {
 
 pub fn add(db: &Connection, keys: &dyn Keys, kind: &str, name: &str, url: &str, key: &str) -> Result<Provider, String> {
     let (name, url, key) = (name.trim(), url.trim().trim_end_matches('/'), key.trim());
-    if !KINDS.contains(&kind) {
+    let agent = crate::agent::is_agent(kind);
+    if !KINDS.contains(&kind) && !agent {
         return Err("Pick a kind of provider".into());
     }
+    if agent && !agents_on(db)? {
+        return Err(AGENTS_OFF.into());
+    }
+    // An Agent has no address or key: it's the CLI on this Mac, signed in on its own.
+    let (url, key) = if agent { ("", "") } else { (url, key) };
     if name.is_empty() || name.chars().count() > 40 {
         return Err("Give the provider a name of up to 40 characters".into());
     }
@@ -558,7 +568,7 @@ pub fn add(db: &Connection, keys: &dyn Keys, kind: &str, name: &str, url: &str, 
     if taken.is_some() {
         return Err(format!("There is already a provider called {name}"));
     }
-    if host(url).is_none() {
+    if !agent && host(url).is_none() {
         return Err("Enter a web address starting with http:// or https://".into());
     }
     if kind == "openrouter" && !key.starts_with("sk-or-") {
@@ -688,11 +698,32 @@ pub fn feature_set(db: &Connection, key: &str, value: &str) -> Result<(), String
 
 /// The adapter for provider `id`, holding its key.
 pub fn provider(db: &Connection, keys: &dyn Keys, id: i64) -> Result<Box<dyn Backend>, String> {
+    let r = find(db, id)?;
+    if let Some(a) = crate::agent::Agent::new(&r.kind) {
+        // No silent fallback: while Agents are off, a feature routed to one says so.
+        return if agents_on(db)? { Ok(Box::new(a)) } else { Err(AGENTS_OFF.into()) };
+    }
     Ok(Box::new(adapter(db, keys, id)?))
+}
+
+const AGENTS_OFF: &str = "Agents are off. Turn them on in Settings, Experimental";
+
+/// Agents are Experimental: on while both the master switch and their own are.
+pub fn agents_on(db: &Connection) -> Result<bool, String> {
+    let on = |k| crate::storage::read_text(db, k).map(|v| v.as_deref() == Some("on")).map_err(|e| e.to_string());
+    Ok(on("experimental")? && on("exp_agents")?)
+}
+
+/// Whether provider `id` is an Agent, so a feature can give it the time it needs.
+pub fn is_agent(db: &Connection, id: i64) -> bool {
+    find(db, id).is_ok_and(|r| crate::agent::is_agent(&r.kind))
 }
 
 fn adapter(db: &Connection, keys: &dyn Keys, id: i64) -> Result<OpenAi, String> {
     let r = find(db, id)?;
+    if crate::agent::is_agent(&r.kind) {
+        return Err(format!("{} is an Agent, which can't transcribe speech", r.name));
+    }
     Ok(OpenAi { key: keys.get(id)?, rich: r.kind == "openrouter", url: r.url })
 }
 
@@ -736,6 +767,7 @@ pub fn models(db: &Mutex<Connection>, keys: &dyn Keys, id: i64, fresh: bool) -> 
 /// Checks the address and key without spending tokens: OpenRouter's key endpoint, else the model list (returned, to cache).
 fn check(p: &dyn Backend) -> Result<(Check, Option<Vec<Model>>), String> {
     let start = Instant::now();
+    p.check()?;
     let (mut list, mut used, mut limit) = (None, None, None);
     match p.key_usage()? {
         Some((u, l)) => (used, limit) = (Some(u), l),
@@ -778,6 +810,9 @@ pub fn test(db: &Mutex<Connection>, id: i64, p: &dyn Backend) -> Result<Check, S
 
 /// Tests a provider before it is added, with the address and key as typed (trimmed like `add`).
 pub fn test_draft(kind: &str, url: &str, key: &str) -> Result<Check, String> {
+    if let Some(a) = crate::agent::Agent::new(kind) {
+        return Ok(check(&a)?.0);
+    }
     let (url, key) = (url.trim().trim_end_matches('/'), key.trim());
     if host(url).is_none() {
         return Err("Enter a web address starting with http:// or https://".into());
@@ -818,6 +853,23 @@ pub(crate) mod tests {
 
     pub(crate) fn add_ok(db: &Connection, keys: &Memory, kind: &str, name: &str, url: &str, key: &str) -> Provider {
         add(db, keys, kind, name, url, key).unwrap()
+    }
+
+    #[test]
+    fn an_agent_is_added_and_used_only_while_agents_are_on() {
+        let (_tmp, db) = db();
+        let keys = Memory::default();
+        assert_eq!(add(&db, &keys, "claude-code", "Claude Code", "", "").unwrap_err(), AGENTS_OFF);
+        for (k, v) in [("experimental", "on"), ("exp_agents", "on")] {
+            crate::storage::write_text(&db, k, v).unwrap();
+        }
+        let p = add(&db, &keys, "claude-code", "Claude Code", "http://ignored", "ignored").unwrap();
+        assert_eq!((p.url.as_str(), p.has_key, p.off_device), ("", false, true), "no address or key, and always off-device");
+        assert!(provider(&db, &keys, p.id).is_ok());
+        assert!(is_agent(&db, p.id));
+        assert!(super::adapter(&db, &keys, p.id).is_err(), "an Agent can't transcribe");
+        crate::storage::write_text(&db, "exp_agents", "off").unwrap();
+        assert_eq!(provider(&db, &keys, p.id).err().unwrap(), AGENTS_OFF, "no silent fallback while off");
     }
 
     #[test]
