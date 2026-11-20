@@ -3,9 +3,10 @@ import { invoke } from "@tauri-apps/api/core";
 /** `liquid`: Liquid Glass's own switch; null below macOS 26, where there's none.
  *  `experimental`: Experimental features' master switch (travels with the look for now, see look.rs).
  *  `nerds`: Stats for nerds' own switch.
+ *  `agents`: Agents' own switch (Claude Code, Codex as AI providers).
  *  `frost`: Liquid Glass opacity, 0 clear to 100 most frosted. */
-export type Look = { theme: "auto" | "light" | "dark"; accent: string; glass: "clear" | "tinted"; liquid: boolean | null; experimental: boolean; nerds: boolean; frost: number };
-export const DEFAULT_LOOK: Look = { theme: "auto", accent: "blue", glass: "clear", liquid: null, experimental: false, nerds: false, frost: 50 };
+export type Look = { theme: "auto" | "light" | "dark"; accent: string; glass: "clear" | "tinted"; liquid: boolean | null; experimental: boolean; nerds: boolean; agents: boolean; frost: number };
+export const DEFAULT_LOOK: Look = { theme: "auto", accent: "blue", glass: "clear", liquid: null, experimental: false, nerds: false, agents: false, frost: 50 };
 
 /** Liquid Glass shows only while both it and experimental features are on (look.rs `glass_on`). */
 export const glassOn = (l: Look) => l.experimental && l.liquid === true;

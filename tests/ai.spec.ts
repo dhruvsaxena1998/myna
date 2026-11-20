@@ -541,3 +541,24 @@ for (const [width, height] of [[880, 520], [640, 420]]) {
     expect(new Set(amber)).toEqual(new Set(["Sends text off this Mac"]));
   });
 }
+
+test("with Agents on, Add offers Claude Code and Codex with no address or key; the row says whose plan it runs on", async ({ page }) => {
+  const look = { theme: "auto", accent: "blue", glass: "clear", liquid: null, experimental: true, nerds: false, agents: true, frost: 50 };
+  await open(page, { providers: [], main: null, fast: null }, `look_get: () => (${JSON.stringify(look)}),
+    ai_add: (a) => ({ id: 4, kind: a.kind, name: a.name, url: "", has_key: false, off_device: true })`);
+  await page.getByRole("button", { name: "Add a provider" }).click();
+  await expect(page.getByLabel("Kind").locator("option")).toHaveText(["OpenAI-compatible", "OpenRouter", "Claude Code (Agent)", "Codex (Agent)"]);
+  await page.getByLabel("Kind").selectOption("claude-code");
+  await expect(page.getByLabel("Name")).toHaveValue("Claude Code");
+  await expect(page.getByLabel("Address")).toHaveCount(0);
+  await expect(page.locator("#add-kind-h")).toHaveText("Runs on your Claude plan; its terms apply. Sends text off your Mac.");
+  await page.getByRole("button", { name: "Add provider" }).click();
+  await expect.poll(() => calls(page, "ai_add")).toEqual([{ kind: "claude-code", name: "Claude Code", url: "", key: "" }]);
+  await expect(page.getByRole("listitem").filter({ hasText: "Agent · Runs on your Claude plan" })).toContainText("Sends text off this Mac");
+});
+
+test("with Agents off, Add offers only Endpoints", async ({ page }) => {
+  await open(page, { providers: [], main: null, fast: null });
+  await page.getByRole("button", { name: "Add a provider" }).click();
+  await expect(page.getByLabel("Kind").locator("option")).toHaveText(["OpenAI-compatible", "OpenRouter"]);
+});

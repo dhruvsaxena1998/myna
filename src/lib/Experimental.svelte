@@ -1,10 +1,11 @@
-<!-- The Experimental page (docs/settings.html, VIEWS.experimental): Liquid Glass on macOS 26 or later, and Stats for nerds. General lists it while its switch is on. -->
+<!-- The Experimental page (docs/settings.html, VIEWS.experimental): Liquid Glass on macOS 26 or later, Stats for nerds, and Agents. General lists it while its switch is on. -->
 <script lang="ts">
   import { applyLook, saveLook, type Look } from "./look";
 
   let { look = $bindable() }: { look: Look } = $props();
   // One error line per section, so a failed save shows under its own rows.
-  let errors = $state({ look: "", dict: "" });
+  let errors = $state({ look: "", dict: "", ai: "" });
+  const AGENTS_DESC = "Adds Claude Code and Codex to AI providers: the one signed in on this Mac does the work on your plan, with its tools off. Slower than an API.";
 
   async function save(change: Partial<Look>, what: string, slot: keyof typeof errors) {
     const was = look;
@@ -48,4 +49,14 @@
     </li>
   </ul>
   <p class="err" role="status">{errors.dict}</p>
+</section>
+<section aria-labelledby="exp-ai-h">
+  <h2 id="exp-ai-h">AI</h2>
+  <ul class="list">
+    <li class="row">
+      <span><label class="name" for="agents">Agents</label><span class="desc" id="agents-d" title={AGENTS_DESC}>{AGENTS_DESC}</span></span>
+      <input type="checkbox" role="switch" class="switch" id="agents" aria-describedby="agents-d" checked={look.agents} onchange={(e) => save({ agents: e.currentTarget.checked }, "Agents", "ai")} />
+    </li>
+  </ul>
+  <p class="err" role="status">{errors.ai}</p>
 </section>
