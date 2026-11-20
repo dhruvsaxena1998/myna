@@ -7,7 +7,7 @@ use crate::stt::{self, Transcriber};
 use crate::permissions::Mic;
 use crate::{notify, now_ms, permissions, pill};
 use rusqlite::Connection;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
@@ -364,6 +364,9 @@ pub struct Mac(pub AppHandle);
 
 /// Whether the menu bar icon is in its recording look; only touched on the main thread.
 static RECORDING: AtomicBool = AtomicBool::new(false);
+/// The wave frame in the menu bar (dark * 5 + bar), so an unchanged level isn't redrawn; NO_FRAME once the icon is put back.
+static SHOWN: AtomicUsize = AtomicUsize::new(NO_FRAME);
+const NO_FRAME: usize = usize::MAX;
 
 /// Whether the menu bar the icon sits in is dark (it follows the wallpaper, not just the system appearance).
 fn menu_bar_dark(item: Option<objc2::rc::Retained<objc2_app_kit::NSStatusItem>>) -> bool {
@@ -435,13 +438,19 @@ impl World for Mac {
             [include_bytes!("../icons/tray-rec/light-0.png"), include_bytes!("../icons/tray-rec/light-1.png"), include_bytes!("../icons/tray-rec/light-2.png"), include_bytes!("../icons/tray-rec/light-3.png"), include_bytes!("../icons/tray-rec/light-4.png")],
             [include_bytes!("../icons/tray-rec/dark-0.png"), include_bytes!("../icons/tray-rec/dark-1.png"), include_bytes!("../icons/tray-rec/dark-2.png"), include_bytes!("../icons/tray-rec/dark-3.png"), include_bytes!("../icons/tray-rec/dark-4.png")],
         ];
+        // Decoded once: decoding a PNG 8 times a second on the main thread made the app stutter while recording.
+        static DECODED: std::sync::OnceLock<Vec<Option<tauri::image::Image<'static>>>> = std::sync::OnceLock::new();
         let app = self.0.clone();
         // On the main thread, like menu_idle, so a frame can never land after the icon was put back.
         let _ = self.0.run_on_main_thread(move || {
             let Some(t) = app.tray_by_id("myna").filter(|_| RECORDING.load(Ordering::Relaxed)) else { return };
             let dark = t.with_inner_tray_icon(|i| menu_bar_dark(i.ns_status_item())).unwrap_or(false);
-            let frame = FRAMES[dark as usize][((level * 4.0).round() as usize).min(4)];
-            if let Ok(icon) = tauri::image::Image::from_bytes(frame) {
+            let n = dark as usize * 5 + ((level * 4.0).round() as usize).min(4);
+            if SHOWN.swap(n, Ordering::Relaxed) == n {
+                return; // same frame as now: no redraw
+            }
+            let frames = DECODED.get_or_init(|| FRAMES.iter().flatten().map(|b| tauri::image::Image::from_bytes(b).ok()).collect());
+            if let Some(icon) = frames[n].clone() {
                 let _ = t.set_icon_with_as_template(Some(icon), false);
             }
         });
@@ -455,6 +464,7 @@ impl World for Mac {
         let app = self.0.clone();
         let _ = self.0.run_on_main_thread(move || {
             RECORDING.store(false, Ordering::Relaxed);
+            SHOWN.store(NO_FRAME, Ordering::Relaxed);
             if let Some(t) = app.tray_by_id("myna") {
                 let _ = t.set_title(None::<String>);
                 if let Ok(icon) = tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png")) {
