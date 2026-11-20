@@ -26,7 +26,7 @@ References: macOS 26 system apps (Notes, Settings, Control Center), Things, Craf
 
 **Radii are concentric.** Inner radius = outer radius − padding between them. Window 26, panels 18 (26 − 8), popover 14 with menu items 8 at 5–6px padding. Interactive controls are capsules (`--r-full`); fields are `--r-md`; multi-line text areas `--r-lg`.
 
-**Reading column.** Document pages are centred at `--w-doc` (720px). Reading text stops at `--measure` (68ch). The inspector (transcript, chat) is `--w-inspector` on the right of the document; below 1100px it floats over it.
+**Reading column.** Document pages are centred at `--w-doc` (920px), wide enough for a Summary's tables. Reading text stops at `--measure` (68ch). The inspector (transcript, chat) is `--w-inspector` on the right of the document; below 1100px it floats over it.
 
 ## Colour
 

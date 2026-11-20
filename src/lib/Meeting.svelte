@@ -564,7 +564,7 @@
   .panel { min-height: 0; overflow: hidden auto; scrollbar-width: thin; padding: 0 var(--sp-4) var(--sp-4); border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); user-select: text; }
   .panel-head { position: sticky; top: 0; z-index: 1; display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); padding: var(--sp-3) 0 var(--sp-2); background: var(--bg-inset); }
   .panel-head h2 { margin: 0; font-size: var(--fs-body); font-weight: var(--fw-semibold); }
-  article { max-width: var(--w-doc, 720px); margin: 0 auto; user-select: text; }
+  article { max-width: var(--w-doc, 920px); margin: 0 auto; user-select: text; }
   h1 { margin: 0; font-size: var(--fs-title1); line-height: 1.2; font-weight: var(--fw-bold, 700); }
   .meta { margin: var(--sp-1) 0 0; color: var(--text-3); font-variant-numeric: tabular-nums; }
   .note { margin: var(--sp-1) 0 0; color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
@@ -604,11 +604,16 @@
   .sumdoc { margin-top: var(--sp-3); }
   .sum-bar, .end { display: flex; align-items: center; gap: var(--sp-2); }
   .sum-prog { margin: var(--sp-4) 0 0; color: var(--text-2); font-size: var(--fs-footnote); }
-  .sum { margin-top: var(--sp-3); font-size: var(--fs-reading); line-height: var(--lh-reading); overflow-wrap: anywhere; }
+  .sum { margin-top: var(--sp-3); font-size: var(--fs-reading); line-height: var(--lh-reading); overflow-wrap: break-word; }
+  /* break-word, not anywhere: anywhere lets a table squeeze a time or a number down to one character per line. */
+  .sum :global(table) { width: 100%; margin: 0 0 var(--sp-4); border-collapse: collapse; font-size: var(--fs-body); line-height: 1.45; }
+  .sum :global(:is(th, td)) { padding: var(--sp-2) var(--sp-3) var(--sp-2) 0; text-align: left; vertical-align: top; border-bottom: .5px solid var(--line); }
+  .sum :global(th) { color: var(--text-3); font-size: var(--fs-footnote); font-weight: var(--fw-semibold); }
+  .sum :global(:is(th, td):last-child) { padding-right: 0; }
   .sum :global(:is(h1, h2, h3, h4)) { margin: var(--sp-5) 0 var(--sp-2); font-size: var(--fs-body); font-weight: var(--fw-semibold); }
   .sum :global(p) { margin: 0 0 var(--sp-2); }
   .sum :global(:is(ul, ol)) { margin: 0 0 var(--sp-2); padding-left: 20px; }
-  .sum :global(.ts) { padding: 0 2px; border: 0; border-radius: var(--r-xs); background: none; color: var(--accent-text); font: inherit; font-size: .88em; font-variant-numeric: tabular-nums; }
+  .sum :global(.ts) { padding: 0 2px; border: 0; border-radius: var(--r-xs); background: none; color: var(--accent-text); font: inherit; font-size: .88em; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .sum :global(.ts:hover) { text-decoration: underline; }
   .sum-cost { margin: var(--sp-5) 0 0; padding-top: var(--sp-2); border-top: .5px solid var(--line); color: var(--text-3); font-size: var(--fs-footnote); font-variant-numeric: tabular-nums; }
   .sum-edit { margin-top: var(--sp-4); display: grid; gap: var(--sp-2); }
