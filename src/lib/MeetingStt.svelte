@@ -1,7 +1,7 @@
 <!-- Meeting notes › Models: Transcribe with (#45). The Local model is the default; an Endpoint replaces it after the meeting only, and only once its model passes Test. -->
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import type { Ai, Model } from "./AiProviders.svelte";
+  import { isAgent, type Ai, type Model } from "./AiProviders.svelte";
   import HostPill from "./HostPill.svelte";
   import type { Cost, SttPick } from "./meetings";
 
@@ -16,10 +16,12 @@
   let pid = $state<number | null>(null);
   let model = $state("");
   let list = $state<string[]>([]);
+  let listing = $state(false); // OpenRouter's list is on its way: its menu shows, disabled, so nothing swaps in later
   let test = $state<{ st: "run" } | { st: "err"; msg: string } | { st: "ok"; c: Check } | null>(null);
   let error = $state("");
 
-  const providers = $derived(ai?.providers ?? []);
+  // Agents take no audio: neither CLI has an audio input.
+  const providers = $derived((ai?.providers ?? []).filter((p) => !isAgent(p.kind)));
   const saved = $derived(value.kind === "endpoint" ? value : null);
   const savedProv = $derived(saved ? providers.find((p) => p.id === saved.provider) : undefined);
   const prov = $derived(providers.find((p) => p.id === pid));
@@ -45,7 +47,9 @@
   $effect(() => {
     const p = prov;
     list = [];
-    if (p?.kind === "openrouter") invoke<Model[]>("meeting_stt_models", { id: p.id }).then((l) => { if (prov?.id === p.id) list = l.map((m) => m.id); }, () => {});
+    listing = p?.kind === "openrouter";
+    if (p?.kind === "openrouter") invoke<Model[]>("meeting_stt_models", { id: p.id }).then((l) => { if (prov?.id === p.id) list = l.map((m) => m.id); }, () => {})
+      .finally(() => { if (prov?.id === p.id) listing = false; });
   });
 
   async function via(v: string) {
@@ -105,9 +109,9 @@
         {#if pid === null}<option value="" disabled>Choose a provider</option>{/if}
         {#each providers as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
       </select>
-      {#if prov?.kind === "openrouter" && list.length}
-        <select class="select" aria-label="Transcription model" bind:value={model} onchange={() => (test = null)}>
-          {#if !model}<option value="" disabled>Choose a model</option>{/if}
+      {#if prov?.kind === "openrouter" && (listing || list.length)}
+        <select class="select" aria-label="Transcription model" bind:value={model} disabled={listing && !list.length} onchange={() => (test = null)}>
+          {#if !model}<option value="" disabled>{listing && !list.length ? "Loading models…" : "Choose a model"}</option>{/if}
           {#each [...new Set([...list, ...(model ? [model] : [])])] as m (m)}<option value={m}>{m}</option>{/each}
         </select>
       {:else}
@@ -123,7 +127,8 @@
   .desc.test { color: var(--text-3); font-variant-numeric: tabular-nums; }
   /* Provider, model and Test wrap instead of running off a narrow window. */
   .ep .end { flex-wrap: wrap; justify-content: flex-end; }
-  .ep .end > :is(.select, .input) { min-width: 0; max-width: 100%; }
+  /* One width for the menu and the typed id, so the row never shifts when the list arrives or the provider changes. */
+  .ep .end > :is(.select, .input) { width: 220px; min-width: 0; max-width: 100%; }
   /* A Test's reason is what the user acts on, so it wraps instead of truncating. */
   .desc.bad, .desc.test.bad { color: var(--danger-text); white-space: normal; }
   .alert { width: var(--ic-sm); height: var(--ic-sm); margin: 1px var(--sp-1) 0 0; vertical-align: top; }

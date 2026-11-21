@@ -16,12 +16,15 @@ async function connect() {
   const { code } = await chrome.storage.local.get("code");
   if (!code) return setStatus("idle");
   trying = true;
-  tryPort(0, code);
+  tryPort(0, code, false);
 }
 
-function tryPort(i, code) {
+// `wrong`: a Myna on an earlier port refused the code. Another Myna (a dev build beside the installed one) may
+// take it, so every port is tried before the popup says the code is wrong.
+function tryPort(i, code, wrong) {
   if (i >= PORTS.length) {
     trying = false;
+    if (wrong) return setStatus("wrong-code");
     setStatus("offline");
     return retry();
   }
@@ -49,11 +52,7 @@ function tryPort(i, code) {
       setStatus("offline");
       return retry();
     }
-    if (e.code === WRONG_CODE) {
-      trying = false;
-      return setStatus("wrong-code");
-    }
-    tryPort(i + 1, code); // not Myna here, or Myna isn't running: try the next port
+    tryPort(i + 1, code, wrong || e.code === WRONG_CODE); // not this Myna, or none here: try the next port
   };
 }
 

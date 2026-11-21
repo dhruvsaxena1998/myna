@@ -267,7 +267,7 @@
             {#if tcl}<TranscriptCleanup bind:prefs={tcl} part="editor" />
             {:else}<ErrorState title="Myna couldn't read the cleanup settings" message={data.transcript?.ok === false ? data.transcript.error : ""} />{/if}
           {:else if view.sub === "add"}
-            {#if ai}<AiProviders bind:ai part="add" {back} />
+            {#if ai}<AiProviders bind:ai part="add" {back} agents={!!look?.experimental && !!look?.agents} />
             {:else}<ErrorState title="Myna couldn't read its AI providers" message={data.ai?.ok === false ? data.ai.error : ""} />{/if}
           {:else if view.page === "listen"}
             {#if !voice}

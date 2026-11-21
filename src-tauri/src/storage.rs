@@ -65,6 +65,8 @@ const MIGRATIONS: &[&str] = &[
     // heard, counted before the text went, so Stats for nerds still counts them.
     "ALTER TABLE trace ADD COLUMN words INTEGER;
      ALTER TABLE trace ADD COLUMN cleared INTEGER;",
+    // `provider.position`: the order AI providers lists them in, and so every model picker; NULL (an older Myna's row) goes last.
+    "ALTER TABLE provider ADD COLUMN position INTEGER;",
 ];
 const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
 

@@ -1,6 +1,6 @@
 <!-- Settings › AI providers (`part="page"`) and its Add a provider drill-in (`"add"`): docs/settings.html, VIEWS.ai and VIEWS.add. One `ai`, held by the shell, so the page, the drill-in and the other pages agree. -->
 <script lang="ts" module>
-  export type Provider = { id: number; kind: "openai" | "openrouter"; name: string; url: string; has_key: boolean; off_device: boolean };
+  export type Provider = { id: number; kind: "openai" | "openrouter" | "claude-code" | "codex"; name: string; url: string; has_key: boolean; off_device: boolean };
   export type Route = { provider: number; model: string; gone: boolean } | null;
   // `decide`: "fast" (uses the Fast model, also when missing), "none" (Not set: its provider was removed) or "<provider id>|<model>".
   export type Ai = { providers: Provider[]; main: Route; fast: Route; decide?: string };
@@ -15,6 +15,14 @@
     ["openai", "OpenAI-compatible", "", ""],
     ["openrouter", "OpenRouter", "OpenRouter", "https://openrouter.ai/api/v1"],
   ];
+  // Agents (Experimental): the user's own CLI, signed in on this Mac. [kind, label, name, whose plan]
+  const AGENTS: [Provider["kind"], string, string, string][] = [
+    ["claude-code", "Claude Code (Agent)", "Claude Code", "Claude"],
+    ["codex", "Codex (Agent)", "Codex", "ChatGPT"],
+  ];
+  export const isAgent = (kind: string) => AGENTS.some((a) => a[0] === kind);
+  const planOf = (kind: string) => AGENTS.find((a) => a[0] === kind)?.[3] ?? "";
+  const agentDesc = (kind: string) => `Agent · Runs on your ${planOf(kind)} plan; its terms apply`;
   const SLOTS: [Slot | "decide", string, string][] = [
     ["main", "Main model", "Writes summaries and answers your questions."],
     ["fast", "Fast model", "Quick jobs like tidying up text and small decisions."],
@@ -32,21 +40,23 @@
     if (t.models != null) return `Works · ${t.models} model${t.models === 1 ? "" : "s"} · ${s}`;
     return `Key works · ${usd(t.used ?? 0)} used${t.limit != null ? ` of ${usd(t.limit)}` : ""} · ${s}`;
   };
-  const decided = ({ choice, confidence, cost, ms }: Decision) =>
+  const decided = ({ choice, confidence, cost, ms }: Decision, plan: boolean) =>
     [`Picked ${choice}`, ...(confidence != null ? [`${Math.round(confidence * 100)}% sure`] : []), `${(ms / 1000).toFixed(1)} s`,
-      cost.kind === "usd" ? usd(cost.usd) : cost.kind === "free" ? "Free" : "Cost unknown"].join(" · ");
+      cost.kind === "usd" ? usd(cost.usd) : cost.kind === "free" ? "Free" : plan ? "On your plan" : "Cost unknown"].join(" · ");
 </script>
 
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { tick } from "svelte";
+  import { flip } from "svelte/animate";
   import HostPill from "./HostPill.svelte";
   import type { Cost } from "./meetings";
 
-  // `open`: a drill-in under AI providers. `back`: leaves one.
-  let { ai = $bindable(), part, open: openSub = async () => {}, back = async () => {} }: {
-    ai: Ai; part: "page" | "add"; open?: (sub: string) => Promise<void> | void; back?: () => Promise<void> | void;
+  // `open`: a drill-in under AI providers. `back`: leaves one. `agents`: Agents are on (Experimental), so Add offers them.
+  let { ai = $bindable(), part, open: openSub = async () => {}, back = async () => {}, agents = false }: {
+    ai: Ai; part: "page" | "add"; open?: (sub: string) => Promise<void> | void; back?: () => Promise<void> | void; agents?: boolean;
   } = $props();
+  const kinds = $derived(agents ? [...PRESETS, ...AGENTS.map(([k, l, n]): (typeof PRESETS)[number] => [k, l, n, ""])] : PRESETS);
   const providers = $derived(ai.providers);
   const routes = $derived({ main: ai.main, fast: ai.fast });
   let tests = $state<Record<number, Test>>({});
@@ -84,7 +94,7 @@
   // --- Add form
   function pickKind(e: Event) {
     const kind = (e.currentTarget as HTMLSelectElement).value as Provider["kind"];
-    const [, , name, url] = PRESETS.find((p) => p[0] === kind)!;
+    const [, , name, url] = kinds.find((p) => p[0] === kind)!;
     draft = { ...draft, kind, name, url };
     errs = {};
     dtest = null;
@@ -96,7 +106,7 @@
     else if (providers.some((p) => p.name.toLowerCase() === name.toLowerCase())) e.name = "You already have one with this name.";
     let proto = "";
     try { proto = new URL(draft.url).protocol; } catch { /* not a URL */ }
-    if (!/^https?:$/.test(proto) || !hostOf(draft.url)) e.url = "Enter the full address, starting with http:// or https://.";
+    if (!isAgent(draft.kind) && (!/^https?:$/.test(proto) || !hostOf(draft.url))) e.url = "Enter the full address, starting with http:// or https://.";
     const key = draft.key.trim();
     if (draft.kind === "openrouter" && !key) e.key = "Paste your OpenRouter key.";
     else if (draft.kind === "openrouter" && !key.startsWith("sk-or-")) e.key = "OpenRouter keys start with “sk-or-”. Make sure you copied all of it.";
@@ -135,6 +145,52 @@
   }
 
   // --- Remove
+  // Reordering: drag a row's grip, or focus it and press the arrow keys. Every model picker lists providers in this order.
+  async function save(next: Provider[], was: Provider[]) {
+    if (next.every((p, i) => p.id === was[i].id)) return;
+    error = ""; note = "";
+    ai = { ...ai, providers: next };
+    try {
+      await invoke("ai_order", { ids: next.map((p) => p.id) });
+    } catch (err) {
+      ai = { ...ai, providers: was };
+      error = `Couldn’t move it: ${err}`;
+    }
+  }
+  const moved = (list: Provider[], from: number, to: number) => { const n = [...list]; n.splice(to, 0, ...n.splice(from, 1)); return n; };
+  async function gripKeys(e: KeyboardEvent, i: number) {
+    const to = e.key === "ArrowUp" ? i - 1 : e.key === "ArrowDown" ? i + 1 : -1;
+    if (to < 0 || to >= providers.length) return;
+    e.preventDefault();
+    const id = providers[i].id;
+    save(moved(ai.providers, i, to), ai.providers);
+    await tick();
+    document.getElementById(`grip-${id}`)?.focus(); // moving the row's node drops focus; it stays with the row
+  }
+  // While dragging, the row moves through the list live; the order is saved once, on release. The window follows the
+  // pointer, not the grip: the row's node moves in the list as it goes, which would drop a pointer capture.
+  let drag = $state<{ id: number; was: Provider[]; slots: DOMRect[] } | null>(null);
+  function gripDown(e: PointerEvent, id: number) {
+    if (e.button !== 0) return;
+    e.preventDefault(); // no text selection while dragging
+    const g = e.currentTarget as HTMLElement;
+    g.focus({ preventScroll: true });
+    const rows = [...(g.closest("ul")?.querySelectorAll(":scope > .row.prov") ?? [])];
+    drag = { id, was: ai.providers, slots: rows.map((r) => r.getBoundingClientRect()) };
+  }
+  function gripMove(e: PointerEvent) {
+    if (!drag) return;
+    const from = ai.providers.findIndex((p) => p.id === drag!.id);
+    let to = drag.slots.findIndex((r) => e.clientY < r.bottom);
+    if (to < 0) to = drag.slots.length - 1;
+    if (to !== from) ai = { ...ai, providers: moved(ai.providers, from, to) };
+  }
+  function gripUp() {
+    if (!drag) return;
+    const was = drag.was;
+    drag = null;
+    save(ai.providers, was);
+  }
   async function remove(p: Provider) {
     error = ""; note = "";
     try {
@@ -250,6 +306,7 @@
       if (m.images) parts.push("reads images");
       return parts.join(" · ") || "Cost unknown";
     }
+    if (isAgent(p.kind)) return m.id === "default" ? `The model ${p.name} picks · On your plan` : "On your plan";
     return p.off_device ? "Cost unknown" : "Free · runs on your server";
   }
   function popKeys(e: KeyboardEvent) {
@@ -265,7 +322,7 @@
   }
 </script>
 
-<svelte:window onpointerdown={outside} />
+<svelte:window onpointerdown={outside} onpointermove={gripMove} onpointerup={gripUp} onpointercancel={gripUp} />
 
 {#snippet pill(off: boolean)}<HostPill {off} />{/snippet}
 <!-- DESIGN.md › Field: an error line starts with an alert icon. -->
@@ -273,22 +330,27 @@
 
 {#if part === "add"}
   {@const or = draft.kind === "openrouter"}
+  {@const ag = isAgent(draft.kind)}
   {@const msg = addError || (dtest?.st === "err" ? dtest.msg : "")}
   <form onsubmit={add} novalidate aria-label="Add a provider">
     <section>
       <ul class="list">
         <li class="field"><label for="add-kind">Kind</label>
-          <select id="add-kind" class="select" value={draft.kind} onchange={pickKind} aria-describedby="add-kind-h">{#each PRESETS as [v, l]}<option value={v}>{l}</option>{/each}</select>
-          <span class="help" id="add-kind-h">{or ? "One key for models from many companies." : "Any server that speaks the OpenAI API."}</span></li>
+          <select id="add-kind" class="select" value={draft.kind} onchange={pickKind} aria-describedby="add-kind-h">{#each kinds as [v, l]}<option value={v}>{l}</option>{/each}</select>
+          <span class="help" id="add-kind-h" title={ag ? `${agentDesc(draft.kind)}. Sends text off your Mac.` : undefined}>{ag ? `Runs on your ${planOf(draft.kind)} plan; its terms apply. Sends text off your Mac.` : or ? "One key for models from many companies." : "Any server that speaks the OpenAI API."}</span></li>
         <li class="field"><label for="add-name">Name</label>
           <input id="add-name" class="input" bind:value={draft.name} maxlength="40" placeholder={or ? "" : "Server on this Mac"} autocomplete="off" spellcheck="false" oninput={() => (errs = { ...errs, name: undefined })} aria-invalid={!!errs.name} aria-describedby="add-name-h" />
           <span class="help" class:bad={errs.name} id="add-name-h" role="status">{#if errs.name}{@render alert()}{errs.name}{:else}Shown when you pick a model.{/if}</span></li>
+        {#if ag}
+        <li class="field"><span class="help">Signed in on this Mac, no key needed. Test checks it’s installed and signed in.</span></li>
+        {:else}
         <li class="field"><label for="add-url">Address</label>
           <input id="add-url" class="input mono" type="url" bind:value={draft.url} placeholder={or ? "" : "http://localhost:11434/v1"} autocomplete="off" spellcheck="false" oninput={() => ((errs = { ...errs, url: undefined }), (dtest = null))} aria-invalid={!!errs.url} aria-describedby="add-url-h" />
           <span class="help" class:bad={errs.url} id="add-url-h" role="status">{#if errs.url}{@render alert()}{errs.url}{:else if hostOf(draft.url)}{@render pill(!loopback(draft.url))}{:else}{or ? "OpenRouter’s address. Leave it as it is." : "Where the server listens, ending in /v1."}{/if}</span></li>
         <li class="field"><label for="add-key">{or ? "Key" : "Key (optional)"}</label>
           <input id="add-key" class="input mono" type="password" bind:value={draft.key} autocomplete="off" spellcheck="false" placeholder={or ? "sk-or-…" : ""} oninput={() => ((errs = { ...errs, key: undefined }), (dtest = null))} aria-invalid={!!errs.key} aria-describedby="add-key-h" />
           <span class="help" class:bad={errs.key} id="add-key-h" role="status">{#if errs.key}{@render alert()}{errs.key}{:else}{or ? "Find it at openrouter.ai/keys." : "Only if your server asks for one."} Kept in your Mac’s Keychain.{/if}</span></li>
+        {/if}
       </ul>
     </section>
     <div class="actions">
@@ -301,11 +363,17 @@
 {:else}
   <section aria-labelledby="prov-h">
     <h2 id="prov-h">Providers</h2>
-    <p class="help">Servers on this Mac keep your words on it. Testing is free.</p>
+    <p class="help">Servers on this Mac keep your words on it. Testing is free. Model lists follow this order; drag a row to change it.<span class="sr-only" id="prov-order">Press the up or down arrow to move it.</span></p>
     <ul class="list">
-      {#each providers as p (p.id)}
+      {#each providers as p, i (p.id)}
         {@const t = tests[p.id]}
-        <li class="row prov">
+        <li class="row prov" class:grab={providers.length > 1} class:dragging={drag?.id === p.id} animate:flip={{ duration: drag?.id === p.id ? 0 : 150 }}>
+          {#if providers.length > 1 && confirm !== p.id}
+            <button type="button" class="grip" id="grip-{p.id}" aria-label="Reorder {p.name}" aria-describedby="prov-order" title="Drag to reorder"
+              onkeydown={(e) => gripKeys(e, i)} onpointerdown={(e) => gripDown(e, p.id)}>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="6" r="1.5" /><circle cx="15" cy="6" r="1.5" /><circle cx="9" cy="12" r="1.5" /><circle cx="15" cy="12" r="1.5" /><circle cx="9" cy="18" r="1.5" /><circle cx="15" cy="18" r="1.5" /></svg>
+            </button>
+          {/if}
           {#if confirm === p.id}
             {@const uses = routeUses(ai, p.id)}
             {@const text = uses ? "Models that use it become Not set." : "Nothing uses it right now."}
@@ -318,7 +386,8 @@
             {@const addr = p.url + (p.has_key ? " · Key in Keychain" : "")}
             <span>
               <span class="name titled"><span class="trunc">{p.name}</span>{@render pill(p.off_device)}</span>
-              <span class="desc" title={addr}><span class="mono">{p.url}</span>{#if p.has_key}{" · Key in Keychain"}{/if}</span>
+              {#if isAgent(p.kind)}<span class="desc" title={agentDesc(p.kind)}>{agentDesc(p.kind)}</span>
+              {:else}<span class="desc" title={addr}><span class="mono">{p.url}</span>{#if p.has_key}{" · Key in Keychain"}{/if}</span>{/if}
               <span class="desc test" class:bad={t?.st === "err"} aria-live="polite" title={t?.st === "err" ? t.msg : undefined}>
                 {#if !t}Not tested yet{:else if t.st === "run"}Checking…{:else if t.st === "err"}{@render alert()}{t.msg}{:else}{testText(t)}{/if}
               </span>
@@ -354,7 +423,8 @@
       {#each SLOTS as [slot, title, text]}
         {@const d = slot === "decide"}
         {@const r = d ? droute : routes[slot]}
-        {@const help = !d ? text : droute ? "Which folder a meeting goes in, which pictures matter. Reads text only." : "Pick a model here, or set a Fast model above."}
+        {@const agentFast = slot === "fast" && !!r && isAgent(prov(r.provider)?.kind ?? "")}
+        {@const help = agentFast ? "An Agent takes a few seconds: dictation cleanup waits up to 15 s before pasting." : !d ? text : droute ? "Which folder a meeting goes in, which pictures matter. Reads text only." : "Pick a model here, or set a Fast model above."}
         {@const ps = d ? routers : providers}
         {@const ls = d ? dlists : lists}
         <li class="row" class:dec={d}>
@@ -411,7 +481,7 @@
           <span class="name">Test decision model</span>
           <span class="desc" title={SAMPLE.question}>{SAMPLE.question}</span>
           <span class="desc test" class:bad={dtry?.st === "err"} aria-live="polite" title={dtry?.st === "err" ? `Couldn’t decide: ${dtry.msg}` : undefined}>
-            {#if !dtry}Not tested yet{:else if dtry.st === "run"}Checking…{:else if dtry.st === "err"}{@render alert()}Couldn’t decide: {dtry.msg}{:else}{decided(dtry.d)}{/if}
+            {#if !dtry}Not tested yet{:else if dtry.st === "run"}Checking…{:else if dtry.st === "err"}{@render alert()}Couldn’t decide: {dtry.msg}{:else}{decided(dtry.d, isAgent(prov(droute?.provider ?? -1)?.kind ?? ""))}{/if}
           </span>
         </span>
         <span class="end"><button type="button" class="btn" disabled={!droute || dtry?.st === "run"} onclick={testDecide}>Test</button></span>
@@ -432,6 +502,15 @@
   .prov, .dtest { min-height: 80px; }
   /* Each line is reserved, so it truncates (full text in `title`) instead of wrapping on a narrow window. */
   .prov .desc, .dtest .desc, .dec .desc { white-space: nowrap; }
+  /* The reorder handle sits before the row's text; 24px wide keeps a fair hit area for a small glyph. */
+  .row.prov:has(> .grip) { grid-template-columns: auto minmax(0, 1fr) auto; column-gap: var(--sp-1); padding-left: var(--sp-1); }
+  .grip { display: grid; place-items: center; width: 24px; height: var(--h-ctl); padding: 0; border: 0; border-radius: var(--r-sm); background: none; color: var(--text-3); cursor: grab; touch-action: none; }
+  .grip svg { width: var(--ic-sm); height: var(--ic-sm); fill: currentColor; }
+  .grip:hover { color: var(--text-2); }
+  .grip:active { cursor: grabbing; }
+  .grip:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 0; }
+  /* The row being dragged lifts off the list; the others slide past it. */
+  .row.prov.dragging { position: relative; z-index: 1; border-radius: var(--r-md); background-color: var(--bg-content); box-shadow: var(--shadow-menu), inset 0 0 0 .5px var(--line-strong); }
   .desc.test { margin-top: var(--sp-1); color: var(--text-3); font-variant-numeric: tabular-nums; }
   .desc.test.bad { color: var(--danger-text); }
   .err.neutral { color: var(--text-2); }
@@ -459,7 +538,9 @@
   .pop .input { margin-bottom: var(--sp-1); }
   /* Fixed, not max: the list must not resize when models arrive, or the page under it jumps. */
   .pk-list { height: 300px; overflow-y: auto; scrollbar-width: thin; }
-  .pk-h { padding: 6px 10px 2px; font-size: var(--fs-caption); line-height: var(--lh-caption); font-weight: var(--fw-semibold); color: var(--text-3); }
+  /* A provider's heading: a label a step above its models' meta, and a hairline between providers so each group reads as one. */
+  .pk-h { padding: 8px 10px 4px; font-size: var(--fs-footnote); line-height: var(--lh-footnote); font-weight: var(--fw-semibold); color: var(--text-2); }
+  .pk-list > .pk-h:not(:first-child) { margin-top: 6px; padding-top: 10px; box-shadow: inset 0 .5px 0 var(--line-strong); }
   .pk-note { margin: 0; padding: 4px 10px; font-size: var(--fs-footnote); color: var(--text-3); }
   .pk { display: flex; flex-direction: column; align-items: stretch; width: 100%; min-height: 42px; box-sizing: border-box; padding: 4px 10px; border: 0; border-radius: var(--r-sm); background: none; color: var(--text); font: inherit; text-align: left; }
   /* Like a native menu: the item under the pointer or focus fills with the accent. */

@@ -28,6 +28,9 @@ pub struct Look {
     pub experimental: bool,
     /// Stats for nerds' own switch, off by default; its page shows only while this and the master switch are on.
     pub nerds: bool,
+    /// Agents' own switch (Claude Code, Codex as AI providers), off by default; usable only while this and the master switch are on.
+    #[serde(default)]
+    pub agents: bool,
     /// Liquid Glass opacity: how strongly the CSS fill frosts the glass, 0 clear to 100 most frosted.
     #[serde(default = "default_frost")]
     pub frost: u8,
@@ -70,6 +73,7 @@ pub fn get(conn: &Connection, macos: u32) -> Result<Look, String> {
         liquid: liquid_ok(macos).then(|| read("look_liquid", &["off", "on"])).transpose()?.map(|v| v == "on"),
         experimental: read("experimental", &["off", "on"])? == "on",
         nerds: read("exp_nerds", &["off", "on"])? == "on",
+        agents: read("exp_agents", &["off", "on"])? == "on",
         frost: frost.unwrap_or_else(default_frost),
     })
 }
@@ -85,8 +89,8 @@ pub fn set(conn: &Connection, l: &Look, macos: u32) -> Result<(), String> {
         return Err("Liquid Glass needs macOS 26 or later.".into());
     }
     let onoff = |on: bool| if on { "on" } else { "off" }.to_string();
-    let (liquid, exp, nerds, frost) = (l.liquid.map(onoff), onoff(l.experimental), onoff(l.nerds), l.frost.to_string());
-    let saved = [("look_theme", &l.theme), ("look_accent", &l.accent), ("look_glass", &l.glass), ("experimental", &exp), ("exp_nerds", &nerds), ("look_frost", &frost)];
+    let (liquid, exp, nerds, agents, frost) = (l.liquid.map(onoff), onoff(l.experimental), onoff(l.nerds), onoff(l.agents), l.frost.to_string());
+    let saved = [("look_theme", &l.theme), ("look_accent", &l.accent), ("look_glass", &l.glass), ("experimental", &exp), ("exp_nerds", &nerds), ("exp_agents", &agents), ("look_frost", &frost)];
     for (k, v) in saved.into_iter().chain(liquid.as_ref().map(|v| ("look_liquid", v))) {
         storage::write_text(conn, k, v).map_err(|e| e.to_string())?;
     }
@@ -182,7 +186,7 @@ mod tests {
     use super::*;
 
     fn is(t: &str, a: &str, g: &str) -> Look {
-        Look { theme: t.into(), accent: a.into(), glass: g.into(), liquid: None, experimental: false, nerds: false, frost: 50 }
+        Look { theme: t.into(), accent: a.into(), glass: g.into(), liquid: None, experimental: false, nerds: false, agents: false, frost: 50 }
     }
 
     #[test]

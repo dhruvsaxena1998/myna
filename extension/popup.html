@@ -1,21 +1,45 @@
 <!doctype html>
+<!-- The add-on's popup, in the app's Settings grammar (DESIGN.md): tokens.css is a copy of design/tokens.css, kept equal by tests/extension/look.node-test.mjs. -->
+<html lang="en" data-theme="auto">
 <meta charset="utf-8">
+<link rel="stylesheet" href="tokens.css">
 <style>
-  body { width: 280px; margin: 0; padding: 14px; font: 13px/1.4 system-ui, sans-serif; }
-  h1 { margin: 0 0 8px; font-size: 14px; }
-  input { box-sizing: border-box; width: 100%; padding: 6px 8px; font: 13px ui-monospace, monospace; text-transform: uppercase; }
-  button { margin-top: 8px; padding: 5px 12px; }
-  #status { margin: 10px 0 0; }
-  #rec { width: 100%; margin-top: 14px; }
-  #hint { margin: 6px 0 0; min-height: 1.4em; color: #666; }
+  html { background: var(--bg-content); }
+  body { width: 300px; margin: 0; padding: var(--sp-4); }
+  .prefs { gap: var(--sp-4); }
+  header { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); }
+  h1 { margin: 0; font-size: var(--fs-title3); line-height: var(--lh-title3); font-weight: var(--fw-semibold); }
+  /* Status is a dot plus a word, never colour alone. */
+  .state { display: inline-flex; align-items: center; gap: var(--sp-1h); color: var(--text-2); font-size: var(--fs-footnote); }
+  .state::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); }
+  .state[data-s="connected"]::before { background: var(--ok); }
+  .state[data-s="wrong-code"]::before { background: var(--danger); }
+  .state[data-s="offline"]::before { background: var(--caution); }
+  form { display: flex; gap: var(--sp-2); padding: var(--sp-3); }
+  form .input { flex: 1; min-width: 0; font-family: var(--font-mono); font-size: 12px; text-transform: uppercase; }
+  .help { margin: var(--sp-2) 0 0; min-height: calc(2 * var(--lh-footnote)); }
+  .help.bad { color: var(--danger-text); }
+  .rec-dot { display: inline-block; width: 7px; height: 7px; margin-right: var(--sp-1h); border-radius: 50%; background: var(--rec); vertical-align: 1px; }
 </style>
-<h1>Myna</h1>
-<form id="f">
-  <label for="code">Connection code, from Myna’s Settings</label>
-  <input id="code" maxlength="12" placeholder="MYNA-XXXX-XX" autocomplete="off" spellcheck="false">
-  <button>Connect</button>
-</form>
-<p id="status" role="status"></p>
-<button id="rec" disabled>Record this tab</button>
-<p id="hint"></p>
-<script type="module" src="popup.js"></script>
+<body class="prefs">
+  <header><h1>Myna</h1><span class="state" id="state"></span></header>
+  <section aria-labelledby="pair-h">
+    <h2 id="pair-h">Pairing code</h2>
+    <ul class="list"><li>
+      <form id="f">
+        <input class="input" id="code" aria-labelledby="pair-h" aria-describedby="status" maxlength="12" placeholder="MYNA-XXXX-XX" autocomplete="off" spellcheck="false">
+        <button class="btn" id="go">Connect</button>
+      </form>
+    </li></ul>
+    <p class="help" id="status" role="status"></p>
+  </section>
+  <section aria-labelledby="tab-h">
+    <h2 id="tab-h">This tab</h2>
+    <ul class="list"><li class="row">
+      <span><span class="name" id="rec-name">Record this tab</span><span class="desc" id="hint"></span></span>
+      <button class="btn" id="rec" aria-describedby="hint" disabled>Record</button>
+    </li></ul>
+  </section>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

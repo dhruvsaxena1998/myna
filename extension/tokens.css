@@ -1,0 +1,408 @@
+/* Myna design tokens. The single source for every colour, size and timing in the app.
+   Rules live in DESIGN.md. Components use only the semantic layer (no raw hex outside this file).
+   Theme: <html data-theme="light|dark|auto"> (auto follows macOS). Accent: <html data-accent="blue|…">. */
+
+/* ---------- 1. Scale: type, space, radius, size, motion, layers (theme-independent) ---------- */
+:root {
+  --stage-desk: linear-gradient(160deg, #5b7aa6, #b08a6a); /* the pill preview's stand-in desktop, same in both themes */
+  /* Type. One family; WebKit switches SF Pro Text/Display optical sizes and applies SF tracking itself,
+     so no letter-spacing tokens: adding our own double-tracks in WKWebView. */
+  --font: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+
+  /* role: size / line-height / weight. Mirrors macOS text styles. */
+  --fs-caption: 11px;  --lh-caption: 14px;  /* section labels in sidebar and menus, pill text */
+  --fs-footnote: 12px; --lh-footnote: 16px; /* help text, meta, timestamps */
+  --fs-body: 13px;     --lh-body: 18px;     /* every control and list row */
+  --fs-reading: 15px;  --lh-reading: 24px;  /* transcript, summary, chat: the document register */
+  --fs-title3: 15px;   --lh-title3: 20px;   /* section headings (h2) */
+  --fs-title2: 18px;   --lh-title2: 24px;   /* toolbar titles */
+  --fs-title1: 26px;   --lh-title1: 32px;   /* document and onboarding titles (one per screen) */
+  --fw-regular: 400; --fw-medium: 500; --fw-semibold: 600; --fw-bold: 700;
+
+  /* Space. 4px grid; 2 and 6 only for optical nudges inside controls. */
+  --sp-0: 2px; --sp-1: 4px; --sp-1h: 6px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px;
+  --sp-5: 24px; --sp-6: 32px; --sp-7: 48px;
+
+  /* Radius. Concentric: inner radius = outer radius − the padding between them. */
+  --r-xs: 4px;     /* kbd, tiny marks */
+  --r-sm: 8px;     /* menu items, icon tiles */
+  --r-md: 10px;    /* fields, nav rows, glyph boxes */
+  --r-lg: 14px;    /* popovers, menus, list rows, inline cards */
+  --r-xl: 18px;    /* panels inside the window (window 26 − inset 8) */
+  --r-2xl: 26px;   /* window, live-notes panel */
+  --r-full: 999px; /* buttons, pills, tags, segmented controls, search */
+
+  /* Control and layout sizes */
+  --h-ctl-sm: 24px; --h-ctl: 30px; --h-ctl-lg: 36px; --h-hud: 40px;
+  --h-titlebar: 44px; --h-toolbar: 56px; --h-menubar: 28px; --h-row: 30px; --h-menu-item: 26px;
+  --w-sidebar: 228px; --w-settings-nav: 200px; --w-inspector: 400px; --w-menu: 300px; --w-popover: 440px;
+  --w-doc: 720px;      /* reading column */
+  --measure: 68ch;     /* max line length for reading text */
+  --win-inset: 8px;    /* gap between window edge and inner panels */
+  --ic: 16px; --ic-sm: 14px; --ic-lg: 20px; --ic-stroke: 1.5;
+
+  /* Motion. Short and functional; nothing loops except live indicators. */
+  --dur-fast: 120ms;   /* exits, hovers */
+  --dur: 180ms;        /* enters, toggles */
+  --dur-slow: 260ms;   /* panels sliding in */
+  --ease-out: cubic-bezier(.28, 0, .22, 1);
+  --ease-in: cubic-bezier(.5, 0, .8, .3);
+  --pulse: 1.6s;       /* recording dot */
+
+  /* Layers */
+  --z-sticky: 1; --z-panel: 20; --z-drawer: 30; --z-popover: 40; --z-menubar: 50;
+  --z-menu: 60; --z-hud: 70; --z-toast: 80;
+}
+
+/* ---------- 2. Colour: light (default) ---------- */
+:root {
+  color-scheme: light;
+
+  /* Surfaces, back to front. Materials are translucent and sit over native window vibrancy;
+     opaque surfaces hold content. */
+  --bg-desk: #E4E6EC;                     /* prototype only: stands in for the wallpaper */
+  --mat-window-base: rgba(244,244,247,.70);    /* window chrome behind the panels */
+  --mat-sidebar-base: rgba(255,255,255,.56);
+  --mat-menu-base: rgba(250,250,252,.84);      /* menus, popovers, toasts, live-notes panel */
+  --bg-content: #F7F7F9;                  /* main panel: the page; never pure white, which glares */
+  --bg-sidebar: #F3F3F6;                  /* opaque fallback for --mat-sidebar */
+  --bg-inset: #EFEFF2;                    /* grouped lists, inspector, cards on the page */
+  --bg-raised: #FFFFFF;                   /* opaque fallback for --mat-menu */
+  --blur: blur(30px) saturate(180%);
+
+  /* Fills (translucent, so they work on any surface) */
+  --fill-field: rgba(0,0,0,.045);
+  --fill-control: rgba(255,255,255,.92);  /* default button */
+  --fill-control-on: #FFFFFF;             /* selected segment */
+  --fill-hover: rgba(0,0,0,.05);
+  --fill-pressed: rgba(0,0,0,.09);
+  --fill-track: rgba(0,0,0,.16);          /* switch off, progress track, empty pips */
+
+  /* Lines */
+  --line: rgba(0,0,0,.07);                /* hairline separators */
+  --line-strong: rgba(0,0,0,.16);         /* control outlines */
+  --edge: rgba(255,255,255,.75);          /* top-light edge on materials */
+
+  /* Text. Every pair with --bg-content, --bg-inset and --bg-sidebar clears 4.5:1 (check-contrast.mjs). */
+  --text: #1D1D1F;
+  --text-2: #4A4A50;                      /* secondary copy, meta */
+  --text-3: #66666C;                      /* help, timestamps, section labels */
+  --text-disabled: rgba(29,29,31,.38);    /* exempt from contrast, always paired with disabled state */
+
+  /* Status. -text is for words; the bare token is for dots, bars and fills. */
+  --rec: #FF3B30;                         /* recording dot, mic-live level bars: never alone, always with text */
+  --danger: #C4281C; --danger-text: #B3261E; --danger-soft: rgba(196,40,28,.08);
+  --caution: #C77700; --caution-text: #8A5300; --caution-soft: rgba(199,119,0,.10); /* possibly muted, sends off this Mac */
+  --ok: #28A745; --ok-text: #1E7B34;
+  --on-solid: #FFFFFF;                    /* text on --danger fills */
+
+  /* HUD: the dictation pill and recording pill are dark in both themes, like system HUDs */
+  --hud-bg: rgba(28,28,30,.74); --hud-bg-solid: #1C1C1E; --hud-fg: #F5F5F7; --hud-2: rgba(245,245,247,.72);
+  --hud-fill: rgba(255,255,255,.14); --hud-edge: rgba(255,255,255,.20);
+
+  /* Shadows: only floating things get blur and offset */
+  --shadow-control: 0 1px 2px rgba(0,0,0,.06);
+  --shadow-solid: 0 1px 2px rgba(0,0,0,.14);
+  --shadow-panel: 0 1px 3px rgba(0,0,0,.06);
+  --shadow-menu: 0 0 0 .5px rgba(0,0,0,.12), 0 12px 40px rgba(0,0,0,.18);
+  --shadow-window: 0 0 0 .5px rgba(0,0,0,.14), 0 24px 64px rgba(0,0,0,.20);
+  --shadow-hud: 0 10px 30px rgba(0,0,0,.30);
+
+  /* Label colours for tags and folders: dots only, the label text stays --text */
+  --label-blue: #2F6FD0; --label-purple: #7A5AC8; --label-pink: #B0428A; --label-red: #C42B1C;
+  --label-orange: #C0731A; --label-yellow: #B38F00; --label-green: #1F8A4C; --label-teal: #0F8A8A;
+  --label-brown: #A35A2A; --label-graphite: #5A6B7B;
+
+  /* Data colours (Stats for nerds): marks only, the text beside them stays --text. Outcomes are fixed, not the accent,
+     because a red accent would read as "failed" (checked with the dataviz palette validator; the grey is a deliberate neutral).
+     Timing: the opened trace's steps. Rules: one per kind of edit. */
+  --o-pasted: #0A64D8; --o-none: #8A8A92; --o-failed: var(--danger);
+  --t-load: var(--caution); --t-stt: var(--accent); --t-rules: var(--text-3); --t-clean: var(--text-2); --t-paste: var(--line-strong);
+  --k-filler: #2B6CD8; --k-repeat: #C26A00; --k-cutoff: #8A47C2; --k-number: #0E8A7A; --k-word: #C2306B;
+}
+
+/* ---------- 3. Colour: dark. An elevation ladder: each step up is lighter. ---------- */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg-desk: #0E0E10;
+  --mat-window-base: rgba(24,24,26,.62); --mat-sidebar-base: rgba(44,44,48,.55); --mat-menu-base: rgba(40,40,44,.82);
+  --bg-content: #1D1D1F; --bg-sidebar: #232326; --bg-inset: #252527; --bg-raised: #2C2C2E;
+  --fill-field: rgba(255,255,255,.07); --fill-control: rgba(255,255,255,.10); --fill-control-on: rgba(255,255,255,.18);
+  --fill-hover: rgba(255,255,255,.07); --fill-pressed: rgba(255,255,255,.12); --fill-track: rgba(255,255,255,.20);
+  --line: rgba(255,255,255,.10); --line-strong: rgba(255,255,255,.18); --edge: rgba(255,255,255,.12);
+  --text: #ECECEF; --text-2: #B3B3B9; --text-3: #949499; --text-disabled: rgba(236,236,239,.35);
+  --rec: #FF453A;
+  --danger: #D9342B; --danger-text: #FF6961; --danger-soft: rgba(255,105,97,.12);
+  --caution: #FFB340; --caution-text: #FFC266; --caution-soft: rgba(255,179,64,.12);
+  --ok: #30D158; --ok-text: #4CD964;
+  --on-solid: #FFFFFF;
+  --shadow-control: 0 1px 2px rgba(0,0,0,.30);
+  --shadow-solid: 0 1px 2px rgba(0,0,0,.40);
+  --shadow-panel: 0 1px 3px rgba(0,0,0,.30);
+  --shadow-menu: 0 0 0 .5px rgba(255,255,255,.14), 0 12px 40px rgba(0,0,0,.55);
+  --shadow-window: 0 0 0 .5px rgba(255,255,255,.14), 0 18px 50px rgba(0,0,0,.60);
+  --shadow-hud: 0 10px 30px rgba(0,0,0,.50);
+  --label-blue: #5B9BFF; --label-purple: #A98BF0; --label-pink: #E57BC0; --label-red: #FF6961;
+  --label-orange: #FF9F45; --label-yellow: #FFD60A; --label-green: #4CD964; --label-teal: #40C8C8;
+  --label-brown: #C9895A; --label-graphite: #98A6B4;
+  --o-pasted: #3D8BFF; --o-none: #8E8E96; --o-failed: var(--danger);
+  --t-load: var(--caution); --t-stt: var(--accent); --t-rules: var(--text-3); --t-clean: var(--text-2); --t-paste: var(--line-strong);
+  --k-filler: #6AA8FF; --k-repeat: #FFB04A; --k-cutoff: #C99BFF; --k-number: #4FD1BE; --k-word: #FF7AA8;
+}
+/* auto: same values as dark. Keep in sync with the block above (check-contrast.mjs fails if they drift). */
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="auto"] {
+    color-scheme: dark;
+    --bg-desk: #0E0E10;
+    --mat-window-base: rgba(24,24,26,.62); --mat-sidebar-base: rgba(44,44,48,.55); --mat-menu-base: rgba(40,40,44,.82);
+    --bg-content: #1D1D1F; --bg-sidebar: #232326; --bg-inset: #252527; --bg-raised: #2C2C2E;
+    --fill-field: rgba(255,255,255,.07); --fill-control: rgba(255,255,255,.10); --fill-control-on: rgba(255,255,255,.18);
+    --fill-hover: rgba(255,255,255,.07); --fill-pressed: rgba(255,255,255,.12); --fill-track: rgba(255,255,255,.20);
+    --line: rgba(255,255,255,.10); --line-strong: rgba(255,255,255,.18); --edge: rgba(255,255,255,.12);
+    --text: #ECECEF; --text-2: #B3B3B9; --text-3: #949499; --text-disabled: rgba(236,236,239,.35);
+    --rec: #FF453A;
+    --danger: #D9342B; --danger-text: #FF6961; --danger-soft: rgba(255,105,97,.12);
+    --caution: #FFB340; --caution-text: #FFC266; --caution-soft: rgba(255,179,64,.12);
+    --ok: #30D158; --ok-text: #4CD964;
+    --on-solid: #FFFFFF;
+    --shadow-control: 0 1px 2px rgba(0,0,0,.30);
+    --shadow-solid: 0 1px 2px rgba(0,0,0,.40);
+    --shadow-panel: 0 1px 3px rgba(0,0,0,.30);
+    --shadow-menu: 0 0 0 .5px rgba(255,255,255,.14), 0 12px 40px rgba(0,0,0,.55);
+    --shadow-window: 0 0 0 .5px rgba(255,255,255,.14), 0 18px 50px rgba(0,0,0,.60);
+    --shadow-hud: 0 10px 30px rgba(0,0,0,.50);
+    --label-blue: #5B9BFF; --label-purple: #A98BF0; --label-pink: #E57BC0; --label-red: #FF6961;
+    --label-orange: #FF9F45; --label-yellow: #FFD60A; --label-green: #4CD964; --label-teal: #40C8C8;
+    --label-brown: #C9895A; --label-graphite: #98A6B4;
+    --o-pasted: #3D8BFF; --o-none: #8E8E96; --o-failed: var(--danger);
+    --t-load: var(--caution); --t-stt: var(--accent); --t-rules: var(--text-3); --t-clean: var(--text-2); --t-paste: var(--line-strong);
+    --k-filler: #6AA8FF; --k-repeat: #FFB04A; --k-cutoff: #C99BFF; --k-number: #4FD1BE; --k-word: #FF7AA8;
+  }
+}
+
+/* ---------- 4. Accent. Fill and text are separate tokens so both meet contrast in both themes. ---------- */
+:root, :root[data-accent="blue"] { --accent: #0A64D8; --on-accent: #FFFFFF; --accent-text-l: #0A5BC4; --accent-text-d: #6AAEFF; }
+:root[data-accent="purple"]   { --accent: #8E44AD; --on-accent: #FFFFFF; --accent-text-l: #8E44AD; --accent-text-d: #DA8FFF; }
+:root[data-accent="pink"]     { --accent: #C2185B; --on-accent: #FFFFFF; --accent-text-l: #C2185B; --accent-text-d: #FF7A9A; }
+:root[data-accent="red"]      { --accent: #C42B1C; --on-accent: #FFFFFF; --accent-text-l: #C42B1C; --accent-text-d: #FF6961; }
+:root[data-accent="orange"]   { --accent: #B35000; --on-accent: #FFFFFF; --accent-text-l: #B35000; --accent-text-d: #FF9F0A; }
+:root[data-accent="yellow"]   { --accent: #FFCC00; --on-accent: #1D1D1F; --accent-text-l: #806600; --accent-text-d: #FFD60A; }
+:root[data-accent="green"]    { --accent: #1E7B34; --on-accent: #FFFFFF; --accent-text-l: #1E7B34; --accent-text-d: #4CD964; }
+:root[data-accent="graphite"] { --accent: #5E5E63; --on-accent: #FFFFFF; --accent-text-l: #5E5E63; --accent-text-d: #C7C7CC; }
+/* Swatches on Look & appearance: every accent at once, whichever is chosen. */
+:root { --sw-blue: #0A64D8; --sw-purple: #8E44AD; --sw-pink: #C2185B; --sw-red: #C42B1C; --sw-orange: #B35000; --sw-yellow: #FFCC00; --sw-green: #1E7B34; --sw-graphite: #5E5E63; }
+
+/* Derived accent tokens. Defined once so every accent and theme gets them. */
+:root {
+  --accent-text: var(--accent-text-l);
+  --accent-hover: color-mix(in srgb, var(--accent) 88%, #FFFFFF);
+  --accent-pressed: color-mix(in srgb, var(--accent) 86%, #000000);
+  --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);         /* suggestion chips, user-message tint */
+  --accent-soft-strong: color-mix(in srgb, var(--accent) 16%, transparent);  /* selected nav row, active toolbar toggle */
+  --focus-ring: color-mix(in srgb, var(--accent) 80%, transparent);
+  --selection: color-mix(in srgb, var(--accent) 24%, transparent);
+  --mat-window: var(--mat-window-base); --mat-sidebar: var(--mat-sidebar-base); --mat-menu: var(--mat-menu-base);
+}
+:root[data-theme="dark"] { --accent-text: var(--accent-text-d); }
+@media (prefers-color-scheme: dark) { :root[data-theme="auto"] { --accent-text: var(--accent-text-d); } }
+
+/* Tinted glass: optional "Look" setting that washes materials with the accent */
+:root[data-glass="tinted"] {
+  --mat-sidebar: color-mix(in srgb, var(--mat-sidebar-base) 82%, var(--accent));
+  --mat-menu: color-mix(in srgb, var(--mat-menu-base) 90%, var(--accent));
+  --mat-window: color-mix(in srgb, var(--mat-window-base) 86%, var(--accent));
+}
+
+/* Liquid Glass (experimental, Settings › Experimental features): the window is one sheet of macOS's own glass,
+   so the panels thin into frosted fills on it. Contrast then depends on the desktop; Regular glass keeps it readable.
+   The Opacity slider sets --frost (0..1, .5 default); the alphas scale with it. */
+:root[data-liquid] { --mat-sidebar: rgba(255,255,255,calc(.36 * var(--frost, .5))); --bg-content: rgba(255,255,255,calc(.96 * var(--frost, .5))); --bg-inset: rgba(255,255,255,calc(1.1 * var(--frost, .5))); }
+:root[data-liquid][data-theme="dark"] { --mat-sidebar: rgba(255,255,255,calc(.08 * var(--frost, .5))); --bg-content: rgba(20,20,22,calc(.84 * var(--frost, .5))); --bg-inset: rgba(255,255,255,calc(.1 * var(--frost, .5))); }
+@media (prefers-color-scheme: dark) { :root[data-liquid][data-theme="auto"] { --mat-sidebar: rgba(255,255,255,calc(.08 * var(--frost, .5))); --bg-content: rgba(20,20,22,calc(.84 * var(--frost, .5))); --bg-inset: rgba(255,255,255,calc(.1 * var(--frost, .5))); } }
+
+/* ---------- 5. Base ---------- */
+html { background: var(--bg-desk); color: var(--text); font: var(--fs-body)/var(--lh-body) var(--font);
+  -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+::selection { background: var(--selection); }
+:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+/* Controls used inside and outside Settings (the update pop-up, the main window): top level, one rule each. */
+/* Dropdowns: a macOS Settings pop-up button (DESIGN.md › Dropdown): a soft rounded rect, no ring or shadow, no hover change; one rule for every page.
+   appearance: none, or WebKit draws its own; the drawn chevrons (a data: image, allowed by img-src in tauri.conf.json) stand in for the native ones. */
+.select { appearance: none; height: 26px; padding: 0 26px 0 10px; border: 0; border-radius: 7px; color: var(--text); font: inherit;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='12' fill='none' stroke='%233C3C43' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1.2 4.6 4 1.8l2.8 2.8M1.2 7.4 4 10.2l2.8-2.8'/%3E%3C/svg%3E") no-repeat right 9px center / 8px 12px, var(--fill-field); text-overflow: ellipsis; }
+.select:active:not(:disabled) { background-color: var(--fill-pressed); }
+:root[data-theme="dark"] .select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='12' fill='none' stroke='%23E5E5EA' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1.2 4.6 4 1.8l2.8 2.8M1.2 7.4 4 10.2l2.8-2.8'/%3E%3C/svg%3E"); }
+@media (prefers-color-scheme: dark) { :root[data-theme="auto"] .select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='12' fill='none' stroke='%23E5E5EA' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1.2 4.6 4 1.8l2.8 2.8M1.2 7.4 4 10.2l2.8-2.8'/%3E%3C/svg%3E"); } }
+/* Button: capsule, 30px (DESIGN.md › Button). Disabled buttons keep their fill and dim their text; every other control dims as a whole. */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-1h); height: var(--h-ctl); box-sizing: border-box; padding: 0 14px; border: 0; border-radius: var(--r-full);
+  background: var(--fill-control); color: var(--text); font: inherit; box-shadow: inset 0 0 0 .5px var(--line-strong), var(--shadow-control); white-space: nowrap;
+  transition: background-color var(--dur-fast) var(--ease-in), transform var(--dur-fast) var(--ease-in); }
+.btn:hover:not(:disabled) { background: color-mix(in srgb, var(--fill-control) 85%, var(--text)); }
+.btn:active:not(:disabled) { transform: scale(.97); }
+.btn:disabled { color: var(--text-disabled); }
+.btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.btn.primary { background: var(--accent); color: var(--on-accent); font-weight: var(--fw-medium); box-shadow: var(--shadow-solid); }
+.btn.primary:hover:not(:disabled) { background: var(--accent-hover); }
+.btn.primary:active:not(:disabled) { background: var(--accent-pressed); }
+.btn.primary:disabled { background: var(--fill-control); box-shadow: inset 0 0 0 .5px var(--line-strong); }
+.btn.danger { background: var(--danger); color: var(--on-solid); font-weight: var(--fw-medium); box-shadow: var(--shadow-solid); }
+.btn.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--danger) 88%, #FFFFFF); }
+.btn.quiet { background: none; box-shadow: none; padding: 0 10px; color: var(--text-2); }
+.btn.quiet:hover:not(:disabled) { background: var(--fill-hover); }
+.btn.icon { width: var(--h-ctl); padding: 0; }
+.btn.sm { height: var(--h-ctl-sm); padding: 0 10px; }
+.btn.icon.sm { width: var(--h-ctl-sm); padding: 0; }
+/* :where keeps these at one class, so a component's own icon size wins. */
+.btn :where(.ic), .search > :where(.ic) { width: var(--ic-sm); height: var(--ic-sm); flex: none; fill: none; stroke: currentColor; stroke-width: var(--ic-stroke); stroke-linecap: round; stroke-linejoin: round; }
+/* Field (DESIGN.md › Field). Invalid: a 1.5px danger ring; the message sits under it. */
+.input { height: var(--h-ctl); box-sizing: border-box; padding: 0 var(--sp-3); border: 0; border-radius: var(--r-md); background: var(--fill-field); color: var(--text); font: inherit;
+  box-shadow: inset 0 0 0 .5px var(--line-strong); caret-color: var(--accent); }
+textarea.input { height: auto; padding: var(--sp-2) var(--sp-3); border-radius: var(--r-lg); line-height: var(--lh-body); }
+.input::placeholder { color: var(--text-3); }
+.input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.input[aria-invalid="true"] { box-shadow: inset 0 0 0 1.5px var(--danger); }
+/* Search: a capsule field with its icon. <label class="search"><svg class="ic">…</svg><input type="search"></label> */
+.search { position: relative; display: flex; align-items: center; }
+.search > .ic { position: absolute; left: 10px; top: 50%; translate: 0 -50%; color: var(--text-3); pointer-events: none; }
+.search input { appearance: none; width: 100%; height: var(--h-ctl); box-sizing: border-box; padding: 0 30px; border: 0; border-radius: var(--r-full); background: var(--fill-field);
+  box-shadow: inset 0 0 0 .5px var(--line-strong); color: var(--text); font: inherit; caret-color: var(--accent); }
+.search input::placeholder { color: var(--text-3); }
+.search input::-webkit-search-cancel-button { display: none; }
+.search input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.select:disabled, .input:disabled { opacity: .45; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* Settings grammar (DESIGN.md › Grouped list): one copy for every Settings page, under .prefs (the page's scroller).
+   Sections sit 24px apart; a section's reserved error line hangs inside that gap, so every gap is the same. */
+.prefs { display: flex; flex-direction: column; gap: var(--sp-5); container-type: inline-size; }
+.prefs section { margin: 0; }
+/* Section heading: a quiet label over its list (docs/settings.html), not a headline. */
+.prefs h2 { margin: 0 0 var(--sp-2); font-size: var(--fs-body); line-height: var(--lh-body); font-weight: var(--fw-semibold); color: var(--text-2); }
+.prefs h2:has(+ .help) { margin-bottom: var(--sp-1); }
+.prefs .help { margin: 0; color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
+.prefs h2 + .help { margin-bottom: var(--sp-3); }
+.prefs .help.after { margin-top: var(--sp-2); }
+/* A drill-in has no heading: its help line tucks up into the page gap, 8px above its list. */
+.prefs section > .help:first-child { margin: calc(-1 * var(--sp-1)) 0 var(--sp-2); }
+/* In-list sub-label, e.g. a vendor heading between two lists. */
+.prefs h3 { margin: var(--sp-3) 0 var(--sp-1); padding: 0 var(--sp-4); font-size: var(--fs-footnote); line-height: var(--lh-footnote); font-weight: var(--fw-semibold); color: var(--text-2); }
+.prefs .list + h3 { margin-top: var(--sp-4); }
+.prefs .list { list-style: none; margin: 0; padding: 0; border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); }
+/* The separator is a background line inset 16px from the left, so it adds no height; hover fills set background-color and keep it. */
+.prefs .list > li + li { background-image: linear-gradient(var(--line), var(--line)); background-repeat: no-repeat; background-position: var(--sp-4) 0; background-size: calc(100% - var(--sp-4)) 1px; }
+/* A list whose rows lead with a radio (models): the line starts at the text, 48px in. */
+.prefs .list.radios > li + li { background-position: 48px 0; background-size: calc(100% - 48px) 1px; }
+.prefs .list > li:first-child { border-radius: var(--r-xl) var(--r-xl) 0 0; }
+.prefs .list > li:last-child { border-radius: 0 0 var(--r-xl) var(--r-xl); }
+.prefs .list > li:only-child { border-radius: var(--r-xl); }
+/* Row: 60px for one line of description (12 + 18 + 2 + 16 + 12): title, description, trailing control. */
+.prefs .row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-3); align-items: center; align-content: center; min-height: 60px; box-sizing: border-box; padding: var(--sp-3) var(--sp-4); }
+.prefs .row > :first-child { min-width: 0; }
+.prefs .name { display: block; font-weight: var(--fw-medium); }
+.prefs .desc { display: block; margin-top: 2px; font-size: var(--fs-footnote); line-height: var(--lh-footnote); color: var(--text-2); }
+/* One line, so rows stay 60px; the full text goes in the row's title. A narrow page lets it wrap. */
+.prefs .row .desc { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* A row that opens a drill-in: a count in --text-3 and a chevron. */
+.prefs .row.go { cursor: default; transition: background-color var(--dur-fast) var(--ease-in); }
+.prefs .row.go:hover { background-color: var(--fill-hover); }
+.prefs .end { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); }
+.prefs .count { color: var(--text-3); font-variant-numeric: tabular-nums; }
+.prefs .chev { display: inline-flex; color: var(--text-3); }
+:where(.prefs, .stage-path) .ic { width: var(--ic); height: var(--ic); flex: none; fill: none; stroke: currentColor; stroke-width: var(--ic-stroke); stroke-linecap: round; stroke-linejoin: round; }
+.prefs .err { margin: var(--sp-1) 0 0; min-height: var(--lh-footnote); color: var(--danger-text); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
+.prefs section > .err:last-child { margin-bottom: calc(-1 * (var(--sp-1) + var(--lh-footnote))); }
+/* A page-wide error line after the last section: 4px under it, not a whole gap. */
+.prefs > .err { margin-top: calc(var(--sp-1) - var(--sp-5)); }
+/* Pill (DESIGN.md › Pill): neutral by default, .status, .caution. */
+:is(.prefs, .stage-path, .regen) .pill { display: inline-flex; align-items: center; gap: var(--sp-1); height: 20px; padding: 0 var(--sp-2); border-radius: var(--r-full); font-size: var(--fs-caption); line-height: var(--lh-caption);
+  font-weight: var(--fw-semibold); white-space: nowrap; flex: none; background: var(--fill-hover); color: var(--text-2); }
+:is(.prefs, .stage-path, .regen) .pill.status { background: var(--accent-soft); color: var(--accent-text); }
+:is(.prefs, .stage-path, .regen) .pill.caution { background: var(--caution-soft); color: var(--caution-text); }
+:is(.prefs, .stage-path, .regen) .pill .ic { width: 12px; height: 12px; }
+/* Allowed / installed: a check plus a word. */
+:is(.prefs, .stage-path) .ok { display: inline-flex; align-items: center; gap: var(--sp-1); color: var(--text-2); white-space: nowrap; }
+:is(.prefs, .stage-path) .ok .ic { width: var(--ic-sm); height: var(--ic-sm); color: var(--ok-text); stroke-width: 2; }
+/* Something you'd copy: a path, an address, a code. */
+.prefs .mono { font: 12px/var(--lh-footnote) var(--font-mono); overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; cursor: text; }
+.prefs .desc .mono { display: inline; }
+/* Keycaps. */
+:is(.prefs, .stage-path) kbd { display: inline-grid; place-items: center; min-width: 20px; height: 20px; box-sizing: border-box; padding: 0 5px; border-radius: var(--r-xs); background: var(--fill-field);
+  box-shadow: inset 0 0 0 .5px var(--line-strong); font: var(--fs-footnote)/1 var(--font); color: var(--text); }
+:is(.prefs, .stage-path) .keys { display: inline-flex; gap: 3px; }
+/* Word chips: tags in a list row, the input at the end (docs/settings.html .chips). */
+.prefs .chips { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); min-height: 60px; box-sizing: border-box; padding: var(--sp-3) var(--sp-4); cursor: text; }
+.prefs .chips:focus-within { box-shadow: inset 0 0 0 2px var(--focus-ring); }
+.prefs .chips input { flex: 1 1 140px; min-width: 120px; height: 24px; padding: 0 var(--sp-1); border: 0; background: none; outline: none; color: var(--text); font: inherit; caret-color: var(--accent); }
+.prefs .chips input::placeholder { color: var(--text-3); }
+.prefs .tag { display: inline-flex; align-items: center; gap: 2px; height: 24px; box-sizing: border-box; padding: 0 var(--sp-1) 0 10px; border-radius: var(--r-full); background: var(--fill-field);
+  box-shadow: inset 0 0 0 .5px var(--line); white-space: nowrap; cursor: default; }
+.prefs .tag button { display: inline-grid; place-items: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: var(--r-full); background: none; color: var(--text-3); }
+.prefs .tag button:hover { background: var(--fill-hover); color: var(--text); }
+.prefs .tag button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.prefs .tag .ic { width: 12px; height: 12px; }
+/* Switch, 38×22. */
+.prefs .switch { appearance: none; width: 38px; height: 22px; margin: 0; border-radius: 11px; position: relative; flex: none; background: var(--fill-track);
+  transition: background var(--dur) var(--ease-out); }
+.prefs .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .3), inset 0 0 0 .5px var(--line-strong); transition: transform var(--dur) var(--ease-out); }
+.prefs .switch:checked { background: var(--accent); }
+.prefs .switch:checked::after { transform: translateX(16px); }
+/* Segmented control: a capsule track, equal segments; the raised thumb is the only cue, so choosing never changes a width. */
+.prefs .seg { display: inline-grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 2px; margin: 0; padding: 3px; border: 0; border-radius: var(--r-full); background: var(--fill-field); }
+.prefs .seg label { position: relative; }
+.prefs .seg input { position: absolute; inset: 0; margin: 0; opacity: 0; }
+.prefs .seg span { display: grid; place-items: center; height: 24px; padding: 0 14px; border-radius: var(--r-full); color: var(--text-2); white-space: nowrap;
+  transition: background-color var(--dur-fast) var(--ease-in), color var(--dur-fast) var(--ease-in); }
+.prefs .seg input:checked + span { background: var(--fill-control-on); color: var(--text); box-shadow: 0 0 0 .5px var(--line-strong), 0 1px 2px rgba(0, 0, 0, .1); }
+.prefs .seg input:focus-visible + span { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+/* Accent swatches: a 24px hit area, a 16px dot in its own colour; the chosen one shows a pip in --on (dark on yellow), so it reads on every colour. */
+.prefs .swatches { display: flex; gap: var(--sp-1); margin: 0; padding: 0; border: 0; min-width: 0; }
+.prefs .sw { --on: #fff; position: relative; display: grid; place-items: center; width: 24px; height: 24px; }
+.prefs .sw:has(input[value="yellow"]) { --on: #1D1D1F; }
+.prefs .sw input { position: absolute; inset: 0; margin: 0; opacity: 0; }
+.prefs .sw .dot { display: grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: var(--c); box-shadow: inset 0 0 0 .5px var(--line-strong); }
+.prefs .sw .pip { width: 6px; height: 6px; border-radius: 50%; background: var(--on); visibility: hidden; }
+.prefs .sw input:checked + .dot .pip { visibility: visible; }
+.prefs .sw input:focus-visible + .dot { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+/* The page's last line (docs/settings.html .foot). */
+.prefs .foot { margin: 0; color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }
+.prefs .foot a { color: var(--accent-text); text-decoration: none; }
+.prefs .foot a:hover { text-decoration: underline; text-underline-offset: 2px; }
+/* Slider: 4px track, accent left of a 20px white knob; --v is the fill's width. A glyph sits at each end. */
+.prefs .slider { display: flex; align-items: center; gap: var(--sp-2); width: 100%; max-width: 260px; color: var(--text-3); }
+.prefs .slider input[type="range"] { appearance: none; display: block; flex: 1; min-width: 0; height: 20px; margin: 0; background: none; }
+.prefs .slider input[type="range"]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: linear-gradient(to right, var(--accent) var(--v, 50%), var(--fill-track) var(--v, 50%)); }
+.prefs .slider input[type="range"]::-webkit-slider-thumb { appearance: none; width: 20px; height: 20px; margin-top: -8px; border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .3), inset 0 0 0 .5px var(--line-strong); }
+.prefs .slider input[type="range"]:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: 10px; }
+/* One disabled look for everything that isn't a button. */
+.prefs .switch:disabled, .prefs .seg:disabled, .prefs .slider:has(input:disabled) { opacity: .45; }
+/* Field row on a drill-in (docs/settings.html .field): label column, control column, the help under the control. `.one` is a 60px row with no help line. */
+.prefs .field { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: var(--sp-1) var(--sp-4); align-items: start; box-sizing: border-box; padding: var(--sp-3) var(--sp-4); }
+.prefs .field.one { min-height: 60px; align-items: center; align-content: center; }
+.prefs .field > label, .prefs .field > .name { font-weight: var(--fw-medium); line-height: var(--h-ctl); }
+.prefs .field .help { grid-column: 2; min-height: var(--lh-footnote); }
+.prefs .field .input, .prefs .field .select { min-width: 0; }
+.prefs .field .select { justify-self: start; max-width: 220px; }
+.prefs .actions { display: flex; gap: var(--sp-2); }
+/* Narrow page: a wide control (select, segmented, keycaps, slider, swatches) drops under its text; switches, checks, buttons and chevrons stay right. */
+@container (max-width: 480px) {
+  .prefs .row:is(.wide, :has(> :is(.select, .seg, .slider, .swatches))) { grid-template-columns: minmax(0, 1fr); gap: var(--sp-2); }
+  .prefs .row:is(.wide, :has(> :is(.select, .seg, .slider, .swatches))) > :last-child { justify-self: start; }
+  .prefs .row.wide > .end { justify-content: flex-start; }
+  .prefs .row .desc { white-space: normal; }
+  .prefs .field { grid-template-columns: minmax(0, 1fr); }
+  .prefs .field .help { grid-column: 1; }
+  .prefs .field > label, .prefs .field > .name { line-height: var(--lh-body); }
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root[data-theme] { --mat-window: var(--bg-inset); --mat-sidebar: var(--bg-sidebar); --mat-menu: var(--bg-raised); --hud-bg: var(--hud-bg-solid); }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root { --dur-fast: 0ms; --dur: 0ms; --dur-slow: 0ms; }
+  *, *::before, *::after { animation-duration: 0s !important; animation-iteration-count: 1 !important; }
+}
+@media (prefers-contrast: more) {
+  :root[data-theme] { --line: var(--line-strong); --text-3: var(--text-2); }
+}

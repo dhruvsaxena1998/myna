@@ -416,10 +416,11 @@ impl Session {
             Err(e) => return (None, fail("No Fast model", e)),
         };
         let backend = ai::provider(&db, &*self.keys, record.id);
+        let budget = if ai::is_agent(&db, record.id) { cleanup::AGENT_BUDGET } else { cleanup::BUDGET };
         let instruction = cleanup::instruction(&db, app).unwrap_or_else(|_| cleanup::DEFAULT.into());
         drop(db);
         match backend {
-            Ok(b) => (Some(model.clone()), cleanup::run(b, &model, &instruction, text, words, self.second * cleanup::BUDGET.as_secs() as u32)),
+            Ok(b) => (Some(model.clone()), cleanup::run(b, &model, &instruction, text, words, self.second * budget.as_secs() as u32)),
             Err(e) => (Some(model), fail("AI didn’t answer", e)),
         }
     }

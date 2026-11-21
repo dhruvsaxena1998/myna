@@ -208,6 +208,31 @@ test("removing a provider confirms, then names the slots and feature models now 
   await expect(page.getByRole("button", { name: "Dismiss" })).toHaveCount(0);
 });
 
+test("dragging a provider's handle reorders the list and saves the order once, on release", async ({ page }) => {
+  await open(page, { providers: [OLLAMA, OR], main: null, fast: null }, `ai_order: () => null`);
+  const names = page.locator(".row.prov .trunc");
+  const grip = page.getByRole("button", { name: "Reorder OpenRouter" }).boundingBox();
+  const first = await page.locator(".row.prov").first().boundingBox();
+  const g = (await grip)!;
+  await page.mouse.move(g.x + g.width / 2, g.y + g.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(g.x + g.width / 2, first!.y + 10, { steps: 5 });
+  await expect(names).toHaveText(["OpenRouter", "Ollama on this Mac"]);
+  expect(await calls(page, "ai_order")).toEqual([]);
+  await page.mouse.up();
+  await expect.poll(() => calls(page, "ai_order")).toEqual([{ ids: [2, 1] }]);
+});
+
+test("the arrow keys on a provider's handle move it, and focus stays on the handle", async ({ page }) => {
+  await open(page, { providers: [OLLAMA, OR], main: null, fast: null }, `ai_order: () => null`);
+  await page.getByRole("button", { name: "Reorder Ollama on this Mac" }).focus();
+  await page.keyboard.press("ArrowUp"); // already first: nothing happens
+  await page.keyboard.press("ArrowDown");
+  await expect.poll(() => calls(page, "ai_order")).toEqual([{ ids: [2, 1] }]);
+  await expect(page.locator(".row.prov .trunc")).toHaveText(["OpenRouter", "Ollama on this Mac"]);
+  await expect(page.getByRole("button", { name: "Reorder Ollama on this Mac" })).toBeFocused();
+});
+
 test("a failed load shows the error, not a blank page", async ({ page }) => {
   await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", models_list: () => [], ai_get: () => { throw "Couldn't read the AI providers: locked" } }`);
   await page.goto("/settings");
@@ -541,3 +566,24 @@ for (const [width, height] of [[880, 520], [640, 420]]) {
     expect(new Set(amber)).toEqual(new Set(["Sends text off this Mac"]));
   });
 }
+
+test("with Agents on, Add offers Claude Code and Codex with no address or key; the row says whose plan it runs on", async ({ page }) => {
+  const look = { theme: "auto", accent: "blue", glass: "clear", liquid: null, experimental: true, nerds: false, agents: true, frost: 50 };
+  await open(page, { providers: [], main: null, fast: null }, `look_get: () => (${JSON.stringify(look)}),
+    ai_add: (a) => ({ id: 4, kind: a.kind, name: a.name, url: "", has_key: false, off_device: true })`);
+  await page.getByRole("button", { name: "Add a provider" }).click();
+  await expect(page.getByLabel("Kind").locator("option")).toHaveText(["OpenAI-compatible", "OpenRouter", "Claude Code (Agent)", "Codex (Agent)"]);
+  await page.getByLabel("Kind").selectOption("claude-code");
+  await expect(page.getByLabel("Name")).toHaveValue("Claude Code");
+  await expect(page.getByLabel("Address")).toHaveCount(0);
+  await expect(page.locator("#add-kind-h")).toHaveText("Runs on your Claude plan; its terms apply. Sends text off your Mac.");
+  await page.getByRole("button", { name: "Add provider" }).click();
+  await expect.poll(() => calls(page, "ai_add")).toEqual([{ kind: "claude-code", name: "Claude Code", url: "", key: "" }]);
+  await expect(page.getByRole("listitem").filter({ hasText: "Agent · Runs on your Claude plan" })).toContainText("Sends text off this Mac");
+});
+
+test("with Agents off, Add offers only Endpoints", async ({ page }) => {
+  await open(page, { providers: [], main: null, fast: null });
+  await page.getByRole("button", { name: "Add a provider" }).click();
+  await expect(page.getByLabel("Kind").locator("option")).toHaveText(["OpenAI-compatible", "OpenRouter"]);
+});

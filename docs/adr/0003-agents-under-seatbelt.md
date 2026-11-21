@@ -15,3 +15,5 @@ We rejected a Linux microVM (shuru) for Phase 1. It is the stronger wall, but it
 - Network stays open in Phase 1; Seatbelt can't allow-list by host without a proxy. With only Myna's read-only tools, nothing in the run can make requests except the CLI itself.
 - `sandbox-exec` has been marked deprecated since 2017, but Codex and Claude Code both rely on it. If Apple removes it, revisit shuru.
 - Verified live for all four CLIs on 2026-11-01 (ticket 27): sign-in works under the profile and Myna's tools answer through the relay. Token refresh under the profile is still unverified.
+
+**Amended 2026-11-20 (first build):** Chat isn't built yet, so no run gets Myna's MCP server or socket: every run has no tools at all (Claude: `--tools ""` with an empty strict MCP config; Codex: features off, read-only sandbox). The Seatbelt profile and the check after each run are as above; Claude's `system/init` must list no tools and no MCP servers, and a Codex run with any item besides messages and reasoning is refused. The MCP relay arrives with Chat.
