@@ -130,6 +130,18 @@ pub fn write_switch(conn: &Connection, key: &str, on: bool) -> rusqlite::Result<
     write_text(conn, key, if on { "1" } else { "0" })
 }
 
+/// Set once setup is done, or at once for a data folder from before setup existed. Until then setup opens at launch.
+pub const ONBOARDED: &str = "onboarded";
+
+/// Whether setup should open at launch. `fresh`: the database was just created. Someone already using Myna skips it.
+pub fn onboard(conn: &Connection, fresh: bool) -> rusqlite::Result<bool> {
+    match read_text(conn, ONBOARDED)? {
+        // Saved as "0" for a new folder, so closing setup part way still opens it next launch.
+        None => write_switch(conn, ONBOARDED, !fresh).map(|_| fresh),
+        v => Ok(v.as_deref() != Some("1")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,6 +149,19 @@ mod tests {
     fn version(dir: &Path) -> i64 {
         Connection::open(dir.join("myna.sqlite")).unwrap()
             .query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap()
+    }
+
+    #[test]
+    fn setup_opens_for_a_new_folder_until_done_and_never_for_an_existing_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        let new = open(&tmp.path().join("new")).unwrap();
+        assert!(onboard(&new, true).unwrap());
+        assert!(onboard(&new, false).unwrap(), "closed part way: opens again next launch");
+        write_switch(&new, ONBOARDED, true).unwrap();
+        assert!(!onboard(&new, false).unwrap());
+        let old = open(&tmp.path().join("old")).unwrap();
+        assert!(!onboard(&old, false).unwrap());
+        assert!(!onboard(&old, true).unwrap(), "marked done at once");
     }
 
     #[test]

@@ -643,6 +643,24 @@ fn addon_folder(app: AppHandle) -> Result<(), String> {
     std::process::Command::new("open").arg(&dir).spawn().map(drop).map_err(|e| format!("Couldn't open {}: {e}", dir.display()))
 }
 
+/// First-run setup, from Set up Myna again in Settings. The page starts over from its first step.
+#[tauri::command]
+fn onboarding_open(app: AppHandle) {
+    open_onboarding(&app);
+    let _ = app.emit_to("onboarding", "onboarding-start", ());
+}
+
+/// Setup's Done: it won't open on its own again.
+#[tauri::command]
+fn onboarding_done(app: AppHandle, d: tauri::State<Data>) -> Result<(), String> {
+    storage::write_switch(&d.db.lock().unwrap(), storage::ONBOARDED, true).map_err(|e| format!("Couldn't save that setup is done: {e}"))?;
+    if let Some(w) = app.get_webview_window("onboarding") {
+        let _ = w.hide();
+        leave_dock(&app);
+    }
+    Ok(())
+}
+
 /// Shows the data folder in Finder.
 #[tauri::command]
 fn storage_reveal(storage: tauri::State<Storage>) -> Result<(), String> {
@@ -1156,6 +1174,7 @@ fn act(app: &AppHandle, todo: Option<Do>) {
         Some(Do::ToggleMeeting) => toggle_meeting(app),
         Some(Do::TellSettings) => {
             let _ = app.emit_to("settings", "voice-fn", ());
+            let _ = app.emit_to("onboarding", "voice-fn", ());
         }
         None => {}
     }
@@ -1175,6 +1194,20 @@ fn open_main(app: &AppHandle) {
     open_window(app, "main");
 }
 
+/// Setup, in the Dock and in front like the main window, so a first launch from Finder can't miss it.
+fn open_onboarding(app: &AppHandle) {
+    let _ = app.set_activation_policy(ActivationPolicy::Regular);
+    open_window(app, "onboarding");
+}
+
+/// Back to the menu bar only, once neither the main window nor setup is showing.
+fn leave_dock(app: &AppHandle) {
+    let open = |l| app.get_webview_window(l).and_then(|w| w.is_visible().ok()).unwrap_or(false);
+    if !open("main") && !open("onboarding") {
+        let _ = app.set_activation_policy(ActivationPolicy::Accessory);
+    }
+}
+
 /// The update pop-up, from About, the manual check, the notification and the menubar item.
 /// Never on its own from an automatic check.
 fn open_update(app: &AppHandle) {
@@ -1185,7 +1218,7 @@ fn open_update(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![pill::pill_hit, dictation_fix, fix_take, debug_on, ai_get, ai_add, ai_remove, ai_order, ai_set, ai_models, ai_test, ai_test_draft, ai_decide_models, ai_decide_set, ai_decide, storage_status, storage_reveal, models_list, model_select, model_download, model_cancel, model_delete, model_add, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, history_keep_get, history_keep_set, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, meeting_get, meeting_set, meeting_text, segments_include, addon_get, addon_disconnect, addon_folder, meeting_retry, meeting_local, meeting_again, meeting_rename, meeting_delete, meeting_audio, meeting_pause, meeting_stt_get, meeting_stt_local, meeting_stt_models, meeting_stt_test, meeting_open, meetings_list, meetings_search, meeting_page, speaker_rename, meeting_running, meeting_toggle, call_start, call_dismiss, call_keep, call_stop, summary_get, summary_pick, summary_delete, summary_edit, summary_run, summary_estimate, summary_model, summary_prefs_get, summary_prefs_set, title_prefs_get, title_prefs_set, summary_templates_get, summary_templates_set, transcript_prefs_get, transcript_prefs_set, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link])
+        .invoke_handler(tauri::generate_handler![pill::pill_hit, dictation_fix, fix_take, debug_on, ai_get, ai_add, ai_remove, ai_order, ai_set, ai_models, ai_test, ai_test_draft, ai_decide_models, ai_decide_set, ai_decide, storage_status, storage_reveal, models_list, model_select, model_download, model_cancel, model_delete, model_add, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, history_keep_get, history_keep_set, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, meeting_get, meeting_set, meeting_text, segments_include, addon_get, addon_disconnect, addon_folder, meeting_retry, meeting_local, meeting_again, meeting_rename, meeting_delete, meeting_audio, meeting_pause, meeting_stt_get, meeting_stt_local, meeting_stt_models, meeting_stt_test, meeting_open, meetings_list, meetings_search, meeting_page, speaker_rename, meeting_running, meeting_toggle, call_start, call_dismiss, call_keep, call_stop, summary_get, summary_pick, summary_delete, summary_edit, summary_run, summary_estimate, summary_model, summary_prefs_get, summary_prefs_set, title_prefs_get, title_prefs_set, summary_templates_get, summary_templates_set, transcript_prefs_get, transcript_prefs_set, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link, onboarding_open, onboarding_done])
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::Updates::default())
         .setup(|app| {
@@ -1199,8 +1232,14 @@ pub fn run() {
                 eprintln!("{e}"); // dev starts empty instead
             }
             let models = base.join("Myna/models");
+            let fresh = !dir.join("myna.sqlite").exists();
+            let mut onboard = false;
             let status = match storage::open(&dir) {
                 Ok(db) => {
+                    onboard = storage::onboard(&db, fresh).unwrap_or_else(|e| {
+                        eprintln!("onboarding: {e}");
+                        false
+                    });
                     let db = Arc::new(Mutex::new(db));
                     let world = Box::new(session::Mac(app.handle().clone()));
                     let tap_limit = std::time::Duration::from_secs(voice::TAP_LIMIT_SECS);
@@ -1339,16 +1378,19 @@ pub fn run() {
                 open_window(app.handle(), "settings"); // never fail silently: Settings shows the error
             } else {
                 watch_updates(app.handle().clone());
+                if onboard {
+                    open_onboarding(app.handle());
+                }
             }
             Ok(())
         })
         .on_window_event(|w, e| {
             // Closing a window hides it; the app lives on in the menubar, and leaves the Dock with the main window.
-            if let (WindowEvent::CloseRequested { api, .. }, "main" | "settings" | "update") = (e, w.label()) {
+            if let (WindowEvent::CloseRequested { api, .. }, "main" | "settings" | "update" | "onboarding") = (e, w.label()) {
                 api.prevent_close();
                 let _ = w.hide();
-                if w.label() == "main" {
-                    let _ = w.app_handle().set_activation_policy(ActivationPolicy::Accessory);
+                if w.label() == "main" || w.label() == "onboarding" {
+                    leave_dock(w.app_handle());
                 }
             }
         })

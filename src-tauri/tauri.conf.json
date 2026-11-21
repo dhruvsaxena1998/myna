@@ -86,6 +86,31 @@
         }
       },
       {
+        "label": "onboarding",
+        "title": "Set up Myna",
+        "url": "/onboarding",
+        "width": 560,
+        "height": 560,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "visible": false,
+        "center": true,
+        "transparent": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 20,
+          "y": 24
+        },
+        "windowEffects": {
+          "effects": [
+            "sidebar"
+          ],
+          "state": "followsWindowActiveState"
+        }
+      },
+      {
         "label": "pill",
         "title": "Voice typing",
         "url": "/pill",
