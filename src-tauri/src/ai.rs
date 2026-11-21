@@ -544,7 +544,7 @@ fn gone(db: &Connection, provider: i64, model: &str) -> bool {
 }
 
 pub fn get(db: &Connection, keys: &dyn Keys) -> Result<State, String> {
-    let mut q = db.prepare("SELECT id, kind, name, url FROM provider ORDER BY id").map_err(|e| e.to_string())?;
+    let mut q = db.prepare("SELECT id, kind, name, url FROM provider ORDER BY position IS NULL, position, id").map_err(|e| e.to_string())?;
     let rows = q.query_map([], record).map_err(|e| e.to_string())?;
     let providers = rows.map(|r| view(r.map_err(|e| e.to_string())?, keys)).collect::<Result<_, _>>()?;
     Ok(State { providers, main: get_route(db, "main")?, fast: get_route(db, "fast")?, decide: feature_get(db, DECIDE)?.0 })
@@ -574,7 +574,7 @@ pub fn add(db: &Connection, keys: &dyn Keys, kind: &str, name: &str, url: &str, 
     if kind == "openrouter" && !key.starts_with("sk-or-") {
         return Err("An OpenRouter key starts with sk-or-".into());
     }
-    db.execute("INSERT INTO provider(kind, name, url) VALUES (?1, ?2, ?3)", params![kind, name, url]).map_err(|e| e.to_string())?;
+    db.execute("INSERT INTO provider(kind, name, url, position) VALUES (?1, ?2, ?3, (SELECT COALESCE(MAX(position), 0) + 1 FROM provider))", params![kind, name, url]).map_err(|e| e.to_string())?;
     let id = db.last_insert_rowid();
     if !key.is_empty() && let Err(e) = keys.set(id, key) {
         let _ = db.execute("DELETE FROM provider WHERE id = ?1", [id]);
@@ -604,6 +604,21 @@ pub fn remove(db: &mut Connection, keys: &dyn Keys, id: i64) -> Result<Vec<Strin
     tx.commit().map_err(|e| e.to_string())?;
     keys.delete(id)?;
     Ok(slots)
+}
+
+/// Saves the order AI providers lists them in; `ids` is every provider, first to last.
+pub fn order(db: &mut Connection, ids: &[i64]) -> Result<(), String> {
+    let tx = db.transaction().map_err(|e| e.to_string())?;
+    let all: i64 = tx.query_row("SELECT COUNT(*) FROM provider", [], |r| r.get(0)).map_err(|e| e.to_string())?;
+    if all != ids.len() as i64 {
+        return Err("The providers changed. Open AI providers again".into());
+    }
+    for (i, id) in ids.iter().enumerate() {
+        if tx.execute("UPDATE provider SET position = ?1 WHERE id = ?2", params![i as i64 + 1, id]).map_err(|e| e.to_string())? != 1 {
+            return Err("The providers changed. Open AI providers again".into());
+        }
+    }
+    tx.commit().map_err(|e| e.to_string())
 }
 
 pub fn set(db: &Connection, slot: &str, provider: i64, model: &str) -> Result<(), String> {
@@ -870,6 +885,20 @@ pub(crate) mod tests {
         assert!(super::adapter(&db, &keys, p.id).is_err(), "an Agent can't transcribe");
         crate::storage::write_text(&db, "exp_agents", "off").unwrap();
         assert_eq!(provider(&db, &keys, p.id).err().unwrap(), AGENTS_OFF, "no silent fallback while off");
+    }
+
+    #[test]
+    fn providers_list_in_the_saved_order_and_a_new_one_goes_last() {
+        let (_t, mut c) = db();
+        let keys = Memory::default();
+        let a = add_ok(&c, &keys, "openai", "A", "http://localhost:1/v1", "").id;
+        let b = add_ok(&c, &keys, "openai", "B", "http://localhost:2/v1", "").id;
+        let names = |c: &Connection| get(c, &keys).unwrap().providers.into_iter().map(|p| p.name).collect::<Vec<_>>();
+        order(&mut c, &[b, a]).unwrap();
+        add_ok(&c, &keys, "openai", "C", "http://localhost:3/v1", "");
+        assert_eq!(names(&c), ["B", "A", "C"]);
+        assert!(order(&mut c, &[a, b]).is_err(), "a stale list that misses C is refused");
+        assert_eq!(names(&c), ["B", "A", "C"]);
     }
 
     #[test]

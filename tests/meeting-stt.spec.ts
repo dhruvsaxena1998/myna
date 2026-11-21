@@ -90,3 +90,10 @@ test("a saved Endpoint names the Local model that keeps muted stretches on this 
   await open(page, { kind: "endpoint", provider: 1, model: "openai/whisper-large-v3" });
   await expect(row(page)).toContainText("What you say while muted stays on this Mac, with Model a.");
 });
+
+test("an Agent isn't offered: Claude Code and Codex take no audio", async ({ page }) => {
+  const CLAUDE = { id: 3, kind: "claude-code", name: "Claude Code", url: "", has_key: false, off_device: true };
+  await open(page, { kind: "local" }, [CLAUDE, LOCAL]);
+  await via(page).selectOption("endpoint");
+  await expect(page.getByRole("combobox", { name: "Provider" }).locator("option")).toHaveText(["Whisper server"]);
+});

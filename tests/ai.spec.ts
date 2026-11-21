@@ -208,6 +208,15 @@ test("removing a provider confirms, then names the slots and feature models now 
   await expect(page.getByRole("button", { name: "Dismiss" })).toHaveCount(0);
 });
 
+test("Move up saves the new order and keeps focus on the moved row", async ({ page }) => {
+  await open(page, { providers: [OLLAMA, OR], main: null, fast: null }, `ai_order: () => null`);
+  await expect(page.getByRole("button", { name: "Move Ollama on this Mac up" })).toBeDisabled();
+  await page.getByRole("button", { name: "Move OpenRouter up" }).click();
+  await expect.poll(() => calls(page, "ai_order")).toEqual([{ ids: [2, 1] }]);
+  await expect(page.getByRole("button", { name: "Move OpenRouter down" })).toBeFocused();
+  await expect(page.locator(".row.prov .trunc")).toHaveText(["OpenRouter", "Ollama on this Mac"]);
+});
+
 test("a failed load shows the error, not a blank page", async ({ page }) => {
   await fakeTauri(page, `{ storage_status: () => "/tmp/Myna", models_list: () => [], ai_get: () => { throw "Couldn't read the AI providers: locked" } }`);
   await page.goto("/settings");

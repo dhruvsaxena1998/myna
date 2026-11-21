@@ -144,6 +144,23 @@
   }
 
   // --- Remove
+  // Moves a provider one place; every model picker lists providers in this order.
+  async function move(i: number, by: -1 | 1) {
+    const was = ai.providers, next = [...was];
+    [next[i], next[i + by]] = [next[i + by], next[i]];
+    error = ""; note = "";
+    ai = { ...ai, providers: next };
+    try {
+      await invoke("ai_order", { ids: next.map((p) => p.id) });
+      await tick();
+      // focus follows the row it moved, onto the other arrow once it reaches an end
+      const id = next[i + by].id, same = document.getElementById(`mv-${by < 0 ? "up" : "down"}-${id}`) as HTMLButtonElement | null;
+      (same?.disabled ? document.getElementById(`mv-${by < 0 ? "down" : "up"}-${id}`) : same)?.focus();
+    } catch (err) {
+      ai = { ...ai, providers: was };
+      error = `Couldn’t move it: ${err}`;
+    }
+  }
   async function remove(p: Provider) {
     error = ""; note = "";
     try {
@@ -316,9 +333,9 @@
 {:else}
   <section aria-labelledby="prov-h">
     <h2 id="prov-h">Providers</h2>
-    <p class="help">Servers on this Mac keep your words on it. Testing is free.</p>
+    <p class="help">Servers on this Mac keep your words on it. Testing is free. Model lists show providers in this order.</p>
     <ul class="list">
-      {#each providers as p (p.id)}
+      {#each providers as p, i (p.id)}
         {@const t = tests[p.id]}
         <li class="row prov">
           {#if confirm === p.id}
@@ -340,6 +357,10 @@
               </span>
             </span>
             <span class="end">
+              {#if providers.length > 1}
+                <button type="button" class="btn icon quiet" id="mv-up-{p.id}" aria-label="Move {p.name} up" title="Move up" disabled={i === 0} onclick={() => move(i, -1)}><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6" /></svg></button>
+                <button type="button" class="btn icon quiet" id="mv-down-{p.id}" aria-label="Move {p.name} down" title="Move down" disabled={i === providers.length - 1} onclick={() => move(i, 1)}><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg></button>
+              {/if}
               <button type="button" class="btn" disabled={t?.st === "run"} onclick={() => test(p)}>Test</button>
               <button type="button" class="btn icon quiet" id="rm-{p.id}" aria-label="Remove {p.name}" onclick={() => (confirm = p.id)}><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" /></svg></button>
             </span>

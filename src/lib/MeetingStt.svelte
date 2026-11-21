@@ -1,7 +1,7 @@
 <!-- Meeting notes › Models: Transcribe with (#45). The Local model is the default; an Endpoint replaces it after the meeting only, and only once its model passes Test. -->
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import type { Ai, Model } from "./AiProviders.svelte";
+  import { isAgent, type Ai, type Model } from "./AiProviders.svelte";
   import HostPill from "./HostPill.svelte";
   import type { Cost, SttPick } from "./meetings";
 
@@ -19,7 +19,8 @@
   let test = $state<{ st: "run" } | { st: "err"; msg: string } | { st: "ok"; c: Check } | null>(null);
   let error = $state("");
 
-  const providers = $derived(ai?.providers ?? []);
+  // Agents take no audio: neither CLI has an audio input.
+  const providers = $derived((ai?.providers ?? []).filter((p) => !isAgent(p.kind)));
   const saved = $derived(value.kind === "endpoint" ? value : null);
   const savedProv = $derived(saved ? providers.find((p) => p.id === saved.provider) : undefined);
   const prov = $derived(providers.find((p) => p.id === pid));
