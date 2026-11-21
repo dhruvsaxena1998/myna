@@ -16,7 +16,10 @@ Single-context: root `GLOSSARY.md` + `docs/adr/`. See `docs/agents/domain.md`.
 
 ### Worktrees
 
-After creating a git worktree, run `scripts/worktree-setup.sh` in it: copies the gitignored local files (`.env.local`, `.scratch/`, `.impeccable/`), pins cmake for mise, runs `pnpm install`.
+- After creating a git worktree, run `scripts/worktree-setup.sh` in it: copies the gitignored local files (`.env.local`, `.scratch/`, `.impeccable/`), pins cmake for mise, runs `pnpm install`.
+- Use worktrunk for managing worktrees `wt` 
+- Remember to cleanup storage and worktree after the work has been merged.
+- Work with no GitHub ticket (ad-hoc fixes): commit and push straight to `main`, no PR.
 
 ### Compatibility: a user's data outlives the build
 
