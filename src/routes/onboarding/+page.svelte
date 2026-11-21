@@ -12,7 +12,7 @@
   import { PRESS, Recorder } from "$lib/recorder.svelte";
   import { keycaps } from "$lib/shortcut";
   import ModelList from "$lib/ModelList.svelte";
-  import { watchDownloads } from "$lib/downloads.svelte";
+  import { dl, watchDownloads } from "$lib/downloads.svelte";
 
   let { data } = $props();
   let voice = $derived(data.voice); // assignable: saved picks show at once
@@ -63,6 +63,7 @@
       }
       if (at === "done") return void (await invoke("onboarding_done"));
       step++;
+      if (at === "models") await builtIn();
     } catch (e) {
       error = String(e);
     }
@@ -95,6 +96,13 @@
   let sttActive = $derived(stt?.active ?? null); // assignable: ModelList binds it
   let diarActive = $derived(diar?.active ?? null);
   const apple = $derived(stt?.models.find((m) => m.system && !m.needs));
+  // A pick that isn't downloaded can't type anything yet: start on Apple Speech, which is built in.
+  async function builtIn() {
+    const pick = stt?.models.find((m) => m.id === sttActive);
+    if (!apple?.installed || pick?.installed || dl.installed[pick?.id ?? ""]) return;
+    await invoke("model_select", { task: "stt", id: apple.id });
+    sttActive = apple.id;
+  }
 </script>
 
 {#snippet mark(ok: boolean)}{#if ok}<span class="ok"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>Works</span>{/if}{/snippet}
