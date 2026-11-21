@@ -1,11 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The main window, Settings, the update pop-up and the dictation pill",
+  "description": "The main window, Settings, setup, the update pop-up and the dictation pill",
   "windows": [
     "main",
     "settings",
     "update",
+    "onboarding",
     "pill"
   ],
   "permissions": [

@@ -1,6 +1,6 @@
 # 02: Onboarding to a working app
 
-**Status:** draft
+**Status:** built on `feat/onboarding` (2026-11-21), awaiting a clean-Mac test
 **Spec stories:** 1, 2, 3, 5a–5d
 **Depends on:** 01, 03; then grows as 04/05/09 land
 
@@ -27,3 +27,15 @@ First launch takes a new user, including a teammate who has never seen the app, 
 ## Open questions for you
 - Which permissions are asked in onboarding vs. on first use?
 - Skip the model download if the user is offline, or block?
+
+## Tickets (2026-11-21)
+- 02.1 Setup window at first launch; existing installs marked done; reopens until Done. **Built.**
+- 02.2 What to help with: Voice typing / Meeting notes, both on. **Built.** (Language you speak: not in setup yet.)
+- 02.3 Permissions step, only the ones the picked parts need. **Built** (reuses Permissions.svelte).
+- 02.4 Voice typing key: recorder, fn + 🌐 Do Nothing hint. **Built.** (No preset buttons, no Hold/Tap.)
+- 02.5 Models: recommended STT (+ Who for meetings), progress, cancel, retry; Apple Speech meanwhile. **Built.**
+- 02.6 Browser add-on step (Meetings only). **Built** (reuses BrowserAddon.svelte).
+- 02.7 Finish screen: the key to try, where Start meeting is. **Built.**
+- 02.8 Settings › General › Set up Myna again. **Built.**
+- 02.9 Turning a part on later walks only its missing steps. Not built: Settings already shows permissions inline.
+- 02.10 Clean-Mac test: first dictation + first recording via setup alone. Open.

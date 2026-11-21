@@ -1,4 +1,4 @@
-<!-- General (docs/settings.html, VIEWS.general): Appearance, Updates, Your data, the experimental switch, the license credit. -->
+<!-- General (docs/settings.html, VIEWS.general): Appearance, Updates, Your data, Setup, the experimental switch, the license credit. -->
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
@@ -153,6 +153,16 @@
     </li>
   </ul>
   <p class="err" role="status">{errors.data}</p>
+</section>
+
+<section aria-labelledby="setup-h">
+  <h2 id="setup-h">Setup</h2>
+  <ul class="list">
+    <li class="row">
+      <span><span class="name">First-run setup</span><span class="desc">Walk through it again: what to use, permissions, your key and models.</span></span>
+      <button class="btn" onclick={() => invoke("onboarding_open")}>Set up Myna again</button>
+    </li>
+  </ul>
 </section>
 
 <section aria-labelledby="exp-h">
