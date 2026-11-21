@@ -86,9 +86,16 @@ pub fn place(app: &AppHandle, place: String) {
     });
 }
 
+/// The pill shows it; setup's key test listens too.
+fn tell(app: &AppHandle, v: serde_json::Value) {
+    for w in ["pill", "onboarding"] {
+        let _ = app.emit_to(w, "dictation", &v);
+    }
+}
+
 /// Shows "writing", "cleaning", "added" or "idle" (nothing) on the pill.
 pub fn show(app: &AppHandle, state: &str) {
-    let _ = app.emit_to("pill", "dictation", serde_json::json!({ "state": state }));
+    tell(app, serde_json::json!({ "state": state }));
 }
 
 /// Shows the meeting recording pill, for a meeting that started at `started` (unix ms), or hides it. `mic` is
@@ -141,17 +148,17 @@ fn inside(r: [f64; 4], at: NSPoint, frame: objc2_foundation::NSRect) -> bool {
 
 /// Shows "Added without cleanup": the words went in as the rules left them, and `reason` says why.
 pub fn fallback(app: &AppHandle, reason: &str) {
-    let _ = app.emit_to("pill", "dictation", serde_json::json!({ "state": "fallback", "reason": reason }));
+    tell(app, serde_json::json!({ "state": "fallback", "reason": reason }));
 }
 
 /// Shows "listening": `hold` says let go of `key` to paste; otherwise press it again, before `limit` seconds run out.
 pub fn listening(app: &AppHandle, hold: bool, key: &str, limit: u64) {
-    let _ = app.emit_to("pill", "dictation", serde_json::json!({ "state": "listening", "hold": hold, "key": key, "limit": limit }));
+    tell(app, serde_json::json!({ "state": "listening", "hold": hold, "key": key, "limit": limit }));
 }
 
 /// Shows an error: what went wrong, and what to do about it.
 pub fn error(app: &AppHandle, title: &str, hint: &str) {
-    let _ = app.emit_to("pill", "dictation", serde_json::json!({ "state": "error", "title": title, "hint": hint }));
+    tell(app, serde_json::json!({ "state": "error", "title": title, "hint": hint }));
 }
 
 /// The mic loudness for the level bars, 0 to 1.

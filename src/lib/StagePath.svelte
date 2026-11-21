@@ -40,10 +40,10 @@
           {:else if id === "listen"}{mode === "hold" ? "Hold" : "Tap"}
             {#if accel}<span class="keys" role="img" aria-label={spoken(accel)}>{#each keycaps(accel) as k}<kbd>{k}</kbd>{/each}</span>{:else}no key set{/if}
           {:else if id === "understand"}
-            {#if installed}<span class="ok"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>{model}</span>
+            {#if installed}<span class="ok" title={model}><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg><span class="clip">{model}</span></span>
             {:else if pct != null}Downloading {pct}%
             {:else}Model not downloaded{/if}
-          {:else}{paste === "clipboard" ? "Paste" : "Type"}{#if fast}<span aria-hidden="true">·</span><span class="clip">{fast.model}</span>{#if fast.off}<HostPill off />{/if}{/if}{/if}
+          {:else}{paste === "clipboard" ? "Paste" : "Type"}{#if fast}<span aria-hidden="true">·</span><span class="clip" title={fast.model}>{fast.model}</span>{#if fast.off}<HostPill off />{/if}{/if}{/if}
         </span>
       {/key}
     </button>
@@ -51,8 +51,12 @@
 </nav>
 
 <style>
-  /* Three columns, the last a little wider for the cleanup model: the gaps between stages never change, and a changed value moves nothing; values end in an ellipsis. */
-  .stage-path { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1.4fr); align-items: start; min-width: 0; max-width: 640px; }
+  /* Listen and Understand keep their width; Write takes what is left (a long cleanup model ends in an ellipsis, whole on hover). */
+  .stage-path { flex: 1; display: flex; align-items: flex-start; min-width: 0; }
+  /* Write (the long cleanup model) gives up room first, down to a floor; then Listen and Understand end in an ellipsis too. */
+  .stage-path > .stage { flex: 0 1 auto; }
+  .stage-path > .stage:last-child { flex: 1 1 0; min-width: 72px; }
+  .link { flex: none; }
   .stage { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; padding: 2px var(--sp-2); margin: 0 calc(-1 * var(--sp-2)); border: 0; border-radius: var(--r-sm); background: none; text-align: left; font: inherit; color: inherit;
     transition: background-color var(--dur-fast) var(--ease-in); }
   .stage:hover { background: var(--fill-hover); }
@@ -64,7 +68,7 @@
   .sv { display: flex; align-items: center; gap: var(--sp-1); max-width: 100%; height: var(--lh-footnote); font-size: var(--fs-footnote); line-height: var(--lh-footnote); color: var(--text-3);
     white-space: nowrap; overflow: hidden; font-variant-numeric: tabular-nums; }
   .sv :global(kbd) { height: 16px; min-width: 16px; padding: 0 4px; }
-  .sv :global(.ok) { color: inherit; }
+  .sv :global(.ok) { color: inherit; min-width: 0; }
   .sv :global(.ok .ic) { width: 12px; height: 12px; }
   .sv :global(.pill) { height: 16px; padding: 0 6px; }
   /* A chevron centred on the names' line (2px padding + (20 − 14) / 2). */

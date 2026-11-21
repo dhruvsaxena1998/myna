@@ -11,14 +11,16 @@
   import { onMount } from "svelte";
 
   // `rows`: just the `<li>` rows, for a list that already exists (Listen's, under Use voice typing).
-  let { initial, kinds = ["mic", "ax"], rows: bare = false }: { initial: Perms; kinds?: Kind[]; rows?: boolean } = $props();
+  // Bind `initial` to keep what was granted when this unmounts (setup's Back and Continue).
+  let { initial = $bindable(), kinds = ["mic", "ax"], rows: bare = false }: { initial: Perms; kinds?: Kind[]; rows?: boolean } = $props();
 
-  let perms = $derived(initial); // assignable: refreshed on focus and after asking
-  const refresh = async () => (perms = await invoke<Perms>("permissions_state"));
+  let perms = $derived(initial); // assignable: refreshed on mount, on focus and after asking
+  const refresh = async () => (perms = initial = await invoke<Perms>("permissions_state"));
   // Back from System Settings with Accessibility still off: the stale-entry hint shows, and only then.
   let opened = $state(false), back = $state(false);
   // The user switches things on in System Settings, then comes back.
   onMount(() => {
+    refresh(); // the page loaded its copy when the window opened; something may be allowed since
     const off = getCurrentWindow().onFocusChanged(({ payload }) => {
       if (!payload) return;
       if (opened) back = true;

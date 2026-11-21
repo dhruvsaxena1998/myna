@@ -9,7 +9,8 @@
   import { fuzzy } from "$lib/fuzzy";
 
   // `search`: false for a short list, like the diarization models. `onchange`: after a pick or a removal, which can change the other speech-to-text task's pick too.
-  let { task, label, help, active = $bindable(), onchange, search = true }: { task: Task; label: string; help: string; active: string | null; onchange?: () => void; search?: boolean } = $props();
+  // `advanced`: false hides adding a model of your own (setup).
+  let { task, label, help, active = $bindable(), onchange, search = true, advanced = true }: { task: Task; label: string; help: string; active: string | null; onchange?: () => void; search?: boolean; advanced?: boolean } = $props();
 
   let error = $state("");
   let q = $state("");
@@ -131,7 +132,7 @@
   <p class="err" role="status">{error}</p>
 </section>
 <p class="help">Sizes are download sizes. A model downloads only when you ask.</p>
-<section aria-labelledby="adv-{task.id}" class="adv">
+{#if advanced}<section aria-labelledby="adv-{task.id}" class="adv">
   <h2 id="adv-{task.id}">Advanced</h2>
   <p class="help">Add your own model for one of these runtimes. A file or folder on this Mac is used where it is, and Remove never deletes it. A Hugging Face repo downloads into Myna’s models folder.</p>
   <form onsubmit={add} novalidate aria-label="Add a model">
@@ -150,7 +151,7 @@
       <button class="btn" disabled={adding || !source.trim()}>Add model</button>
     </div>
   </form>
-</section>
+</section>{/if}
 
 <style>
   /* The shared row (60px, separator, one-line description), with the radio column and the status column on top. */
