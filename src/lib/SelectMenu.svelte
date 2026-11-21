@@ -155,7 +155,9 @@
   @keyframes rise { from { opacity: 0; transform: translateY(4px); } }
   .search { display: block; box-sizing: border-box; width: 100%; margin: 0 0 4px; padding: 4px 8px; border: 0; border-radius: var(--r-sm); background: var(--bg-inset); color: var(--text); font: inherit; outline: none; box-shadow: inset 0 0 0 .5px var(--line); }
   .search:focus-visible { box-shadow: inset 0 0 0 1px var(--accent); }
-  .head { padding: 6px 10px 2px 28px; font-size: var(--fs-caption); line-height: var(--lh-caption); font-weight: var(--fw-semibold); color: var(--text-3); }
+  /* A group's heading (a provider in a model menu): a label a step above its options, a hairline above every group after the first. */
+  .head { padding: 8px 10px 4px 28px; font-size: var(--fs-footnote); line-height: var(--lh-footnote); font-weight: var(--fw-semibold); color: var(--text-2); }
+  .opt + .head { margin-top: 5px; padding-top: 9px; box-shadow: inset 0 .5px 0 var(--line-strong); }
   .opt { display: flex; align-items: center; gap: 4px; min-height: 26px; padding: 0 12px 0 6px; border-radius: var(--r-sm); white-space: nowrap; }
   .opt span { overflow: hidden; text-overflow: ellipsis; }
   .opt.active:not([aria-disabled="true"]) { background: var(--accent); color: var(--on-accent); }

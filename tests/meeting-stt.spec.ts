@@ -6,7 +6,7 @@ const m = { id: "a", name: "Model a", vendor: "V", desc: "d", acc: 4, spd: 4, de
 const OR = { id: 1, kind: "openrouter", name: "OpenRouter", url: "https://openrouter.ai/api/v1", has_key: true, off_device: true };
 const LOCAL = { id: 2, kind: "openai", name: "Whisper server", url: "http://localhost:8000/v1", has_key: false, off_device: false };
 
-async function open(page: Page, stt: unknown = { kind: "local" }, providers: unknown[] = [OR, LOCAL]) {
+async function open(page: Page, stt: unknown = { kind: "local" }, providers: unknown[] = [OR, LOCAL], extra = "") {
   await fakeTauri(page, `{
     storage_status: () => "/tmp/Myna",
     meeting_get: () => ({ on: true, key: "Ctrl+Alt+KeyM", keep_teams: false }),
@@ -21,6 +21,7 @@ async function open(page: Page, stt: unknown = { kind: "local" }, providers: unk
       window.__stt = { kind: "endpoint", provider, model };
       return { ms: 1234, segments: 2, cost: { kind: "usd", usd: 0.0002 } };
     },
+    ${extra}
   }`);
   await page.goto("/settings");
   await page.getByRole("option", { name: "Meeting notes" }).click();
@@ -96,4 +97,13 @@ test("an Agent isn't offered: Claude Code and Codex take no audio", async ({ pag
   await open(page, { kind: "local" }, [CLAUDE, LOCAL]);
   await via(page).selectOption("endpoint");
   await expect(page.getByRole("combobox", { name: "Provider" }).locator("option")).toHaveText(["Whisper server"]);
+});
+
+test("while OpenRouter's list loads, its model menu is already there, disabled, so nothing swaps in later", async ({ page }) => {
+  await open(page, { kind: "local" }, [OR, LOCAL], `meeting_stt_models: () => new Promise(() => {}),`);
+  await via(page).selectOption("endpoint");
+  const model = page.getByRole("combobox", { name: "Transcription model" });
+  await expect(model).toBeDisabled();
+  await expect(model).toContainText("Loading models…");
+  await expect(page.getByRole("textbox", { name: "Transcription model" })).toHaveCount(0);
 });

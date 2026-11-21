@@ -48,6 +48,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { tick } from "svelte";
+  import { flip } from "svelte/animate";
   import HostPill from "./HostPill.svelte";
   import type { Cost } from "./meetings";
 
@@ -144,22 +145,51 @@
   }
 
   // --- Remove
-  // Moves a provider one place; every model picker lists providers in this order.
-  async function move(i: number, by: -1 | 1) {
-    const was = ai.providers, next = [...was];
-    [next[i], next[i + by]] = [next[i + by], next[i]];
+  // Reordering: drag a row's grip, or focus it and press the arrow keys. Every model picker lists providers in this order.
+  async function save(next: Provider[], was: Provider[]) {
+    if (next.every((p, i) => p.id === was[i].id)) return;
     error = ""; note = "";
     ai = { ...ai, providers: next };
     try {
       await invoke("ai_order", { ids: next.map((p) => p.id) });
-      await tick();
-      // focus follows the row it moved, onto the other arrow once it reaches an end
-      const id = next[i + by].id, same = document.getElementById(`mv-${by < 0 ? "up" : "down"}-${id}`) as HTMLButtonElement | null;
-      (same?.disabled ? document.getElementById(`mv-${by < 0 ? "down" : "up"}-${id}`) : same)?.focus();
     } catch (err) {
       ai = { ...ai, providers: was };
       error = `Couldn’t move it: ${err}`;
     }
+  }
+  const moved = (list: Provider[], from: number, to: number) => { const n = [...list]; n.splice(to, 0, ...n.splice(from, 1)); return n; };
+  async function gripKeys(e: KeyboardEvent, i: number) {
+    const to = e.key === "ArrowUp" ? i - 1 : e.key === "ArrowDown" ? i + 1 : -1;
+    if (to < 0 || to >= providers.length) return;
+    e.preventDefault();
+    const id = providers[i].id;
+    save(moved(ai.providers, i, to), ai.providers);
+    await tick();
+    document.getElementById(`grip-${id}`)?.focus(); // moving the row's node drops focus; it stays with the row
+  }
+  // While dragging, the row moves through the list live; the order is saved once, on release. The window follows the
+  // pointer, not the grip: the row's node moves in the list as it goes, which would drop a pointer capture.
+  let drag = $state<{ id: number; was: Provider[]; slots: DOMRect[] } | null>(null);
+  function gripDown(e: PointerEvent, id: number) {
+    if (e.button !== 0) return;
+    e.preventDefault(); // no text selection while dragging
+    const g = e.currentTarget as HTMLElement;
+    g.focus({ preventScroll: true });
+    const rows = [...(g.closest("ul")?.querySelectorAll(":scope > .row.prov") ?? [])];
+    drag = { id, was: ai.providers, slots: rows.map((r) => r.getBoundingClientRect()) };
+  }
+  function gripMove(e: PointerEvent) {
+    if (!drag) return;
+    const from = ai.providers.findIndex((p) => p.id === drag!.id);
+    let to = drag.slots.findIndex((r) => e.clientY < r.bottom);
+    if (to < 0) to = drag.slots.length - 1;
+    if (to !== from) ai = { ...ai, providers: moved(ai.providers, from, to) };
+  }
+  function gripUp() {
+    if (!drag) return;
+    const was = drag.was;
+    drag = null;
+    save(ai.providers, was);
   }
   async function remove(p: Provider) {
     error = ""; note = "";
@@ -292,7 +322,7 @@
   }
 </script>
 
-<svelte:window onpointerdown={outside} />
+<svelte:window onpointerdown={outside} onpointermove={gripMove} onpointerup={gripUp} onpointercancel={gripUp} />
 
 {#snippet pill(off: boolean)}<HostPill {off} />{/snippet}
 <!-- DESIGN.md › Field: an error line starts with an alert icon. -->
@@ -333,11 +363,17 @@
 {:else}
   <section aria-labelledby="prov-h">
     <h2 id="prov-h">Providers</h2>
-    <p class="help">Servers on this Mac keep your words on it. Testing is free. Model lists show providers in this order.</p>
+    <p class="help">Servers on this Mac keep your words on it. Testing is free. Model lists follow this order; drag a row to change it.<span class="sr-only" id="prov-order">Press the up or down arrow to move it.</span></p>
     <ul class="list">
       {#each providers as p, i (p.id)}
         {@const t = tests[p.id]}
-        <li class="row prov">
+        <li class="row prov" class:grab={providers.length > 1} class:dragging={drag?.id === p.id} animate:flip={{ duration: drag?.id === p.id ? 0 : 150 }}>
+          {#if providers.length > 1 && confirm !== p.id}
+            <button type="button" class="grip" id="grip-{p.id}" aria-label="Reorder {p.name}" aria-describedby="prov-order" title="Drag to reorder"
+              onkeydown={(e) => gripKeys(e, i)} onpointerdown={(e) => gripDown(e, p.id)}>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="6" r="1.5" /><circle cx="15" cy="6" r="1.5" /><circle cx="9" cy="12" r="1.5" /><circle cx="15" cy="12" r="1.5" /><circle cx="9" cy="18" r="1.5" /><circle cx="15" cy="18" r="1.5" /></svg>
+            </button>
+          {/if}
           {#if confirm === p.id}
             {@const uses = routeUses(ai, p.id)}
             {@const text = uses ? "Models that use it become Not set." : "Nothing uses it right now."}
@@ -357,10 +393,6 @@
               </span>
             </span>
             <span class="end">
-              {#if providers.length > 1}
-                <button type="button" class="btn icon quiet" id="mv-up-{p.id}" aria-label="Move {p.name} up" title="Move up" disabled={i === 0} onclick={() => move(i, -1)}><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6" /></svg></button>
-                <button type="button" class="btn icon quiet" id="mv-down-{p.id}" aria-label="Move {p.name} down" title="Move down" disabled={i === providers.length - 1} onclick={() => move(i, 1)}><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg></button>
-              {/if}
               <button type="button" class="btn" disabled={t?.st === "run"} onclick={() => test(p)}>Test</button>
               <button type="button" class="btn icon quiet" id="rm-{p.id}" aria-label="Remove {p.name}" onclick={() => (confirm = p.id)}><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" /></svg></button>
             </span>
@@ -470,6 +502,15 @@
   .prov, .dtest { min-height: 80px; }
   /* Each line is reserved, so it truncates (full text in `title`) instead of wrapping on a narrow window. */
   .prov .desc, .dtest .desc, .dec .desc { white-space: nowrap; }
+  /* The reorder handle sits before the row's text; 24px wide keeps a fair hit area for a small glyph. */
+  .row.prov:has(> .grip) { grid-template-columns: auto minmax(0, 1fr) auto; column-gap: var(--sp-1); padding-left: var(--sp-1); }
+  .grip { display: grid; place-items: center; width: 24px; height: var(--h-ctl); padding: 0; border: 0; border-radius: var(--r-sm); background: none; color: var(--text-3); cursor: grab; touch-action: none; }
+  .grip svg { width: var(--ic-sm); height: var(--ic-sm); fill: currentColor; }
+  .grip:hover { color: var(--text-2); }
+  .grip:active { cursor: grabbing; }
+  .grip:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 0; }
+  /* The row being dragged lifts off the list; the others slide past it. */
+  .row.prov.dragging { position: relative; z-index: 1; border-radius: var(--r-md); background-color: var(--bg-content); box-shadow: var(--shadow-menu), inset 0 0 0 .5px var(--line-strong); }
   .desc.test { margin-top: var(--sp-1); color: var(--text-3); font-variant-numeric: tabular-nums; }
   .desc.test.bad { color: var(--danger-text); }
   .err.neutral { color: var(--text-2); }
@@ -497,7 +538,9 @@
   .pop .input { margin-bottom: var(--sp-1); }
   /* Fixed, not max: the list must not resize when models arrive, or the page under it jumps. */
   .pk-list { height: 300px; overflow-y: auto; scrollbar-width: thin; }
-  .pk-h { padding: 6px 10px 2px; font-size: var(--fs-caption); line-height: var(--lh-caption); font-weight: var(--fw-semibold); color: var(--text-3); }
+  /* A provider's heading: a label a step above its models' meta, and a hairline between providers so each group reads as one. */
+  .pk-h { padding: 8px 10px 4px; font-size: var(--fs-footnote); line-height: var(--lh-footnote); font-weight: var(--fw-semibold); color: var(--text-2); }
+  .pk-list > .pk-h:not(:first-child) { margin-top: 6px; padding-top: 10px; box-shadow: inset 0 .5px 0 var(--line-strong); }
   .pk-note { margin: 0; padding: 4px 10px; font-size: var(--fs-footnote); color: var(--text-3); }
   .pk { display: flex; flex-direction: column; align-items: stretch; width: 100%; min-height: 42px; box-sizing: border-box; padding: 4px 10px; border: 0; border-radius: var(--r-sm); background: none; color: var(--text); font: inherit; text-align: left; }
   /* Like a native menu: the item under the pointer or focus fills with the accent. */
