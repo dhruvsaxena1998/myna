@@ -503,10 +503,10 @@ pub struct SttEndpoint {
 }
 
 impl SttEndpoint {
-    /// One chunk, within OpenRouter's 60 s upstream timeout (plus the upload).
-    pub fn send(&self, wav: &[u8]) -> Result<(Vec<crate::runtime::Segment>, Cost), String> {
+    /// One chunk, within OpenRouter's 60 s upstream timeout (plus the upload); `step` ("chunk 3/8") is for the AI log.
+    pub fn send(&self, wav: &[u8], step: Option<String>) -> Result<(Vec<crate::runtime::Segment>, Cost), String> {
         let Some(dir) = &self.log else { return self.api.transcribe(&self.model, wav, 90) };
-        let e = crate::ai_log::Entry { audio_ms: crate::ai_log::wav_ms(wav), limit_s: Some(90), ..crate::ai_log::Entry::new(self.feature, Some(&self.provider), false, Some(&self.model), "transcribe") };
+        let e = crate::ai_log::Entry { audio_ms: crate::ai_log::wav_ms(wav), limit_s: Some(90), step, ..crate::ai_log::Entry::new(self.feature, Some(&self.provider), false, Some(&self.model), "transcribe") };
         let start = crate::ai_log::begin();
         let r = self.api.transcribe(&self.model, wav, 90);
         crate::ai_log::finish(dir, e, start, &r, |e, (segs, cost)| {
@@ -565,7 +565,7 @@ pub fn stt_test(db: &Mutex<Connection>, keys: &dyn Keys, id: i64, model: &str) -
     }
     let e = SttEndpoint { feature: "Test", ..stt_endpoint_for(&db.lock().unwrap(), keys, id, model)? };
     let start = Instant::now();
-    let (segs, cost) = e.send(CLIP).map_err(|e| format!("{model} can't transcribe meetings: {e}"))?;
+    let (segs, cost) = e.send(CLIP, None).map_err(|e| format!("{model} can't transcribe meetings: {e}"))?;
     if segs.is_empty() {
         return Err(format!("{model} can't transcribe meetings: it sent no segment timestamps"));
     }
@@ -1596,10 +1596,11 @@ pub(crate) mod tests {
         feature_set(&c, STT, &format!("{id}|whisper-1")).unwrap();
         log_on(&c, true);
         let e = stt_endpoint(&c, &keys).unwrap().unwrap();
-        e.send(CLIP).unwrap();
+        e.send(CLIP, Some("chunk 1/1".into())).unwrap();
         let l = crate::ai_log::list(tmp.path(), None, false);
         let x = crate::ai_log::get(tmp.path(), &l[0].id).unwrap();
         assert_eq!((x.feature.as_str(), x.method.as_deref(), x.provider.as_deref(), x.model.as_deref(), x.cost), ("Meeting speech-to-text", Some("transcribe"), Some("Cloud"), Some("whisper-1"), Some(Cost::Usd { usd: 0.0002 })));
+        assert_eq!(x.step.as_deref(), Some("chunk 1/1"));
         assert!(x.segments.unwrap().contains("This short clip."));
         assert!((4000..7000).contains(&x.audio_ms.unwrap()), "{:?}", x.audio_ms);
         let file = std::fs::read(tmp.path().join("ai-log.jsonl")).unwrap();

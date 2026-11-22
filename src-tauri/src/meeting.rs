@@ -1220,14 +1220,14 @@ impl Meetings {
                 s.spawn(move || crate::ai_log::about(about, || loop {
                     let i = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     let Some(chunk) = chunks.get(i) else { break };
-                    let wav = wav_bytes(chunk);
-                    let mut r = e.send(&wav);
+                    let (wav, step) = (wav_bytes(chunk), format!("chunk {}/{}", i + 1, chunks.len()));
+                    let mut r = e.send(&wav, Some(step.clone()));
                     for k in 0..RETRIES {
                         if r.is_ok() {
                             break;
                         }
                         std::thread::sleep(self.backoff * 2u32.pow(k));
-                        r = e.send(&wav);
+                        r = e.send(&wav, Some(step.clone()));
                     }
                     let _ = tx.send((i, r));
                 }));

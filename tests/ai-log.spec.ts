@@ -91,26 +91,28 @@ test("an empty AI log says so", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "No AI calls yet" })).toBeVisible(); // DESIGN.md: a heading, one sentence
   await expect(page.getByText("Use a feature that calls an AI provider and it shows up here.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Clear all" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Errors only" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Open AI providers" }).click();
+  expect(await calls(page, "settings_open")).toEqual([{ page: "ai" }]);
 });
 
-test("opening a call shows its details and every section it has", async ({ page }) => {
+test("opening a call shows its details and every section it has, the reason it failed first", async ({ page }) => {
   await go(page);
   await rows(page).nth(0).click();
   expect(await calls(page, "ai_log_get")).toEqual([{ id: "c" }]);
-  await expect(page.getByRole("heading", { name: "Summary · part 3/7" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Summary · part 3/7", level: 1 })).toBeVisible(); // the toolbar names the call
+  await expect(page.locator(".content .meta").first()).toContainText("Streamed chat"); // not "chat_stream"
   const details = page.getByRole("region", { name: "Details" });
   for (const t of ["OpenRouter", "Endpoint", "openai/gpt-5-mini", "OK", "420 ms", "2.31 s", "60 s", "1,200 in · 85 out", "$0.00040"]) await expect(details).toContainText(t);
-  for (const s of ["System prompt", "Prompt", "Text", "Raw reply"]) await expect(page.getByRole("region", { name: s, exact: true })).toBeVisible();
+  for (const s of ["System prompt", "Prompt", "Text"]) await expect(page.getByRole("region", { name: s, exact: true })).toBeVisible();
   await expect(page.getByRole("region", { name: "Error", exact: true })).toHaveCount(0); // only what the call has
-  // JSON replies are pretty-printed, in monospace.
-  const raw = page.getByRole("region", { name: "Raw reply" }).locator("pre");
-  await expect(raw).toContainText('"choices": [');
-  expect(await raw.evaluate((e) => getComputedStyle(e).fontFamily)).toMatch(/mono/i);
-  await page.getByRole("button", { name: "All calls" }).click();
+  await expect(page.getByRole("region", { name: /Raw reply/ })).toHaveCount(0); // the raw reply isn't shown
+  await page.getByRole("main").getByRole("button", { name: "AI log" }).click();
   await rows(page).nth(1).click();
   await expect(page.getByRole("region", { name: "Details" })).toContainText("On your plan");
+  await expect(page.locator("section.card").nth(1)).toHaveAccessibleName("Error"); // straight under Details
   await expect(page.getByRole("region", { name: "Error", exact: true })).toContainText("AI took too long");
-  await page.getByRole("button", { name: "All calls" }).click();
+  await page.getByRole("main").getByRole("button", { name: "AI log" }).click();
   await rows(page).nth(2).click();
   const decision = page.getByRole("region", { name: "Decision details" });
   for (const t of ["Which app?", "Mail, Slack", "Pick one.", "chat", "Slack (80% sure)"]) await expect(decision).toContainText(t);
@@ -128,8 +130,8 @@ test("Copy puts the section's text on the clipboard", async ({ page }) => {
   await rows(page).nth(0).click();
   await page.getByRole("button", { name: "Copy system prompt" }).click();
   await expect(page.getByRole("region", { name: "System prompt" }).getByRole("button")).toHaveText("Copied");
-  await page.getByRole("button", { name: "Copy raw reply" }).click();
-  expect(await calls(page, "text_copy")).toEqual([{ text: "You write meeting summaries." }, { text: JSON.stringify({ choices: [{ message: { content: "The team agreed to ship Friday." } }] }, null, 2) }]);
+  await page.getByRole("button", { name: "Copy prompt" }).click();
+  expect(await calls(page, "text_copy")).toEqual([{ text: "You write meeting summaries." }, { text: "Summarise this transcript part." }]);
 });
 
 test("Errors only narrows the list", async ({ page }) => {
@@ -141,36 +143,61 @@ test("Errors only narrows the list", async ({ page }) => {
   await expect(rows(page)).toHaveCount(3);
 });
 
-test("a meeting's or a dictation's calls are one row; opening it lists them, and a streamed raw reply is indented", async ({ page }) => {
+test("a meeting's or a dictation's calls are one row, named by what it was; opening it lists them in the order they ran", async ({ page }) => {
   const at = Date.now() - 60e3;
   const entries = [
-    { id: "m2", at: at + 2, feature: "Summary", entity: "meeting:7", method: "chat_stream", outcome: "error", error: "boom", total_ms: 200,
-      raw: 'data: {"choices":[{"delta":{"content":"Hi"}}]}\n\ndata: [DONE]\n' },
-    { id: "m1", at: at + 1, feature: "Title", entity: "meeting:7", method: "chat", outcome: "ok", total_ms: 100 },
-    { id: "d1", at, feature: "LLM cleanup", entity: "dictation:5", method: "chat", outcome: "ok", total_ms: 50 },
+    { id: "m4", at: at + 9000, feature: "Summary", entity: "meeting:7", method: "chat_stream", outcome: "error", error: "boom", total_ms: 1000, provider: "OpenRouter", model: "gpt" },
+    { id: "m3", at: at + 5000, feature: "Title", entity: "meeting:7", method: "chat", outcome: "ok", text: "Weekly standup", total_ms: 1000, provider: "OpenRouter", model: "gpt" },
+    { id: "m2", at: at + 500, feature: "Meeting speech-to-text", step: "chunk 2/2", entity: "meeting:7", method: "transcribe", outcome: "ok", total_ms: 2000, provider: "Groq", model: "whisper" },
+    { id: "m1", at, feature: "Meeting speech-to-text", step: "chunk 1/2", entity: "meeting:7", method: "transcribe", outcome: "ok", total_ms: 2000, provider: "Groq", model: "whisper" },
+    { id: "d1", at: at - 60e3, feature: "LLM cleanup", entity: "dictation:5", method: "chat", outcome: "ok", text: "Ship it on Friday.", total_ms: 50, provider: "OpenRouter", model: "gpt" },
   ];
+  const all = JSON.stringify(entries);
   await fakeTauri(page, `{
     storage_status: () => "/tmp/Myna", models_list: () => [], look_get: () => (${JSON.stringify(look(true, true))}), look_set: () => {},
-    ai_log_list: () => ${JSON.stringify(entries)}.map(${SUMMARY}).map((s, i) => ({ ...s, entity: ${JSON.stringify(entries)}[i].entity })),
-    ai_log_get: ({ id }) => ${JSON.stringify(entries)}.find((e) => e.id === id) ?? null, text_copy: () => {},
+    ai_log_list: () => ${all}.map((e) => ({ ...(${SUMMARY})(e), entity: e.entity })),
+    ai_log_get: ({ id }) => ${all}.find((e) => e.id === id) ?? null, text_copy: () => {},
   }`);
   await page.goto("/main");
   await nav(page).click();
   await expect(rows(page)).toHaveCount(2);
-  await expect(rows(page).nth(0)).toContainText("Meeting");
-  await expect(rows(page).nth(0)).toContainText("2 calls");
-  await expect(rows(page).nth(0)).toContainText("Title, Summary");
-  await expect(rows(page).nth(0)).toContainText("1 failed");
-  await expect(rows(page).nth(1)).toContainText("Dictation");
+  const meeting = rows(page).nth(0);
+  await expect(meeting.locator(".name")).toHaveText("Weekly standup"); // its Title's answer
+  await expect(meeting.locator(".meta")).toHaveText(/^Meeting · Today \d\d:\d\d · 4 calls$/);
+  await expect(meeting.locator(".nums")).toHaveText("4.50 s"); // the two chunks overlap: 2.5 s, then 1 s and 1 s
+  await expect(meeting).toContainText("1 failed");
+  await expect(rows(page).nth(1).locator(".name")).toHaveText("Ship it on Friday.");
+  await expect(rows(page).nth(1).locator(".meta")).toContainText("Dictation");
+
+  await meeting.click();
+  await expect(page.getByRole("heading", { name: "Weekly standup", level: 1 })).toBeVisible();
+  await expect(page.locator(".sub")).toHaveText("Meeting · 4 calls · 4.50 s · OpenRouter · gpt"); // the usual model, once
+  await expect(rows(page).locator(".name")).toHaveText(["Meeting speech-to-text · chunk 1/2", "Meeting speech-to-text · chunk 2/2", "Title", "Summary"]);
+  await expect(rows(page).nth(0).locator(".meta")).toContainText("Groq · whisper"); // only where it differs
+  await expect(rows(page).nth(2).locator(".meta")).not.toContainText("gpt");
+  await page.getByRole("button", { name: "Errors only" }).click(); // works inside a meeting too
+  await expect(rows(page)).toHaveCount(1);
   await rows(page).nth(0).click();
-  await expect(page.getByRole("heading", { name: "Meeting", level: 2 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Summary", level: 1 })).toBeVisible();
+  await page.getByRole("button", { name: "Weekly standup" }).click(); // the breadcrumb goes back to the meeting
+  await expect(rows(page)).toHaveCount(1);
+  await page.getByRole("button", { name: "Errors only" }).click();
+  await expect(rows(page)).toHaveCount(4);
+  await page.getByRole("main").getByRole("button", { name: "AI log" }).click();
   await expect(rows(page)).toHaveCount(2);
-  await rows(page).nth(0).click();
-  await expect(page.getByRole("region", { name: "Raw reply" }).locator("pre")).toHaveText('data:\n{\n  "choices": [\n    {\n      "delta": {\n        "content": "Hi"\n      }\n    }\n  ]\n}\n\ndata: [DONE]');
-  await page.getByRole("button", { name: "Back" }).click();
-  await expect(rows(page)).toHaveCount(2);
-  await page.getByRole("button", { name: "All calls" }).click();
-  await expect(rows(page)).toHaveCount(2);
+});
+
+test("each view opens at its top", async ({ page }) => {
+  const entries = Array.from({ length: 30 }, (_, i) => ({ id: "t" + i, at: Date.now() - i * 60e3, feature: "Test", method: "check", outcome: "ok", total_ms: 10 }));
+  await fakeTauri(page, `{
+    storage_status: () => "/tmp/Myna", models_list: () => [], look_get: () => (${JSON.stringify(look(true, true))}), look_set: () => {},
+    ai_log_list: () => ${JSON.stringify(entries)}, ai_log_get: ({ id }) => ${JSON.stringify(entries)}.find((e) => e.id === id),
+  }`);
+  await page.goto("/main");
+  await nav(page).click();
+  await rows(page).last().click();
+  await expect(page.getByRole("region", { name: "Details" })).toBeVisible();
+  expect(await page.locator(".content").evaluate((e) => e.scrollTop)).toBe(0);
 });
 
 test("Clear all asks first, then empties the AI log", async ({ page }) => {
