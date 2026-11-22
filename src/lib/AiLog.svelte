@@ -27,8 +27,12 @@
   let timer: ReturnType<typeof setTimeout>;
 
   $effect(() => {
-    invoke<Summary[]>("ai_log_list", {}).then((r) => (calls = r), (err) => (error = String(err)));
-    const un = listen<Summary>("ai-log", ({ payload }) => (calls = [payload, ...calls]));
+    // A call that lands before the list does stays on top, once.
+    invoke<Summary[]>("ai_log_list", {}).then((r) => {
+      const seen = new Set(calls.map((c) => c.id));
+      calls = [...calls, ...r.filter((c) => !seen.has(c.id))];
+    }, (err) => (error = String(err)));
+    const un = listen<Summary>("ai-log", ({ payload }) => (calls = [payload, ...calls.filter((c) => c.id !== payload.id)]));
     return () => void un.then((u) => u());
   });
 
@@ -145,7 +149,8 @@
     {:else if !calls.length}
       <div class="empty"><h3>No AI calls yet</h3><p>Use a feature that calls an AI provider and it shows up here.</p></div>
     {:else}
-      <div class="empty"><h3>No calls match</h3><p>Pick All features or turn off Errors only to see the rest.</p></div>
+      <div class="empty"><h3>No calls match</h3><p>Pick All features or turn off Errors only to see the rest.</p>
+        <button class="btn" onclick={() => { f.feature = "all"; f.errors = false; }}>Show all calls</button></div>
     {/if}
     <p class="err" role="status">{error}</p>
   </div>
@@ -173,6 +178,7 @@
   .empty { padding: var(--sp-6) var(--sp-4); text-align: center; border-radius: var(--r-xl); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--line); }
   .empty h3 { margin: 0 0 var(--sp-1); font-size: var(--fs-title3); line-height: var(--lh-title3); font-weight: var(--fw-semibold); }
   .empty p { margin: 0; color: var(--text-2); }
+  .empty .btn { margin-top: var(--sp-3); }
   .top { margin-bottom: var(--sp-2); }
   .back { display: inline-flex; align-items: center; gap: 2px; min-height: 24px; margin-left: -4px; padding: 0 4px 0 0; border: 0; background: none; font: inherit; color: var(--accent-text); border-radius: var(--r-sm); }
   .back:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }

@@ -496,6 +496,8 @@ pub struct SttEndpoint {
     pub model: String,
     pub off: bool,
     api: OpenAi,
+    /// Who the AI log records the call as.
+    feature: &'static str,
     /// The data folder while the AI log is on.
     log: Option<std::path::PathBuf>,
 }
@@ -504,7 +506,7 @@ impl SttEndpoint {
     /// One chunk, within OpenRouter's 60 s upstream timeout (plus the upload).
     pub fn send(&self, wav: &[u8]) -> Result<(Vec<crate::runtime::Segment>, Cost), String> {
         let Some(dir) = &self.log else { return self.api.transcribe(&self.model, wav, 90) };
-        let e = crate::ai_log::Entry { audio_ms: crate::ai_log::wav_ms(wav), limit_s: Some(90), ..crate::ai_log::Entry::new("Meeting speech-to-text", Some(&self.provider), false, Some(&self.model), "transcribe") };
+        let e = crate::ai_log::Entry { audio_ms: crate::ai_log::wav_ms(wav), limit_s: Some(90), ..crate::ai_log::Entry::new(self.feature, Some(&self.provider), false, Some(&self.model), "transcribe") };
         let start = crate::ai_log::begin();
         let r = self.api.transcribe(&self.model, wav, 90);
         crate::ai_log::finish(dir, e, start, &r, |e, (segs, cost)| {
@@ -522,13 +524,13 @@ pub fn stt_endpoint(db: &Connection, keys: &dyn Keys) -> Result<Option<SttEndpoi
         return Ok(None);
     }
     let (r, model) = feature(db, STT)?;
-    Ok(Some(SttEndpoint { provider: r.name, model, off: off_device(&r.url), api: adapter(db, keys, r.id)?, log: log_dir(db) }))
+    Ok(Some(SttEndpoint { provider: r.name, model, off: off_device(&r.url), api: adapter(db, keys, r.id)?, feature: "Meeting speech-to-text", log: log_dir(db) }))
 }
 
 /// Provider `provider`'s `model`, for one Transcribe again; the setting for new meetings stays as it is.
 pub fn stt_endpoint_for(db: &Connection, keys: &dyn Keys, provider: i64, model: &str) -> Result<SttEndpoint, String> {
     let r = find(db, provider)?;
-    Ok(SttEndpoint { provider: r.name, model: model.into(), off: off_device(&r.url), api: adapter(db, keys, r.id)?, log: log_dir(db) })
+    Ok(SttEndpoint { provider: r.name, model: model.into(), off: off_device(&r.url), api: adapter(db, keys, r.id)?, feature: "Meeting speech-to-text", log: log_dir(db) })
 }
 
 /// OpenRouter's transcription models; other providers have their model id typed in, so none.
@@ -561,9 +563,9 @@ pub fn stt_test(db: &Mutex<Connection>, keys: &dyn Keys, id: i64, model: &str) -
     if model.is_empty() {
         return Err("Enter a model".into());
     }
-    let a = adapter(&db.lock().unwrap(), keys, id)?;
+    let e = SttEndpoint { feature: "Test", ..stt_endpoint_for(&db.lock().unwrap(), keys, id, model)? };
     let start = Instant::now();
-    let (segs, cost) = a.transcribe(model, CLIP, 90).map_err(|e| format!("{model} can't transcribe meetings: {e}"))?;
+    let (segs, cost) = e.send(CLIP).map_err(|e| format!("{model} can't transcribe meetings: {e}"))?;
     if segs.is_empty() {
         return Err(format!("{model} can't transcribe meetings: it sent no segment timestamps"));
     }
@@ -769,13 +771,17 @@ pub fn feature_set(db: &Connection, key: &str, value: &str) -> Result<(), String
 
 /// The adapter for provider `id`, holding its key; while the AI log is on, wrapped to record each call as `feature`'s.
 pub fn provider(db: &Connection, keys: &dyn Keys, id: i64, feature: &str) -> Result<Box<dyn Backend>, String> {
-    let r = find(db, id)?;
+    let r = find(db, id).inspect_err(|e| {
+        if let Some(dir) = log_dir(db) {
+            crate::ai_log::blocked(&dir, feature, None, false, e);
+        }
+    })?;
     let agent = crate::agent::is_agent(&r.kind);
     let b: Box<dyn Backend> = match crate::agent::Agent::new(&r.kind) {
         // No silent fallback: while Agents are off, a feature routed to one says so.
         Some(_) if !agents_on(db)? => {
             if let Some(dir) = log_dir(db) {
-                crate::ai_log::blocked(&dir, feature, &r.name, true, AGENTS_OFF);
+                crate::ai_log::blocked(&dir, feature, Some(&r.name), true, AGENTS_OFF);
             }
             return Err(AGENTS_OFF.into());
         }
@@ -797,8 +803,13 @@ pub(crate) const AGENTS_OFF: &str = "Agents are off. Turn them on in Settings, E
 
 /// The AI log is Experimental: on while both the master switch and its own are.
 pub fn ai_log_on(db: &Connection) -> Result<bool, String> {
+    experimental_on(db, "exp_ailog")
+}
+
+/// An Experimental switch `key`: on while both the master switch and it are.
+fn experimental_on(db: &Connection, key: &str) -> Result<bool, String> {
     let on = |k| crate::storage::read_text(db, k).map(|v| v.as_deref() == Some("on")).map_err(|e| e.to_string());
-    Ok(on("experimental")? && on("exp_ailog")?)
+    Ok(on("experimental")? && on(key)?)
 }
 
 /// The data folder (beside the database) while the AI log is on.
@@ -811,8 +822,7 @@ fn log_dir(db: &Connection) -> Option<std::path::PathBuf> {
 
 /// Agents are Experimental: on while both the master switch and their own are.
 pub fn agents_on(db: &Connection) -> Result<bool, String> {
-    let on = |k| crate::storage::read_text(db, k).map(|v| v.as_deref() == Some("on")).map_err(|e| e.to_string());
-    Ok(on("experimental")? && on("exp_agents")?)
+    experimental_on(db, "exp_agents")
 }
 
 /// Whether provider `id` is an Agent, so a feature can give it the time it needs.
@@ -1583,6 +1593,29 @@ pub(crate) mod tests {
         assert!((4000..7000).contains(&x.audio_ms.unwrap()), "{:?}", x.audio_ms);
         let file = std::fs::read(tmp.path().join("ai-log.jsonl")).unwrap();
         assert!(!file.windows(4).any(|w| w == b"RIFF"), "no audio");
+    }
+
+    #[test]
+    fn test_on_meeting_speech_to_text_is_logged_as_test() {
+        let (base, _) = server(|_, _, _| (200, HEARD.into()));
+        let (tmp, c) = db();
+        let keys = Memory::default();
+        let id = add_ok(&c, &keys, "openai", "Cloud", &base, "").id;
+        log_on(&c, true);
+        let db = Mutex::new(c);
+        stt_test(&db, &keys, id, "whisper-1").unwrap();
+        let x = crate::ai_log::get(tmp.path(), &crate::ai_log::list(tmp.path(), None, false)[0].id).unwrap();
+        assert_eq!((x.feature.as_str(), x.method.as_deref(), x.provider.as_deref(), x.model.as_deref()), ("Test", Some("transcribe"), Some("Cloud"), Some("whisper-1")));
+    }
+
+    #[test]
+    fn a_provider_that_cant_be_found_is_logged_as_blocked() {
+        let (tmp, c) = db();
+        log_on(&c, true);
+        assert_eq!(provider(&c, &Memory::default(), 99, "Title").err().unwrap(), "That provider no longer exists");
+        let l = crate::ai_log::list(tmp.path(), None, false);
+        assert_eq!((l.len(), l[0].feature.as_str(), l[0].outcome.as_str()), (1, "Title", "blocked"));
+        assert_eq!(crate::ai_log::get(tmp.path(), &l[0].id).unwrap().error.as_deref(), Some("That provider no longer exists"));
     }
 
     #[test]

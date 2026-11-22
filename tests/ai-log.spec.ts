@@ -143,8 +143,10 @@ test("the feature filter and Errors only narrow the list", async ({ page }) => {
   await expect(rows(page).nth(0)).toContainText("LLM cleanup");
   await page.getByLabel("Feature").selectOption("Decision");
   await expect(page.getByRole("heading", { name: "No calls match" })).toBeVisible();
-  await page.getByRole("button", { name: "Errors only" }).click(); // module state: leave it as found
-  await page.getByLabel("Feature").selectOption("all");
+  await page.getByRole("button", { name: "Show all calls" }).click(); // DESIGN.md: a heading, one sentence, one action
+  await expect(rows(page)).toHaveCount(3);
+  await expect(page.getByLabel("Feature")).toHaveValue("all");
+  await expect(page.getByRole("button", { name: "Errors only" })).toHaveAttribute("aria-pressed", "false");
 });
 
 test("Clear all asks first, then empties the AI log", async ({ page }) => {
@@ -165,6 +167,26 @@ test("a new call shows up at the top as it lands", async ({ page }) => {
   await expect(rows(page).nth(0)).toContainText("Title");
   await expect(rows(page).nth(0)).toContainText("Ollama · qwen2.5:7b");
   await expect(rows(page).nth(0)).toContainText("Error");
+});
+
+test("a call that lands before the list loads is kept once, at the top", async ({ page }) => {
+  await fakeTauri(page, `{
+    storage_status: () => "/tmp/Myna", models_list: () => [], look_get: () => (${JSON.stringify(look(true, true))}), look_set: () => {},
+    ai_log_list: () => new Promise((r) => (window.__list = () => r(${ENTRIES}.map(${SUMMARY})))),
+  }`);
+  await page.goto("/main");
+  await nav(page).click();
+  await expect.poll(() => calls(page, "plugin:event|listen").then((l) => l.some((a: any) => a.event === "ai-log"))).toBe(true);
+  await page.evaluate(() => {
+    const at = Date.now();
+    (window as any).__emit("ai-log", { id: "c", at, feature: "Summary", step: "part 3/7", method: "chat_stream", outcome: "ok" }); // also in the list
+    (window as any).__emit("ai-log", { id: "d", at, feature: "Title", provider: "Ollama", model: "qwen2.5:7b", method: "chat", outcome: "error" });
+  });
+  await expect.poll(() => page.evaluate(() => typeof (window as any).__list)).toBe("function");
+  await page.evaluate(() => (window as any).__list());
+  await expect(rows(page)).toHaveCount(4);
+  await expect(rows(page).nth(0)).toContainText("Title");
+  await expect(rows(page).nth(1)).toContainText("Summary · part 3/7");
 });
 
 for (const theme of ["light", "dark"]) {

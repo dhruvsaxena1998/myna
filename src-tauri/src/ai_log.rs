@@ -186,8 +186,8 @@ pub fn finish<T>(dir: &Path, mut e: Entry, start: Instant, r: &Result<T, String>
 }
 
 /// A call that never went out, and why.
-pub fn blocked(dir: &Path, feature: &str, provider: &str, agent: bool, why: &str) {
-    append(dir, &Entry { outcome: Some("blocked".into()), error: Some(why.into()), method: None, ..Entry::new(feature, Some(provider), agent, None, "") });
+pub fn blocked(dir: &Path, feature: &str, provider: Option<&str>, agent: bool, why: &str) {
+    append(dir, &Entry { outcome: Some("blocked".into()), error: Some(why.into()), method: None, ..Entry::new(feature, provider, agent, None, "") });
 }
 
 /// How a failed call ended, from the adapters' messages.

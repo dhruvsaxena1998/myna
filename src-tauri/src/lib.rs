@@ -328,19 +328,23 @@ async fn ai_test_draft(d: tauri::State<'_, Data>, kind: String, url: String, key
 
 /// The AI log (Experimental): its calls newest first, one opened, or all cleared. They read the file whether or not
 /// it's on; only recording is switched.
+/// Off the main thread: the file can hold many megabytes of raw replies.
 #[tauri::command]
-fn ai_log_list(d: tauri::State<Data>, feature: Option<String>, errors: Option<bool>) -> Vec<ai_log::Summary> {
-    ai_log::list(&d.dir, feature.as_deref(), errors.unwrap_or(false))
+async fn ai_log_list(d: tauri::State<'_, Data>, feature: Option<String>, errors: Option<bool>) -> Result<Vec<ai_log::Summary>, String> {
+    let dir = d.dir.clone();
+    tauri::async_runtime::spawn_blocking(move || ai_log::list(&dir, feature.as_deref(), errors.unwrap_or(false))).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn ai_log_get(d: tauri::State<Data>, id: String) -> Option<ai_log::Entry> {
-    ai_log::get(&d.dir, &id)
+async fn ai_log_get(d: tauri::State<'_, Data>, id: String) -> Result<Option<ai_log::Entry>, String> {
+    let dir = d.dir.clone();
+    tauri::async_runtime::spawn_blocking(move || ai_log::get(&dir, &id)).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn ai_log_clear(d: tauri::State<Data>) -> Result<(), String> {
-    ai_log::clear(&d.dir)
+async fn ai_log_clear(d: tauri::State<'_, Data>) -> Result<(), String> {
+    let dir = d.dir.clone();
+    tauri::async_runtime::spawn_blocking(move || ai_log::clear(&dir)).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
