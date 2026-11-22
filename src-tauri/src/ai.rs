@@ -90,6 +90,9 @@ pub struct Decision {
     pub confidence: Option<f64>,
     pub cost: Cost,
     pub ms: u64,
+    /// The reply as it came back, for the AI log; in memory only.
+    #[serde(skip)]
+    pub raw: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -97,6 +100,29 @@ pub struct Reply {
     pub text: String,
     pub tokens: Option<(u64, u64)>,
     pub cost: Cost,
+    /// The reply as it came back (the HTTP body, the SSE lines, an Agent's stream-json lines), for the AI log.
+    pub raw: Option<String>,
+}
+
+thread_local! {
+    /// The last reply an adapter read on this thread, so the AI log has it on the error path too.
+    static RAW: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+pub(crate) fn keep_raw(raw: Option<String>) {
+    RAW.with(|r| *r.borrow_mut() = raw);
+}
+
+pub(crate) fn take_raw() -> Option<String> {
+    RAW.with(|r| r.borrow_mut().take())
+}
+
+/// `r`, keeping `raw` for the AI log when it failed.
+fn with_raw<T>(raw: Option<String>, r: Result<T, String>) -> Result<T, String> {
+    if r.is_err() {
+        keep_raw(raw);
+    }
+    r
 }
 
 /// What Test found: `models` for an OpenAI-compatible server, `used` and `limit` (USD) for an OpenRouter key.
@@ -132,6 +158,8 @@ pub trait Backend: Send {
     fn decide(&self, _model: &str, _question: &str, _options: &[String], _instructions: &str, _decisions: bool, _secs: u64) -> Result<Decision, String> {
         Err("This provider can't make decisions".into())
     }
+    /// Names the next calls' step for the AI log ("part 3/7"), None for the feature's own call; nothing unlogged.
+    fn step(&self, _step: Option<&str>) {}
 }
 
 /// Where API keys live. The real one is the Keychain; tests use memory.
@@ -200,6 +228,7 @@ impl OpenAi {
         let mut res = self.request(path, body, secs)?;
         let status = res.status().as_u16();
         let text = res.body_mut().read_to_string().map_err(|e| format!("Couldn't reach {}: {e}", self.url))?;
+        keep_raw(Some(text.clone()));
         self.answer(status, &text)
     }
 
@@ -287,13 +316,25 @@ impl OpenAi {
             body["response_format"] = f;
         }
         let json = self.send("/chat/completions", Some(body.to_string()), secs)?;
-        let text = json["choices"][0]["message"]["content"].as_str().ok_or_else(|| format!("{} sent no reply", self.url))?.to_string();
-        Ok(self.reply(model, text, &json["usage"]))
+        let raw = take_raw(); // before `reply`, which may fetch prices
+        let text = with_raw(raw.clone(), json["choices"][0]["message"]["content"].as_str().ok_or_else(|| format!("{} sent no reply", self.url)))?.to_string();
+        Ok(Reply { raw, ..self.reply(model, text, &json["usage"]) })
     }
 
     /// `ask` as a stream (server-sent events), `on` getting the text so far as it grows. A server that ignores
     /// `stream` and answers whole is read as `ask` reads it.
     fn ask_stream(&self, model: &str, system: Option<&str>, prompt: &str, secs: u64, on: &mut dyn FnMut(&str)) -> Result<Reply, String> {
+        let mut raw = String::new();
+        let r = self.ask_stream_into(model, system, prompt, secs, on, &mut raw);
+        let raw = (!raw.is_empty()).then_some(raw).or_else(take_raw);
+        match r {
+            Ok(r) => Ok(Reply { raw, ..r }),
+            Err(e) => with_raw(raw, Err(e)),
+        }
+    }
+
+    /// `ask_stream`, every line read kept in `raw`.
+    fn ask_stream_into(&self, model: &str, system: Option<&str>, prompt: &str, secs: u64, on: &mut dyn FnMut(&str), raw: &mut String) -> Result<Reply, String> {
         use std::io::BufRead;
         let unreachable = |e: String| format!("Couldn't reach {}: {e}", self.url);
         let body = json!({"model": model, "messages": messages(system, prompt), "stream": true, "stream_options": {"include_usage": true}});
@@ -301,11 +342,14 @@ impl OpenAi {
         let status = res.status().as_u16();
         if status >= 400 {
             let text = res.body_mut().read_to_string().unwrap_or_default();
+            raw.push_str(&text);
             return self.answer(status, &text).and_then(|_| Err(unreachable(format!("HTTP {status}"))));
         }
         let (mut text, mut usage, mut whole, mut streamed) = (String::new(), Value::Null, String::new(), false);
         for line in std::io::BufReader::new(res.body_mut().as_reader()).lines() {
             let line = line.map_err(|e| unreachable(e.to_string()))?;
+            raw.push_str(&line);
+            raw.push('\n');
             let Some(data) = line.strip_prefix("data:") else {
                 // ":" lines keep the connection open; anything else is a reply sent whole.
                 if !line.starts_with(':') {
@@ -352,7 +396,7 @@ impl OpenAi {
             (None, true) => self.models().ok().and_then(|l| l.into_iter().find(|m| m.id == model)).and_then(|m| m.input_per_m.zip(m.output_per_m)),
             _ => None,
         };
-        Reply { text, tokens, cost: cost_of(reported, price, tokens, !off_device(&self.url)) }
+        Reply { text, tokens, cost: cost_of(reported, price, tokens, !off_device(&self.url)), raw: None }
     }
 }
 
@@ -397,8 +441,9 @@ impl Backend for OpenAi {
             let prompt = format!("{question}\n\nOptions:\n{}", options.iter().map(|o| format!("- {o}")).collect::<Vec<_>>().join("\n"));
             let format = json!({"type": "json_schema", "json_schema": {"name": "decision", "strict": true, "schema": schema}});
             let r = self.ask(model, Some(instructions), &prompt, Some(format), secs)?;
-            let c = serde_json::from_str::<Value>(&r.text).ok().and_then(|v| v["choice"].as_str().map(str::to_string)).ok_or_else(|| format!("{model} didn't answer with one of the options"))?;
-            return Ok(Decision { choice: picked(&c)?, confidence: None, cost: r.cost, ms: 0 });
+            let c = serde_json::from_str::<Value>(&r.text).ok().and_then(|v| v["choice"].as_str().map(str::to_string)).ok_or_else(|| format!("{model} didn't answer with one of the options"));
+            let choice = with_raw(r.raw.clone(), c.and_then(|c| picked(&c)))?;
+            return Ok(Decision { choice, confidence: None, cost: r.cost, ms: 0, raw: r.raw });
         }
         // OpenRouter's Jev-shape route; a question without `instructions` is refused.
         let criteria: serde_json::Map<String, Value> = options.iter().map(|o| (o.clone(), json!(o))).collect();
@@ -406,18 +451,19 @@ impl Backend for OpenAi {
         // It sits beside /v1 (…/api/alpha/decisions), not under it.
         let root = OpenAi { url: self.url.trim_end_matches("/v1").into(), key: self.key.clone(), rich: true };
         let json = root.send("/alpha/decisions", Some(body.to_string()), secs)?;
+        let raw = take_raw(); // before `decision_models`, which may fetch prices
         let a = &json["answers"]["pick"];
         if a["type"] == "refusal" {
-            return Err(format!("{model} refused to answer"));
+            return with_raw(raw, Err(format!("{model} refused to answer")));
         }
-        let c = a["choice"].as_str().ok_or_else(|| format!("{model} sent no choice"))?;
+        let choice = with_raw(raw.clone(), a["choice"].as_str().ok_or_else(|| format!("{model} sent no choice")).and_then(picked))?;
         let u = &json["usage"];
         let tokens = u["input_tokens"].as_u64().map(|i| (i, u["output_tokens"].as_u64().unwrap_or(0)));
         let price = match u["cost"].as_f64() {
             None => self.decision_models().ok().and_then(|l| l.into_iter().find(|m| m.id == model)).and_then(|m| Some((m.input_per_m?, m.output_per_m.unwrap_or(0.0)))),
             Some(_) => None,
         };
-        Ok(Decision { choice: picked(c)?, confidence: a["confidence"].as_f64(), cost: cost_of(u["cost"].as_f64(), price, tokens, false), ms: 0 })
+        Ok(Decision { choice, confidence: a["confidence"].as_f64(), cost: cost_of(u["cost"].as_f64(), price, tokens, false), ms: 0, raw })
     }
 }
 
@@ -450,12 +496,24 @@ pub struct SttEndpoint {
     pub model: String,
     pub off: bool,
     api: OpenAi,
+    /// Who the AI log records the call as.
+    feature: &'static str,
+    /// The data folder while the AI log is on.
+    log: Option<std::path::PathBuf>,
 }
 
 impl SttEndpoint {
     /// One chunk, within OpenRouter's 60 s upstream timeout (plus the upload).
     pub fn send(&self, wav: &[u8]) -> Result<(Vec<crate::runtime::Segment>, Cost), String> {
-        self.api.transcribe(&self.model, wav, 90)
+        let Some(dir) = &self.log else { return self.api.transcribe(&self.model, wav, 90) };
+        let e = crate::ai_log::Entry { audio_ms: crate::ai_log::wav_ms(wav), limit_s: Some(90), ..crate::ai_log::Entry::new(self.feature, Some(&self.provider), false, Some(&self.model), "transcribe") };
+        let start = crate::ai_log::begin();
+        let r = self.api.transcribe(&self.model, wav, 90);
+        crate::ai_log::finish(dir, e, start, &r, |e, (segs, cost)| {
+            e.segments = Some(segs.iter().map(|s| format!("[{:.1}–{:.1}] {}", s.start, s.end, s.text.trim())).collect::<Vec<_>>().join("\n"));
+            e.cost = Some(cost.clone());
+        });
+        r
     }
 }
 
@@ -466,13 +524,13 @@ pub fn stt_endpoint(db: &Connection, keys: &dyn Keys) -> Result<Option<SttEndpoi
         return Ok(None);
     }
     let (r, model) = feature(db, STT)?;
-    Ok(Some(SttEndpoint { provider: r.name, model, off: off_device(&r.url), api: adapter(db, keys, r.id)? }))
+    Ok(Some(SttEndpoint { provider: r.name, model, off: off_device(&r.url), api: adapter(db, keys, r.id)?, feature: "Meeting speech-to-text", log: log_dir(db) }))
 }
 
 /// Provider `provider`'s `model`, for one Transcribe again; the setting for new meetings stays as it is.
 pub fn stt_endpoint_for(db: &Connection, keys: &dyn Keys, provider: i64, model: &str) -> Result<SttEndpoint, String> {
     let r = find(db, provider)?;
-    Ok(SttEndpoint { provider: r.name, model: model.into(), off: off_device(&r.url), api: adapter(db, keys, r.id)? })
+    Ok(SttEndpoint { provider: r.name, model: model.into(), off: off_device(&r.url), api: adapter(db, keys, r.id)?, feature: "Meeting speech-to-text", log: log_dir(db) })
 }
 
 /// OpenRouter's transcription models; other providers have their model id typed in, so none.
@@ -486,7 +544,7 @@ pub fn stt_models(db: &Mutex<Connection>, keys: &dyn Keys, id: i64) -> Result<Ve
 
 /// Provider `id`'s decision models; none but OpenRouter's have any.
 pub fn decision_models(db: &Mutex<Connection>, keys: &dyn Keys, id: i64) -> Result<Vec<Model>, String> {
-    let p = provider(&db.lock().unwrap(), keys, id)?; // the lock is not held while waiting on the network
+    let p = provider(&db.lock().unwrap(), keys, id, "Decision models")?; // the lock is not held while waiting on the network
     p.decision_models()
 }
 
@@ -505,9 +563,9 @@ pub fn stt_test(db: &Mutex<Connection>, keys: &dyn Keys, id: i64, model: &str) -
     if model.is_empty() {
         return Err("Enter a model".into());
     }
-    let a = adapter(&db.lock().unwrap(), keys, id)?;
+    let e = SttEndpoint { feature: "Test", ..stt_endpoint_for(&db.lock().unwrap(), keys, id, model)? };
     let start = Instant::now();
-    let (segs, cost) = a.transcribe(model, CLIP, 90).map_err(|e| format!("{model} can't transcribe meetings: {e}"))?;
+    let (segs, cost) = e.send(CLIP).map_err(|e| format!("{model} can't transcribe meetings: {e}"))?;
     if segs.is_empty() {
         return Err(format!("{model} can't transcribe meetings: it sent no segment timestamps"));
     }
@@ -711,22 +769,60 @@ pub fn feature_set(db: &Connection, key: &str, value: &str) -> Result<(), String
     saved.map_err(|e| format!("Couldn't save the model: {e}"))
 }
 
-/// The adapter for provider `id`, holding its key.
-pub fn provider(db: &Connection, keys: &dyn Keys, id: i64) -> Result<Box<dyn Backend>, String> {
-    let r = find(db, id)?;
-    if let Some(a) = crate::agent::Agent::new(&r.kind) {
+/// The adapter for provider `id`, holding its key; while the AI log is on, wrapped to record each call as `feature`'s.
+pub fn provider(db: &Connection, keys: &dyn Keys, id: i64, feature: &str) -> Result<Box<dyn Backend>, String> {
+    let r = find(db, id).inspect_err(|e| {
+        if let Some(dir) = log_dir(db) {
+            crate::ai_log::blocked(&dir, feature, None, false, e);
+        }
+    })?;
+    let agent = crate::agent::is_agent(&r.kind);
+    let b: Box<dyn Backend> = match crate::agent::Agent::new(&r.kind) {
         // No silent fallback: while Agents are off, a feature routed to one says so.
-        return if agents_on(db)? { Ok(Box::new(a)) } else { Err(AGENTS_OFF.into()) };
-    }
-    Ok(Box::new(adapter(db, keys, id)?))
+        Some(_) if !agents_on(db)? => {
+            if let Some(dir) = log_dir(db) {
+                crate::ai_log::blocked(&dir, feature, Some(&r.name), true, AGENTS_OFF);
+            }
+            return Err(AGENTS_OFF.into());
+        }
+        Some(a) => Box::new(a),
+        None => Box::new(adapter(db, keys, id)?),
+    };
+    Ok(logged(db, b, Some(&r.name), agent, feature))
 }
 
-const AGENTS_OFF: &str = "Agents are off. Turn them on in Settings, Experimental";
+/// `b` wrapped to record each call while the AI log is on, else `b` itself.
+fn logged(db: &Connection, b: Box<dyn Backend>, provider: Option<&str>, agent: bool, feature: &str) -> Box<dyn Backend> {
+    match log_dir(db) {
+        Some(dir) => crate::ai_log::Logged::wrap(b, dir, provider, agent, feature),
+        None => b,
+    }
+}
+
+pub(crate) const AGENTS_OFF: &str = "Agents are off. Turn them on in Settings, Experimental";
+
+/// The AI log is Experimental: on while both the master switch and its own are.
+pub fn ai_log_on(db: &Connection) -> Result<bool, String> {
+    experimental_on(db, "exp_ailog")
+}
+
+/// An Experimental switch `key`: on while both the master switch and it are.
+fn experimental_on(db: &Connection, key: &str) -> Result<bool, String> {
+    let on = |k| crate::storage::read_text(db, k).map(|v| v.as_deref() == Some("on")).map_err(|e| e.to_string());
+    Ok(on("experimental")? && on(key)?)
+}
+
+/// The data folder (beside the database) while the AI log is on.
+fn log_dir(db: &Connection) -> Option<std::path::PathBuf> {
+    if !ai_log_on(db).unwrap_or(false) {
+        return None;
+    }
+    std::path::Path::new(db.path()?).parent().map(|p| p.to_path_buf()).filter(|p| !p.as_os_str().is_empty())
+}
 
 /// Agents are Experimental: on while both the master switch and their own are.
 pub fn agents_on(db: &Connection) -> Result<bool, String> {
-    let on = |k| crate::storage::read_text(db, k).map(|v| v.as_deref() == Some("on")).map_err(|e| e.to_string());
-    Ok(on("experimental")? && on("exp_agents")?)
+    experimental_on(db, "exp_agents")
 }
 
 /// Whether provider `id` is an Agent, so a feature can give it the time it needs.
@@ -773,7 +869,7 @@ pub fn models(db: &Mutex<Connection>, keys: &dyn Keys, id: i64, fresh: bool) -> 
     if !fresh && let Some(l) = cached(&db.lock().unwrap(), id) {
         return Ok(l);
     }
-    let p = provider(&db.lock().unwrap(), keys, id)?; // the lock is not held while waiting on the network
+    let p = provider(&db.lock().unwrap(), keys, id, "Models")?; // the lock is not held while waiting on the network
     let list = p.models()?;
     store(&db.lock().unwrap(), id, &list)?;
     Ok(list)
@@ -801,7 +897,7 @@ pub fn decide(db: &Mutex<Connection>, keys: &dyn Keys, question: &str, options: 
         let db = db.lock().unwrap(); // not held while waiting on the network
         let decisions = matches!(own(&db, DECIDE)?, Own::Pick(..));
         let (r, model) = feature(&db, DECIDE)?;
-        (provider(&db, keys, r.id)?, model, decisions)
+        (provider(&db, keys, r.id, "Decision")?, model, decisions)
     };
     let start = Instant::now();
     let mut d = p.decide(&model, question, options, instructions, decisions, 30)?;
@@ -824,16 +920,17 @@ pub fn test(db: &Mutex<Connection>, id: i64, p: &dyn Backend) -> Result<Check, S
 }
 
 /// Tests a provider before it is added, with the address and key as typed (trimmed like `add`).
-pub fn test_draft(kind: &str, url: &str, key: &str) -> Result<Check, String> {
+pub fn test_draft(db: &Mutex<Connection>, kind: &str, url: &str, key: &str) -> Result<Check, String> {
+    let log = |b: Box<dyn Backend>| logged(&db.lock().unwrap(), b, None, crate::agent::is_agent(kind), "Test");
     if let Some(a) = crate::agent::Agent::new(kind) {
-        return Ok(check(&a)?.0);
+        return Ok(check(&*log(Box::new(a)))?.0);
     }
     let (url, key) = (url.trim().trim_end_matches('/'), key.trim());
     if host(url).is_none() {
         return Err("Enter a web address starting with http:// or https://".into());
     }
     let p = OpenAi { url: url.into(), key: (!key.is_empty()).then(|| key.into()), rich: kind == "openrouter" };
-    Ok(check(&p)?.0)
+    Ok(check(&*log(Box::new(p)))?.0)
 }
 
 #[cfg(test)]
@@ -856,7 +953,7 @@ pub(crate) mod tests {
         fn models(&self) -> Result<Vec<Model>, String> { Ok(vec![Model { id: "fake-1".into(), ..Default::default() }]) }
         fn key_usage(&self) -> Result<Option<(f64, Option<f64>)>, String> { Ok(None) }
         fn chat(&self, model: &str, _: Option<&str>, _: &str, _: u64) -> Result<Reply, String> {
-            Ok(Reply { text: format!("hi from {model}"), tokens: Some((3, 4)), cost: Cost::Free })
+            Ok(Reply { text: format!("hi from {model}"), tokens: Some((3, 4)), cost: Cost::Free, raw: None })
         }
     }
 
@@ -880,11 +977,11 @@ pub(crate) mod tests {
         }
         let p = add(&db, &keys, "claude-code", "Claude Code", "http://ignored", "ignored").unwrap();
         assert_eq!((p.url.as_str(), p.has_key, p.off_device), ("", false, true), "no address or key, and always off-device");
-        assert!(provider(&db, &keys, p.id).is_ok());
+        assert!(provider(&db, &keys, p.id, "Test").is_ok());
         assert!(is_agent(&db, p.id));
         assert!(super::adapter(&db, &keys, p.id).is_err(), "an Agent can't transcribe");
         crate::storage::write_text(&db, "exp_agents", "off").unwrap();
-        assert_eq!(provider(&db, &keys, p.id).err().unwrap(), AGENTS_OFF, "no silent fallback while off");
+        assert_eq!(provider(&db, &keys, p.id, "Test").err().unwrap(), AGENTS_OFF, "no silent fallback while off");
     }
 
     #[test]
@@ -1194,16 +1291,19 @@ pub(crate) mod tests {
     #[test]
     fn a_draft_is_tested_as_typed_and_saves_nothing() {
         let base = stub(vec![("/models", 200, LIST)]);
-        let c = test_draft("openai", &format!(" {base}/ "), "").unwrap();
+        let (_t, db) = db();
+        let db = Mutex::new(db);
+        let c = test_draft(&db, "openai", &format!(" {base}/ "), "").unwrap();
         assert_eq!((c.models, c.used), (Some(2), None));
         let base = stub(vec![("/key", 200, r#"{"data":{"usage":0.5,"limit":null}}"#)]);
-        assert_eq!(test_draft("openrouter", &base, "sk-or-x").unwrap().used, Some(0.5));
-        assert!(test_draft("openai", "not a url", "").is_err());
+        assert_eq!(test_draft(&db, "openrouter", &base, "sk-or-x").unwrap().used, Some(0.5));
+        assert!(test_draft(&db, "openai", "not a url", "").is_err());
     }
 
     const OPTS: [&str; 5] = ["Inbox", "Acme", "Platform team", "1:1s", "None of these"];
+    const OPTS_Q: &str = "Which folder should “Acme pricing follow-up” go in?";
     fn ask(db: &Mutex<Connection>, keys: &Memory) -> Result<Decision, String> {
-        decide(db, keys, "Which folder should “Acme pricing follow-up” go in?", &OPTS.map(String::from), "Pick the folder this meeting belongs in.")
+        decide(db, keys, OPTS_Q, &OPTS.map(String::from), "Pick the folder this meeting belongs in.")
     }
     const PICKED: &str = r#"{"id":"x","model":"typesafe/jev-1.14-20261014","answers":{"pick":{"type":"choice","choice":"Acme","confidence":0.98,
         "probabilities":{"Acme":0.98,"Inbox":0.02}}},"usage":{"input_tokens":420,"output_tokens":0,"cost":0.000018}}"#;
@@ -1340,6 +1440,182 @@ pub(crate) mod tests {
         let c = Mutex::new(c);
         assert_eq!(stt_models(&c, &keys, or).unwrap()[0].id, "openai/whisper-large-v3");
         assert!(stt_models(&c, &keys, plain).unwrap().is_empty());
+    }
+
+    // ---- AI log ----
+
+    fn log_on(db: &Connection, on: bool) {
+        for (k, v) in [("experimental", "on"), ("exp_ailog", if on { "on" } else { "off" })] {
+            crate::storage::write_text(db, k, v).unwrap();
+        }
+    }
+
+    const SSE: &str = "data: {\"choices\":[{\"delta\":{\"content\":\"# Re\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"cap\"}}]}\n\ndata: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":2,\"cost\":0.01}}\n\ndata: [DONE]\n\n";
+    const WHOLE: &str = r#"{"choices":[{"message":{"content":"Part notes"}}],"usage":{"prompt_tokens":7,"completion_tokens":3,"cost":0.02}}"#;
+
+    /// A server that streams when asked to and answers whole otherwise.
+    fn streams() -> String {
+        server(|_, _, body| (200, if String::from_utf8_lossy(body).contains("\"stream\":true") { SSE.into() } else { WHOLE.into() })).0
+    }
+
+    #[test]
+    fn the_ai_log_keeps_each_call_with_its_feature_step_prompt_and_raw_reply() {
+        let (tmp, db, keys, id) = db_with(format!("{}/v1", streams()), "openrouter");
+        log_on(&db.lock().unwrap(), true);
+        let b = provider(&db.lock().unwrap(), &keys, id, "Summary").unwrap();
+        b.step(Some("part 1/2"));
+        assert_eq!(b.chat("m", Some("Take notes"), "<transcript>hi</transcript>", 10).unwrap().text, "Part notes");
+        b.step(None);
+        let mut seen = vec![];
+        assert_eq!(b.chat_stream("m", Some("Merge"), "<notes>n</notes>", 10, &mut |t| seen.push(t.to_string())).unwrap().text, "# Recap");
+        assert_eq!(seen, ["# Re", "# Recap"], "the feature still gets the text as it grows");
+
+        let l = crate::ai_log::list(tmp.path(), None, false);
+        assert_eq!(l.len(), 2);
+        let (s, p) = (crate::ai_log::get(tmp.path(), &l[0].id).unwrap(), crate::ai_log::get(tmp.path(), &l[1].id).unwrap());
+        assert_eq!((p.feature.as_str(), p.step.as_deref(), p.provider.as_deref(), p.kind.as_deref(), p.model.as_deref(), p.method.as_deref()), ("Summary", Some("part 1/2"), Some("P"), Some("endpoint"), Some("m"), Some("chat")));
+        assert_eq!((p.system.as_deref(), p.prompt.as_deref(), p.text.as_deref(), p.raw.as_deref()), (Some("Take notes"), Some("<transcript>hi</transcript>"), Some("Part notes"), Some(WHOLE)));
+        assert_eq!((p.outcome.as_deref(), p.ttft_ms, p.limit_s, p.tokens_in, p.tokens_out, p.cost.clone()), (Some("ok"), None, Some(10), Some(7), Some(3), Some(Cost::Usd { usd: 0.02 })));
+        assert!(p.total_ms.is_some());
+        assert_eq!((s.step, s.method.as_deref(), s.text.as_deref(), s.cost), (None, Some("chat_stream"), Some("# Recap"), Some(Cost::Usd { usd: 0.01 })));
+        assert!(s.ttft_ms.is_some() && s.raw.unwrap().contains("data: [DONE]"));
+        assert_eq!((l[0].preview.as_deref(), l[0].outcome.as_str()), (Some("# Recap"), "ok"));
+    }
+
+    #[test]
+    fn nothing_is_logged_while_the_ai_log_or_experimental_is_off() {
+        let (tmp, db, keys, id) = db_with(format!("{}/v1", streams()), "openai");
+        let call = || provider(&db.lock().unwrap(), &keys, id, "LLM cleanup").unwrap().chat("m", None, "hi", 10).unwrap();
+        call();
+        log_on(&db.lock().unwrap(), false);
+        call();
+        log_on(&db.lock().unwrap(), true);
+        crate::storage::write_text(&db.lock().unwrap(), "experimental", "off").unwrap();
+        call();
+        assert!(crate::ai_log::list(tmp.path(), None, false).is_empty());
+    }
+
+    #[test]
+    fn failures_are_logged_as_error_timeout_refused_or_blocked() {
+        let (base, _) = server(|path, _, _| match path {
+            "/v1/chat/completions" => (500, "oops".into()),
+            _ => {
+                std::thread::sleep(Duration::from_millis(2500));
+                (200, "{}".into())
+            }
+        });
+        let (tmp, db, keys, id) = db_with(format!("{base}/v1"), "openai");
+        log_on(&db.lock().unwrap(), true);
+        let b = provider(&db.lock().unwrap(), &keys, id, "Title").unwrap();
+        assert!(b.chat("m", None, "hi", 10).is_err());
+        let slow = add_ok(&db.lock().unwrap(), &keys, "openai", "Slow", &format!("{base}/slow"), "").id;
+        assert!(provider(&db.lock().unwrap(), &keys, slow, "Title").unwrap().chat("m", None, "hi", 1).is_err());
+        let l = crate::ai_log::list(tmp.path(), None, true);
+        assert_eq!(l.iter().map(|s| s.outcome.as_str()).collect::<Vec<_>>(), ["timeout", "error"]);
+        let e = crate::ai_log::get(tmp.path(), &l[1].id).unwrap();
+        assert!(e.error.unwrap().ends_with("HTTP 500"));
+        assert_eq!(e.raw.as_deref(), Some("oops"), "the body that failed to parse is kept");
+
+        let (_t, db, keys) = decide_db(vec![("/api/alpha/decisions", 200, r#"{"answers":{"pick":{"type":"choice","choice":"Mars"}}}"#)]);
+        log_on(&db.lock().unwrap(), true);
+        decide_set(&db.lock().unwrap(), "1|m").unwrap();
+        assert!(ask(&db, &keys).is_err());
+        crate::storage::write_text(&db.lock().unwrap(), "exp_agents", "on").unwrap();
+        let agent = add_ok(&db.lock().unwrap(), &keys, "claude-code", "Claude Code", "", "").id;
+        crate::storage::write_text(&db.lock().unwrap(), "exp_agents", "off").unwrap();
+        assert_eq!(provider(&db.lock().unwrap(), &keys, agent, "LLM cleanup").err().unwrap(), AGENTS_OFF);
+        let dir = std::path::PathBuf::from(db.lock().unwrap().path().unwrap()).parent().unwrap().to_path_buf();
+        let l = crate::ai_log::list(&dir, None, false);
+        assert_eq!(l.iter().map(|s| (s.feature.as_str(), s.outcome.as_str())).collect::<Vec<_>>(), [("LLM cleanup", "blocked"), ("Decision", "refused")]);
+        let d = crate::ai_log::get(&dir, &l[1].id).unwrap();
+        let dd = d.decision.unwrap();
+        assert_eq!((dd.question.as_str(), dd.options.len(), dd.via.as_str(), dd.choice), (OPTS_Q, OPTS.len(), "decisions", None));
+        assert_eq!(crate::ai_log::get(&dir, &l[0].id).unwrap().error.as_deref(), Some(AGENTS_OFF));
+    }
+
+    #[test]
+    fn a_huge_reply_is_cut_images_become_placeholders_and_no_key_is_kept() {
+        let big = format!(r#"{{"choices":[{{"message":{{"content":"ok"}}}}],"pad":"{}"}}"#, "x".repeat(300 * 1024));
+        let (base, _) = server(move |_, _, _| (200, big.clone()));
+        let (tmp, db, keys, id) = db_with(format!("{base}/v1"), "openrouter");
+        keys.set(id, "sk-or-secret-123").unwrap();
+        log_on(&db.lock().unwrap(), true);
+        let png = "A".repeat(4096);
+        let b = provider(&db.lock().unwrap(), &keys, id, "LLM cleanup").unwrap();
+        b.chat("m", None, &format!("look: data:image/png;base64,{png} done"), 10).unwrap();
+        let e = crate::ai_log::get(tmp.path(), &crate::ai_log::list(tmp.path(), None, false)[0].id).unwrap();
+        assert_eq!(e.prompt.as_deref(), Some("look: [image, 3 KB] done"));
+        let raw = e.raw.unwrap();
+        assert!(raw.len() <= 256 * 1024 + 20 && raw.ends_with("[cut at 256 KB]") && e.raw_cut == Some(true));
+        let file = std::fs::read_to_string(tmp.path().join("ai-log.jsonl")).unwrap();
+        assert!(!file.contains("sk-or-secret") && !file.to_lowercase().contains("authorization"));
+    }
+
+    #[test]
+    fn a_log_that_cant_be_written_doesnt_fail_the_call() {
+        let (tmp, db, keys, id) = db_with(format!("{}/v1", streams()), "openai");
+        std::fs::create_dir(tmp.path().join("ai-log.jsonl")).unwrap(); // a folder where the file goes
+        log_on(&db.lock().unwrap(), true);
+        assert_eq!(provider(&db.lock().unwrap(), &keys, id, "Summary").unwrap().chat("m", None, "hi", 10).unwrap().text, "Part notes");
+    }
+
+    #[test]
+    fn llm_cleanup_keeps_its_time_budget_while_logging() {
+        let (base, _) = server(|_, _, _| {
+            std::thread::sleep(Duration::from_millis(1500));
+            (200, WHOLE.into())
+        });
+        let (tmp, db, keys, id) = db_with(format!("{base}/v1"), "openai");
+        log_on(&db.lock().unwrap(), true);
+        let b = provider(&db.lock().unwrap(), &keys, id, "LLM cleanup").unwrap();
+        let start = Instant::now();
+        let o = crate::cleanup::run(b, "m", crate::cleanup::DEFAULT, "hi there", &Default::default(), Duration::from_millis(500));
+        assert!(start.elapsed() < Duration::from_millis(900), "{:?}", start.elapsed());
+        assert_eq!(o.fallback.unwrap().reason, "AI took too long");
+        std::thread::sleep(Duration::from_millis(1500));
+        assert_eq!(crate::ai_log::list(tmp.path(), Some("LLM cleanup"), false).len(), 1, "the late reply is still logged");
+    }
+
+    #[test]
+    fn meeting_speech_to_text_is_logged_with_segments_and_clip_length_but_no_audio() {
+        let (base, _) = server(|_, _, _| (200, HEARD.into()));
+        let (tmp, c) = db();
+        let keys = Memory::default();
+        let id = add_ok(&c, &keys, "openai", "Cloud", &base, "").id;
+        feature_set(&c, STT, &format!("{id}|whisper-1")).unwrap();
+        log_on(&c, true);
+        let e = stt_endpoint(&c, &keys).unwrap().unwrap();
+        e.send(CLIP).unwrap();
+        let l = crate::ai_log::list(tmp.path(), None, false);
+        let x = crate::ai_log::get(tmp.path(), &l[0].id).unwrap();
+        assert_eq!((x.feature.as_str(), x.method.as_deref(), x.provider.as_deref(), x.model.as_deref(), x.cost), ("Meeting speech-to-text", Some("transcribe"), Some("Cloud"), Some("whisper-1"), Some(Cost::Usd { usd: 0.0002 })));
+        assert!(x.segments.unwrap().contains("This short clip."));
+        assert!((4000..7000).contains(&x.audio_ms.unwrap()), "{:?}", x.audio_ms);
+        let file = std::fs::read(tmp.path().join("ai-log.jsonl")).unwrap();
+        assert!(!file.windows(4).any(|w| w == b"RIFF"), "no audio");
+    }
+
+    #[test]
+    fn test_on_meeting_speech_to_text_is_logged_as_test() {
+        let (base, _) = server(|_, _, _| (200, HEARD.into()));
+        let (tmp, c) = db();
+        let keys = Memory::default();
+        let id = add_ok(&c, &keys, "openai", "Cloud", &base, "").id;
+        log_on(&c, true);
+        let db = Mutex::new(c);
+        stt_test(&db, &keys, id, "whisper-1").unwrap();
+        let x = crate::ai_log::get(tmp.path(), &crate::ai_log::list(tmp.path(), None, false)[0].id).unwrap();
+        assert_eq!((x.feature.as_str(), x.method.as_deref(), x.provider.as_deref(), x.model.as_deref()), ("Test", Some("transcribe"), Some("Cloud"), Some("whisper-1")));
+    }
+
+    #[test]
+    fn a_provider_that_cant_be_found_is_logged_as_blocked() {
+        let (tmp, c) = db();
+        log_on(&c, true);
+        assert_eq!(provider(&c, &Memory::default(), 99, "Title").err().unwrap(), "That provider no longer exists");
+        let l = crate::ai_log::list(tmp.path(), None, false);
+        assert_eq!((l.len(), l[0].feature.as_str(), l[0].outcome.as_str()), (1, "Title", "blocked"));
+        assert_eq!(crate::ai_log::get(tmp.path(), &l[0].id).unwrap().error.as_deref(), Some("That provider no longer exists"));
     }
 
     #[test]

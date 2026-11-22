@@ -415,7 +415,7 @@ impl Session {
             Ok(r) => r,
             Err(e) => return (None, fail("No Fast model", e)),
         };
-        let backend = ai::provider(&db, &*self.keys, record.id);
+        let backend = ai::provider(&db, &*self.keys, record.id, "LLM cleanup");
         let budget = if ai::is_agent(&db, record.id) { cleanup::AGENT_BUDGET } else { cleanup::BUDGET };
         let instruction = cleanup::instruction(&db, app).unwrap_or_else(|_| cleanup::DEFAULT.into());
         drop(db);

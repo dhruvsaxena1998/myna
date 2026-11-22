@@ -252,7 +252,7 @@ mod tests {
         fn chat(&self, _: &str, system: Option<&str>, prompt: &str, secs: u64) -> Result<Reply, String> {
             self.seen.lock().unwrap().push((system.map(Into::into), prompt.into(), secs));
             std::thread::sleep(self.delay);
-            self.reply.map(|text| Reply { text: text.into(), tokens: None, cost: Cost::Free }).map_err(Into::into)
+            self.reply.map(|text| Reply { text: text.into(), tokens: None, cost: Cost::Free, raw: None }).map_err(Into::into)
         }
     }
 

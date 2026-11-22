@@ -34,7 +34,7 @@ impl FollowUp {
     pub fn run(&self, id: i64) {
         self.clean(id);
         self.name(id);
-        let r = summary::auto(&self.db, &|p| self.open(p), id, &mut |p| self.summary_progress(id, p));
+        let r = summary::auto(&self.db, &|p| self.open(p, "Summary"), id, &mut |p| self.summary_progress(id, p));
         self.say_summary(match r {
             Ok(Some(v)) => json!({ "id": id, "state": "done", "version": v }),
             Ok(None) => json!({ "id": id, "state": "skipped" }), // Summarize when a meeting finishes is off, or no model
@@ -49,7 +49,7 @@ impl FollowUp {
             let (backend, ask) = {
                 let db = self.db.lock().unwrap();
                 let name: String = db.query_row("SELECT name FROM provider WHERE id = ?1", [provider], |r| r.get(0)).map_err(|_| "That provider isn't there anymore.".to_string())?;
-                (ai::provider(&db, &*self.keys, provider)?, summary::Ask { template, prompt, provider: name, context: ai::context(&db, provider, &model), model })
+                (ai::provider(&db, &*self.keys, provider, "Summary")?, summary::Ask { template, prompt, provider: name, context: ai::context(&db, provider, &model), model })
             };
             summary::run(&self.db, &*backend, id, &ask, &mut |p| self.summary_progress(id, p))
         };
@@ -65,7 +65,7 @@ impl FollowUp {
     /// when it's off or its model is Not set.
     fn clean(&self, id: i64) {
         let say = |v: Value| self.app.emit("meeting-cleanup", v);
-        match transcript::auto(&self.db, &|p| self.open(p), id, &mut |n, of| say(json!({ "id": id, "state": "reading", "n": n, "of": of }))) {
+        match transcript::auto(&self.db, &|p| self.open(p, "Transcript cleanup"), id, &mut |n, of| say(json!({ "id": id, "state": "reading", "n": n, "of": of }))) {
             Ok(Some(cost)) => say(json!({ "id": id, "state": "done", "cost": cost })),
             Ok(None) => {}
             Err(e) => say(json!({ "id": id, "state": "failed", "error": e })),
@@ -74,7 +74,7 @@ impl FollowUp {
 
     /// The Title model names it when it's still untitled; then the windows and the menu hear of it.
     fn name(&self, id: i64) {
-        match title::auto(&self.db, &|p| self.open(p), id) {
+        match title::auto(&self.db, &|p| self.open(p, "Title"), id) {
             Ok(Some(_)) => {
                 self.app.emit("meeting-title", json!(id));
                 self.app.recent();
@@ -97,8 +97,9 @@ impl FollowUp {
         self.app.emit("meeting-summary", v);
     }
 
-    fn open(&self, provider: i64) -> Result<Box<dyn Backend>, String> {
-        ai::provider(&self.db.lock().unwrap(), &*self.keys, provider)
+    /// Provider `provider`'s backend, its calls labelled `feature` in the AI log.
+    fn open(&self, provider: i64, feature: &str) -> Result<Box<dyn Backend>, String> {
+        ai::provider(&self.db.lock().unwrap(), &*self.keys, provider, feature)
     }
 }
 

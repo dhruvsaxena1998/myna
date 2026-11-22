@@ -10,6 +10,7 @@
   import Meetings from "$lib/Meetings.svelte";
   import type { Notes } from "$lib/MeetingNotes.svelte";
   import { writing, type Meeting as Row_, type Page, type Progress, type Running, type SummaryRun, type CleanupRun } from "$lib/meetings";
+  import AiLog from "$lib/AiLog.svelte";
   import Traces from "$lib/Traces.svelte";
   import Yours from "$lib/Yours.svelte";
   import { glassOn, syncGlass, type Look } from "$lib/look";
@@ -35,7 +36,7 @@
   let cleanups = $state<Record<number, CleanupRun>>({}); // the same, for transcript cleanup
   let page = $state<Page | null>(null); // the open meeting, loaded before the view swaps so it never pops in
   let meetingError = $state("");
-  let current = $state<"meetings" | "history" | "yours" | "nerds">("meetings");
+  let current = $state<"meetings" | "history" | "yours" | "nerds" | "ailog">("meetings");
   let fix = $state<number | null>(null);
   // Fix it on the pill: the dictation it rated 👎, with its "What did you mean?" open. The backend holds it until
   // taken, so a "fix" event missed while the page reloaded or slept still lands on load or on focus.
@@ -120,7 +121,8 @@
 
   // Stats for nerds is experimental: its entry shows only while it and Experimental features are on.
   const nerds = $derived(!!look?.experimental && look.nerds);
-  const view = $derived(current === "nerds" && !nerds ? "history" : current);
+  const ailog = $derived(!!look?.experimental && look.ailog); // the AI log, the same way
+  const view = $derived((current === "nerds" && !nerds) || (current === "ailog" && !ailog) ? "history" : current);
   // History lists what was said; a dictation that left no text has only its trace in Stats for nerds.
   const said = $derived(rows.filter((r) => r.text));
 
@@ -177,6 +179,11 @@
         {@render icon('<path d="M5 20V11M12 20V5M19 20v-6"/>')}<span class="label">Stats for nerds</span>
       </button>
     {/if}
+    {#if ailog}
+      <button class="nav" aria-current={view === "ailog"} onclick={() => (current = "ailog")}>
+        {@render icon('<path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/>')}<span class="label">AI log</span>
+      </button>
+    {/if}
     <div class="foot">
       <button class="nav" onclick={() => invoke("settings_open")}>
         {@render icon('<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>')}<span class="label">Settings</span><kbd>⌘,</kbd>
@@ -188,6 +195,8 @@
     {#if !data.storage.ok}
       <header data-tauri-drag-region><h1>Myna</h1></header>
       <div class="content"><ErrorState title="Myna couldn't open its data folder" message={data.storage.error} /></div>
+    {:else if view === "ailog"}
+      <AiLog />
     {:else if view === "meetings" && data.meetings?.ok === false}
       <header data-tauri-drag-region><h1>All meetings</h1></header>
       <div class="content"><ErrorState title="Myna couldn't read your meetings" message={data.meetings.error} /></div>

@@ -1,6 +1,7 @@
 mod addon;
 mod agent;
 mod ai;
+mod ai_log;
 mod apple;
 mod calls;
 mod cleanup;
@@ -54,6 +55,8 @@ struct Storage(Result<String, String>);
 /// Managed only when the database opened.
 struct Data {
     db: Arc<Mutex<Connection>>,
+    /// The data folder, where the database and the AI log live.
+    dir: PathBuf,
     models_dir: PathBuf,
     macos: u32,
     /// Model id -> cancel flag, for each download in progress.
@@ -265,7 +268,7 @@ async fn ai_models(d: tauri::State<'_, Data>, id: i64, fresh: bool) -> Result<Ve
 async fn ai_test(d: tauri::State<'_, Data>, id: i64) -> Result<ai::Check, String> {
     let (db, keys) = (d.db.clone(), d.keys.clone());
     tauri::async_runtime::spawn_blocking(move || {
-        let p = ai::provider(&db.lock().unwrap(), &*keys, id)?;
+        let p = ai::provider(&db.lock().unwrap(), &*keys, id, "Test")?;
         ai::test(&db, id, &*p)
     })
     .await
@@ -318,8 +321,30 @@ async fn meeting_stt_test(d: tauri::State<'_, Data>, provider: i64, model: Strin
 }
 
 #[tauri::command]
-async fn ai_test_draft(kind: String, url: String, key: String) -> Result<ai::Check, String> {
-    tauri::async_runtime::spawn_blocking(move || ai::test_draft(&kind, &url, &key)).await.map_err(|e| e.to_string())?
+async fn ai_test_draft(d: tauri::State<'_, Data>, kind: String, url: String, key: String) -> Result<ai::Check, String> {
+    let db = d.db.clone();
+    tauri::async_runtime::spawn_blocking(move || ai::test_draft(&db, &kind, &url, &key)).await.map_err(|e| e.to_string())?
+}
+
+/// The AI log (Experimental): its calls newest first, one opened, or all cleared. They read the file whether or not
+/// it's on; only recording is switched.
+/// Off the main thread: the file can hold many megabytes of raw replies.
+#[tauri::command]
+async fn ai_log_list(d: tauri::State<'_, Data>, feature: Option<String>, errors: Option<bool>) -> Result<Vec<ai_log::Summary>, String> {
+    let dir = d.dir.clone();
+    tauri::async_runtime::spawn_blocking(move || ai_log::list(&dir, feature.as_deref(), errors.unwrap_or(false))).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn ai_log_get(d: tauri::State<'_, Data>, id: String) -> Result<Option<ai_log::Entry>, String> {
+    let dir = d.dir.clone();
+    tauri::async_runtime::spawn_blocking(move || ai_log::get(&dir, &id)).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn ai_log_clear(d: tauri::State<'_, Data>) -> Result<(), String> {
+    let dir = d.dir.clone();
+    tauri::async_runtime::spawn_blocking(move || ai_log::clear(&dir)).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -1218,7 +1243,7 @@ fn open_update(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![pill::pill_hit, dictation_fix, fix_take, debug_on, ai_get, ai_add, ai_remove, ai_order, ai_set, ai_models, ai_test, ai_test_draft, ai_decide_models, ai_decide_set, ai_decide, storage_status, storage_reveal, models_list, model_select, model_download, model_cancel, model_delete, model_add, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, history_keep_get, history_keep_set, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, meeting_get, meeting_set, meeting_text, segments_include, addon_get, addon_disconnect, addon_folder, meeting_retry, meeting_local, meeting_again, meeting_rename, meeting_delete, meeting_audio, meeting_pause, meeting_stt_get, meeting_stt_local, meeting_stt_models, meeting_stt_test, meeting_open, meetings_list, meetings_search, meeting_page, speaker_rename, meeting_running, meeting_toggle, call_start, call_dismiss, call_keep, call_stop, summary_get, summary_pick, summary_delete, summary_edit, summary_run, summary_estimate, summary_model, summary_prefs_get, summary_prefs_set, title_prefs_get, title_prefs_set, summary_templates_get, summary_templates_set, transcript_prefs_get, transcript_prefs_set, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link, onboarding_open, onboarding_done])
+        .invoke_handler(tauri::generate_handler![pill::pill_hit, dictation_fix, fix_take, debug_on, ai_get, ai_add, ai_remove, ai_order, ai_set, ai_models, ai_test, ai_test_draft, ai_decide_models, ai_decide_set, ai_decide, ai_log_list, ai_log_get, ai_log_clear, storage_status, storage_reveal, models_list, model_select, model_download, model_cancel, model_delete, model_add, permissions_state, permission_ask, stt_unload_get, stt_unload_set, pill_look_get, pill_look_set, look_get, look_set, glass_set, voice_get, voice_set, rules_get, rules_set, cleanup_get, cleanup_set, cleanup_spell, traces_list, traces_all, trace_get, trace_delete, traces_clear, history_keep_get, history_keep_set, feedback_set, fixes_get, fix_add, fix_dismiss, feedback_export, text_copy, settings_open, voice_pause, meeting_get, meeting_set, meeting_text, segments_include, addon_get, addon_disconnect, addon_folder, meeting_retry, meeting_local, meeting_again, meeting_rename, meeting_delete, meeting_audio, meeting_pause, meeting_stt_get, meeting_stt_local, meeting_stt_models, meeting_stt_test, meeting_open, meetings_list, meetings_search, meeting_page, speaker_rename, meeting_running, meeting_toggle, call_start, call_dismiss, call_keep, call_stop, summary_get, summary_pick, summary_delete, summary_edit, summary_run, summary_estimate, summary_model, summary_prefs_get, summary_prefs_set, title_prefs_get, title_prefs_set, summary_templates_get, summary_templates_set, transcript_prefs_get, transcript_prefs_set, globe_ok, globe_open, updates_get, updates_set, update_state, update_check, update_download, update_restart, update_cancel, update_open, open_link, onboarding_open, onboarding_done])
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::Updates::default())
         .setup(|app| {
@@ -1256,8 +1281,13 @@ pub fn run() {
                     let handle = app.handle().clone();
                     app.manage(Calls(Mutex::new(calls::Watcher::default())));
                     app.manage(addon::Addon::new(db.clone(), addon::ORIGIN, &addon::PORTS, move |e| on_addon(&handle, e)));
+                    let handle = app.handle().clone();
+                    ai_log::on_append(move |s| {
+                        let _ = handle.emit("ai-log", s);
+                    });
                     app.manage(Data {
                         db,
+                        dir: dir.clone(),
                         models_dir: models,
                         macos: models::macos_major(),
                         downloads: Default::default(),

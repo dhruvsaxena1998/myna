@@ -89,7 +89,7 @@ mod tests {
         }
         fn chat(&self, _: &str, _: Option<&str>, prompt: &str, _: u64) -> Result<Reply, String> {
             assert!(prompt.contains("Me: Let's plan the launch") && !prompt.contains("secret"), "{prompt}");
-            Ok(Reply { text: self.0.into(), tokens: None, cost: Cost::Usd { usd: 0.0001 } })
+            Ok(Reply { text: self.0.into(), tokens: None, cost: Cost::Usd { usd: 0.0001 }, raw: None })
         }
     }
 
