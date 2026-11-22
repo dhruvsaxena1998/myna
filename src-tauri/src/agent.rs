@@ -124,11 +124,12 @@ impl Agent {
             Kind::Claude => parse_claude(&stdout),
             Kind::Codex => parse_codex(&stdout),
         };
+        crate::ai::keep_raw(Some(stdout.clone())); // the stream-json lines, for the AI log
         match parsed {
             Err(Refused::Tools(t)) => Err(format!("{} loaded or used tools ({t}), so Myna didn't use its answer", k.name())),
             Err(Refused::Failed(e)) => Err(failed(e)),
             Ok(r) if code != 0 && r.text.is_empty() => Err(failed(last_line(&stderr))),
-            Ok(r) => Ok(r),
+            Ok(r) => Ok(Reply { raw: crate::ai::take_raw(), ..r }),
         }
     }
 }
@@ -301,7 +302,7 @@ fn parse_claude(out: &str) -> Result<Reply, Refused> {
     let u = &r["usage"];
     let input = ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"].iter().filter_map(|k| u[k].as_u64()).sum::<u64>();
     let tokens = u["output_tokens"].as_u64().map(|o| (input, o));
-    Ok(Reply { text: r["result"].as_str().unwrap_or_default().trim().into(), tokens, cost: Cost::Unknown })
+    Ok(Reply { text: r["result"].as_str().unwrap_or_default().trim().into(), tokens, cost: Cost::Unknown, raw: None })
 }
 
 /// Codex's `exec --json`: only messages and reasoning; any other item (a command, a patch, an MCP or web call) refuses.
@@ -332,7 +333,7 @@ fn parse_codex(out: &str) -> Result<Reply, Refused> {
     if !done {
         return Err(Refused::Failed("it sent no answer".into()));
     }
-    Ok(Reply { text: text.trim().into(), tokens, cost: Cost::Unknown })
+    Ok(Reply { text: text.trim().into(), tokens, cost: Cost::Unknown, raw: None })
 }
 
 /// The option `answer` names: exact, else ignoring case, quotes, a list dash and a full stop.
@@ -376,8 +377,11 @@ impl Backend for Agent {
         let list = options.iter().map(|o| format!("- {o}")).collect::<Vec<_>>().join("\n");
         let prompt = format!("{question}\n\nOptions:\n{list}\n\nReply with exactly one of the options, word for word, and nothing else.");
         let r = self.run(model, Some(instructions), &prompt, secs)?;
-        let choice = pick(&r.text, options).ok_or_else(|| format!("{} picked “{}”, which isn't one of the options", self.kind.name(), r.text.chars().take(80).collect::<String>()))?;
-        Ok(Decision { choice, confidence: None, cost: Cost::Unknown, ms: 0 })
+        let Some(choice) = pick(&r.text, options) else {
+            crate::ai::keep_raw(r.raw);
+            return Err(format!("{} picked “{}”, which isn't one of the options", self.kind.name(), r.text.chars().take(80).collect::<String>()));
+        };
+        Ok(Decision { choice, confidence: None, cost: Cost::Unknown, ms: 0, raw: r.raw })
     }
 }
 
@@ -389,7 +393,7 @@ mod tests {
     fn claude_answers_only_with_no_tools_and_no_mcp_servers() {
         let init = r#"{"type":"system","subtype":"init","tools":[],"mcp_servers":[]}"#;
         let result = r#"{"type":"result","subtype":"success","is_error":false,"result":" Hi. ","usage":{"input_tokens":2,"cache_creation_input_tokens":10,"cache_read_input_tokens":5,"output_tokens":3}}"#;
-        assert_eq!(parse_claude(&format!("{init}\n{result}")), Ok(Reply { text: "Hi.".into(), tokens: Some((17, 3)), cost: Cost::Unknown }));
+        assert_eq!(parse_claude(&format!("{init}\n{result}")), Ok(Reply { text: "Hi.".into(), tokens: Some((17, 3)), cost: Cost::Unknown, raw: None }));
         let tools = r#"{"type":"system","subtype":"init","tools":["Bash"],"mcp_servers":[{"name":"gmail"}]}"#;
         assert_eq!(parse_claude(&format!("{tools}\n{result}")), Err(Refused::Tools("Bash, gmail".into())));
         assert!(matches!(parse_claude(result), Err(Refused::Tools(_))), "no init: can't tell tools were off");
@@ -407,7 +411,7 @@ mod tests {
             r#"{"type":"item.completed","item":{"id":"1","type":"agent_message","text":"Hello."}}"#,
             r#"{"type":"turn.completed","usage":{"input_tokens":9,"output_tokens":2}}"#,
         ];
-        assert_eq!(parse_codex(&ok.join("\n")), Ok(Reply { text: "Hello.".into(), tokens: Some((9, 2)), cost: Cost::Unknown }));
+        assert_eq!(parse_codex(&ok.join("\n")), Ok(Reply { text: "Hello.".into(), tokens: Some((9, 2)), cost: Cost::Unknown, raw: None }));
         let cmd = r#"{"type":"item.started","item":{"id":"2","type":"command_execution","command":"cat ~/.zshrc"}}"#;
         assert_eq!(parse_codex(&[ok[0], cmd, ok[2], ok[3]].join("\n")), Err(Refused::Tools("command_execution".into())));
         assert_eq!(parse_codex(r#"{"type":"turn.failed","error":{"message":"401"}}"#), Err(Refused::Failed("401".into())));

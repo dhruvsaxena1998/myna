@@ -121,6 +121,10 @@ _Avoid_: stage, pass, phase
 The record of one dictation that reached speech-to-text, whether or not it was pasted: the speech model, the app in front, the audio length, how it ended, and the text after each step with the time that step took. It keeps no audio. Voice typing history and Stats for nerds both read it; deleting a history entry deletes its trace.
 _Avoid_: log, event, debug info
 
+**AI log**:
+Experimental: the record, kept on this Mac, of every call Myna made to an AI provider, with the prompt as sent and the reply as it came back. Not a Trace.
+_Avoid_: request log, debug log
+
 ## Learning
 
 **Correction**:

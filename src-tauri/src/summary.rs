@@ -64,6 +64,7 @@ pub fn run(db: &Mutex<Connection>, backend: &dyn Backend, meeting: i64, ask: &As
             notes.push(n);
             continue;
         }
+        backend.step(Some(&format!("part {}/{}", i + 1, parts.len())));
         let r = backend.chat(&ask.model, Some(PART), &prompt, SECS)?;
         let used = r.tokens.map(|(i, o)| (i + o) as i64);
         db.lock()
@@ -88,6 +89,7 @@ pub fn run(db: &Mutex<Connection>, backend: &dyn Backend, meeting: i64, ask: &As
         }
         let mut next = vec![];
         for b in batches {
+            backend.step(Some("combine"));
             let r = backend.chat(&ask.model, Some(COMBINE), &format!("<notes>\n{}\n</notes>", b.join("\n\n")), SECS)?;
             cost.push(r.cost);
             next.push(r.text);
@@ -95,6 +97,7 @@ pub fn run(db: &Mutex<Connection>, backend: &dyn Backend, meeting: i64, ask: &As
         notes = next;
     }
     let mut last: Option<std::time::Instant> = None;
+    backend.step(None);
     let r = backend.chat_stream(&ask.model, Some(&system), &format!("<notes>\n{}\n</notes>", notes.join("\n\n")), SECS, &mut |text| {
         if last.is_none_or(|t| t.elapsed() >= EVERY) {
             last = Some(std::time::Instant::now());
@@ -478,7 +481,7 @@ mod tests {
             } else {
                 "# Recap".into()
             };
-            Ok(Reply { text, tokens: None, cost: Cost::Usd { usd: 0.01 } })
+            Ok(Reply { text, tokens: None, cost: Cost::Usd { usd: 0.01 }, raw: None })
         }
     }
 
