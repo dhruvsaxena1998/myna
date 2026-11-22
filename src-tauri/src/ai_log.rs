@@ -26,6 +26,9 @@ pub struct Entry {
     /// "part 3/7", for a feature that makes several calls.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub step: Option<String>,
+    /// What the call was for, so the log groups a dictation's or a meeting's calls: "meeting:42", "dictation:<started>".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entity: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
     /// "endpoint" or "agent".
@@ -99,6 +102,8 @@ pub struct Summary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub step: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub entity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
@@ -123,6 +128,7 @@ impl Entry {
             at: self.at,
             feature: self.feature.clone(),
             step: self.step.clone(),
+            entity: self.entity.clone(),
             provider: self.provider.clone(),
             kind: self.kind.clone(),
             model: self.model.clone(),
@@ -149,6 +155,7 @@ impl Entry {
             id: format!("{at}-{}-{n}", std::process::id()),
             at,
             feature: feature.into(),
+            entity: current(),
             provider: provider.map(Into::into),
             kind: Some(if agent { "agent" } else { "endpoint" }.into()),
             model: model.map(Into::into),
@@ -156,6 +163,23 @@ impl Entry {
             ..Default::default()
         }
     }
+}
+
+thread_local! {
+    /// What this thread's calls are for, while `about` runs.
+    static ENTITY: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Runs `f` with the calls it makes on this thread logged as `entity`'s. A thread it spawns passes `current()` on.
+pub fn about<T>(entity: Option<String>, f: impl FnOnce() -> T) -> T {
+    let was = ENTITY.with(|e| e.replace(entity));
+    let r = f();
+    ENTITY.with(|e| *e.borrow_mut() = was);
+    r
+}
+
+pub fn current() -> Option<String> {
+    ENTITY.with(|e| e.borrow().clone())
 }
 
 /// Starts timing a call; clears any reply an earlier call left on this thread.
@@ -253,16 +277,18 @@ pub struct Logged {
     provider: Option<String>,
     agent: bool,
     feature: String,
+    /// Taken when it's opened: its calls may run on another thread.
+    entity: Option<String>,
     step: Mutex<Option<String>>,
 }
 
 impl Logged {
     pub fn wrap(inner: Box<dyn Backend>, dir: PathBuf, provider: Option<&str>, agent: bool, feature: &str) -> Box<dyn Backend> {
-        Box::new(Logged { inner, dir, provider: provider.map(Into::into), agent, feature: feature.into(), step: Mutex::new(None) })
+        Box::new(Logged { inner, dir, provider: provider.map(Into::into), agent, feature: feature.into(), entity: current(), step: Mutex::new(None) })
     }
 
     fn entry(&self, model: Option<&str>, method: &str) -> Entry {
-        Entry { step: self.step.lock().unwrap().clone(), ..Entry::new(&self.feature, self.provider.as_deref(), self.agent, model, method) }
+        Entry { step: self.step.lock().unwrap().clone(), entity: self.entity.clone(), ..Entry::new(&self.feature, self.provider.as_deref(), self.agent, model, method) }
     }
 
     fn sent(&self, model: &str, method: &str, system: Option<&str>, prompt: &str, secs: u64) -> Entry {

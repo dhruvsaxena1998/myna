@@ -326,7 +326,7 @@ impl Session {
                 if clean && !text.is_empty() {
                     s.world.show(Pill::Cleaning);
                     let at = Instant::now();
-                    let (model, done) = s.cleanup(&text, &words, t.app.as_deref());
+                    let (model, done) = crate::ai_log::about(Some(format!("dictation:{}", t.started)), || s.cleanup(&text, &words, t.app.as_deref()));
                     let settings = serde_json::json!({ "model": model, "cost": done.cost, "fallback": done.fallback.as_ref().map(|f| f.reason), "detail": done.fallback.as_ref().and_then(|f| f.detail.as_ref()) });
                     t.steps.push(Step { kind: "cleanup", text: done.text.clone(), ms: ms(at.elapsed()), settings: Some(settings.to_string()), edits: None });
                     (text, fallback) = (done.text, done.fallback.map(|f| f.reason));

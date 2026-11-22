@@ -3,7 +3,7 @@
 <script module lang="ts">
   import type { Cost } from "./meetings";
   export type Outcome = "ok" | "error" | "timeout" | "refused" | "blocked";
-  export type Summary = { id: string; at: number; feature: string; step?: string | null; provider?: string | null; kind?: string | null; model?: string | null;
+  export type Summary = { id: string; at: number; feature: string; step?: string | null; entity?: string | null; provider?: string | null; kind?: string | null; model?: string | null;
     method: string; outcome: Outcome; total_ms?: number | null; cost?: Cost | null; preview?: string | null };
   type Decision = { question?: string | null; options?: string[] | null; instructions?: string | null; via?: string | null; choice?: string | null; confidence?: number | null };
   export type Entry = Omit<Summary, "method" | "outcome" | "preview"> & { method?: string | null; outcome?: Outcome | null;
@@ -11,7 +11,7 @@
     ttft_ms?: number | null; limit_s?: number | null; tokens_in?: number | null; tokens_out?: number | null; audio_ms?: number | null; segments?: unknown };
   const OUTCOME: Record<string, string> = { ok: "OK", error: "Error", timeout: "Timed out", refused: "Refused", blocked: "Blocked" };
   // Filters last as long as the window is open, like Stats for nerds'.
-  const f = $state({ feature: "all", errors: false });
+  const f = $state({ errors: false });
 </script>
 
 <script lang="ts">
@@ -22,6 +22,8 @@
 
   let calls = $state<Summary[]>([]);
   let open = $state<Entry | null>(null);
+  // The dictation or meeting being looked at: its `entity`.
+  let group = $state<string | null>(null);
   let error = $state("");
   let copied = $state("");
   let timer: ReturnType<typeof setTimeout>;
@@ -36,15 +38,37 @@
     return () => void un.then((u) => u());
   });
 
-  const features = $derived([...new Set(calls.map((c) => c.feature))]);
-  const list = $derived(calls.filter((c) => (f.feature === "all" || c.feature === f.feature) && (!f.errors || c.outcome !== "ok")));
+  // One row per dictation or meeting, newest first; a call made for neither (Test, Decision) is a row of its own.
+  type Group = { key: string; calls: Summary[] };
+  const groups = $derived.by(() => {
+    const by = new Map<string, Summary[]>();
+    for (const c of calls) {
+      const k = c.entity ?? c.id;
+      by.get(k)?.push(c) ?? by.set(k, [c]);
+    }
+    return [...by].map(([key, calls]): Group => ({ key, calls }));
+  });
+  const list = $derived(groups.filter((g) => !f.errors || g.calls.some((c) => c.outcome !== "ok")));
+  const inGroup = $derived(groups.find((g) => g.key === group)?.calls ?? []);
+  const KIND: Record<string, string> = { meeting: "Meeting", dictation: "Dictation" };
+  const name = (g: Group) => (g.calls[0].entity && KIND[g.calls[0].entity.split(":")[0]]) || label(g.calls[0]);
+  const failed = (g: Group) => g.calls.filter((c) => c.outcome !== "ok").length;
+  const total = (g: Group) => g.calls.reduce((n, c) => n + (c.total_ms ?? 0), 0);
+  function pick(g: Group) {
+    if (g.calls.length === 1 && !g.calls[0].entity) return show(g.calls[0].id);
+    group = g.key;
+  }
   const label = (c: Pick<Summary, "feature" | "step">) => [c.feature, c.step].filter(Boolean).join(" · ");
   const usd = (n: number) => "$" + (n >= 0.01 || n === 0 ? n.toFixed(2) : n.toPrecision(2));
   const price = (c: Cost | null | undefined, kind?: string | null) =>
     !c ? "—" : c.kind === "usd" ? usd(c.usd) : c.kind === "free" ? "Free" : kind === "agent" ? "On your plan" : "Cost unknown";
   const ms = (n: number | null | undefined) => (n == null ? "—" : dur(n));
-  // A JSON reply reads better indented; anything else (SSE lines, stream-json, a cut body) is shown as it came.
-  const pretty = (raw: string) => { try { return JSON.stringify(JSON.parse(raw), null, 2); } catch { return raw; } };
+  // JSON reads better indented: a whole body, else each SSE `data:` line or stream-json line; other lines stay as they came.
+  const indent = (s: string) => { try { return JSON.stringify(JSON.parse(s), null, 2); } catch { return null; } };
+  const pretty = (raw: string) => indent(raw) ?? raw.split("\n").map((l) => {
+    const m = /^data:\s*(.*)$/.exec(l), j = indent(m ? m[1] : l);
+    return j ? (m ? "data:\n" : "") + j + "\n" : l;
+  }).join("\n").replace(/\n{3,}/g, "\n\n").trim();
 
   async function show(id: string) {
     error = "";
@@ -94,15 +118,10 @@
 
 <header data-tauri-drag-region>
   <h1>AI log</h1>
-  {#if !open}
+  {#if !open && !group}
     <span class="grow" data-tauri-drag-region></span>
-    <select class="select" aria-label="Feature" bind:value={f.feature}>
-      <option value="all">All features</option>
-      {#each features as x}<option value={x}>{x}</option>{/each}
-      {#if f.feature !== "all" && !features.includes(f.feature)}<option value={f.feature}>{f.feature}</option>{/if}
-    </select>
     <button class="btn toggle" aria-pressed={f.errors} onclick={() => (f.errors = !f.errors)}>Errors only</button>
-    <ClearAll count={calls.length} ask="Delete every call in the AI log? This can’t be undone." clear={() => invoke("ai_log_clear")} onclear={() => { calls = []; f.feature = "all"; }} />
+    <ClearAll count={calls.length} ask="Delete every call in the AI log? This can’t be undone." clear={() => invoke("ai_log_clear")} onclear={() => (calls = [])} />
   {/if}
 </header>
 
@@ -110,7 +129,7 @@
 {#if open}
   {@const e = open}
   <div class="top">
-    <button class="back" onclick={() => (open = null)}>{@render icon('<path d="M14.5 6 8.5 12l6 6" />')}All calls</button>
+    <button class="back" onclick={() => (open = null)}>{@render icon('<path d="M14.5 6 8.5 12l6 6" />')}{group ? "Back" : "All calls"}</button>
   </div>
   <div class="head">
     <div>
@@ -132,9 +151,51 @@
       <pre class="body" class:mono class:bad={key === "error"}>{text}</pre>
     </section>
   {/each}
+{:else if group}
+  <div class="top">
+    <button class="back" onclick={() => (group = null)}>{@render icon('<path d="M14.5 6 8.5 12l6 6" />')}All calls</button>
+  </div>
+  {#if inGroup.length}
+    {@const g = { key: group, calls: inGroup }}
+    <div class="head">
+      <div>
+        <h2>{name(g)}</h2>
+        <div class="meta">{when(inGroup[inGroup.length - 1].at)} · {inGroup.length} {inGroup.length === 1 ? "call" : "calls"} · {ms(total(g))}</div>
+      </div>
+    </div>
+  {/if}
+  <div class="page">
+    {@render rows(inGroup)}
+    <p class="err" role="status">{error}</p>
+  </div>
 {:else}
   <div class="page">
     {#if list.length}
+      <ul class="list" aria-label="AI calls">
+        {#each list as g (g.key)}
+          {@const n = failed(g)}
+          {@const c = g.calls[0]}
+          <li>
+            <button class="row" onclick={() => pick(g)}>
+              <span class="t"><span class="name">{name(g)}</span><span class="meta">{[when(g.calls[g.calls.length - 1].at), g.calls.length > 1 ? `${g.calls.length} calls` : [c.provider, c.model].filter(Boolean).join(" · "), [...new Set(g.calls.map((x) => x.feature))].reverse().join(", ")].filter(Boolean).join(" · ")}</span></span>
+              <span class="nums">{ms(total(g))}</span>
+              <span class="badge" class:bad={n > 0}>{g.calls.length === 1 ? (OUTCOME[c.outcome] ?? c.outcome) : n ? `${n} failed` : "OK"}</span>
+            </button>
+          </li>
+        {/each}
+      </ul>
+    {:else if !calls.length}
+      <div class="empty"><h3>No AI calls yet</h3><p>Use a feature that calls an AI provider and it shows up here.</p></div>
+    {:else}
+      <div class="empty"><h3>No calls match</h3><p>Turn off Errors only to see the rest.</p>
+        <button class="btn" onclick={() => (f.errors = false)}>Show all calls</button></div>
+    {/if}
+    <p class="err" role="status">{error}</p>
+  </div>
+{/if}
+</div>
+
+{#snippet rows(list: Summary[])}
       <ul class="list" aria-label="AI calls">
         {#each list as c (c.id)}
           <li>
@@ -146,20 +207,10 @@
           </li>
         {/each}
       </ul>
-    {:else if !calls.length}
-      <div class="empty"><h3>No AI calls yet</h3><p>Use a feature that calls an AI provider and it shows up here.</p></div>
-    {:else}
-      <div class="empty"><h3>No calls match</h3><p>Pick All features or turn off Errors only to see the rest.</p>
-        <button class="btn" onclick={() => { f.feature = "all"; f.errors = false; }}>Show all calls</button></div>
-    {/if}
-    <p class="err" role="status">{error}</p>
-  </div>
-{/if}
-</div>
+{/snippet}
 
 <style>
   .grow { flex: 1; align-self: stretch; }
-  .select { max-width: 200px; }
   .toggle[aria-pressed="true"] { background: var(--accent-soft-strong); color: var(--accent-text); box-shadow: none; }
   .page { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-3); align-content: start; max-width: 1000px; margin: 0 auto; }
   .meta { color: var(--text-3); font-size: var(--fs-footnote); line-height: var(--lh-footnote); }

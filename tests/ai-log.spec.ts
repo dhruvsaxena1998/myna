@@ -132,21 +132,45 @@ test("Copy puts the section's text on the clipboard", async ({ page }) => {
   expect(await calls(page, "text_copy")).toEqual([{ text: "You write meeting summaries." }, { text: JSON.stringify({ choices: [{ message: { content: "The team agreed to ship Friday." } }] }, null, 2) }]);
 });
 
-test("the feature filter and Errors only narrow the list", async ({ page }) => {
+test("Errors only narrows the list", async ({ page }) => {
   await go(page);
-  await page.getByLabel("Feature").selectOption("Decision");
-  await expect(rows(page)).toHaveCount(1);
-  await expect(rows(page).nth(0)).toContainText("Decision");
-  await page.getByLabel("Feature").selectOption("all");
   await page.getByRole("button", { name: "Errors only" }).click();
   await expect(rows(page)).toHaveCount(1);
   await expect(rows(page).nth(0)).toContainText("LLM cleanup");
-  await page.getByLabel("Feature").selectOption("Decision");
-  await expect(page.getByRole("heading", { name: "No calls match" })).toBeVisible();
-  await page.getByRole("button", { name: "Show all calls" }).click(); // DESIGN.md: a heading, one sentence, one action
+  await page.getByRole("button", { name: "Errors only" }).click();
   await expect(rows(page)).toHaveCount(3);
-  await expect(page.getByLabel("Feature")).toHaveValue("all");
-  await expect(page.getByRole("button", { name: "Errors only" })).toHaveAttribute("aria-pressed", "false");
+});
+
+test("a meeting's or a dictation's calls are one row; opening it lists them, and a streamed raw reply is indented", async ({ page }) => {
+  const at = Date.now() - 60e3;
+  const entries = [
+    { id: "m2", at: at + 2, feature: "Summary", entity: "meeting:7", method: "chat_stream", outcome: "error", error: "boom", total_ms: 200,
+      raw: 'data: {"choices":[{"delta":{"content":"Hi"}}]}\n\ndata: [DONE]\n' },
+    { id: "m1", at: at + 1, feature: "Title", entity: "meeting:7", method: "chat", outcome: "ok", total_ms: 100 },
+    { id: "d1", at, feature: "LLM cleanup", entity: "dictation:5", method: "chat", outcome: "ok", total_ms: 50 },
+  ];
+  await fakeTauri(page, `{
+    storage_status: () => "/tmp/Myna", models_list: () => [], look_get: () => (${JSON.stringify(look(true, true))}), look_set: () => {},
+    ai_log_list: () => ${JSON.stringify(entries)}.map(${SUMMARY}).map((s, i) => ({ ...s, entity: ${JSON.stringify(entries)}[i].entity })),
+    ai_log_get: ({ id }) => ${JSON.stringify(entries)}.find((e) => e.id === id) ?? null, text_copy: () => {},
+  }`);
+  await page.goto("/main");
+  await nav(page).click();
+  await expect(rows(page)).toHaveCount(2);
+  await expect(rows(page).nth(0)).toContainText("Meeting");
+  await expect(rows(page).nth(0)).toContainText("2 calls");
+  await expect(rows(page).nth(0)).toContainText("Title, Summary");
+  await expect(rows(page).nth(0)).toContainText("1 failed");
+  await expect(rows(page).nth(1)).toContainText("Dictation");
+  await rows(page).nth(0).click();
+  await expect(page.getByRole("heading", { name: "Meeting", level: 2 })).toBeVisible();
+  await expect(rows(page)).toHaveCount(2);
+  await rows(page).nth(0).click();
+  await expect(page.getByRole("region", { name: "Raw reply" }).locator("pre")).toHaveText('data:\n{\n  "choices": [\n    {\n      "delta": {\n        "content": "Hi"\n      }\n    }\n  ]\n}\n\ndata: [DONE]');
+  await page.getByRole("button", { name: "Back" }).click();
+  await expect(rows(page)).toHaveCount(2);
+  await page.getByRole("button", { name: "All calls" }).click();
+  await expect(rows(page)).toHaveCount(2);
 });
 
 test("Clear all asks first, then empties the AI log", async ({ page }) => {

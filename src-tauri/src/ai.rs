@@ -1483,6 +1483,17 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_call_is_logged_as_what_it_was_for_even_on_another_thread() {
+        let (tmp, db, keys, id) = db_with(format!("{}/v1", streams()), "openrouter");
+        log_on(&db.lock().unwrap(), true);
+        let b = crate::ai_log::about(Some("meeting:7".into()), || provider(&db.lock().unwrap(), &keys, id, "Summary").unwrap());
+        std::thread::spawn(move || b.chat("m", None, "hi", 10).unwrap()).join().unwrap();
+        provider(&db.lock().unwrap(), &keys, id, "Test").unwrap().chat("m", None, "hi", 10).unwrap();
+        let l = crate::ai_log::list(tmp.path(), None, false);
+        assert_eq!(l.iter().map(|s| s.entity.as_deref()).collect::<Vec<_>>(), [None, Some("meeting:7")]);
+    }
+
+    #[test]
     fn nothing_is_logged_while_the_ai_log_or_experimental_is_off() {
         let (tmp, db, keys, id) = db_with(format!("{}/v1", streams()), "openai");
         let call = || provider(&db.lock().unwrap(), &keys, id, "LLM cleanup").unwrap().chat("m", None, "hi", 10).unwrap();

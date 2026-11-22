@@ -32,6 +32,10 @@ impl FollowUp {
     /// A failed cleanup keeps the text as heard and the rest runs on that; the title goes on the cleaned lines, before
     /// the Summary, so the list shows a name soon. Returns when all three are done or failed.
     pub fn run(&self, id: i64) {
+        crate::ai_log::about(Some(format!("meeting:{id}")), || self.run_all(id))
+    }
+
+    fn run_all(&self, id: i64) {
         self.clean(id);
         self.name(id);
         let r = summary::auto(&self.db, &|p| self.open(p, "Summary"), id, &mut |p| self.summary_progress(id, p));
@@ -53,7 +57,7 @@ impl FollowUp {
             };
             summary::run(&self.db, &*backend, id, &ask, &mut |p| self.summary_progress(id, p))
         };
-        let r = run();
+        let r = crate::ai_log::about(Some(format!("meeting:{id}")), run);
         self.say_summary(match &r {
             Ok(v) => json!({ "id": id, "state": "done", "version": v }),
             Err(e) => json!({ "id": id, "state": "failed", "error": e }),

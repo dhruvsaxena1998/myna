@@ -987,7 +987,7 @@ impl Meetings {
         let _one = self.job.lock().unwrap();
         let set = |sql: &str, p: &[&dyn rusqlite::ToSql]| self.db.lock().unwrap().execute(sql, p).map(drop).map_err(|e| format!("Couldn't save the meeting: {e}"));
         set("UPDATE meeting SET state = 'transcribing', failure = NULL WHERE id = ?1", &[&id])?;
-        let done = self.write_up(id, stt, who, with, keep_done, progress);
+        let done = crate::ai_log::about(Some(format!("meeting:{id}")), || self.write_up(id, stt, who, with, keep_done, progress));
         if let Err(e) = &done {
             let _ = set("UPDATE meeting SET state = 'failed', failure = ?1 WHERE id = ?2", &[e, &id]);
         }
@@ -1213,10 +1213,11 @@ impl Meetings {
     fn upload(&self, e: &crate::ai::SttEndpoint, chunks: &[&[i16]], done: &mut dyn FnMut()) -> Vec<Result<(Vec<Segment>, crate::ai::Cost), String>> {
         let next = std::sync::atomic::AtomicUsize::new(0);
         let (tx, rx) = channel();
+        let about = crate::ai_log::current();
         std::thread::scope(|s| {
             for _ in 0..PARALLEL {
-                let (tx, next) = (tx.clone(), &next);
-                s.spawn(move || loop {
+                let (tx, next, about) = (tx.clone(), &next, about.clone());
+                s.spawn(move || crate::ai_log::about(about, || loop {
                     let i = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     let Some(chunk) = chunks.get(i) else { break };
                     let wav = wav_bytes(chunk);
@@ -1229,7 +1230,7 @@ impl Meetings {
                         r = e.send(&wav);
                     }
                     let _ = tx.send((i, r));
-                });
+                }));
             }
             drop(tx);
             let mut out: Vec<_> = chunks.iter().map(|_| Err(String::new())).collect();
