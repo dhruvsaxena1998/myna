@@ -49,6 +49,7 @@ pub fn run(db: &Mutex<Connection>, backend: &dyn Backend, meeting: i64, provider
             data(sent),
             near(visible.get(at + part.len())),
         );
+        backend.step(Some(&format!("part {}/{}", i + 1, parts.len())));
         let r = backend.chat(model, Some(&system), &prompt, crate::summary::SECS)?;
         cost.push(r.cost);
         let reply = r.text.find('{').zip(r.text.rfind('}')).and_then(|(a, b)| serde_json::from_str::<HashMap<String, serde_json::Value>>(r.text.get(a..=b)?).ok()).unwrap_or_default();
@@ -183,7 +184,7 @@ mod tests {
             } else {
                 self.reply.lock().unwrap().clone()
             };
-            Ok(Reply { text, tokens: None, cost: Cost::Usd { usd: 0.01 } })
+            Ok(Reply { text, tokens: None, cost: Cost::Usd { usd: 0.01 }, raw: None })
         }
     }
 

@@ -31,6 +31,9 @@ pub struct Look {
     /// Agents' own switch (Claude Code, Codex as AI providers), off by default; usable only while this and the master switch are on.
     #[serde(default)]
     pub agents: bool,
+    /// The AI log's own switch, off by default; it records only while this and the master switch are on.
+    #[serde(default)]
+    pub ailog: bool,
     /// Liquid Glass opacity: how strongly the CSS fill frosts the glass, 0 clear to 100 most frosted.
     #[serde(default = "default_frost")]
     pub frost: u8,
@@ -74,6 +77,7 @@ pub fn get(conn: &Connection, macos: u32) -> Result<Look, String> {
         experimental: read("experimental", &["off", "on"])? == "on",
         nerds: read("exp_nerds", &["off", "on"])? == "on",
         agents: read("exp_agents", &["off", "on"])? == "on",
+        ailog: read("exp_ailog", &["off", "on"])? == "on",
         frost: frost.unwrap_or_else(default_frost),
     })
 }
@@ -89,8 +93,8 @@ pub fn set(conn: &Connection, l: &Look, macos: u32) -> Result<(), String> {
         return Err("Liquid Glass needs macOS 26 or later.".into());
     }
     let onoff = |on: bool| if on { "on" } else { "off" }.to_string();
-    let (liquid, exp, nerds, agents, frost) = (l.liquid.map(onoff), onoff(l.experimental), onoff(l.nerds), onoff(l.agents), l.frost.to_string());
-    let saved = [("look_theme", &l.theme), ("look_accent", &l.accent), ("look_glass", &l.glass), ("experimental", &exp), ("exp_nerds", &nerds), ("exp_agents", &agents), ("look_frost", &frost)];
+    let (liquid, exp, nerds, agents, ailog, frost) = (l.liquid.map(onoff), onoff(l.experimental), onoff(l.nerds), onoff(l.agents), onoff(l.ailog), l.frost.to_string());
+    let saved = [("look_theme", &l.theme), ("look_accent", &l.accent), ("look_glass", &l.glass), ("experimental", &exp), ("exp_nerds", &nerds), ("exp_agents", &agents), ("exp_ailog", &ailog), ("look_frost", &frost)];
     for (k, v) in saved.into_iter().chain(liquid.as_ref().map(|v| ("look_liquid", v))) {
         storage::write_text(conn, k, v).map_err(|e| e.to_string())?;
     }
@@ -186,7 +190,7 @@ mod tests {
     use super::*;
 
     fn is(t: &str, a: &str, g: &str) -> Look {
-        Look { theme: t.into(), accent: a.into(), glass: g.into(), liquid: None, experimental: false, nerds: false, agents: false, frost: 50 }
+        Look { theme: t.into(), accent: a.into(), glass: g.into(), liquid: None, experimental: false, nerds: false, agents: false, ailog: false, frost: 50 }
     }
 
     #[test]
@@ -267,6 +271,16 @@ mod tests {
         assert!(!get(&conn, 15).unwrap().nerds);
         set(&conn, &Look { nerds: true, ..is("auto", "blue", "clear") }, 15).unwrap();
         assert!(get(&conn, 15).unwrap().nerds);
+    }
+
+    #[test]
+    fn the_ai_log_has_its_own_switch_off_by_default() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = crate::storage::open(tmp.path()).unwrap();
+        assert!(!get(&conn, 15).unwrap().ailog);
+        set(&conn, &Look { ailog: true, ..is("auto", "blue", "clear") }, 15).unwrap();
+        assert!(get(&conn, 15).unwrap().ailog);
+        assert_eq!(crate::storage::read_text(&conn, "exp_ailog").unwrap().as_deref(), Some("on"));
     }
 
     #[test]
